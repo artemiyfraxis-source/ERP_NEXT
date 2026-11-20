@@ -91,7 +91,9 @@ def label_printer(_principal: Annotated[Principal, Depends(warehouse_view_princi
     jobs = []
     for row in rows:
         lot = lots.get(row.lot_id) if row.lot_id else None
-        what = KIND_TEXT.get(row.kind) or (f"ГРН {lot.grn}{'/' + lot.package if lot.package else ''}" if lot else "Партия удалена")
+        # A «lot» job without a warehouse lot is the label of a production intake act (finished_goods_label.py: lot_id =
+        # the act id, no FK) — it is reprinted from «Приёмка с производства», not here.
+        what = KIND_TEXT.get(row.kind) or (f"ГРН {lot.grn}{'/' + lot.package if lot.package else ''}" if lot else "Этикетка ГП")
         jobs.append({"id": str(row.id), "kind": row.kind, "what": what, "article": lot.article if lot else "",
                      "name": lot.name if lot else "", "warehouse": lot.warehouse if lot else "",
                      "lot_id": str(row.lot_id) if lot else None, "copies": row.copies, "by": row.created_by,

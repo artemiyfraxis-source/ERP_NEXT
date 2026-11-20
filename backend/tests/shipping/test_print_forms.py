@@ -92,7 +92,18 @@ def _packed_in_two_boxes(client, **extra):
 
 
 def _row(part, name, quantity, batch="", pl="", boxes=""):
-    return {"part": part, "name": name, "quantity": quantity, "unit": "шт", "batch": batch, "pl": pl, "boxes": boxes}
+    index, _, article = part.partition(" ")
+    return {"part": part, "name": name, "quantity": quantity, "unit": "шт", "batch": batch, "pl": pl, "boxes": boxes,
+            "item_index": index, "article": article}
+
+
+# Шапка отправки, итоги и сводка мест PL (владелец 20.11.2026) — проверяются отдельно от полей формы 04.2.
+PL_HEAD = ("shipper", "customer", "consignee", "shipping_address", "contact", "phone", "project", "shipment", "dn", "terms",
+           "carrier", "track", "positions", "quantity", "total_gross", "summary")
+
+
+def _form_04_2(form):
+    return {key: value for key, value in form.items() if key not in PL_HEAD}
 
 
 def test_packing_list_is_one_sheet_per_box_as_form_04_2(shipping_api):
@@ -103,7 +114,7 @@ def test_packing_list_is_one_sheet_per_box_as_form_04_2(shipping_api):
 
     common = {"kind": "pl", "title": "PL591К.3-1", "number": ["PL", "591К.3", "-", "1"], "places": "2", "package": "Короб",
               "packed_at": "22.09.26", "shipped_at": "22.09.26", "packer": "Гусев А.А."}
-    assert forms == [
+    assert [_form_04_2(form) for form in forms] == [
         {**common, "place": "1", "dims": "32x25x21", "net": "11", "gross": "11,6", "seal": "П-17", "rows": [
             # «Чертежный номер/Артикул» — № КБ с артикулом, «Номер этикетки» — GRN партии ГП.
             _row("КБ1 A-КБ1", "Жгут КБ1", "6", batch="ГП.26.0000001"), _row("КБ2 A-КБ2", "Жгут КБ2", "5", batch="ГП.26.0000002"),
@@ -113,6 +124,26 @@ def test_packing_list_is_one_sheet_per_box_as_form_04_2(shipping_api):
             _row("КБ1 A-КБ1", "Жгут КБ1", "4", batch="ГП.26.0000001"),
         ]},
     ]
+    # Шапка — данные отправки, как в DN; итоги места; сводка всех мест (коробов больше одного).
+    head = {key: forms[0][key] for key in PL_HEAD if key not in {"shipment", "summary"}}
+    assert head == {
+        "shipper": SHIPPER, "customer": "Заказчик", "consignee": "Получатель", "shipping_address": "Москва", "contact": "",
+        "phone": "+7 900 000-00-00", "project": "591К.3", "dn": "DN591К.3-1", "terms": "Доставка ТК", "carrier": "СДЭК",
+        "track": "", "positions": "2 позиции", "quantity": "11 шт", "total_gross": "",
+    }
+    assert forms[0]["shipment"] == shipment["number"] and (forms[1]["positions"], forms[1]["quantity"]) == ("1 позиция", "4 шт")
+    assert forms[0]["summary"] == forms[1]["summary"] == [
+        {"place": "1", "package": "Короб", "dims": "32x25x21", "net": "11", "gross": "11,6", "seal": "П-17", "contents": "КБ1 — 6 шт; КБ2 — 5 шт"},
+        {"place": "2", "package": "Короб", "dims": "", "net": "", "gross": "", "seal": "", "contents": "КБ1 — 4 шт"},
+    ]
+
+
+def test_a_single_box_pl_has_no_places_summary(shipping_api):
+    client = shipping_api
+    good = _stocked(client, accepted="6")
+    shipment = _shipment(client, [{"good_id": good["id"], "quantity": "6"}])
+    [form] = _print(client, shipment["id"], "pl")
+    assert (form["places"], form["summary"], form["positions"], form["quantity"]) == ("1", [], "1 позиция", "6 шт")
 
 
 def test_delivery_note_sums_each_kb_over_boxes_with_project_card_requisites(shipping_api):
@@ -141,6 +172,7 @@ def test_delivery_note_sums_each_kb_over_boxes_with_project_card_requisites(ship
         "upd_edo": True, "upd_paper": False, "paper_box": "BXN 1", "note": "",
         # Брутто второго короба не взвешено — общий вес пустой, дописать от руки.
         "places": "2", "gross": "", "upd": "УПД-1", "shipped_at": "22.09.26", "packer": "Гусев А.А.",
+        "positions": "2 позиции", "quantity": "15 шт",
     }]
 
 

@@ -194,3 +194,17 @@ it("lists «Все станки» first and asks for machine_id=all", async () =
   expect(screen.getAllByRole("option")[0]).toHaveTextContent("Все станки · 3 строк");
   expect(fetchMock.mock.calls.some(([url]) => String(url).includes("machine_id=all"))).toBe(true);
 });
+
+it("has a section title and keeps a long wire name on one line with a tooltip", async () => {
+  const long = "Компания Крокс. Разработка, производство и продажа антенн";
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.includes("/cutting-queue/machines")) return json(MACHINES);
+    return json({ machine_id: "ОБ.095", version: "v", rows: [row({ wire_name: "RTK 031", wire_title: long, setup_change: true, setup_text: `Заправьте ${long}` })] });
+  });
+  render(<CuttingQueue />);
+  expect(await screen.findByRole("heading", { name: "Очередь резки" })).toBeInTheDocument();
+  const clip = screen.getByText("RTK 031", { selector: ".cq-wire .cq-clip" });
+  expect(clip).toHaveAttribute("title", long);
+  expect(screen.getByTitle(`Заправьте ${long}`)).toBeInTheDocument();
+});

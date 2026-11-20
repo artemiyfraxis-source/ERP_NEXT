@@ -209,7 +209,7 @@ export function Ob019Controls({ card, run, onStartWhy, onControl }: {
   };
   return <section className="machine-controls" aria-label="Управление станком">
     <div className="machine-controls-bar">
-      {cell("stop", <button type="button" className="primary danger machine-stop" onClick={() => void sendCommand("stop")}>Стоп</button>,
+      {data?.can_stop !== false && cell("stop", <button type="button" className="primary danger machine-stop" onClick={() => void sendCommand("stop")}>Стоп</button>,
         card.link.code !== "ok" ? "без связи может не дойти" : "")}
       {canControl && ACTIONS.map((command) => {
         const why = command === "start" ? startWhy ?? "" : blocked(command, card, open, lifted, run);

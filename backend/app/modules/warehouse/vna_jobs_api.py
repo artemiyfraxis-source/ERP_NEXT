@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.shared.clock import moscow_now
@@ -124,6 +124,13 @@ def start(request: Request, principal: Person, now: Now, uow_factory: UowFactory
                      expected_vna_serial=instrument["serial"] if source == "s2vna" else None,
                      vna_name=chosen["vna"]["name"] if source == "s2vna" else "Arinst VNA-DL"))
     return {**_view(job), "agent": chosen}
+
+
+@router.get("")
+def recent(instrument_id: UUID, principal: Person, uow_factory: UowFactory,
+           limit: Annotated[int, Query(ge=1, le=30)] = 10):
+    """«Последние файлы» of the analyser card: this person's finished captures of the instrument."""
+    return {"captures": vna_jobs.recent_captures(uow_factory(), str(principal.actor.id), instrument_id, limit)}
 
 
 @router.get("/{job_id}")

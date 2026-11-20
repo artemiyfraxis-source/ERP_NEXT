@@ -580,7 +580,7 @@ describe("Приёмка с производства: свои колонки и
     expect(rowButtons()).toEqual(["Принять 591К.3 КБ1: 34"]);
   });
 
-  it("«Упаковано»: ЭДО без номера — выключенный «Трек…» с причиной, без «Без УПД…»; УПД нет совсем — «Без УПД…» с ПИН", async () => {
+  it("«Упаковано»: ответ без `no_upd_offered` у ЭДО без номера — выключенный «Трек…»; сервер предлагает «Без УПД…» — кнопка с ПИН", async () => {
     intakeRows = [row({ accepted: "4", packed: "4", remaining: "0", delivered: "4", tasks: [] })];
     shipments = [packedShipment];
     const first = render(<ProductionIntakePage principal={principal} />);
@@ -592,7 +592,7 @@ describe("Приёмка с производства: свои колонки и
     expect(rowButtons()).toEqual([]);
     first.unmount();
 
-    // Сервер решает сам (`no_upd_offered`): ЭДО без номера — не предлагает, даже если слова пробелов похожи.
+    // Сервер решает сам (`no_upd_offered`): не предлагает — выключенный «Трек…», даже если слова пробелов похожи.
     shipments = [{ ...packedShipment, missing_ship_codes: ["upd_number", "track_number"], no_upd_offered: false }];
     const second = render(<ProductionIntakePage principal={principal} />);
     expect(await screen.findByRole("button", { name: "Трек ОТГ-20261029-01" })).toBeDisabled();
@@ -692,6 +692,28 @@ it("PL и DN по отдельности: без номера — «Сформи
   expect(cell(head, "DN")).toContain("DN591К.3-1");
   fireEvent.click(screen.getByRole("button", { name: "Сформировать PL ОТГ-20261029-01" }));
   await waitFor(() => expect(writes().map((call) => [call.url, call.body])).toContainEqual(["/api/shipping/shipments/s1/issue-document", { version: 3, document: "pl" }]));
+});
+
+it("ЭДО без № (владелец 20.11): сервер предлагает «Без УПД…» и у упакованной, и у набранной с DN; без DN — нет", async () => {
+  intakeRows = [row({ accepted: "4", packed: "4", remaining: "0", delivered: "4", tasks: [] })];
+  const offered = { ...packedShipment, missing_data: ["№ УПД"], missing_ship_codes: ["upd_number", "track_number"], no_upd_offered: true };
+  shipments = [offered];
+  const packed = render(<ProductionIntakePage principal={principal} />);
+  expect(await screen.findByRole("button", { name: "Без УПД ОТГ-20261029-01" })).toBeInTheDocument();
+  packed.unmount();
+
+  shipments = [{ ...offered, status: "Собрана", pl_number: "", dn_number: "DN591К.3-1" }];
+  const assembled = render(<ProductionIntakePage principal={principal} />);
+  fireEvent.click(await screen.findByRole("tab", { name: /^Все/ }));
+  expect(await screen.findByRole("button", { name: "Без УПД ОТГ-20261029-01" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Трек ОТГ-20261029-01" })).not.toBeInTheDocument();
+  assembled.unmount();
+
+  shipments = [{ ...offered, status: "Собрана", pl_number: "", dn_number: "" }];
+  render(<ProductionIntakePage principal={principal} />);
+  fireEvent.click(await screen.findByRole("tab", { name: /^Все/ }));
+  await screen.findByText("ОТГ-20261029-01");
+  expect(screen.queryByRole("button", { name: "Без УПД ОТГ-20261029-01" })).not.toBeInTheDocument();
 });
 
 it("DN «Сформировать» зовёт выдачу DN у упакованной отправки без DN", async () => {
@@ -877,4 +899,72 @@ it("loads a linked older shipment outside the journal list, including cancelled 
   expect(await within(journal).findByText("ОТГ-СТАРАЯ")).toBeInTheDocument();
   expect(within(journal).getByText("Отменена", { selector: ".status-chip" })).toBeInTheDocument();
   expect(within(journal).getByText(/В отгрузке нет позиций/)).toBeInTheDocument();
+});
+
+describe("Приёмка с производства: «Упаковать всё» и «Отгрузить всё» по проекту", () => {
+  const today = "2026-11-09";
+  const kb = (index: string, over: Record<string, unknown> = {}) => row({ item_index: index, name: `Жгут ${index}`, good_id: `g-${index}`, accepted: "6", remaining: "0", delivered: "6", tasks: [],
+    pack_allowed: true, pack_permission_remaining: "10000", acts: [act(`ГП.${index}`, "6", today)], ...over });
+  const confirmSpy = () => vi.spyOn(window, "confirm").mockReturnValue(true);
+  const packCalls = () => calls.filter((call) => call.url === "/api/shipping/project-ship");
+
+  it("«Упаковать всё»: пакует КБ с разрешением своими количествами, без разрешения пропускает и говорит сколько", async () => {
+    const ask = confirmSpy();
+    intakeRows = [kb("КБ1"), kb("КБ2", { accepted: "4", acts: [act("ГП.КБ2", "4", today)] }), kb("КБ3", { pack_allowed: false, pack_permission_remaining: "0" })];
+    render(<ProductionIntakePage principal={principal} />);
+    const button = await screen.findByRole("button", { name: "Упаковать всё: 2 КБ · 10 шт" });
+    expect(screen.getByText("без разрешения: 1 КБ")).toBeInTheDocument();
+    fireEvent.click(button);
+    await screen.findByText(/^Упаковано 2 КБ · 10 шт · ОТГ-9/);
+    expect(ask).toHaveBeenCalledWith(expect.stringContaining("Упаковать 2 КБ · 10 шт проекта 591К.3?"));
+    expect(ask).toHaveBeenCalledWith(expect.stringContaining("пропущено: 1 КБ"));
+    expect(packCalls()).toHaveLength(1);
+    expect(packCalls()[0].body).toEqual({ project: "591К.3", addressee_version: 2, ship: false, lines: [
+      { good_id: "g-КБ1", version: 1, quantity: "6" }, { good_id: "g-КБ2", version: 1, quantity: "4" },
+    ] });
+  });
+
+  it("«Упаковать всё»: разные данные доставки — отдельная отправка на каждую группу; отказ группы виден в итоге", async () => {
+    confirmSpy();
+    intakeRows = [kb("КБ1"), kb("КБ2")];
+    itemDeliveries = [kbDelivery("КБ1"), { ...kbDelivery("КБ2"), effective: { ...kbDelivery("КБ2").effective, shipping_point: "Другой адрес" } }];
+    const base = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    let shipCalls = 0;
+    vi.stubGlobal("fetch", vi.fn((input, init) => String(input) === "/api/shipping/project-ship" && ++shipCalls === 2
+      ? Promise.resolve(json({ detail: "Остаток изменился" }, 409)) : base(input, init)));
+    render(<ProductionIntakePage principal={principal} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Упаковать всё: 2 КБ · 12 шт" }));
+    await screen.findByText(/^Упаковано 1 КБ · 6 шт/);
+    expect(await screen.findByText(/Не упаковано 1 КБ — КБ2/)).toBeInTheDocument();
+    expect(shipCalls).toBe(2);
+  });
+
+  it("«Упаковать всё»: без согласия в диалоге ничего не отправляется; без права склада кнопки нет", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    intakeRows = [kb("КБ1"), kb("КБ2")];
+    const { unmount } = render(<ProductionIntakePage principal={principal} />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Упаковать всё/ }));
+    expect(writes()).toEqual([]);
+    unmount();
+    render(<ProductionIntakePage principal={viewer} />);
+    await screen.findAllByText("Жгут КБ1");
+    expect(screen.queryByRole("button", { name: /^Упаковать всё/ })).not.toBeInTheDocument();
+  });
+
+  it("«Отгрузить всё»: отгружает готовые отправки проекта, неготовые пропускает с пробелами", async () => {
+    const ask = confirmSpy();
+    const ready = (id: string, index: string) => ({ ...packedShipment, id, number: `ОТГ-${id}`, ready_to_ship: true, ready_for_track: true, track_number: "TRK", missing_ship: [], missing_data: [],
+      lines: [shipmentLine({ id: `l-${id}`, good_id: `g-${index}`, item_index: index, name: `Жгут ${index}` })] });
+    const gap = { ...packedShipment, id: "z", number: "ОТГ-z", lines: [shipmentLine({ id: "l-z", item_index: "КБ3", name: "Жгут КБ3" })] };
+    intakeRows = [kb("КБ1", { accepted: "4", packed: "4" }), kb("КБ2", { accepted: "4", packed: "4" }), kb("КБ3", { accepted: "4", packed: "4" })];
+    shipments = [ready("a", "КБ1"), ready("b", "КБ2"), gap];
+    window.history.replaceState({}, "", "/?tab=to_ship");
+    render(<ProductionIntakePage principal={principal} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Отгрузить всё: 2 отправки" }));
+    await screen.findByText("Отгружено 2 отправки");
+    expect(ask).toHaveBeenCalledWith(expect.stringContaining("Отгрузить 2 отправки проекта 591К.3?"));
+    expect(ask).toHaveBeenCalledWith(expect.stringContaining("ОТГ-z — № УПД, трек-номер"));
+    expect(writes().map((call) => call.url)).toEqual(["/api/shipping/shipments/a/ship", "/api/shipping/shipments/b/ship"]);
+    expect(writes()[0].body).toEqual({ version: 3 });
+  });
 });

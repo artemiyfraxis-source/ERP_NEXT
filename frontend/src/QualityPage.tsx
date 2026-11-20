@@ -25,11 +25,10 @@ import { PageWindow } from "./PageWindow";
 import { DataTable, type DataColumn } from "./DataTable";
 import { printCoaxPassport } from "./coaxPassportPrint";
 import { useCanPrint } from "./rights";
-import { VnaBench } from "./VnaBench";
-import { vnaBenchAvailable } from "./vnaBenchApi";
 
 type Mutate = (key: string, operation: () => Promise<unknown>) => Promise<boolean>;
-type QualityTab = "queue" | "vswr" | "vna" | "rejects" | "instruments";
+// «ВАЦ — рабочее место» переехало в карточку прибора «Оборудования» (владелец 20.11.2026); `?tab=vna` ведёт туда (MOVED_TABS).
+type QualityTab = "queue" | "vswr" | "rejects" | "instruments";
 
 function urlTab(): string {
   return new URLSearchParams(window.location.search).get("tab") ?? "";
@@ -54,8 +53,6 @@ export function QualityPage({ principal }: { principal: Principal }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
-  // «ВАЦ — рабочее место» включается сам, когда сервер отвечает на /api/production/vna-bench/state (S3/S4); до того вкладки нет.
-  const [vnaBench, setVnaBench] = useState(false);
   // «Не годно» по КСВН → очередь ОТК: описание брака подставляется в черновик первой коробки этого задания.
   const [prefill, setPrefill] = useState<(VswrRejectRequest & { boxId: string; stamp: number }) | null>(null);
 
@@ -91,19 +88,12 @@ export function QualityPage({ principal }: { principal: Principal }) {
   }
 
   useEffect(() => { void reload(); }, []);
-  useEffect(() => {
-    if (!canQuality) return;
-    let active = true;
-    void vnaBenchAvailable().then((available) => { if (active) setVnaBench(available); });
-    return () => { active = false; };
-  }, [canQuality]);
 
   const ready = boxes.filter((box) => inQcQueue(box, tasks));
   const rejectCount = qcRejections.filter((item) => item.status === "Ожидает решения").length
     + defects.filter((item) => item.status === "Ожидает решения" && !item.replaced_by_output_id).length;
   const tabs: { id: QualityTab; label: string }[] = [
     ...(canQuality ? [{ id: "queue" as const, label: `Очередь ОТК · ${ready.length}` }, { id: "vswr" as const, label: "Замеры КСВН" }] : []),
-    ...(canQuality && vnaBench ? [{ id: "vna" as const, label: "ВАЦ — рабочее место" }] : []),
     ...(canEdit ? [{ id: "rejects" as const, label: `Брак · ${rejectCount}` }] : []),
     ...(canQuality ? [{ id: "instruments" as const, label: "Средства измерения" }] : []),
   ];
@@ -175,9 +165,6 @@ export function QualityPage({ principal }: { principal: Principal }) {
         onOverview={(overview) => setVswrTasks((current) => current.map((item) => item.id === overview.task.id ? { ...item, control: overview.control,
           required: { ...item.required, ...overview.required, ...overviewTotals(overview) } } : item))}
         canUpload={canQuality} canReject={(taskId) => Boolean(queueBox(taskId))} onReject={rejectFromVswr} />
-    </div>}
-    {loaded && canQuality && vnaBench && <div role="tabpanel" id="quality-panel-vna" aria-labelledby="quality-tab-vna" hidden={tab !== "vna"}>
-      {tab === "vna" && <VnaBench canEdit={canQuality} />}
     </div>}
     {loaded && canEdit && <div role="tabpanel" id="quality-panel-rejects" aria-labelledby="quality-tab-rejects" hidden={tab !== "rejects"}><div className="review-row">
       <QcRejectionReview rejections={qcRejections} busy={Boolean(busy)} mutate={mutate} />

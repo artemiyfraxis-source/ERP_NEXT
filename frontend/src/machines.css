@@ -126,8 +126,25 @@
 .machine-facts dl > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: baseline; }
 .machine-facts dt { color: var(--muted-foreground); font-size: 13px; }
 .machine-facts dd { margin: 0; font-size: 14px; font-weight: 500; text-align: right; font-variant-numeric: tabular-nums; }
-.machine-card > .machine-facts dl { grid-template-columns: repeat(auto-fit, minmax(200px, max-content)); column-gap: 32px; }
-.machine-card > .machine-facts dl > div { grid-template-columns: max-content max-content; }
+/* Паспорт в карточке: ровные колонки по ширине окна, длинное значение («Planar, S50180, …», «Также на ПК …») переносится —
+   окно никогда не прокручивается вбок (владелец 20.11.2026). */
+.machine-card > .machine-facts dl { grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); column-gap: 32px; }
+.machine-card > .machine-facts dl > div { grid-template-columns: max-content minmax(0, 1fr); }
+.machine-card > .machine-facts dd { text-align: left; overflow-wrap: anywhere; }
+
+/* Карточка анализатора цепей (AnalyserCard.tsx): рабочее место ВАЦ или замер файлом Arinst, «Подключение» — последним. */
+.analyser-card .vna-bench { min-width: 0; }
+.analyser-connection summary { cursor: pointer; font-size: 14px; overflow-wrap: anywhere; }
+.analyser-connection[open] summary { margin-bottom: 8px; }
+.analyser-status { margin: 0; font-size: 16px; font-weight: 500; overflow-wrap: anywhere; }
+.analyser-capture { display: grid; gap: 8px; }
+.analyser-capture h3 { margin: 4px 0 0; }
+.analyser-steps { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+.analyser-command { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.analyser-command button.primary, .analyser-command button.secondary:not(.small) { min-height: 44px; }
+.analyser-files .num { font-variant-numeric: tabular-nums; }
+.analyser-file-name { overflow-wrap: anywhere; font-weight: 500; }
+.analyser-files td:last-child { text-align: right; }
 .machine-state { font-size: 18px; }
 .machine-alarms { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; padding: 0; list-style: none; font-weight: 500; }
 .machine-none { margin: 0; font-size: 13px; }
