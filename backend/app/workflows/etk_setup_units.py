@@ -47,6 +47,11 @@ def _ready(session, *, operation_id: UUID | None = None, card_id: UUID | None = 
             continue  # a snapshot without a usable ref can't point at an ETK row
 
 
+def _newer(row, other) -> bool:
+    """Later READY wins; equal times break by id so the answer does not depend on row order."""
+    return (row.updated_at, str(row.id)) > (other.updated_at, str(other.id))
+
+
 def _iso(value) -> str:
     return (value if value.tzinfo else value.replace(tzinfo=UTC)).isoformat()
 
@@ -77,7 +82,7 @@ def operation_etk_units(task_id: UUID, operation_id: UUID,
         latest: dict[int, tuple] = {}
         for item in _ready(uow.session, operation_id=operation_id, task_id=task_id):
             position = item[1]
-            if position not in latest or item[0].updated_at > latest[position][0].updated_at:
+            if position not in latest or _newer(item[0], latest[position][0]):
                 latest[position] = item
         rows = _view(uow.session, [latest[position] for position in sorted(latest)])
     return {"units": rows}
@@ -94,7 +99,7 @@ def project_setup_units(card_id: UUID, factory: Factory) -> dict:
         latest: dict[tuple[int, UUID], tuple] = {}
         for item in found:
             key = (item[1], item[0].machine_id)
-            if item[2] in open_tasks and (key not in latest or item[0].updated_at > latest[key][0].updated_at):
+            if item[2] in open_tasks and (key not in latest or _newer(item[0], latest[key][0])):
                 latest[key] = item
         rows = _view(session, list(latest.values()))
     rows.sort(key=lambda item: (item["etk_position"], item["inventory_number"], item["unit_id"]))
