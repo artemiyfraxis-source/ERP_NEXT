@@ -98,27 +98,72 @@ def test_machine_filter_and_machine_list(production_api):
     response = client.get(f"{URL}/machines")
     assert response.status_code == 200, response.text
     assert response.json()["machines"] == [
+        {"machine_id": "all", "machine_name": "Все станки", "rows": 2, "left": "20", "projects": 1},
         {"machine_id": "ОБ.095", "machine_name": "Станок ОБ.095", "rows": 1, "left": "10", "projects": 1},
         {"machine_id": "ОБ.1", "machine_name": "", "rows": 1, "left": "10", "projects": 1}]
 
 
-def test_card_without_machine_gets_its_own_bucket_and_several_machines_prefer_bzw(production_api):
+def several_machines(doc=None):
+    """708К. tooling as issued today: the BZW-886+Q2 first (the default), the BZW-50X also listed."""
+    doc = on_machine(doc or document(), "ОБ.094")
+    doc["operations"][0]["card"]["tooling"][0]["name"] = "BZW-886+Q2"
+    doc["operations"][0]["card"]["tooling"].append({"section": "Оборудование", "inventory_number": "ОБ.095",
+                                                    "name": "BZW-50X"})
+    return doc
+
+
+def test_card_without_machine_gets_its_own_bucket_and_a_row_is_on_every_machine_its_etk_names(production_api):
     client, _ = production_api
     doc = document()
     doc["operations"][0]["card"]["tooling"] = [{"section": "Инструмент", "name": "Линейка"}]
-    several = on_machine(document(), "ОБ.094")
-    several["operations"][0]["card"]["tooling"].append({"section": "Оборудование", "inventory_number": "ОБ.095",
-                                                         "name": "BZW-50X"})
-    batch(client, [issue("708К.", "КБ1", standalone(doc)), issue("709К.", "КБ1", standalone(several))])
-    bzw = queue(client, "ОБ.095")["rows"]
-    assert [(row["project"], row["warnings"]) for row in bzw] == [("709К.", ["в ЭТК ещё станки: ОБ.094"])]
+    batch(client, [issue("708К.", "КБ1", standalone(doc)), issue("709К.", "КБ1", standalone(several_machines()))])
+    for machine, name in (("ОБ.094", "BZW-886+Q2"), ("ОБ.095", "BZW-50X")):
+        rows = queue(client, machine)["rows"]
+        assert [(row["project"], row["machine_id"], row["machine_name"], row["warnings"]) for row in rows] == [
+            ("709К.", machine, name, [])]
+        assert rows[0]["machines"] == [{"machine_id": "ОБ.094", "machine_name": "BZW-886+Q2"},
+                                       {"machine_id": "ОБ.095", "machine_name": "BZW-50X"}]
     unknown = queue(client, "none")
     assert unknown["machine_id"] is None
-    assert [(row["project"], row["machine_id"], row["warnings"]) for row in unknown["rows"]] == [
-        ("708К.", None, ["нет в ЭТК: станок"])]
+    assert [(row["project"], row["machine_id"], row["machines"], row["warnings"]) for row in unknown["rows"]] == [
+        ("708К.", None, [], ["нет в ЭТК: станок"])]
     machines = client.get(f"{URL}/machines").json()["machines"]
     assert [(item["machine_id"], item["machine_name"], item["rows"]) for item in machines] == [
-        ("ОБ.095", "BZW-50X", 1), (None, "Станок не указан", 1)]
+        ("all", "Все станки", 2), ("ОБ.094", "BZW-886+Q2", 1), ("ОБ.095", "BZW-50X", 1), (None, "Станок не указан", 1)]
+
+
+def test_default_machine_is_the_first_the_etk_names(production_api):
+    client, _ = production_api
+    batch(client, [issue("708К.", "КБ1", standalone(several_machines()))])
+    row = queue(client, "all")["rows"][0]
+    assert (row["machine_id"], row["machine_name"]) == ("ОБ.094", "BZW-886+Q2")
+
+
+def test_row_under_two_machines_leaves_both_lists_after_done(production_api):
+    client, operator = production_api
+    batch(client, [issue("708К.", "КБ1", standalone(several_machines()))])
+    row = queue(client, "ОБ.095")["rows"][0]
+    assert queue(client, "ОБ.094")["rows"][0]["key"] == row["key"]
+    assert done(client, row, 10, operator=operator).status_code == 200
+    assert queue(client, "ОБ.094")["rows"] == queue(client, "ОБ.095")["rows"] == queue(client, "all")["rows"] == []
+    assert client.get(f"{URL}/machines").json()["machines"] == []
+
+
+def test_all_machines_lists_every_row_once_in_setup_order(production_api):
+    client, _ = production_api
+    no_machine = document(length=700)
+    no_machine["operations"][0]["card"]["tooling"] = []
+    batch(client, [issue("708К.", "КБ1", standalone(several_machines(document(length=2000)))),
+                   issue("709К.", "КБ1", standalone(on_machine(document(length=1000), "ОБ.095"))),
+                   issue("710К.", "КБ1", standalone(with_cable(document(length=500), "RG 316"))),
+                   issue("711К.", "КБ1", standalone(no_machine))])
+    body = queue(client, "all")
+    assert body["machine_id"] == "all"
+    assert [(row["project"], row["machine_id"], row["setup_change"]) for row in body["rows"]] == [
+        ("710К.", "ОБ.1", True), ("711К.", None, True), ("709К.", "ОБ.095", False), ("708К.", "ОБ.094", False)]
+    assert len({row["key"] for row in body["rows"]}) == 4
+    total = client.get(f"{URL}/machines").json()["machines"][0]
+    assert total == {"machine_id": "all", "machine_name": "Все станки", "rows": 4, "left": "40", "projects": 4}
 
 
 def test_done_on_a_grouped_row_assigns_the_operator_and_posts_output_to_its_kb(production_api):
@@ -149,16 +194,50 @@ def test_done_on_a_standalone_row_posts_output_and_refuses_more_than_left(produc
     batch(client, [issue("708К.", "КБ1", standalone())])
     row = queue(client)["rows"][0]
     assert row["group_id"] is None
-    # The acting master is not a fitter: joining the PF is refused by the ordinary assignment rule, nothing is posted.
-    master = done(client, row, 1)
-    assert master.status_code == 422 and "не монтажник" in master.json()["detail"]
     too_many = done(client, row, 11, operator=operator)
     assert too_many.status_code == 422
     assert "осталось 10" in too_many.json()["detail"]
     response = done(client, row, 10, operator=operator)
     assert response.status_code == 200, response.text
     assert response.json()["notice"] == "Готово: 708К. · КБ1 · 10 шт"
+    assert response.json()["assigned"] is True
     assert queue(client)["rows"] == []
+
+
+def test_done_by_a_non_fitter_posts_like_manual_output_without_assignment(production_api):
+    client, operator = production_api
+    master = UUID("10000000-0000-0000-0000-000000000001")
+    batch(client, [issue("708К.", "КБ1", standalone())])
+    row = queue(client)["rows"][0]
+    response = done(client, row, 4)  # the master himself, not a монтажник
+    assert response.status_code == 200, response.text
+    assert response.json()["assigned"] is False and response.json()["row"]["left"] == "6"
+    with app.state.production_uow_factory() as uow:
+        outputs = uow.session.scalars(select(ProductionOutputRow)).all()
+        assert [(o.operator_id, o.good_quantity) for o in outputs] == [(master, 4)]
+        task = uow.production.get(UUID(row["task_id"]))
+        assert task.operation(UUID(row["operation_id"])).operator_ids == ()  # nobody was assigned
+    # A монтажник pressing (or worked for) still joins the PF.
+    assert done(client, row, 2, operator=operator).json()["assigned"] is True
+    assert queue(client)["rows"][0]["operator_ids"] == [str(operator)]
+
+
+def test_done_receipt_is_the_journal_line_of_the_press(production_api):
+    from app.shared.persistence import AuditEventRow
+    from app.modules.production.cutting_queue import RECEIPT
+
+    client, operator = production_api
+    batch(client, [issue("708К.", "КБ1", standalone())])
+    row = queue(client)["rows"][0]
+    assert done(client, row, 3, operator=operator).status_code == 200
+    with app.state.production_uow_factory() as uow:
+        event = uow.session.scalars(select(AuditEventRow).where(AuditEventRow.event_type == RECEIPT)).one()
+        details, actor_name = event.details, event.actor_name
+    assert actor_name == "Мастер"
+    assert {name: details[name] for name in ("project", "item_index", "task_number", "quantity", "performer",
+                                             "pressed_by", "operator_id")} == {
+        "project": "708К.", "item_index": "КБ1", "task_number": row["task_number"], "quantity": 3,
+        "performer": "Оператор", "pressed_by": "Мастер", "operator_id": str(operator)}
 
 
 def test_repeated_key_does_not_post_twice_and_a_reused_key_is_refused(production_api):

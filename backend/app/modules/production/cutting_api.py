@@ -267,7 +267,8 @@ def queue_rows(machine_id: Annotated[str, Query(min_length=1, max_length=64)],
                principal: Annotated[Principal, Depends(production_view_principal)],
                factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
                techcards_factory: Annotated[Callable | None, Depends(techcards_uow_factory)]):
-    """`machine_id=none` — cuts whose card names no machine («Станок не указан»)."""
+    """`machine_id=none` — cuts whose card names no machine («Станок не указан»); `machine_id=all` — «Все станки»,
+    every row once."""
     machine = machine_id.strip()
     rows = _queue(principal, factory, techcards_factory, machine)
     return {"machine_id": None if machine == cutting_queue.NO_MACHINE else machine,

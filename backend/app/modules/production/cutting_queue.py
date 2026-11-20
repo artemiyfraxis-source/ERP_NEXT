@@ -7,8 +7,9 @@ then length short → long). The ETK is not fully debugged yet: a missing or odd
 «нет в ЭТК: …» warnings and the operator works on.
 
 «Готово» posts the row's pieces through the existing manual output path (`enter_manual_output`: its refusals, site and
-quantity rules, group freeze) after assigning the acting operator to the PF if they are not on it yet. Idempotency rides
-an audit event whose id is derived from the key (primary key = the constraint against a double post)."""
+quantity rules, group freeze); a монтажник not yet on the PF is assigned first, anyone else with access to the site's
+tasks posts as «Ввод готовых» (under the presser, nobody assigned). Idempotency rides an audit event whose id is derived
+from the key (primary key = the constraint against a double post); it is also the «Журнал» line of the press."""
 
 from __future__ import annotations
 
@@ -31,11 +32,13 @@ from .execution import ManualOutputCommand, enter_manual_output, operation_quant
 from .infrastructure import ProductionWorkSessionRow
 from .traceability import WorkStatus
 
-# 708К. cuts on the big rotary BZW (owner 20.11): preferred when a card lists several machines. A card that names none
-# goes to its own bucket (machine_id null, GET `machine_id=none`), never onto a real machine's list.
-DEFAULT_MACHINE = "ОБ.095"
+# Machine of a row = what its ETK tooling names (owner 20.11, final): a card listing several machines puts the row on
+# EACH of their lists (same key — one «Готово» removes it everywhere); a card that names none goes to its own bucket
+# (machine_id null, GET `machine_id=none`), never onto a real machine's list. `machine_id=all` — every row once.
 NO_MACHINE = "none"
 NO_MACHINE_NAME = "Станок не указан"
+ALL_MACHINES = "all"
+ALL_MACHINES_NAME = "Все станки"
 NO_DOCUMENT = "нет в ЭТК: выданная карта"
 UNCONFIRMED = "Нет ЭТК задания — не понять, резка ли это: готовые вводит мастер"
 WORK_OPEN = "По этому ПФ идёт работа на карточке — сдайте там"
@@ -97,7 +100,8 @@ def _cut_ops(document: Mapping | None, operation) -> list[tuple[Mapping, Mapping
     return found
 
 
-def _machine(op: Mapping, warnings: list[str]) -> tuple[str | None, str]:
+def _machines(op: Mapping, warnings: list[str]) -> list[tuple[str, str]]:
+    """Every machine the ETK tooling names, in card order (the first is the row's default); none → «нет в ЭТК: станок»."""
     machines: dict[str, str] = {}
     for tool in _mapping(op.get("card")).get("tooling") or []:
         tool = _mapping(tool)
@@ -106,11 +110,7 @@ def _machine(op: Mapping, warnings: list[str]) -> tuple[str | None, str]:
             machines.setdefault(identity, _text(tool.get("name")))
     if not machines:
         warnings.append("нет в ЭТК: станок")
-        return None, NO_MACHINE_NAME
-    identity = DEFAULT_MACHINE if DEFAULT_MACHINE in machines else next(iter(machines))
-    if len(machines) > 1:
-        warnings.append("в ЭТК ещё станки: " + ", ".join(other for other in machines if other != identity))
-    return identity, machines[identity]
+    return list(machines.items())
 
 
 _RU = {"A": "А", "B": "Б"}  # side letters on the screen are Cyrillic, as the «Зачистка А/Б» columns
@@ -162,7 +162,7 @@ def cut_values(document: Mapping | None, operation, *, known_cut: bool = False) 
     `known_cut` — a member of a cut-kind group: it stays a row even when its frozen ETK lacks the cut."""
     if document is None and not known_cut:
         # No ETK to read (no issued card, revision missing): the PF is kept, but whether it is a cut is unknown.
-        return {"machine_id": None, "machine_name": NO_MACHINE_NAME, "wire": "", "wire_name": "", "length": None,
+        return {"machines": [], "wire": "", "wire_name": "", "length": None,
                 "sides": {"A": None, "B": None}, "marking": "", "warnings": [NO_DOCUMENT], "confirmed": False}
     cuts = _cut_ops(document, operation)
     warnings: list[str] = []
@@ -178,7 +178,7 @@ def cut_values(document: Mapping | None, operation, *, known_cut: bool = False) 
     fields = _mapping(op.get("fields"))
     config = _mapping(_mapping(document).get("build_config"))
     coax = _mapping(config.get("coax"))
-    machine_id, machine_name = _machine(op, warnings)
+    machines = _machines(op, warnings)
     wire, wire_name, length = "", "", None
     sides: dict[str, dict | None] = {"A": None, "B": None}
     if kind == "coaxCut":
@@ -209,7 +209,7 @@ def cut_values(document: Mapping | None, operation, *, known_cut: bool = False) 
         warnings.append("нет в ЭТК: длина")
     laser = raw.get("laserMark") if isinstance(raw.get("laserMark"), Mapping) else fields.get("laserMark")
     marking = ("full" if _mapping(laser).get("mode") == "full" else "ends") if isinstance(laser, Mapping) else ""
-    return {"machine_id": machine_id, "machine_name": machine_name, "wire": wire, "wire_name": wire_name,
+    return {"machines": machines, "wire": wire, "wire_name": wire_name,
             "length": length, "sides": sides, "marking": marking, "warnings": warnings, "confirmed": True}
 
 
@@ -343,14 +343,26 @@ def document_keys(candidates: list[dict]) -> set[DocumentKey]:
 
 def queue_rows(candidates: list[dict], documents: Mapping[DocumentKey, Mapping | None],
                machine_id: str | None = None) -> list[dict]:
-    """Rows from `collect` plus the standalone ETKs; pure — no unit of work."""
-    wanted = None if machine_id == NO_MACHINE else machine_id
+    """Rows from `collect` plus the standalone ETKs; pure — no unit of work. `machine_id`: None or `all` — every row once
+    (its machine = the first the ETK names); `none` — rows whose ETK names no machine; an id — rows whose ETK names it
+    among its machines (a row naming several is on each of their lists, with that machine as its own)."""
     rows = []
     for item in candidates:
         task, operation, group = item["task"], item["operation"], item["group"]
         document = item["document"] if group is not None else documents.get(document_key(task))
         values = cut_values(document, operation, known_cut=group is not None)
-        if values is None or (machine_id is not None and values["machine_id"] != wanted):
+        if values is None:
+            continue
+        named = dict(values["machines"])
+        if machine_id in (None, ALL_MACHINES):
+            shown = next(iter(named), None)
+        elif machine_id == NO_MACHINE:
+            if named:
+                continue
+            shown = None
+        elif machine_id in named:
+            shown = machine_id
+        else:
             continue
         sides = values["sides"]
         project = row_project(task, document)
@@ -359,7 +371,8 @@ def queue_rows(candidates: list[dict], documents: Mapping[DocumentKey, Mapping |
             "task_version": task.version, "task_number": task.number, "project": project, "item": task.item,
             "group_id": group["id"] if group else None, "group_number": group["number"] if group else None,
             "group_state": group["state"] if group else None,
-            "machine_id": values["machine_id"], "machine_name": values["machine_name"],
+            "machine_id": shown, "machine_name": named[shown] if shown is not None else NO_MACHINE_NAME,
+            "machines": [{"machine_id": identity, "machine_name": name} for identity, name in named.items()],
             "wire": values["wire"], "wire_name": values["wire_name"], "length_mm": _plain(values["length"]) or None,
             "planned": _count(item["planned"]), "done": _count(item["done"]),
             "left": _count(item["planned"] - item["done"]),
@@ -387,21 +400,30 @@ def queue_rows(candidates: list[dict], documents: Mapping[DocumentKey, Mapping |
 
 
 def queue_version(rows: list[dict]) -> str:
-    return digest([[row["key"], row["left"], row["task_version"], row["group_state"], row["machine_id"],
+    return digest([[row["key"], row["left"], row["task_version"], row["group_state"], row["machine_id"], row["machines"],
                     row["length_mm"], row["setup_text"], row["warnings"], row["blocked"]] for row in rows])
 
 
 def machines(rows: list[dict]) -> list[dict]:
-    """Machines with open cut work: rows, pieces left, projects."""
+    """Machines with open cut work: rows, pieces left, projects. `rows` — every row once (`queue_rows` without a machine);
+    a row naming several machines counts on each. «Все станки» (`machine_id: "all"`) first, with every row once; no
+    open cut work at all — an empty list."""
+    def entry(identity, name):
+        return {"machine_id": identity, "machine_name": name, "rows": 0, "left": Decimal(0), "projects": set()}
+
+    def add(target, row):
+        target["rows"] += 1
+        target["left"] += Decimal(row["left"])
+        target["projects"].add(row["project"])
+
+    total = entry(ALL_MACHINES, ALL_MACHINES_NAME)
     found: dict[str | None, dict] = {}
     for row in rows:
-        entry = found.setdefault(row["machine_id"], {"machine_id": row["machine_id"], "machine_name": row["machine_name"],
-                                                     "rows": 0, "left": Decimal(0), "projects": set()})
-        entry["rows"] += 1
-        entry["left"] += Decimal(row["left"])
-        entry["projects"].add(row["project"])
-    return [{**entry, "left": _count(entry["left"]), "projects": len(entry["projects"])}
-            for _key, entry in sorted(found.items(), key=lambda item: (item[0] is None, item[0] or ""))]
+        add(total, row)
+        for machine in row["machines"] or [{"machine_id": None, "machine_name": NO_MACHINE_NAME}]:
+            add(found.setdefault(machine["machine_id"], entry(machine["machine_id"], machine["machine_name"])), row)
+    listed = ([total] if rows else []) + [found[key] for key in sorted(found, key=lambda key: (key is None, key or ""))]
+    return [{**item, "left": _count(item["left"]), "projects": len(item["projects"])} for item in listed]
 
 
 def receipt_id(key: str) -> UUID:
@@ -451,16 +473,23 @@ def mark_done(task_id: UUID, operation_id: UUID, quantity: int, key: str, actor,
         task = uow.production.get(task_id)
         operation = task.operation(operation_id)
         assigned = False
+        performer = worker
         if worker.id not in operation.operator_ids:
-            # Owner 20.11: anyone at the machine may press «Готово» — the operator joins the PF's assignees first.
-            assign_task(AssignProductionCommand(
-                task_id=task.id, expected_version=task.version, operation_id=operation.id,
-                operator_ids=(*operation.operator_ids, worker.id),
-                requested_start=operation.planned_start if operation.operator_ids else None, actor=actor, now=now), uow)
-            assigned = True
+            person = uow.operators.get(worker.id)
+            if worker.id == actor.id and (person is None or not person.installer):
+                # Owner 20.11 (final): anyone with access to the site's tasks may press «Готово». Not a монтажник
+                # (master, technologist): the pieces are posted as «Ввод готовых» — under the presser, nobody assigned.
+                performer = None
+            else:
+                # A монтажник (himself or the one worked for) joins the PF's assignees first; `assign_task` refusals apply.
+                assign_task(AssignProductionCommand(
+                    task_id=task.id, expected_version=task.version, operation_id=operation.id,
+                    operator_ids=(*operation.operator_ids, worker.id),
+                    requested_start=operation.planned_start if operation.operator_ids else None, actor=actor, now=now), uow)
+                assigned = True
         box, output, _filled, _closed = enter_manual_output(ManualOutputCommand(
             task_id=task_id, operation_id=operation_id, good_quantity=Decimal(quantity), actor=actor, now=now,
-            performer=worker), uow)
+            performer=performer), uow)
         task = uow.production.get(task_id)
         operation = task.operation(operation_id)
         planned, made = operation_quantity(task, operation), uow.outputs.total_for_operation(operation_id)
@@ -472,11 +501,15 @@ def mark_done(task_id: UUID, operation_id: UUID, quantity: int, key: str, actor,
                   "row": {"key": f"{task.id}:{operation_id}", "task_id": str(task.id), "operation_id": str(operation_id),
                           "task_version": task.version, "planned": _count(planned), "done": _count(made),
                           "left": _count(max(Decimal(0), planned - made))}}
+        # The «Журнал» line: who pressed (the event's actor, and by name), whose pieces, project, КБ, task, quantity.
+        made_by = performer or actor
         uow.audit.add(AuditEvent(id=receipt_id(key), aggregate_id=output.id, event_type=RECEIPT, actor=actor,
-                                 occurred_at=now, details={"key": key, "fingerprint": fingerprint,
-                                                           "operator_id": str(worker.id), "task_id": str(task_id),
-                                                           "operation_id": str(operation_id), "quantity": quantity,
-                                                           "result": result}))
+                                 occurred_at=now, details={
+                                     "project": project, "item_index": task.item, "task_number": task.number,
+                                     "quantity": quantity, "performer": made_by.name, "pressed_by": actor.name,
+                                     "operator_id": str(made_by.id), "pressed_by_id": str(actor.id),
+                                     "task_id": str(task_id), "operation_id": str(operation_id),
+                                     "replay_key": key, "fingerprint": fingerprint, "result": result}))
         uow.session.flush()
         uow.commit()
         return result

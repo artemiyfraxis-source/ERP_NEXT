@@ -416,10 +416,13 @@ row. `cutting_queue.py`, routes in `cutting_api.py`. Computed on every read — 
 - One read per request (`collect`): running tasks, their outputs and the active member ids in a few queries; members
   of finished or closed work are dropped before the group access check and before their snapshot (the frozen document)
   is read; open group sessions and operator names are read once.
-- Machine = the cut operation's card tooling «Оборудование» (`inventory_number`, else `equipment_model_id`). Several —
-  `ОБ.095` (BZW-50X) if listed, else the first, with «в ЭТК ещё станки: <the others>». None — never put on a real
-  machine: the row gets `machine_id: null`, «нет в ЭТК: станок», and its own bucket «Станок не указан»
-  (`machine_id=none`).
+- Machine = what the cut operation's card tooling «Оборудование» names (`inventory_number`, else
+  `equipment_model_id`; owner 20.11, final — 708К. today names ОБ.094 BZW-886+Q2). Several — the row is on EACH of
+  those machines' lists with the same `key`, so one «Готово» removes it everywhere; on a machine's list its
+  `machine_id`/`machine_name` is that machine, in «Все станки» the first the card names (the default). `machines` lists
+  them all in card order. None — never put on a real machine: the row gets `machine_id: null`, `machines: []`, «нет в
+  ЭТК: станок», and its own bucket «Станок не указан» (`machine_id=none`). No machine is stored per row and «Готово»
+  does not record one: the operator may work a row on any machine.
 - A missing or odd ETK value never drops a row: the value is `null` and `warnings` says «нет в ЭТК: длина / провод /
   зачистка А / режим зачистки А / …». A grouped row whose frozen ETK lacks the cut stays with «нет в ЭТК: резка кабеля».
 - Order: setup key (wire, then side A and B strip values/mode/diameters, then laser marking mode), then length short →
@@ -428,11 +431,13 @@ row. `cutting_queue.py`, routes in `cutting_api.py`. Computed on every read — 
   зачистка Б: … · лазер по краям»; «без зачистки» when no side is stripped).
 
 `GET /api/production/cutting-queue?machine_id=ОБ.095` (myops view; `machine_id=none` — the «Станок не указан» bucket,
-answered with `machine_id: null`):
+answered with `machine_id: null`; `machine_id=all` — «Все станки»: every row of every machine once, same order, answered
+with `machine_id: "all"`):
 
 ```text
 {machine_id, version, rows: [{key, task_id, operation_id, task_version, task_number, project, item,
   group_id, group_number, group_state (open|frozen|null), machine_id, machine_name,
+  machines: [{machine_id, machine_name}],
   wire, wire_name, length_mm, planned, done, left,
   strip_a, strip_a_mode (full|partial|null), strip_a_program (confirmed|unconfirmed|absent; wires: null),
   strip_b, strip_b_mode, strip_b_program, diameters, laser_mark, marking_mode (full|ends|null),
@@ -441,11 +446,13 @@ answered with `machine_id: null`):
 
 Decimals are strings (`length_mm` mm; `planned`/`done`/`left` in PF units, `done` = good + defect). `strip_*` is `null`
 when that side is not stripped; coax values are the confirmed program boundaries from the conductor tip, else L1/L2/L3.
-`version` is a digest of (row, left, task version, group state, machine, length, setup text, warnings, blocked) for
-change detection. `project` is the issued ETK's spelling (`row_project`), the same in the «Готово» notice.
+`version` is a digest of (row, left, task version, group state, machine, machines, length, setup text, warnings,
+blocked) for change detection. `project` is the issued ETK's spelling (`row_project`), the same in the «Готово» notice.
 
 `GET /api/production/cutting-queue/machines` (myops view): `{machines: [{machine_id, machine_name, rows, left, projects}]}`
-— machines with open cut work, by id; the bucket without a machine (`machine_id: null`, «Станок не указан») last.
+— «Все станки» (`machine_id: "all"`, every row once) first, then machines with open cut work by id (a row naming
+several machines counts on each), the bucket without a machine (`machine_id: null`, «Станок не указан») last. No open
+cut work at all — `[]`.
 
 `POST /api/production/cutting-queue/done` (myops edit, optional `?on_behalf_of=`, required `Idempotency-Key`):
 `{task_id, operation_id, quantity}` (integer > 0). One transaction, lock order project → group → task:
@@ -454,9 +461,12 @@ change detection. `project` is the issued ETK's spelling (`row_project`), the sa
    issued ETK holds a cable cut. Anything else (labels/tubes PF grouped or split off, a PF with inputs) → 422 «В очереди
    резки сдаётся только резка кабеля — этот ПФ сдают на его карточке»; no readable ETK → 422 «Нет ЭТК задания — …».
    Checked before anyone is assigned or anything is posted.
-1. The performer not yet on the PF (unassigned, or assigned to others) joins its assignees through the ordinary
-   `assign_task` (owner: anyone at the machine may press «Готово»); its refusals apply — e.g. «… не монтажник», another
-   site of a grouped row. Existing assignees and their facts stay. Known effect: on a grouped row only that member's PF
+1. Owner 20.11 (final): any user with access to that site's tasks may press «Готово». The presser who is not a монтажник
+   (master, technologist; not on the PF) posts as «Ввод готовых»: the output is under the presser, nobody is assigned.
+   A монтажник not yet on the PF (himself, or the one worked for via `on_behalf_of`) joins its assignees through the
+   ordinary `assign_task`; its refusals apply — e.g. another site of a grouped row, «… не монтажник» when working for a
+   non-монтажник. Site rules and the cut-only rule (step 0) hold for everyone. Existing assignees and their facts stay.
+   Known effect: on a grouped row only that member's PF
    is assigned (the group's own `assign` replaces every row's assignees and refuses a started group, so it is not
    used), so the group card's common assignment becomes inconsistent (`assignment_consistent: false`, no common
    assignees shown) and `assign_task` re-plans that PF's window from now (or from its planned start when it already had
@@ -473,7 +483,11 @@ Returns `{notice: "Готово: 708К. · КБ3 · 120 шт", assigned, box: {i
 row: {key, task_id, operation_id, task_version, planned, done, left}}`. The receipt is an audit event
 `production.cutting_queue_done` whose id is `uuid5(key)`: the same key and payload (task, PF, quantity, performer) replays
 the stored response without a second output; the same key with another payload → 409. 403 another site, 404 unknown
-task/PF. No who/when traceability beyond the output's performer and the audit event; auto-write to ОБ.019 is a later PR.
+task/PF. The receipt is also the «Журнал» line «Готово в очереди резки» (`frontend/src/auditLabels.ts`): actor = the
+presser; details `{project, item_index, task_number, quantity, performer, pressed_by, operator_id, pressed_by_id,
+task_id, operation_id, replay_key, fingerprint, result}` (`performer` — whose pieces: the монтажник, or the presser when
+posted as «Ввод готовых»; the journal hides ids, `replay_key`, `fingerprint`, `result`). Receipts written before
+20.11 evening carry `key` instead of `replay_key` and no names. No machine is recorded; auto-write to ОБ.019 is a later PR.
 
 ## Decisions for coordinator review
 
