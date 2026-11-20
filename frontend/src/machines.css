@@ -87,8 +87,9 @@
 .machine-input.is-writing input, .machine-input.is-writing select { border-color: var(--warn-border); background: var(--warn-soft); }
 .machine-input.is-missing input { border-color: var(--warn-border); }
 /* Стягивание конца на чертеже: три режима одной кнопкой (владелец 19.11.2026), под ним — точное значение. */
-.machine-pull-modes { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.machine-pull-modes button { min-height: 44px; min-width: 64px; padding: 0 10px; border: 0; border-right: 1px solid var(--border);
+.machine-pull-modes { display: inline-flex; width: max-content; max-width: none; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+/* flex: none + nowrap: a narrow slot must not squeeze «Стягивание» under «Полу» (prod 20.11, 1536 px). */
+.machine-pull-modes button { flex: none; white-space: nowrap; min-height: 44px; min-width: 56px; padding: 0 8px; border: 0; border-right: 1px solid var(--border);
   border-radius: 0; background: var(--card); color: var(--foreground); font-size: 13px; font-weight: 500; }
 .machine-pull-modes button:last-child { border-right: 0; }
 .machine-pull-modes button.on { background: var(--primary); color: #fff; }
