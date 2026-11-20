@@ -313,7 +313,7 @@ function ScreenWindow({ screen, canEdit, canShow, showHint, onClose, onSaved, sh
       {error && <div className="error-banner" role="alert">{error}</div>}
       {notice && <div className="success-banner" role="status">{notice}</div>}
       <div className="vna-screen-fields">
-        <label>Название<input value={draft.name} maxLength={120} disabled={readOnly} required
+        <label>Название<input name="vna-screen-name" autoComplete="off" value={draft.name} maxLength={120} disabled={readOnly} required
           onChange={(event) => patch({ name: event.target.value })} /></label>
         <label>Назначение<select value={draft.purpose} disabled={readOnly || Boolean(screen?.is_default)}
           onChange={(event) => patch({ purpose: event.target.value as VnaScreenPurpose })}>
@@ -324,9 +324,9 @@ function ScreenWindow({ screen, canEdit, canShow, showHint, onClose, onSaved, sh
           {!LAYOUTS.some((layout) => layout.code === draft.split) && <option value={draft.split}>{layoutOf(draft.split).label}</option>}
           {LAYOUTS.map((layout) => <option key={layout.code} value={layout.code}>{layout.label}</option>)}
         </select></label>
-        <label>Маркеры, ГГц<input value={draft.markers} disabled={readOnly} inputMode="decimal" placeholder="1; 3; 6; 12; 18"
+        <label>Маркеры, ГГц<input name="vna-screen-markers" autoComplete="off" spellCheck={false} value={draft.markers} disabled={readOnly} inputMode="decimal" placeholder="1; 3; 6; 12; 18…"
           onChange={(event) => patch({ markers: event.target.value })} /></label>
-        <label className="wide">Описание<input value={draft.note} maxLength={500} disabled={readOnly}
+        <label className="wide">Описание<input name="vna-screen-note" autoComplete="off" value={draft.note} maxLength={500} disabled={readOnly}
           onChange={(event) => patch({ note: event.target.value })} /></label>
         <label className="vna-screen-check"><input type="checkbox" checked={draft.is_default}
           disabled={readOnly || Boolean(screen?.is_default) || (screen ? !screen.active : false)}
@@ -356,16 +356,16 @@ function ScreenWindow({ screen, canEdit, canShow, showHint, onClose, onSaved, sh
               onChange={(event) => patchTrace(index, { mode: event.target.value as ScaleMode })}>
               {can.modes.map((mode) => <option key={mode} value={mode}>{mode === "auto" ? "Авто" : mode === "norm" ? "По норме" : "Вручную"}</option>)}
             </select></td>
-            <td><input className="num" aria-label={`График ${n}: деление`} inputMode="decimal" value={manual ? trace.pdiv : ""}
+            <td><input className="num" autoComplete="off" spellCheck={false} aria-label={`График ${n}: деление`} inputMode="decimal" value={manual ? trace.pdiv : ""}
               disabled={readOnly || !manual} onChange={(event) => patchTrace(index, { pdiv: event.target.value })} /></td>
-            <td><input className="num" aria-label={`График ${n}: уровень`} inputMode="decimal" value={manual && !smith ? trace.rlev : ""}
+            <td><input className="num" autoComplete="off" spellCheck={false} aria-label={`График ${n}: уровень`} inputMode="decimal" value={manual && !smith ? trace.rlev : ""}
               disabled={readOnly || !manual || smith} onChange={(event) => patchTrace(index, { rlev: event.target.value })} /></td>
-            <td><input className="num" aria-label={`График ${n}: позиция`} inputMode="numeric" value={manual && !smith ? trace.rpos : ""}
+            <td><input className="num" autoComplete="off" spellCheck={false} aria-label={`График ${n}: позиция`} inputMode="numeric" value={manual && !smith ? trace.rpos : ""}
               disabled={readOnly || !manual || smith} onChange={(event) => patchTrace(index, { rpos: event.target.value })} /></td>
             <td><select aria-label={`График ${n}: линия допуска`} value={trace.limit} disabled={readOnly}
               onChange={(event) => patchTrace(index, { limit: event.target.value as VnaScreenLimit })}>
               {can.limits.map((limit) => <option key={limit} value={limit}>{LIMITS[limit]}</option>)}</select></td>
-            <td><input className="num" aria-label={`График ${n}: число линии`} inputMode="decimal"
+            <td><input className="num" autoComplete="off" spellCheck={false} aria-label={`График ${n}: число линии`} inputMode="decimal"
               value={trace.limit === "fixed" ? trace.value : ""} disabled={readOnly || trace.limit !== "fixed"}
               onChange={(event) => patchTrace(index, { value: event.target.value })} /></td>
             <td className="center"><input type="checkbox" aria-label={`График ${n}: скрыт`} checked={trace.hidden} disabled={readOnly}
@@ -385,7 +385,7 @@ function ScreenWindow({ screen, canEdit, canShow, showHint, onClose, onSaved, sh
         на приборе — норма объекта замера.</p>
       <ScreenPreview draft={draft} />
       <div className="form-actions vna-screen-actions">
-        {canEdit && <button type="submit" className="primary" disabled={busy || (Boolean(screen) && !dirty)}>Сохранить</button>}
+        {canEdit && <button type="submit" className="primary" disabled={busy || (Boolean(screen) && !dirty)}>{busy ? "Сохраняю…" : "Сохранить"}</button>}
         {screen && <button type="button" className="secondary" disabled={busy || !canShow || dirty || !screen.active}
           title={dirty ? "Сначала сохраните изменения" : showHint || undefined} onClick={() => void showOnVna()}>Показать на ВАЦ</button>}
         {screen && canEdit && <button type="button" className="secondary" disabled={busy || screen.is_default || dirty}
@@ -452,14 +452,14 @@ export function VnaScreensEditor({ session, calibrationValid, canEdit, show }: {
     {message && <div className="success-banner" role="status">{message}</div>}
     {error && <div className="error-banner" role="alert">{error}
       <button type="button" className="secondary small" onClick={() => setAttempt((value) => value + 1)}>Повторить</button></div>}
-    {!screens && !error && <p className="empty">Загрузка…</p>}
+    {!screens && !error && <p className="empty" role="status">Загрузка…</p>}
     {screens && screens.length === 0 && <p className="empty">Экранов нет — добавьте первый кнопкой «Новый экран».</p>}
     {screens && screens.length > 0 && <table className="vna-screens-list" aria-label="Экраны ВАЦ">
       <thead><tr><th scope="col">Название</th><th scope="col">Назначение</th><th scope="col">Графики</th>
         <th scope="col">Расположение</th><th scope="col">Состояние</th><th scope="col" className="num">Версия</th><th scope="col">Изменён</th></tr></thead>
       <tbody>{screens.map((screen) => <tr key={screen.id} className={`clickable${screen.active ? "" : " inactive"}`} tabIndex={0}
         onClick={() => { setMessage(""); setOpen(screen); }}
-        onKeyDown={(event) => { if (event.key === "Enter") { setMessage(""); setOpen(screen); } }}>
+        onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setMessage(""); setOpen(screen); } }}>
         <td><strong>{screen.name}</strong></td>
         <td>{PURPOSES[screen.purpose]}</td>
         <td className="wrap">{screen.traces.filter((trace) => !trace.hidden).map(traceTitle).join(" · ")}</td>

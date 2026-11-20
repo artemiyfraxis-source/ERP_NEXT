@@ -191,7 +191,7 @@ export function VnaBench({ canEdit }: { canEdit: boolean }) {
       {loadError ? <>
         <div className="error-banner" role="alert">{loadError}</div>
         <button type="button" className="secondary small" onClick={() => setAttempt((value) => value + 1)}>Повторить</button>
-      </> : <p className="empty">Загрузка…</p>}
+      </> : <p className="empty" role="status">Загрузка…</p>}
     </section>;
   }
   const session = state.session?.status === "open" ? state.session : null;
@@ -468,7 +468,7 @@ function ObjectPanel({ session, calibrationValid, canEdit, busy, blockedStart, a
     <h2>Объект</h2>
     <form className="vna-bench-find" onSubmit={(event) => void find(event)}>
       <label>СИ или КБ — скан или номер
-        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="СИ.035, ПЗ-0001/3 или скан этикетки" autoComplete="off" />
+        <input name="vna-object" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="СИ.035, ПЗ-0001/3 или скан этикетки…" autoComplete="off" spellCheck={false} />
       </label>
       <button type="submit" className="secondary" disabled={looking || !query.trim()}>{looking ? "Ищу…" : "Найти"}</button>
     </form>
@@ -489,7 +489,7 @@ function ObjectPanel({ session, calibrationValid, canEdit, busy, blockedStart, a
         {canEdit && target.kind === "assembly" && <button type="button" className="primary" disabled={busy || blockedStart}
           onClick={() => open(assemblyOpen)}>Открыть сеанс для КБ</button>}
       </>}
-      {session && !plan && !error && <p className="empty">Составляю план замера…</p>}
+      {session && !plan && !error && <p className="empty" role="status">Составляю план замера…</p>}
       {session && plan && <>
         {target.kind === "instrument" && !wrongCalibration && <div className="vna-bench-chain">
           <FixturePicker side="left" fixtures={(fixtures ?? []).filter((f) => isFixture(f, target.instrument_id) && f.id !== target.right?.instrument_id)}
@@ -497,9 +497,9 @@ function ObjectPanel({ session, calibrationValid, canEdit, busy, blockedStart, a
           <FixturePicker side="right" fixtures={(fixtures ?? []).filter((f) => isFixture(f, target.instrument_id) && f.id !== target.left?.instrument_id)}
             value={target.right ?? null} disabled={busy || inProgress} onChange={(right) => retarget({ right })} />
           <label className="vna-bench-fmax">Верхняя частота, ГГц
-            <input inputMode="decimal" value={fmaxText} disabled={busy || inProgress} aria-invalid={Boolean(fmaxError)}
+            <input name="vna-fmax" autoComplete="off" spellCheck={false} inputMode="decimal" value={fmaxText} disabled={busy || inProgress} aria-invalid={Boolean(fmaxError)}
               aria-describedby={fmaxError ? "vna-bench-fmax-error" : undefined}
-              placeholder={suggestedGhz !== null ? formatNumber(suggestedGhz, { digits: 2 }) : ""}
+              placeholder={suggestedGhz !== null ? formatNumber(suggestedGhz, { digits: 2 }) : "12,4…"}
               onChange={(event) => setFmaxText(event.target.value)} onBlur={applyFmax}
               onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); applyFmax(); } }} />
             {fmaxError ? <span id="vna-bench-fmax-error" className="tone-danger" role="alert">{fmaxError}</span>
