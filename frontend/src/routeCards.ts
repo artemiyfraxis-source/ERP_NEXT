@@ -209,14 +209,14 @@ export function linkGeometry(from: Rect, to: Rect, obstacles: readonly Rect[] = 
 
 /* ── «Схема полуфабрикатов» генератора: карточки из операций ─────────────────────────────────────────────────── */
 
-/** Полуфабрикат генератора: нарезанные провода, этикетки (печать маркировки — своё задание, владелец 20.11),
-    нарезанные трубки, кабель с метками и деталями (FAKRA), обжатые провода (до первой стороны), обжим
+/** Полуфабрикат генератора: нарезанные провода, этикетки (печать маркировки — своё задание, владелец 20.11; у каждого
+    принтера свой ПФ: Godex — `labels`, Supvan TP80E ОБ.057 — `printed`), нарезанные трубки, кабель с метками и деталями (FAKRA), обжатые провода (до первой стороны), обжим
     стороны после сборки другой (`crimpedA` / `crimpedB`: резка, обжим А, сторона А, обжим В, сторона В — владелец
     14.10), собранные стороны А и В, готовое изделие. */
-export type GenStage = "marked" | "wires" | "labels" | "tubes" | "crimped" | "crimpedA" | "A" | "crimpedB" | "B" | "final";
-const STAGES: GenStage[] = ["marked", "wires", "labels", "tubes", "crimped", "crimpedA", "A", "crimpedB", "B", "final"];
-/** ПФ без входов, что делаются параллельно до сборки: нарезанный кабель, этикетки, нарезанные трубки. */
-const SOURCE_STAGES: ReadonlySet<GenStage> = new Set<GenStage>(["wires", "labels", "tubes"]);
+export type GenStage = "marked" | "wires" | "labels" | "printed" | "tubes" | "crimped" | "crimpedA" | "A" | "crimpedB" | "B" | "final";
+const STAGES: GenStage[] = ["marked", "wires", "labels", "printed", "tubes", "crimped", "crimpedA", "A", "crimpedB", "B", "final"];
+/** ПФ без входов, что делаются параллельно до сборки: нарезанный кабель, этикетки и маркировка каждого принтера, нарезанные трубки. */
+const SOURCE_STAGES: ReadonlySet<GenStage> = new Set<GenStage>(["wires", "labels", "printed", "tubes"]);
 /** Карточки обжатых проводов. */
 export const CRIMP_STAGES: ReadonlySet<GenStage> = new Set<GenStage>(["crimped", "crimpedA", "crimpedB"]);
 const WIRE_CUTS = new Set(["cutWire", "cutWireStrip", "cutWireCrimp", "coaxCut"]);
@@ -224,8 +224,18 @@ const TUBE_CUTS = new Set(["cutTut", "coaxCutTut"]);
 /** Резка трубки, что печатает: этикетки на ленте вкладок коаксиала (opKey `coaxPrintLabel`, карта PRINT_MARK_LABEL) и
     маркировочные трубки, напечатанные и нарезанные на маркираторе (PRINT_MARK_TUBE). */
 const LABEL_PRINT_KEY = "coaxPrintLabel";
+/** Карта Supvan TP80E ОБ.057 (БД.ОП PRINT_MARK, владелец 20.11): маркировка проводов на трубке или ленте. PRINT_MARK_LABEL /
+    PRINT_MARK_TUBE — маркираторы Godex. */
+const TP80E_CODE = "PRINT_MARK";
+/** Метки по КД, напечатанные отдельно от навешивания («Сложная сборка», insMark печати, карта INS_MARK_AUTO). */
+const FLAG_PRINT_KEY = "printMarks";
 const isLabelPrint = (op: RouteOp) => TUBE_CUTS.has(op.type) && (op.key === LABEL_PRINT_KEY || op.code.toUpperCase().startsWith("PRINT_MARK"));
 const isTapeLabels = (op: RouteOp) => op.key === LABEL_PRINT_KEY || op.code.toUpperCase().startsWith("PRINT_MARK_LABEL");
+/** ПФ принтера операции печати: TP80E — `printed`, Godex — `labels`, не печать — null. Зеркало backend `pf_split._print_stage`. */
+function printStage(op: RouteOp): GenStage | null {
+  if (TUBE_CUTS.has(op.type) && op.code.trim().toUpperCase() === TP80E_CODE && op.key !== LABEL_PRINT_KEY) return "printed";
+  return isLabelPrint(op) || (op.type === "insMark" && op.key === FLAG_PRINT_KEY) ? "labels" : null;
+}
 /** Разделка коаксиала отдельной операцией готовит нарезанный кабель (владелец 14.10: «зачистка идёт до всего остального»),
     а не сторону: резка, разделка А, разделка В — один полуфабрикат с резкой. */
 const COAX_STRIPS = new Set(["coaxStrip"]);
@@ -255,13 +265,15 @@ function wireEndPrep(op: RouteOp): boolean {
 
 function cutStage(op: RouteOp): GenStage | null {
   const code = op.code.toUpperCase();
-  if (isLabelPrint(op)) return "labels";
+  const printer = printStage(op);
+  if (printer) return printer;
   if (TUBE_CUTS.has(op.type) || code.startsWith("CUT_TUT")) return "tubes";
   return WIRE_CUTS.has(op.type) || isCableStrip(op) || code.startsWith("CUT_") ? "wires" : null;
 }
 
 /** Полуфабрикат каждой операции (по номеру в ЭТК): резка проводов и кабеля и разделка коаксиала — «Нарезанные провода»
-    («Нарезанный и разделанный кабель»), печать этикеток и маркировки — «Этикетки» («Напечатанная маркировка»),
+    («Нарезанный и разделанный кабель»), печать этикеток и маркировки — ПФ своего принтера (Godex — «Этикетки» /
+    «Напечатанная маркировка», TP80E — «Напечатанная маркировка»),
     резка ТУТ и термоусадки — «Нарезанные трубки» (у FAKRA тоже: каждая — свой ПФ без входов); подготовка концов
     стороны до последней операции сторон — обжим этой стороны
     (`crimpedA` / `crimpedB`, прямо перед стороной: резка, обжим А, сторона А, обжим В, сторона В — владелец 14.10),
@@ -312,8 +324,16 @@ export type GenCard = {
 };
 export type GenLink = { id: string; from: GenStage; to: GenStage; qty: number | null; edges: RouteEdge[] };
 
-function genTitle(stage: GenStage, final: boolean, ops: RouteOp[]): string {
-  if (stage === "labels") return ops.length && ops.every(isTapeLabels) ? "Этикетки" : "Напечатанная маркировка";
+/** `printed` — в схеме есть и ПФ TP80E «Напечатанная маркировка»: ПФ Godex называется по тому, что в нём (зеркало backend
+    `pf_split._title`). */
+function genTitle(stage: GenStage, final: boolean, ops: RouteOp[], printed = false): string {
+  if (stage === "printed") return "Напечатанная маркировка";
+  if (stage === "labels") {
+    if (ops.length && ops.every(isTapeLabels)) return "Этикетки";
+    if (!printed) return "Напечатанная маркировка";
+    const tubes = ops.filter((op) => op.code.toUpperCase().startsWith("PRINT_MARK_TUBE")).length;
+    return tubes === ops.length ? "Маркировочные трубки" : tubes ? "Этикетки и маркировочные трубки" : "Этикетки";
+  }
   if (stage === "marked") return "Кабель с метками и деталями";
   if (stage === "wires") {
     if (ops.length && ops.every((op) => op.type === "coaxCut" || isCableStrip(op))) {
@@ -358,7 +378,7 @@ export function genCards(route: Route, ops: readonly RouteOp[]): { cards: GenCar
     const final = stage === finalStage;
     return {
       id: stage, kind: final ? "final" : SOURCE_STAGES.has(stage) || CRIMP_STAGES.has(stage) ? "semiFinished" : "assembly",
-      title: genTitle(stage, final, cardOps), blocks: blocks.map((block) => block.key), ops: cardOps, final,
+      title: genTitle(stage, final, cardOps, present.includes("printed")), blocks: blocks.map((block) => block.key), ops: cardOps, final,
     };
   });
   // Ход сборки — по первой операции карточки в ЭТК (технолог мог поставить сторону В раньше А); финал — последний.
@@ -491,7 +511,7 @@ export function genArtHeight(stage: GenStage, art: GenArt, final: boolean): numb
   if (stage === "wires") return wireRows(art.wires);
   if (CRIMP_STAGES.has(stage) && !final) return wireRows(crimpWires(stage, art));
   if (stage === "tubes") return rows(art.tubes.length, 22);
-  if (stage === "labels") return 0; // Этикетки — без рисунка разъёмов стороны.
+  if (stage === "labels" || stage === "printed") return 0; // Этикетки и маркировка — без рисунка разъёмов стороны.
   if (final) return art.faces.A.length || art.faces.B.length ? 72 : 0;
   return art.faces[stage === "B" ? "B" : "A"].length ? 72 : 0;
 }

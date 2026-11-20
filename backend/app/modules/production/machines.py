@@ -174,6 +174,10 @@ class MachineSnapshotRow(Base):
                         name="ck_production_machine_snapshots_link"),
         CheckConstraint("seq >= 0", name="ck_production_machine_snapshots_seq"),
         CheckConstraint("trim(boot) <> ''", name="ck_production_machine_snapshots_boot"),
+        CheckConstraint(f"last_state IS NULL OR last_state BETWEEN 0 AND {WORD_MAX}",
+                        name="ck_production_machine_snapshots_last_state"),
+        CheckConstraint("(last_state IS NULL) = (last_state_at IS NULL)",
+                        name="ck_production_machine_snapshots_last_state_at"),
     )
 
     equipment_id: Mapped[UUID] = mapped_column(
@@ -188,6 +192,11 @@ class MachineSnapshotRow(Base):
     registers: Mapped[dict] = mapped_column(JSON, nullable=False)
     error: Mapped[str] = mapped_column(String(500), nullable=False, default="", server_default="")
     reported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # ОБ.019: the machine state D766 of the last snapshot read «На связи» and when (migration 0211). It outlives a
+    # snapshot without words (the operator panel PXS_HMI holds the port): «Закрыть пульт на ПК» is decided on it
+    # (production/machine_control.py `hmi_problem`). NULL — ERP never read the state of this machine.
+    last_state: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_state_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 @dataclass(frozen=True)
@@ -288,6 +297,8 @@ def report(session: Session, *, equipment_id: UUID, inventory: str, token_id: UU
     values = {"link_state": snapshot.link_state, "boot": boot, "seq": snapshot.seq, "proto": PROTO,
               "registers": {str(address): value for address, value in sorted(registers.items())},
               "error": _clean(snapshot.error, 500), "reported_at": now}
+    if kind == KIND_OB019 and snapshot.link_state == "ok" and 766 in registers:
+        values |= {"last_state": registers[766], "last_state_at": now}  # kept as it was by a snapshot without words
     accepted = session.execute(update(MachineSnapshotRow).where(
         MachineSnapshotRow.equipment_id == equipment_id,
         or_(MachineSnapshotRow.boot != boot, MachineSnapshotRow.seq < snapshot.seq),
@@ -460,12 +471,16 @@ OB019_SETTINGS: tuple[tuple[str, tuple[SettingField, ...]], ...] = (
         _f("Стягивание конца", 40, "u32", MM, "мм", key="pull_back_mm", maximum="999.99"),
         _f("Диаметр реза", 42, "u16", MM, "мм", key="diameter_mm", maximum="655.35"),
         _f("Отвод ножа", 43, "u16", MM, "мм", key="knife_back_mm", maximum="5.00"),
-        _f("Внутренний слой: зачистка начала", 44, "u32", MM, "мм"),
-        _f("Внутренний слой: стягивание начала", 46, "u32", MM, "мм"),
-        _f("Внутренний слой: зачистка конца", 48, "u32", MM, "мм"),
-        _f("Внутренний слой: стягивание конца", 50, "u32", MM, "мм"),
-        _f("Внутренний слой: диаметр реза", 52, "u16", MM, "мм"),
-        _f("Внутренний слой: отвод ножа", 53, "u16", MM, "мм"),
+        # The inner layer of a multi-layer cable (FmMuli «Настройка зачистки», keyboard inputs; map §3.4: lengths u32
+        # ×0,01 мм, diameter and knife back u16 ×0,01 мм — the outer block's types and HMI ranges). Written since the
+        # runner 1.4.0 / mbd 1.4.0 (machine_writes.RUNNER_WORDS).
+        _f("Внутренний слой: зачистка начала", 44, "u32", MM, "мм", key="inner_strip_front_mm", maximum="999.99"),
+        _f("Внутренний слой: стягивание начала", 46, "u32", MM, "мм", key="inner_pull_front_mm", maximum="999.99"),
+        _f("Внутренний слой: зачистка конца", 48, "u32", MM, "мм", key="inner_strip_back_mm", maximum="999.99"),
+        _f("Внутренний слой: стягивание конца", 50, "u32", MM, "мм", key="inner_pull_back_mm", maximum="999.99"),
+        _f("Внутренний слой: диаметр реза", 52, "u16", MM, "мм", key="inner_diameter_mm", maximum="655.35"),
+        _f("Внутренний слой: отвод ножа", 53, "u16", MM, "мм", key="inner_knife_back_mm", maximum="5.00"),
+        # CLAMP GAP.L./.R. (前轮间隙/后轮间隙): an input on the HMI, but the map gives no unit or scale — read only.
         _f("Зазор переднего прижима", 60, "u16"),
         _f("Зазор заднего прижима", 61, "u16"),
     )),

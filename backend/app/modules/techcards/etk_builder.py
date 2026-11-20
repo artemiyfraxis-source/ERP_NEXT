@@ -245,6 +245,46 @@ def _is_tape_mark(op: Mapping[str, Any]) -> bool:
     return (_mark_media(op) or {}).get("kind") == "tape"
 
 
+# «Покрыть прозрачной трубкой» (generator, owner 20.11): a clear heat-shrink piece over the printed mark (tape or tube),
+# length = mark length + 10 мм, cut on ОБ.018 (CUT_TUT_short), put on (INS_TUT), shrunk (HEAT_TYT_short). Its ops carry
+# the generator opKeys below (no `markTube` / `wireMarks`: the clear tube is not a mark); the material is in
+# `tutArt` / `tutName` / `tutParts` (`len` — the piece) / `shrinkMaterials`, optional `coverMm` — its Ø.
+MARK_COVER_KEYS = frozenset({"cutWireMarkCover", "onWireMarkCover", "heatWireMarkCover"})
+MARK_COVER_CUT = "cutWireMarkCover"
+MARK_COVER_SUFFIX = "прозрачная трубка поверх маркировки"
+MARK_COVER_EXTRA_MM = Decimal(10)
+
+
+def _mark_cover(op: Mapping[str, Any]) -> bool:
+    return op.get("opKey") in MARK_COVER_KEYS and op.get("type") in {"cutTut", "insTut", "heatTut"}
+
+
+def _cover_cut(config: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    return next((item for item in _list(config.get("ops")) if isinstance(item, Mapping)
+                 and item.get("opKey") == MARK_COVER_CUT and item.get("type") == "cutTut"), None)
+
+
+def _cover_name(cover: Mapping[str, Any]) -> str:
+    """The clear tube by its name («ТУТ(HF) 4/2 прозрачная»), the article («83266») only when no name is given."""
+    parts = _tut_parts(cover)
+    return str(cover.get("tutName") or (parts[0]["name"] if parts else "") or cover.get("tutArt")
+               or (parts[0]["art"] if parts else "")).strip()
+
+
+def _cover_step_text(cover: Mapping[str, Any], mark: Mapping[str, Any]) -> str:
+    """«Поверх метки — прозрачная термоусадочная трубка ТУТ 6/3 прозрачная Ø 6, L 25 мм»: the cover's piece, else the
+    mark's length + 10 мм."""
+    parts = _tut_parts(cover)
+    tube = _cover_name(cover)
+    length = _decimal(parts[0]["len"]) if parts else Decimal(0)
+    mark_parts = _tut_parts(mark)
+    if length <= 0 and mark_parts and _decimal(mark_parts[0]["len"]) > 0:
+        length = _decimal(mark_parts[0]["len"]) + MARK_COVER_EXTRA_MM
+    size = _decimal(cover.get("coverMm"))
+    return ("Поверх метки — прозрачная термоусадочная трубка" + (f" {tube}" if tube else "")
+            + (f" Ø {_format(size)}" if size > 0 else "") + (f", L {_format(length)} мм" if length > 0 else ""))
+
+
 def _laser_step_text(mark: Mapping[str, Any]) -> str:
     text = lambda key: str(mark.get(key) or "").strip()  # noqa: E731
     if mark.get("mode") == "full":
@@ -334,6 +374,8 @@ def _suffix(op: Mapping[str, Any]) -> str:
         crimp = "обжим + лужение" if op.get("tin") else "обжим А и В" if _endpoint_b(op) else "обжим"
         # Партии обжима при резке (генератор, 16.10): у каждой свой терминал — иначе ключи ЭТК совпали бы.
         return f"{crimp} {_cut_terminal(op)}".strip() if op.get("crimpBatch") else crimp
+    if _mark_cover(op):
+        return MARK_COVER_SUFFIX
     if _wire_marks(op):
         return WIRE_MARK_SUFFIX
     if _mark_tube(op):
@@ -502,6 +544,15 @@ def _harness_step(
         if operation_type == "insTut" and _is_tape_mark(op):
             return base, _with_fact(facts, "mark", "маркировка наклеена")
         return base, _with_fact(facts, "mark", "маркировка надета" if operation_type == "insTut" else "маркировка усажена")
+    if _mark_cover(op):
+        if operation_type == "cutTut":
+            parts = _tut_parts(op)
+            material = _cover_name(op)
+            listed = "; ".join(f"{_format(part['count'])} шт" + (f" по {part['len']} мм" if part["len"] else "") for part in parts)
+            head = f"Прозрачная трубка {material}".strip() + " нарезана"
+            return (f"{head}: {listed}" if listed else head), []
+        return base, _with_fact(facts, "mark_cover", "прозрачная трубка надета поверх маркировки" if operation_type == "insTut"
+                                else "прозрачная трубка поверх маркировки усажена")
     if _braid_cut(op):
         material = str(op.get("tutArt") or "")
         head = f"Оплётка {material or op.get('tutName') or ''}".strip()
@@ -952,8 +1003,8 @@ def _components(
     if operation_type == "cutTut" and (_mark_media(op) or {}).get("kind") == "tape":
         # Лента маркировки проводов (владелец 20.11) — расходник маркиратора, не позиция состава.
         return []
-    if operation_type == "cutTut" and _wire_marks(op) and (parts := _tut_parts(op)) and all(_decimal(part["len"]) > 0 for part in parts):
-        # Маркировка проводов: трубка в комплектации в метрах — отрезков × длина на партию.
+    if operation_type == "cutTut" and (_wire_marks(op) or _mark_cover(op)) and (parts := _tut_parts(op)) and all(_decimal(part["len"]) > 0 for part in parts):
+        # Маркировка проводов и прозрачная трубка поверх неё: трубка в комплектации в метрах — отрезков × длина на партию.
         return [{"art": part["art"], "name": part["name"], "norm": _format(part["count"] * _decimal(part["len"]) / 1000 * quantity),
                  "unit": "М."} for part in parts]
     if operation_type == "cutTut" and _tut_parts(op):
@@ -2828,6 +2879,8 @@ def _typed_operation(
         operation["card"]["steps"] = _with_mark_step(operation["card"]["steps"], _laser_step_text(laser))
     if operation["card"] is not None and op.get("type") == "cutTut" and (media := _mark_media(op)) is not None:
         operation["card"]["steps"] = _with_mark_step(operation["card"]["steps"], _media_step_text(media, op))
+        if (cover := _cover_cut(config)) is not None:
+            operation["card"]["steps"] = _with_mark_step(operation["card"]["steps"], _cover_step_text(cover, op))
     if config.get("mode") == "rework":
         operation["title"] = label
         if operation["card"] is not None:
@@ -3705,6 +3758,8 @@ def _scheme_step(op: Mapping[str, Any]) -> str:
         return "Провода припаяны к разъёму"
     if kind == "prs":
         return "Терминалы обжаты"
+    if _mark_cover(op) and operation_type in {"insTut", "heatTut"}:
+        return "Прозрачная трубка надета поверх маркировки" if operation_type == "insTut" else "Прозрачная трубка поверх маркировки усажена"
     if _mark_tube(op):
         if operation_type == "insTut" and _is_tape_mark(op):
             return "Маркировка наклеена"

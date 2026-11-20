@@ -64,6 +64,17 @@ def test_bundled_mark_tube_card_is_found_by_its_code_and_names_the_printer():
     assert "читаем" in card.defects.casefold() and "нечитаем" in card.defects.casefold()
 
 
+def test_bundled_print_mark_card_is_the_tp80e_printer():
+    """Маркировку проводов на трубке Ø 2,4–8 и ленте 6/9/12 мм печатает Supvan TP80E ОБ.057 (владелец 20.11)."""
+    card = _card("PRINT_MARK")
+    assert (card.source_id, card.category) == ("print-mark-печать-маркировки-на-трубке-и-ленте", "Монтаж маркировки")
+    assert [(tool.name, tool.inventory_number) for tool in card.tooling if tool.section == "Оборудование"] == [
+        ("TP80E | Принтер кабельных маркеров и термоусаживаемых трубок", "ОБ.057")]
+    text = " ".join([card.defects, *(step.text for step in card.steps)])
+    assert "трубк" in text and "лент" in text and "ZCUT" not in text and "SPP-L410" not in text
+    assert "Контроль" in {step.kind for step in card.steps}
+
+
 def test_bundled_cut_2strip_tin_card_cuts_strips_both_ends_and_tins_without_crimp():
     """Резка с зачисткой двух концов и лужением (владелец 16.10): ОБ.098 BZW-5.0+Z, обжима нет."""
     card = _card("CUT_WIRE+2strip+tin")
@@ -99,16 +110,16 @@ def test_bundled_vswr_card_measures_both_ends_and_leaves_the_norm_to_the_builder
 def test_seed_creates_the_template_once_beside_the_base_library(operation_library_api):
     load_library(app.state.techcards_uow_factory, [_template("cut-wire", "CUT_WIRE")])
     assert "добавлены" in seed_erp(app.state.techcards_uow_factory, NOW)
-    assert seed_erp(app.state.techcards_uow_factory, NOW) == "Шаблоны ERP: без изменений (39)"
+    assert seed_erp(app.state.techcards_uow_factory, NOW) == "Шаблоны ERP: без изменений (40)"
 
     ids = {item["id"] for item in operation_library_api.get("/api/techcards/templates").json()["items"]}
     fakra = {template["id"] for template in ERP_LIBRARY["templates"]
              if template["id"].split("-")[1] in {"fakra", "hfm"}}
     assert len(fakra) == 27  # 708К.: dedicated FAKRA/HFM/Amphenol cards (14.11.2026)
-    marking_codes = {"PRINT_MARK_LABEL", "INS_MARK_LABEL", "MARK_CONN_PAINT", "MARK_CONN_LASER", "MARK_CONN_TAPE"}
+    marking_codes = {"PRINT_MARK", "PRINT_MARK_LABEL", "INS_MARK_LABEL", "MARK_CONN_PAINT", "MARK_CONN_LASER", "MARK_CONN_TAPE"}
     marking = {card.source_id for card in parse_operation_library(ERP_LIBRARY["templates"])
                if card.code in marking_codes}
-    assert len(marking) == 5
+    assert len(marking) == 6
     assert ids == {"cut-wire", TIN_ID, COAX_CUT_ID, MARK_TUBE_ID, CUT_2STRIP_TIN_ID,
                    "ins-housing-coax-clamp-монтаж-корпуса-с-прижимом", VSWR_ID,
                    "prs-pin-coax-обжим-центрального-контакта"} | fakra | marking  # свод 708К. 4/5

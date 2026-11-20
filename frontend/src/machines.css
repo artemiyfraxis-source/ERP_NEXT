@@ -146,6 +146,15 @@
 .machine-table tbody th small { display: block; color: var(--muted-foreground); font-weight: 400; font-size: 12px; }
 .machine-table tbody tr:nth-child(even) td, .machine-table tbody tr:nth-child(even) th { background: var(--accent); }
 .machine-table input, .machine-table select { width: 100%; max-width: 260px; }
+/* «Остальные параметры»: «Задать» рядом с «На станке»; отличие — только у строки, где они разные. */
+.machine-params .machine-param-input { display: inline-flex; align-items: center; gap: 4px; }
+.machine-params .machine-param-input input { width: 120px; text-align: right; }
+.machine-params .machine-param-input.is-text input { width: 260px; text-align: left; }
+.machine-params select { width: auto; min-width: 120px; }
+.machine-params .machine-param-live { white-space: nowrap; }
+.machine-params td:last-child { width: 40%; }
+.machine-params tr.is-diff td.machine-param-live { background: var(--warn-soft); font-weight: 600; }
+.machine-nodata { margin: 0; }
 .machine-strong { font-weight: 600; }
 .machine-pick { display: grid; gap: 4px; max-width: 720px; }
 .machine-pick span, .machine-form label > span { color: var(--muted-foreground); font-size: 13px; }
@@ -181,6 +190,15 @@ button.machine-stop { min-width: 160px; min-height: 48px; font-size: 18px; font-
 .machine-status-link { color: var(--muted-foreground); font-size: 13px; font-variant-numeric: tabular-nums; }
 .machine-status-hint { flex-basis: 100%; font-size: 14px; }
 .machine-status-estop { flex-basis: 100%; color: var(--muted-foreground); font-size: 12px; }
+/* Пульт на ПК (Ob019Pult): «Закрыть» — своей строкой под подсказкой; «Открыть» — тихо справа от состояния. */
+.machine-status > .machine-status-title { order: 1; }
+.machine-status > .machine-status-link { order: 2; }
+.machine-status > .machine-pult { order: 3; margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.machine-status > .machine-status-hint { order: 4; }
+.machine-status > .machine-pult.is-open { order: 5; flex-basis: 100%; margin-left: 0; }
+.machine-status > .machine-status-estop { order: 6; }
+.machine-pult button { min-height: 44px; }
+@media (pointer: fine) { .machine-pult button.small { min-height: 32px; } }
 
 /* «Что режем»: задание из ЭТК и провод вручную рядом. */
 .machine-what h3, .machine-correction h3 { margin: 0; font-size: 15px; font-weight: 600; }
