@@ -280,8 +280,9 @@ def _machine_rows(session, equipment, printers: list[dict], now) -> list[dict]:
         for unit in units:
             printer = by_unit.get(str(unit.id))
             if printer is not None:  # a marking machine: its printer's agent is its connection to ERP
+                # `marking`: the tile opens the marking printer card (print from a job or own text), not the passport.
                 add({**printer, "key": f"machine:{unit.id}", "kind": "machine", "equipment_id": str(unit.id),
-                     "inventory": inventory, "name": _name(unit)}, unit, True)
+                     "inventory": inventory, "name": _name(unit), "marking": True}, unit, True)
             elif unit.show_in_equipment:
                 add({
                     "key": f"machine:{unit.id}", "kind": "machine", "equipment_id": str(unit.id), "inventory": inventory,

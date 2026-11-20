@@ -5,6 +5,7 @@ import { EquipmentSetupPage } from "./EquipmentSetupPage";
 import { machinesApi, usePolled, type MachineRow, type Tone } from "./machinesApi";
 import { MachineSetupPart } from "./MachineSetup";
 import { ManualJobWindow } from "./ManualJobWindow";
+import { MarkingMachineCard } from "./MarkingMachineCard";
 import { manualJobsApi, type ManualJob } from "./manualJobsApi";
 import { Ob019Card } from "./Ob019Card";
 import { Ob019SetupPanel } from "./Ob019SetupPanel";
@@ -211,6 +212,8 @@ export function MachinesPage({ setupViewer = false, canWrite = false, initialVie
             Наладка{open.pending_setup ? " · ждёт" : ""}</button>
           <button type="button" className="secondary small" onClick={() => void openManual(open)}>Ручная работа</button>
         </>} />
+      : open?.marking && open.equipment_id
+        ? <MarkingMachineCard row={open} canWrite={canWrite} close={() => setOpen(null)} />
       : open && <MachineInfo row={open} close={() => setOpen(null)} canWrite={canWrite} saved={() => undefined}
         manual={open.kind === "machine" ? () => void openManual(open) : undefined} />}
     {setupOf && <SetupWindow row={setupOf} canWrite={canWrite} setupViewer={setupViewer} close={() => setSetupOf(null)} saved={() => undefined} />}
