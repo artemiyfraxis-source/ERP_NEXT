@@ -94,3 +94,15 @@ def test_mark_cover_shrink_takes_the_clear_tube_material():
             op.pop("shrinkMaterials")
     shrink = next(op for op in config["ops"] if op["opKey"] == "heatWireMarkCover")
     assert material_association(shrink, config) == [{"article": COVER["art"], "name": COVER["name"]}]
+
+
+def test_mark_cover_is_named_by_its_name_not_its_article():
+    config = cover_config({"kind": "tape", "sizeMm": 9})
+    name = "ТУТ(HF) 4/2 прозрачная"
+    for op in config["ops"]:
+        if op.get("opKey") == "cutWireMarkCover":
+            op.update(tutArt="83266", tutName=name, coverMm=4, tutParts=[{"art": "83266", "name": name, "count": 4, "len": "25"}])
+    document = build(config)
+    texts = [step["text"] for step in op_by_key(document, "cutMark")["card"]["steps"]]
+    assert f"Поверх метки — прозрачная термоусадочная трубка {name} Ø 4, L 25 мм" in texts
+    assert op_by_key(document, "cutWireMarkCover")["result"][0]["name"] == f"Прозрачная трубка {name} нарезана: 4 шт по 25 мм"

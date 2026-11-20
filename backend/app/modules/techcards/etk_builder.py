@@ -264,11 +264,18 @@ def _cover_cut(config: Mapping[str, Any]) -> Mapping[str, Any] | None:
                  and item.get("opKey") == MARK_COVER_CUT and item.get("type") == "cutTut"), None)
 
 
+def _cover_name(cover: Mapping[str, Any]) -> str:
+    """The clear tube by its name («ТУТ(HF) 4/2 прозрачная»), the article («83266») only when no name is given."""
+    parts = _tut_parts(cover)
+    return str(cover.get("tutName") or (parts[0]["name"] if parts else "") or cover.get("tutArt")
+               or (parts[0]["art"] if parts else "")).strip()
+
+
 def _cover_step_text(cover: Mapping[str, Any], mark: Mapping[str, Any]) -> str:
     """«Поверх метки — прозрачная термоусадочная трубка ТУТ 6/3 прозрачная Ø 6, L 25 мм»: the cover's piece, else the
     mark's length + 10 мм."""
     parts = _tut_parts(cover)
-    tube = str(cover.get("tutArt") or cover.get("tutName") or (parts[0]["art"] if parts else "")).strip()
+    tube = _cover_name(cover)
     length = _decimal(parts[0]["len"]) if parts else Decimal(0)
     mark_parts = _tut_parts(mark)
     if length <= 0 and mark_parts and _decimal(mark_parts[0]["len"]) > 0:
@@ -540,7 +547,7 @@ def _harness_step(
     if _mark_cover(op):
         if operation_type == "cutTut":
             parts = _tut_parts(op)
-            material = str(op.get("tutArt") or op.get("tutName") or (parts[0]["art"] if parts else "")).strip()
+            material = _cover_name(op)
             listed = "; ".join(f"{_format(part['count'])} шт" + (f" по {part['len']} мм" if part["len"] else "") for part in parts)
             head = f"Прозрачная трубка {material}".strip() + " нарезана"
             return (f"{head}: {listed}" if listed else head), []

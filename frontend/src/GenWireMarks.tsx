@@ -11,7 +11,7 @@ const pluralWires = (n: number) => (n % 10 === 1 && n % 100 !== 11 ? "прово
 
 /** «Метка на проводе» (владелец 26.10, 20.11): нет / трубка / лента маркиратора / лазер ОБ.019. Надписи — из распиновки, по
  *  две на провод; под переключателем — что будет напечатано (провод, надпись конца А, конца В), надпись можно поправить. */
-export function WireMarks({ cfg, onChange, rows, skipped, tubes, autoTube, note, wireDia = 0, cover = "" }: {
+export function WireMarks({ cfg, onChange, rows, skipped, tubes, autoTube, note, wireDia = 0, cover = "", printedTubeMm }: {
   cfg: WireMarkCfg | undefined;
   onChange: (cfg: WireMarkCfg) => void;
   rows: WireMarkRow[];
@@ -26,6 +26,8 @@ export function WireMarks({ cfg, onChange, rows, skipped, tubes, autoTube, note,
   wireDia?: number;
   /** Прозрачная трубка поверх метки, что подобрал генератор («ТУТ(HF) 4/2 прозрачная, 25 мм»). */
   cover?: string;
+  /** Ø трубки, что уйдёт на печать при «по Ø провода» (по подобранной трубке состава или БД.МАТ); нет — по Ø провода. */
+  printedTubeMm?: number;
 }) {
   const own = cfg ?? wireMarksOff();
   const kind = wireMarkKindOf(own);
@@ -55,7 +57,7 @@ export function WireMarks({ cfg, onChange, rows, skipped, tubes, autoTube, note,
         <Seg label="Метка на проводе" value={kind} options={WIRE_MARK_KINDS} onChange={setKind} /></div>
       {kind === "tube" && <label className="gfield"><span className="gfield-label">Ø трубки</span>
         <select aria-label="Диаметр трубки маркировки" value={own.tubeMm || ""} onChange={(event) => onChange(withTubeMm(own, event.target.value, wireDia))}>
-          <option value="">по Ø провода — Ø {mmRu(markTubeMmOf({ ...own, tubeMm: "" }, wireDia))} мм</option>
+          <option value="">по Ø провода — Ø {mmRu(!own.tubeMm && printedTubeMm ? printedTubeMm : markTubeMmOf({ ...own, tubeMm: "" }, wireDia))} мм</option>
           {WIRE_MARK_TUBE_SIZES_MM.map((mm) => <option key={mm} value={String(mm)}>Ø {mmRu(mm)} мм</option>)}
         </select></label>}
       {kind === "tape" && <label className="gfield"><span className="gfield-label">Ширина ленты</span>

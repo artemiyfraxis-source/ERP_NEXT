@@ -17,14 +17,17 @@ const kit: KitsetBom = {
 };
 let defaults: unknown = { kind: null, tapeMm: null, tubeByDia: {} };
 const asked: string[] = [];
+/** Справочники генератора ждут его (засев формы — после них); null — отвечают сразу. */
+let gate: Promise<void> | null = null;
 
 beforeEach(() => {
-  resetGeneratorRefs(); resetPinoutHousings(); window.localStorage.clear(); asked.length = 0;
+  resetGeneratorRefs(); resetPinoutHousings(); window.localStorage.clear(); asked.length = 0; gate = null;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path.startsWith("/api/techcards/generator-mark-defaults")) { asked.push(path); return json(defaults); }
     if (path.startsWith("/api/techcards/connector-families")) return json({ items: [], match: { n: 8, kind: "grid", rows: 1, cols: 8, grid: [[1, 2, 3, 4, 5, 6, 7, 8]] } });
     if (path.includes("/generator-draft")) return json({ draft: null });
+    if (gate) await gate;
     return json({ items: [], metadata: null, records: [], columns: [], by_section: [], applicator: "", crimp_height: "", pull_force: "" });
   });
 });
@@ -71,4 +74,32 @@ it("собранная карта открывается со своей мар�
   await screen.findByRole("radiogroup", { name: "Метка на проводе" });
   expect(asked).toEqual([]);
   expect(kindGroup().getByRole("radio", { name: "нет" })).toHaveAttribute("aria-checked", "true");
+});
+
+it("ответ с выбором проекта пришёл раньше справочников (до засева формы) — выбор всё равно применяется", async () => {
+  defaults = { kind: "tape", tapeMm: 12, tubeByDia: {} };
+  let release = () => {};
+  gate = new Promise<void>((resolve) => { release = resolve; });
+  mount(null);
+  await waitFor(() => expect(asked).toHaveLength(1));
+  await new Promise((resolve) => setTimeout(resolve, 50));  // ответ разобран, справочники ещё ждут
+  expect(screen.queryByRole("radiogroup", { name: "Метка на проводе" })).toBeNull();
+  release();
+  await waitFor(() => expect(screen.getByLabelText("Ширина ленты маркировки")).toHaveValue("12"));
+  expect(kindGroup().getByRole("radio", { name: "лента" })).toHaveAttribute("aria-checked", "true");
+});
+
+it("последняя КБ проекта была без меток — новая тоже «нет», но включённая лента начинается с прошлой ширины", async () => {
+  defaults = { kind: "none", tapeMm: 12, tubeByDia: {} };
+  const { config } = mount(null);
+  await waitFor(() => expect(config()?.wireMarks).toEqual({ enabled: false, kind: "none", tapeMm: "12" }));
+  expect(kindGroup().getByRole("radio", { name: "нет" })).toHaveAttribute("aria-checked", "true");
+  fireEvent.click(kindGroup().getByRole("radio", { name: "лента" }));
+  expect(screen.getByLabelText("Ширина ленты маркировки")).toHaveValue("12");
+});
+
+it("последняя КБ проекта метилась лазером — новая тоже лазер", async () => {
+  defaults = { kind: "laser", tapeMm: null, tubeByDia: {} };
+  mount(null);
+  await waitFor(() => expect(kindGroup().getByRole("radio", { name: "лазер ОБ.019" })).toHaveAttribute("aria-checked", "true"));
 });

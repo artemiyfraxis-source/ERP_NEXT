@@ -64,11 +64,14 @@ const clampText = (text: string) => text.trim().slice(0, LASER_TEXT_MAX);
 /** Ключ Ø провода в `tubeByDia`: «1.6» из 1.6 (как сервер, mark_defaults._dia_key); Ø неизвестен — "". */
 export const wireDiaKey = (dia: number): string => (dia > 0 ? String(Math.round(dia * 1000) / 1000) : "");
 
-/** «По Ø провода» (владелец 20.11): ближайший Ø трубки TP80E не меньше Ø провода; толще всех — самый большой, Ø неизвестен —
- *  самый малый. */
+/** Запас Ø трубки над Ø провода, мм: трубка должна налезть (тот же, что у pickWireMarkTube). */
+export const WIRE_MARK_TUBE_MARGIN_MM = 0.5;
+
+/** «По Ø провода» (владелец 20.11): меньший Ø трубки TP80E не меньше Ø провода + 0,5 мм (как pickWireMarkTube); толще всех —
+ *  самый большой, Ø неизвестен — самый малый. */
 export function markTubeForWire(dia: number): number {
   if (!(dia > 0)) return WIRE_MARK_TUBE_SIZES_MM[0];
-  return WIRE_MARK_TUBE_SIZES_MM.find((mm) => mm >= dia - 1e-9) ?? WIRE_MARK_TUBE_SIZES_MM[WIRE_MARK_TUBE_SIZES_MM.length - 1];
+  return WIRE_MARK_TUBE_SIZES_MM.find((mm) => mm >= dia + WIRE_MARK_TUBE_MARGIN_MM - 1e-9) ?? WIRE_MARK_TUBE_SIZES_MM[WIRE_MARK_TUBE_SIZES_MM.length - 1];
 }
 
 /** Ø трубки маркиратора: выбранный, иначе запомненный для этого Ø провода, иначе по Ø провода. */
@@ -110,31 +113,35 @@ export function wireMarkCoverLen(cfg: WireMarkCfg | undefined): string {
   return String(Math.round((mark + WIRE_MARK_COVER_EXTRA_MM) * 1000) / 1000);
 }
 
-/** Последний выбор печатной маркировки проекта (GET /api/techcards/generator-mark-defaults). */
-export type WireMarkDefaults = { kind: "tube" | "tape" | null; tapeMm: number | null; tubeByDia: Record<string, number> };
+/** Последний выбор маркировки проводов проекта (GET /api/techcards/generator-mark-defaults): `kind` — как метила самая новая КБ
+ *  проекта («none» — без меток, null — КБ с маркировкой ещё не было), размеры — из самой новой КБ, где они были. */
+export type WireMarkDefaults = { kind: "none" | WireMarkKind | null; tapeMm: number | null; tubeByDia: Record<string, number> };
 
-/** Новая КБ без черновика и без маркировки (владелец 20.11): чем метил проект в последний раз — трубка или лента, ширина ленты,
- *  Ø трубки для каждого Ø провода. Нет печатного выбора — undefined (форма как была). */
+/** Новая КБ без черновика и без маркировки (владелец 20.11, «последний выбор» буквально): чем метила последняя КБ проекта —
+ *  «нет» (выключено), трубка, лента или лазер; ширина ленты и Ø трубки для каждого Ø провода — заранее, при любом выборе, чтобы
+ *  переключение на ленту или трубку начиналось с них. Ни выбора, ни размеров — undefined (форма как была). */
 export function wireMarksFromDefaults(defaults: WireMarkDefaults | null | undefined): WireMarkCfg | undefined {
-  if (!defaults || (defaults.kind !== "tube" && defaults.kind !== "tape")) return undefined;
+  if (!defaults) return undefined;
+  const kind = defaults.kind === "tube" || defaults.kind === "tape" || defaults.kind === "laser" ? defaults.kind : null;
   const tubeByDia = Object.fromEntries(Object.entries(defaults.tubeByDia || {})
     .filter(([dia, mm]) => Number(dia) > 0 && Number(mm) > 0).map(([dia, mm]) => [wireDiaKey(Number(dia)), String(mm)]));
-  return {
-    enabled: true, mat: "", len: "", dist: "", kind: defaults.kind,
+  const sizes = {
     ...(defaults.tapeMm && defaults.tapeMm > 0 ? { tapeMm: String(defaults.tapeMm) } : {}),
     ...(Object.keys(tubeByDia).length ? { tubeByDia } : {}),
   };
+  if (!kind && defaults.kind !== "none" && !Object.keys(sizes).length) return undefined;
+  return { enabled: !!kind, mat: "", len: "", dist: "", ...(kind ? { kind } : {}), ...sizes };
 }
 
-/** Что уходит в сохранённый рецепт (`build_config.wireMarks`): чем метить, размер, запомненные Ø и покрытие — из него сервер
- *  отдаёт выбор проекта (mark_defaults.py). */
+/** Что уходит в сохранённый рецепт (`build_config.wireMarks`): чем метить («none» — выключено), размеры, запомненные Ø и
+ *  покрытие — из него сервер отдаёт выбор проекта (mark_defaults.py). Ширина ленты — и у выключенной, если её выбирали. */
 export function savedWireMarks(cfg: WireMarkCfg): Record<string, unknown> {
   const kind = wireMarkKindOf(cfg);
   const tubeByDia = Object.entries(cfg.tubeByDia || {}).filter(([dia, mm]) => dia && String(mm || "").trim());
   return {
     enabled: kind !== "none", kind,
     ...(kind === "tube" && (cfg.tubeMm || "").trim() ? { tubeMm: cfg.tubeMm!.trim() } : {}),
-    ...(kind === "tape" ? { tapeMm: String(positiveMm(cfg.tapeMm, WIRE_MARK_TAPE_WIDTHS_MM[0])) } : {}),
+    ...(kind === "tape" || (cfg.tapeMm || "").trim() ? { tapeMm: String(positiveMm(cfg.tapeMm, WIRE_MARK_TAPE_WIDTHS_MM[0])) } : {}),
     ...(tubeByDia.length ? { tubeByDia: Object.fromEntries(tubeByDia) } : {}),
     ...(kind === "tube" || kind === "tape" ? { cover: wireMarkCoverOn(cfg) } : {}),
   };

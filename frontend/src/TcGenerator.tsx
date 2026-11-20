@@ -367,6 +367,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   // Засев — один раз на карту и набор: обновлённый справочник («Записать в БД», «Добавить в БД.КОАКС») форму не
   // пересевает — иначе введённое после засева (длина по чертежу, концы) пропадало.
   const seededFor = useRef<{ card: string; kit: KitsetBom } | null>(null);
+  /** Карта, для которой форма уже засеяна (layout-эффект ниже): по нему применяется выбор маркировки проекта. */
+  const [seededCard, setSeededCard] = useState("");
   // Дописанное технологом комплектующее меняет состав, но форму не пересевает: введённое остаётся, новая строка
   // появляется в выборе компонентов.
   const [kitAdding, setKitAdding] = useState(false);
@@ -418,11 +420,13 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     setComplexTopology(form.complexTopology);
     setManual(form.manual); setS(ensureSeparateLengths({ ...form.S, coax: restoreCoaxState(fromBuild.coax, form.S.coax) })); setTerEdits(form.terEdits); setCoaxAdd(form.coaxAdd);
     setStatus({ text: back?.note || "", error: false });
+    setSeededCard(card.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refs, card.id, kit]);
 
-  // Новая КБ (ещё не собрана) начинает маркировку проводов с последнего выбора проекта (владелец 20.11): трубка или лента,
-  // ширина ленты, Ø трубки по Ø провода. Форма с маркировкой (черновик, «нет») и собранная карта — как есть; нет связи — без него.
+  // Новая КБ (ещё не собрана) начинает маркировку проводов с последнего выбора проекта (владелец 20.11): как метила последняя КБ
+  // («нет», трубка, лента, лазер), ширина ленты, Ø трубки по Ø провода. Форма с маркировкой (черновик, выбор технолога) и
+  // собранная карта — как есть; нет связи — без него. Засеянная карта — состоянием: ответ может прийти и до засева, и после.
   const [markDefaults, setMarkDefaults] = useState<{ card: string; value: WireMarkDefaults } | null>(null);
   const isNewCard = !card.document?.build_config;
   useEffect(() => {
@@ -434,10 +438,10 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     return () => { alive = false; };
   }, [card.id, card.project, isNewCard]);
   useEffect(() => {
-    if (!isNewCard || markDefaults?.card !== card.id || seededFor.current?.card !== card.id || S.wireMarks) return;
+    if (!isNewCard || markDefaults?.card !== card.id || seededCard !== card.id || S.wireMarks) return;
     const wireMarks = wireMarksFromDefaults(markDefaults.value);
     if (wireMarks) setS((current) => (current.wireMarks ? current : { ...current, wireMarks }));
-  }, [markDefaults, S.wireMarks, card.id, isNewCard]);
+  }, [markDefaults, seededCard, S.wireMarks, card.id, isNewCard]);
 
   // renderOpsCard: шаблон, показанный первым, запоминается (selectedTemplates) и дальше не пересчитывается.
   useEffect(() => {
@@ -1267,6 +1271,9 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const wireMarkList = gen.wireMarkList_();
   // Прозрачная трубка поверх метки, что подобрал генератор: «ТУТ(HF) 4/2 прозрачная, 25 мм».
   const wireMarkCoverCut = ops.find((op) => op.opKey === "cutWireMarkCover");
+  // Ø трубки, что уйдёт на печать (по выбранной трубке состава или БД.МАТ) — в подписи «по Ø провода».
+  const wireMarkPrint = ops.find((op) => op.opKey === "cutWireMark")?.markMedia;
+  const wireMarkPrintedTube = wireMarkPrint?.kind === "tube" ? wireMarkPrint.sizeMm : undefined;
   const wireMarkCover = wireMarkCoverCut ? `${wireMarkCoverCut.tutName || wireMarkCoverCut.tutArt}, ${String(wireMarkCoverCut.tutParts?.[0]?.len || "").replace(".", ",")} мм` : "";
   const kdMarks = S.markRows.filter((row) => row.text.trim() || row.target.trim());
   const typical = S.tab !== "coax" && !manualTab && !reworkTab;
@@ -1746,7 +1753,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         onByConnectors={marksByConnectors} onFromDrawing={() => void marksFromDrawing()} drawingBusy={markDrawing.busy} note={markDrawing.note} />
       {complex && <WireMarks cfg={S.wireMarks} onChange={(wireMarks) => update({ wireMarks })} rows={wireMarkList.rows} skipped={wireMarkList.skipped}
         note={wireMarkList.rows.length ? gen.wireMarkCrimpNote_(wireMarkList.rows) : ""} tubes={gen.wireMarkTubeOptions_()} autoTube={gen.wireMarkTube_(wireMarkList.rows)}
-        wireDia={gen.wireMarkDia_(wireMarkList.rows)} cover={wireMarkCover} />}
+        wireDia={gen.wireMarkDia_(wireMarkList.rows)} cover={wireMarkCover} printedTubeMm={wireMarkPrintedTube} />}
     </section>
     {complex && <section className="gsec full gen-note" aria-label="Примечание технолога">
       <label className="gfield"><span className="gfield-label">Примечание технолога<small>отступления от чертежа, чего нет в составе — остаётся в черновике и в собранной карте</small></span>

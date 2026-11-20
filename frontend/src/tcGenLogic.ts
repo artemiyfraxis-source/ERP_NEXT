@@ -9,7 +9,7 @@
  */
 import { matchCableRec } from "./cableMatch";
 import { COAX_PROTECTIVE_TUT_LENGTHS, coaxMarkDefaults, coaxMarksFromName, sumCoaxMaterial, type CoaxMark, type ConnColor, markIsTube, markLabel, markSpecs, markTubeShrinks, markTubeSplit, type MarkMat, type MarkRow, type MarkSpec, type MarkTube } from "./tcGenMarks";
-import { laserMarkOf, laserPrintedKey, markMediaOf, pickCoverTube, pickWireMarkTube, savedWireMarks, WIRE_MARK_DIST_MM, WIRE_MARK_LEN_MM, wireMarkCoverLen, wireMarkCoverOn, wireMarkKey, wireMarkKindOf, wireMarkRow, wireMarkTexts, wireMarkTubeBySize, type LaserMark, type MarkMedia, type WireMarkCfg, type WireMarkRow, type WireMarkSkip } from "./tcGenWireMarks";
+import { laserMarkOf, laserPrintedKey, markMediaOf, pickCoverTube, pickWireMarkTube, savedWireMarks, tubeBeforeShrink, WIRE_MARK_DIST_MM, WIRE_MARK_LEN_MM, wireMarkCoverLen, wireMarkCoverOn, wireMarkKey, wireMarkKindOf, wireMarkRow, wireMarkTexts, wireMarkTubeBySize, type LaserMark, type MarkMedia, type WireMarkCfg, type WireMarkRow, type WireMarkSkip } from "./tcGenWireMarks";
 import { twistGroupProblems, twistGroupsOf, type TwistRow } from "./twistGroups";
 import { pickTerminals, type TerminalPairs } from "./terminalPick";
 import { LUG_CRIMP_CARD, LUG_CRIMP_NAMES, lugArt, lugByArt, lugCrimpOf, lugTypes, type LugCrimp, type LugRec } from "./tcGenLugs";
@@ -3518,15 +3518,24 @@ export function makeGen(D: GenData, S: GenState) {
   }
   /** Чем печатать маркировку проводов: трубка — выбранного, запомненного или ближайшего к Ø провода Ø TP80E, лента — ширины. */
   const wireMarkMedia_ = (rows: WireMarkRow[]) => markMediaOf(S.wireMarks, wireMarkDia_(rows));
-  /** Выбранная трубка; не выбрана — трубка Ø маркиратора из состава и БД.МАТ, нет такой — по Ø изоляции самого толстого провода. */
-  function wireMarkTube_(rows: WireMarkRow[]): string {
-    const chosen = (S.wireMarks?.mat || "").trim();
-    if (chosen) return chosen;
+  /** Трубка маркировки и Ø её печати (ревью 20.11). Ø, выбранный в списке, — всегда он: трубка этого Ø из состава и БД.МАТ, нет
+   *  такой — «Трубка термоусаживаемая маркировочная Ø …». «По Ø провода» (и запомненный Ø): трубка этого Ø, нет такой — по Ø изоляции самого
+   *  толстого провода, и Ø печати — её. Трубка, выбранная вручную, — она; Ø печати — выбранный, иначе её. */
+  function wireMarkTubePick_(rows: WireMarkRow[]): { tube: string; media: MarkMedia | null } {
     const media = wireMarkMedia_(rows);
-    const sized = media?.kind === "tube" ? wireMarkTubeBySize(wireMarkTubeOptions_(), media.sizeMm) : "";
-    if (sized) return sized;
-    return pickWireMarkTube(wireMarkTubeOptions_(), wireMarkDia_(rows));
+    if (media?.kind !== "tube") return { tube: "", media };
+    const explicit = !!(S.wireMarks?.tubeMm || "").trim();
+    const own = (tube: string): MarkMedia => { const mm = tubeBeforeShrink(tube); return mm ? { kind: "tube", sizeMm: mm } : media; };
+    const chosen = (S.wireMarks?.mat || "").trim();
+    if (chosen) return { tube: chosen, media: explicit ? media : own(chosen) };
+    const sized = wireMarkTubeBySize(wireMarkTubeOptions_(), media.sizeMm);
+    if (sized) return { tube: sized, media };
+    if (explicit) return { tube: `Трубка термоусаживаемая маркировочная Ø ${mmRu(media.sizeMm)} мм`, media };
+    const picked = pickWireMarkTube(wireMarkTubeOptions_(), wireMarkDia_(rows));
+    return { tube: picked, media: picked ? own(picked) : media };
   }
+  /** Трубка маркировки проводов (wireMarkTubePick_). */
+  const wireMarkTube_ = (rows: WireMarkRow[]): string => wireMarkTubePick_(rows).tube;
   /** Провода, у которых конец обжимается на станке при резке: трубка маркировки на готовый терминал не налезет. Номера через запятую. */
   function wireMarkCrimpNote_(rows: WireMarkRow[]): string {
     const active = activeWires_();
@@ -3550,14 +3559,14 @@ export function makeGen(D: GenData, S: GenState) {
     const cfg = S.wireMarks!;
     const media = wireMarkMedia_(rows);
     if (media?.kind === "tape") return withWireMarkCover_(wireMarkTapeOps_(rows, media), rows, media);
-    const tube = wireMarkTube_(rows);
+    const { tube, media: tubeMedia } = wireMarkTubePick_(rows);
     const nk = (v: string) => v.trim().toLowerCase().replace(/\s+/g, " ");
     const comp = tube ? comps().find((c) => nk(c.art || "") === nk(tube) || nk(c.name || "") === nk(tube)) : undefined;
     const art = comp ? comp.art || comp.name || tube : tube, name = comp ? comp.name || comp.art || tube : tube;
     const len = (cfg.len || "").trim() || WIRE_MARK_LEN_MM, dist = (cfg.dist || "").trim() || WIRE_MARK_DIST_MM;
     const count = rows.length * 2, texts = wireMarkTexts(rows);
     const markCode = tp80eCard_() ? PRINT_MARK_CODE_ : [MARK_CUT_CODE_, MARK_CUT_CODE_OLD_].find(hasTemplateCode_);
-    const common = { markTube: true, wireMarks: true, markDist: dist, shrinkMaterials: [{ art, name }], ...(media ? { markMedia: media } : {}) };
+    const common = { markTube: true, wireMarks: true, markDist: dist, shrinkMaterials: [{ art, name }], ...(tubeMedia ? { markMedia: tubeMedia } : {}) };
     const out: OpSpec[] = [
       { ...common, type: "cutTut", opKey: "cutWireMark", tmplHint: markCode || "CUT_TUT_short", tmplWant: markCode || MARK_CUT_CODE_, cat: "Резка", markTexts: texts,
         label: `${markCode ? "Печать и резка" : "Резка"} маркировки проводов — ${count} шт × ${len.replace(".", ",")} мм`,
@@ -3568,7 +3577,7 @@ export function makeGen(D: GenData, S: GenState) {
     if (markTubeShrinks(`${name} ${art}`)) {
       out.push({ ...common, type: "heatTut", opKey: "heatWireMark", tmplHint: "HEAT_TYT_short", cat: "Усадка", tutCount: count, label: `Усадка маркировки проводов — ${count} шт` });
     }
-    return media ? withWireMarkCover_(out, rows, media) : out;
+    return tubeMedia ? withWireMarkCover_(out, rows, tubeMedia) : out;
   }
   /** Лента маркиратора (владелец 20.11): печать этикеток и наклейка на провода; лента — расходник маркиратора, не состав,
    *  усадки нет. Ключи операций те же, что у трубки, — схема ПФ и сохранённые маршруты их узнают. */
@@ -4557,7 +4566,8 @@ export function makeGen(D: GenData, S: GenState) {
       ...(route ? { route } : {}),
       ...(S.opOrder?.length ? { opOrder: S.opOrder } : {}),
       // Выбор маркировки проводов — в рецепт: новая КБ проекта начнёт с него (GET /api/techcards/generator-mark-defaults).
-      ...(wireMarksOn_() ? { wireMarks: savedWireMarks(S.wireMarks!) } : {}),
+      // Выключенная («нет») тоже: «последний выбор» проекта — буквально (ревью 20.11). Форма без поля (до 26.10) — без него.
+      ...(isComplex_() && S.wireMarks ? { wireMarks: savedWireMarks(S.wireMarks) } : {}),
       ...usedColorHex_(wires),
     };
   }
