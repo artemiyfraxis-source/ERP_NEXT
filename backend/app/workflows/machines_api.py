@@ -61,6 +61,11 @@ Now = Annotated[datetime, Depends(moscow_now)]
 machines_view_principal = require_section(("production", "myops", "quality"), "view",
                                           detail="Раздел «Оборудование» вам не открыт.")
 Reader = Annotated[Principal, Depends(machines_view_principal)]
+# Commands to a machine («Стоп» included) — the shop's own (Производство / Задания), never ОТК, which only reads the
+# section for its analyser cards.
+machines_command_principal = require_section(("production", "myops"), "view",
+                                             detail="Команды станку подаёт производство или исполнитель задания.")
+Commander = Annotated[Principal, Depends(machines_command_principal)]
 BRIDGE_ONLY = "Снимки станка присылает только агент ERP на ПК станка (токен API «machine:report»)."
 
 PRINTER_NAMES = {"tspl": "Принтер этикеток", "gdi_png": "Принтер маркировки"}

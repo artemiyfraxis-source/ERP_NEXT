@@ -28,6 +28,9 @@ export interface NavItem {
   /** Also opens for these keys, which do not own the screen: «Доступы» neither names the screen under them nor
    *  moves their row («Ручная работа» for «Склад», S3: the warehouse decides the material of finished jobs). */
   alsoPermission?: string[];
+  /** The `alsoPermission` keys open the screen for reading only, whatever their mode: «ОТК» on edit reads «Оборудование»
+   *  (its analyser cards) but never edits or commands a machine (review of #999, 20.11.2026). */
+  alsoReadOnly?: boolean;
   minimum?: AccessMode;
   /** superadmin / admin only, outside the matrix (backend require_full_access: «Доступы», «Сотрудники»). */
   fullAccessOnly?: boolean;
@@ -105,7 +108,7 @@ export const NAV: NavItem[] = [
   // «Оборудование» (бывшие «Станки», владелец 19.11.2026): станки цеха с управлением из ERP и без, их наладка, принтеры и
   // приборы агентов; читают мастер и монтажник.
   // ОТК (`quality`) открывает его тоже: рабочее место ВАЦ — в карточке анализатора цепей (владелец 20.11.2026).
-  { id: "machines", label: "Оборудование", sub: "станки цеха · приборы · наладка · состояние на станке", anyPermission: ["production", "myops"], alsoPermission: ["quality"], block: "prod" },
+  { id: "machines", label: "Оборудование", sub: "станки цеха · приборы · наладка · состояние на станке", anyPermission: ["production", "myops"], alsoPermission: ["quality"], alsoReadOnly: true, block: "prod" },
   // «Ручная работа» (план «Станки вне проекта», 19.11.2026): журнал работ на любом станке вне проекта; те же ключи, что у «Станков».
   { id: "manualjobs", label: "Ручная работа", sub: "работа на станке вне проекта · журнал за период", anyPermission: ["production", "myops"], alsoPermission: ["warehouse"], block: "prod" },
   // «Задания» (`myops`) и «ОТК» (`quality`) — разделы матрицы со своими ключами (owner 04.10.2026), не часть `production`.
@@ -232,8 +235,11 @@ export function hasNavAccess(principal: Principal, item: NavItem, capabilities: 
 /** The card opens for reading only: every key that opens it is granted as «view» (never for a full-access level). */
 export function isViewOnly(principal: Principal, item: NavItem): boolean {
   if (hasFullAccess(principal)) return false;
-  const keys = [...(item.permission ? [item.permission] : item.anyPermission ?? []), ...(item.alsoPermission ?? [])];
+  const own = item.permission ? [item.permission] : item.anyPermission ?? [];
+  const keys = item.alsoReadOnly ? own : [...own, ...(item.alsoPermission ?? [])];
   const modes = keys.map((key) => principal.permissions[key]).filter(Boolean);
+  // Opened only through a read-only `alsoPermission` key — read only.
+  if (item.alsoReadOnly && !modes.length) return Boolean(item.alsoPermission?.some((key) => principal.permissions[key]));
   return modes.length > 0 && !modes.includes("edit");
 }
 

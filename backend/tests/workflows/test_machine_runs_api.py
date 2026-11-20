@@ -380,6 +380,11 @@ def test_a_write_answered_before_the_next_report_waits_for_it_then_starts(machin
     machine.report()  # the bridge's next report, a second later: the card's next read settles the check
     run = admin.get(RUN).json()["run"]
     assert (run["stage"], run["counter_start"], _check(sessions, sent)) == ("ready", START, "ok")
+    # The check is the system's, not the person's whose read triggered it (review of #999, 20.11.2026).
+    with sessions() as session:
+        verified = session.scalars(select(AuditEventRow).where(
+            AuditEventRow.event_type == "production.machine_run_verified")).all()
+    assert [(row.actor_name, row.actor_department) for row in verified] == [("ERP · проверка станка", "Система")]
     started = _start(admin)
     assert started.status_code == 200, started.text
 

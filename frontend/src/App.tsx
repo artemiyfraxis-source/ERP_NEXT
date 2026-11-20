@@ -422,7 +422,7 @@ export function App() {
                 {setupState.state === "disabled" ? "Наладка оборудования ещё не включена." : setupState.state === "denied" ? "Наладка недоступна этому сотруднику." : setupState.error}
               </p><button className="secondary" onClick={() => setSetupRetry(value => value + 1)}>Проверить снова</button></>}
           </section>)}
-        {activeSection === "machines" && <Suspense fallback={<p className="empty">Загрузка…</p>}><MachinesPage setupViewer={setupAvailable}
+        {activeSection === "machines" && <Suspense fallback={<p className="empty">Загрузка…</p>}><MachinesPage key={visit} setupViewer={setupAvailable}
           initialView={place.section === "equipmentsetup" ? "setup" : undefined}
           canWrite={canAct(principal, "production") || canAct(principal, "myops")} canQuality={canAct(principal, "quality")} /></Suspense>}
         {activeSection === "manualjobs" && <Suspense fallback={<p className="empty">Загрузка…</p>}><ManualJobsPage /></Suspense>}

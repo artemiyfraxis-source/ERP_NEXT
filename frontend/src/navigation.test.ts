@@ -207,10 +207,16 @@ it("sends the old «ОТК → ВАЦ — рабочее место» link to th
   expect(sectionOfTab("quality", "vna")).toBe("machines");
   for (const tab of ["queue", "vswr", "rejects", "instruments", null]) expect(sectionOfTab("quality", tab)).toBe("quality");
   // Whoever opened the workplace in ОТК opens «Оборудование» too; it stays theirs to read only.
+  // ОТК on edit reads it only: its mode never lifts «только просмотр» (review of #999).
+  const machines = NAV.find(({ id }) => id === "machines")!;
   const controller = as("operator", { quality: "edit" });
   expect(visibleNav(controller).some(({ id }) => id === "machines")).toBe(true);
-  expect(isViewOnly(controller, NAV.find(({ id }) => id === "machines")!)).toBe(false);
+  expect(isViewOnly(controller, machines)).toBe(true);
+  expect(isViewOnly(as("operator", { quality: "edit", production: "view" }), machines)).toBe(true);
+  expect(isViewOnly(as("operator", { quality: "edit", myops: "edit" }), machines)).toBe(false);
   expect(visibleNav(as("operator", { quality: "view" })).some(({ id }) => id === "machines")).toBe(true);
+  // «Ручная работа» keeps its own rule: «Склад» on edit is no reader there.
+  expect(isViewOnly(as("operator", { warehouse: "edit" }), NAV.find(({ id }) => id === "manualjobs")!)).toBe(false);
 });
 
 it("NAV-SECTIONS: picking and handout open by their own keys", () => {
