@@ -94,7 +94,7 @@ export function DispatchFields({ project, draft, onChange, editable, card, onCar
       {FIELDS.filter(([key]) => !(hideAddress && key === "shipping_point")).map(([key, label, placeholder]) => <label key={key}>{label}
         <input aria-label={`${label}${suffix}`} value={draft[key]} disabled={!editable} placeholder={editable ? placeholder : ""}
           inputMode={key === "phone" ? "tel" : undefined} onChange={(event) => onChange({ ...draft, [key]: event.target.value })} /></label>)}
-      <label>Способ доставки<CarrierSelect label={`Способ доставки${suffix}`} value={draft.carrier} disabled={!editable}
+      <label className={hideUpd ? "dispatch-carrier-wide" : undefined}>Способ доставки<CarrierSelect label={`Способ доставки${suffix}`} value={draft.carrier} disabled={!editable}
         onChange={(carrier) => onChange({ ...draft, carrier })} /></label>
       {!hideUpd && <label>УПД<select aria-label={`УПД${suffix}`} value={draft.upd_type} disabled={!editable} onChange={(event) => onChange({ ...draft, upd_type: event.target.value })}>
         <option value="">не выбрано</option>{UPD.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}

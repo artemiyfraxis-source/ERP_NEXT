@@ -243,3 +243,19 @@ def test_pl_alone_leaves_dn_for_later(shipping_api):
 
     dn = client.post(url, json={"version": pl["version"], "document": "dn"}).json()["shipment"]
     assert dn["dn_number"] == "DN" + pl["pl_number"][2:] and dn["status"] == "Упакована"
+
+
+def test_pl_only_shipment_waits_for_dn_before_shipping(shipping_api):
+    """PL выдан, DN нет: не «На отгрузку» и «Отгрузить» отказывает с «DN»; после «Сформировать» DN — можно."""
+    client = shipping_api
+    good = _stocked(client, accepted="4")
+    assembled = _shipment(client, [{"good_id": good["id"], "quantity": "3"}], no_docs=True)
+    url = f"/api/shipping/shipments/{assembled['id']}/issue-document"
+
+    pl = client.post(url, json={"version": assembled["version"], "document": "pl"}).json()["shipment"]
+    assert pl["ready_to_ship"] is False and "DN не сформирован" in pl["missing_ship"]
+    refused = client.post(f"/api/shipping/shipments/{pl['id']}/ship", json={"version": pl["version"]})
+    assert refused.status_code == 422 and "DN" in refused.json()["detail"]
+
+    dn = client.post(url, json={"version": pl["version"], "document": "dn"}).json()["shipment"]
+    assert "DN не сформирован" not in dn["missing_ship"]

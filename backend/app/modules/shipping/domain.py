@@ -1175,12 +1175,13 @@ GAP_NO_UPD_APPROVAL = "no_upd_approval"
 GAP_UPD_FILE = "upd_file"
 GAP_UPD_NUMBER = "upd_number"
 GAP_TRACK = "track_number"
+GAP_DN = "dn_number"
 NO_UPD_APPROVAL_GAP = "разрешение на отгрузку без УПД"
 GAP_LABELS = {
     GAP_TERMS: "условия доставки", GAP_RECEIVER: "организация", GAP_PHONE: "телефон получателя",
     GAP_CARRIER: "перевозчик", GAP_ADDRESS: "адрес доставки", GAP_UPD_TYPE: "тип УПД",
     GAP_NO_UPD_APPROVAL: NO_UPD_APPROVAL_GAP, GAP_UPD_FILE: "файл УПД", GAP_UPD_NUMBER: "№ УПД",
-    GAP_TRACK: "трек-номер",
+    GAP_TRACK: "трек-номер", GAP_DN: "DN не сформирован",
 }
 # Самого УПД нет (тип не выбран, «Без УПД», бумажная без файла) — только тогда предлагается «Без УПД…» по PIN.
 # ЭДО или бумажная с файлом без № — не хватает лишь номера (`GAP_UPD_NUMBER`): его вписывают, а не разрешают.
@@ -1241,6 +1242,10 @@ def shipping_gap_codes(shipment: Shipment, *, with_track: bool = True) -> tuple[
     ) if not (approved and code in _UPD_GAPS)]
     if shipment.track_required and with_track and not filled(shipment.track_number):
         gaps.append(GAP_TRACK)
+    # PL выдан отдельно, а DN ещё нет (владелец 20.11.2026): отправка не уезжает без DN. Список для печати DN
+    # (`with_track=False`) этот пробел не держит — сам DN печатается только после «Сформировать».
+    if with_track and shipment.pl_number and not shipment.dn_number:
+        gaps.append(GAP_DN)
     return tuple(gaps)
 
 
