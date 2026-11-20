@@ -67,3 +67,38 @@ def check_materials(rows):
         raise ValueError("Выберите совместимый материал: разделите надписи разных материалов на отдельные партии")
     if any(re.search(r"термоусад|трубк|\bтут\b|tube|sleeve", value) for value in materials):
         raise ValueError("Надписи для трубок нельзя печатать на этикетках — выберите совместимый материал")
+
+
+_PARTS = re.compile(r"(\d+)")
+
+
+def natural_key(text: str):
+    """«X2» before «X10»: digit runs compare as numbers, the rest case-insensitively."""
+    return [(0, int(part), "") if part.isdigit() else (1, 0, part.casefold()) for part in _PARTS.split(text) if part]
+
+
+def manual_labels(lines, order="listed", numbering=None):
+    """«Свой текст» of a marking printer card (owner 20.11): one label per line × its copies, in the order typed or by
+    number. A line with {№} becomes one label per number of `numbering` (first, last). These are not product serials:
+    nothing is issued, a row's `serial` stays empty."""
+    rows = []
+    for index, (text, copies) in enumerate(lines):
+        text = str(text).strip()
+        if not text:
+            raise ValueError(f"Пустая строка №{index + 1} — удалите её или впишите надпись")
+        if TOKEN.search(text):
+            if numbering is None:
+                raise ValueError(f"В строке «{text}» есть {{№}} — укажите номера «с» и «по»")
+            first, last = numbering
+            numbers = range(first, last + 1)
+        else:
+            numbers = (None,)
+        for value in numbers:
+            rows.append({"key": f"manual:{index}" + (f":{value}" if value is not None else ""),
+                         "text": expand_serial(text, value) if value is not None else text, "material": "",
+                         "quantity": int(copies), "serial": None})
+            if sum(row["quantity"] for row in rows) > MAX_LABELS:
+                raise ValueError(f"За один раз — не более {MAX_LABELS} этикеток")
+    if order == "number":
+        rows.sort(key=lambda row: natural_key(row["text"]))
+    return rows
