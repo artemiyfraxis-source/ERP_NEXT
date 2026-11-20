@@ -66,3 +66,19 @@ def test_rows_match_by_task_serial_and_text_not_by_etk_index():
                          Counter({("t1", 1, "FRX.1"): 1}))
     assert (view["printed"], view["remaining"], view["remaining_serials"]) == (1, 2, [2, 3])
     assert task.quantity == 3
+
+
+def test_progress_reads_the_issued_etk_without_locking_it(marking, monkeypatch):
+    from app.workflows import marking_labels
+
+    client, _factory, payload, task, *_ = marking
+    original, calls = marking_labels.issued_document, []
+
+    def spy(task, uow, *, lock=True):
+        calls.append(lock)
+        return original(task, uow, lock=lock)
+
+    monkeypatch.setattr(marking_labels, "issued_document", spy)
+    response = client.get(BASE + "/progress", params={"task_id": str(task.id), "operation_id": payload["source"]["operation_id"]})
+    assert response.status_code == 200, response.text
+    assert calls == [False]

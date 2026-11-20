@@ -325,6 +325,34 @@ def _adopt_key(group, recipe):
     group.recipe_key, group.recipe, group.recipe_version = recipe.key, recipe.snapshot, recipe.snapshot["version"]
 
 
+def _keeps_key(group, key, moving, uow):
+    """Whether the group may take recipe `key`: every active row of it outside `moving` (PF ids regrouped now) already
+    has that key — rows of tasks whose rebuild was refused, outside the selection or not running keep their recipe."""
+    if group.recipe_key == key:
+        return True
+    return all(_baseline_key(group, member, uow.production.get(member.task_id)) == key
+               for member in uow.cutting.members(group.id) if member.operation_id not in moving)
+
+
+def issued_separately(group):
+    """A group of a launch made with «Выдать отдельно» (`attach(separate=True)`): the master's separation — regrouping
+    never moves its PF elsewhere and never puts other PFs into it. Explicit groups (from existing work, regrouping) are
+    not joinable either but carry the `cutting-existing:` key."""
+    return not group.joinable and str(group.idempotency_key).startswith("cutting:")
+
+
+def _separated(task, operation_id, key, uow):
+    """The master took this ungrouped PF out of a group (its row there is `split`: «Выдать отдельно» on the group card,
+    or the group was cancelled) and its recipe is still that row's recipe: regrouping honours the separation."""
+    from sqlalchemy import select
+
+    from .cutting_infrastructure import CuttingMemberRow
+
+    rows = uow.session.scalars(select(CuttingMemberRow).where(
+        CuttingMemberRow.operation_id == operation_id, CuttingMemberRow.state == "split"))
+    return any(_baseline_key(uow.cutting.get(row.group_id), row, task) == key for row in rows)
+
+
 def revalidate_group(group_id, version, current, actor, now, uow):
     with uow:
         group = locked_group(group_id, version, uow, actor, now)
@@ -333,6 +361,12 @@ def revalidate_group(group_id, version, current, actor, now, uow):
         checked = []
         for member in uow.cutting.members(group.id):
             task = uow.production.get(member.task_id)
+            if task.techcard_revision != member.row_snapshot.get("techcard_revision"):
+                # The task was re-pinned to a newer ETK while the row keeps its frozen one: acknowledging the card
+                # version alone would let the group start and then refuse every later change of the task.
+                raise ProductionValidationError(
+                    f"{task.item}: задание перекреплено к другой ревизии ЭТК, а строка группы работает по прежней — "
+                    "нажмите «Обновить из ЭТК»")
             document, card_version = current.get(task.id, (None, None))
             recipe, reason = recipe_for_operation(task.project, group.site, document, task.operations, member.operation_id)
             if recipe is None or recipe.key != _baseline_key(group, member, task) or any(
@@ -415,7 +449,7 @@ def refresh_group_etk(group_id, version, cards, actor, now, uow):
             updated, reason = rebuild_task(task, entry, uow, actor, now, homes)
             if reason:
                 raise ProductionValidationError(f"Группа не обновлена: {task.item}: {reason}")
-            found, refused = task_regroup_entries(updated, entry[2], entry[3], uow, actor)
+            found, refused = task_regroup_entries(updated, entry[2], entry[3], uow, actor, homes)
             if not found:
                 raise ProductionValidationError(
                     f"Группа не обновлена: у {task.item} новая ЭТК не даёт рецепта резки — "
@@ -467,7 +501,9 @@ def regroup(entries, uow, actor, now, *, homes=None):
     locks. `entries` — (task, recipe, document, card version); `homes` — {PF id: group id} for PFs the caller already
     took out of their group (restructure). Per key, the largest set first: it keeps the group that already holds most of
     its PFs (id and number stay), else joins an open unstarted group of the project with that recipe, else gets a new
-    group. A PF leaving a group is `split` there; a group left without active rows is cancelled."""
+    group. A group takes a new recipe key only when all its active rows outside `entries` already have it
+    (`_keeps_key`); otherwise the PFs go to another group. A PF of a «Выдать отдельно» group stays in that group alone
+    (`issued_separately`). A PF leaving a group is `split` there; a group left without active rows is cancelled."""
     homes = dict(homes or {})
     position = {}
     for _task, recipe, _document, _version in entries:
@@ -475,24 +511,29 @@ def regroup(entries, uow, actor, now, *, homes=None):
         if member:
             homes[recipe.operation_id] = member.group_id
             position[recipe.operation_id] = member.position
+    moving = {entry[1].operation_id for entry in entries}
+    separate = {group_id for group_id in set(homes.values()) if issued_separately(uow.cutting.get(group_id))}
     buckets = {}
     for entry in entries:
-        buckets.setdefault(entry[1].key, []).append(entry)
+        home = homes.get(entry[1].operation_id)
+        buckets.setdefault((entry[1].key, home if home in separate else None), []).append(entry)
     order = sorted(buckets.items(), key=lambda item: (
-        -len(item[1]), min(position.get(entry[1].operation_id, 10 ** 9) for entry in item[1]), item[0]))
+        item[0][1] is None, -len(item[1]), min(position.get(entry[1].operation_id, 10 ** 9) for entry in item[1]),
+        item[0][0], str(item[0][1])))
     claimed, left, result = set(), set(homes.values()), {"groups": [], "moved": [], "cancelled": []}
-    for key, items in order:
+    for (key, alone), items in order:
         recipe = items[0][1]
         counts = Counter(homes[e[1].operation_id] for e in items if e[1].operation_id in homes)
         group = None
         for group_id, _count in sorted(counts.items(), key=lambda item: (-item[1], str(item[0]))):
             candidate = uow.cutting.get(group_id)
-            if candidate.id not in claimed and _regroupable(candidate, recipe, uow):
+            if (candidate.id not in claimed and (candidate.id in separate) == (alone is not None)
+                    and _regroupable(candidate, recipe, uow) and _keeps_key(candidate, key, moving, uow)):
                 group = candidate
                 break
-        if group is None:
+        if group is None and alone is None:
             group = next((g for g in uow.cutting.list() if g.id not in claimed and g.recipe_key == key
-                          and _regroupable(g, recipe, uow)), None)
+                          and not issued_separately(g) and _regroupable(g, recipe, uow)), None)
         created = group is None
         if created:
             group = uow.cutting.create_explicit(recipe, now)
@@ -528,14 +569,15 @@ def regroup(entries, uow, actor, now, *, homes=None):
     return result
 
 
-def restructure_reason(task, uow, kept=None):
-    """Why the task's PFs may not be rebuilt in place, or "" (owner 20.11: only before any work or output)."""
+def restructure_reason(task, uow, kept=None, operations=()):
+    """Why the task's PFs may not be rebuilt in place, or "" (owner 20.11: only before any work or output).
+    `kept` — old PF ids the rebuilt route keeps, `operations` — the rebuilt PFs."""
     if task.status is not ProductionStatus.RUNNING:
         return "Задание не в работе — состав ПФ не меняется"
     if uow.production.worked([task.id]):
         return "По заданию уже есть работа, выпуск или коробки — состав ПФ не меняется; запустите новое задание"
     from .cutting_infrastructure import CuttingMemberRow
-    from .resource_assignment_infrastructure import ResourceAllocationRow
+    from .resource_assignment_infrastructure import ResourceAllocationMachineRow, ResourceAllocationRow
     from sqlalchemy import select
 
     for operation in task.operations:
@@ -554,6 +596,16 @@ def restructure_reason(task, uow, kept=None):
             ResourceAllocationRow.operation_id.in_(dropped))).first() if dropped else None
         if allocated is not None:
             return "У исчезающего ПФ назначено оборудование — снимите назначение и повторите"
+        # A kept PF (the old «Заготовки» id keeps the cut) loses ETK operations to the new PFs: equipment chosen for
+        # those operations would stay on a PF that no longer has them.
+        positions = {operation.id: set(operation.etk_positions) for operation in operations if operation.id in kept}
+        machines = uow.session.execute(select(ResourceAllocationRow.operation_id, ResourceAllocationMachineRow.etk_position)
+            .join(ResourceAllocationMachineRow, ResourceAllocationMachineRow.allocation_id == ResourceAllocationRow.id)
+            .where(ResourceAllocationRow.operation_id.in_(list(positions)))).all() if positions else []
+        for operation_id, position in machines:
+            if position not in positions[operation_id]:
+                return (f"У ПФ «{task.operation(operation_id).stage}» назначено оборудование на операции, которые "
+                        "переходят в другой ПФ — снимите назначение и повторите")
     return ""
 
 
@@ -573,7 +625,7 @@ def rebuild_task(task, entry, uow, actor, now, homes):
             operations, kept = restructured_operations(task.operations, fresh)
         except ProductionValidationError as error:
             reason = str(error)
-    reason = reason or restructure_reason(task, uow, kept)
+    reason = reason or restructure_reason(task, uow, kept, operations)
     if reason:
         return task, reason
     for operation in task.operations:
@@ -597,9 +649,10 @@ def rebuild_task(task, entry, uow, actor, now, homes):
     return updated, ""
 
 
-def task_regroup_entries(task, document, card_version, uow, actor):
+def task_regroup_entries(task, document, card_version, uow, actor, homes=()):
     """Regroup entries (task, recipe, document, card version) for every unstarted preparation PF of the task, and the
-    grouping refusals. PFs with work or in a started group stay where they are."""
+    grouping refusals. PFs with work or in a started group stay where they are; so does a PF the master separated
+    (`_separated`) unless its recipe changed. `homes` — PFs this rebuild itself took out of their groups."""
     try:
         site = _site(task, min(task.operations, key=lambda op: op.position), uow, actor)
     except (ProductionValidationError, PermissionError) as error:
@@ -610,6 +663,8 @@ def task_regroup_entries(task, document, card_version, uow, actor):
         operation = task.operation(recipe.operation_id)
         member = uow.cutting.for_operation(operation.id)
         if member is None and uow.cutting.execution_reason(operation):
+            continue
+        if member is None and operation.id not in homes and _separated(task, operation.id, recipe.key, uow):
             continue
         if member is not None:
             group = uow.cutting.get(member.group_id)
@@ -655,7 +710,7 @@ def restructure_project(project, cards, actor, now, uow, *, task_ids=None):
             task = updated
         else:
             result["unchanged"].append(identity)
-        found, refused = task_regroup_entries(task, document, card_version, uow, actor)
+        found, refused = task_regroup_entries(task, document, card_version, uow, actor, homes)
         result["refused"].extend({**identity, "reason": f"группировка: {reason}"} for reason in refused)
         entries.extend(found)
     moved = regroup(entries, uow, actor, now, homes=homes)

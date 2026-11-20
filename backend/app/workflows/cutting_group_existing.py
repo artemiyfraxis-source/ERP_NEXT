@@ -136,7 +136,7 @@ def restructure(project, *, factory, techcards_factory, actor, now, dry_run=True
     """Rebuild unstarted tasks on their reissued ETK and regroup PFs by kind (one transaction; dry run rolls back)."""
     from app.modules.production.cutting_application import restructure_project
     from app.modules.production.domain import ProductionStatus
-    from app.modules.techcards.etk_read import issued_card_for_item
+    from app.modules.techcards.etk_read import issued_card_for_item, pinned_card
 
     key = normalize_project_number(project)
     if not key:
@@ -144,7 +144,7 @@ def restructure(project, *, factory, techcards_factory, actor, now, dry_run=True
     with factory() as uow:
         tasks = [t for t in uow.production.for_project(key) if t.status is ProductionStatus.RUNNING
                  and (task_ids is None or t.id in set(task_ids))]
-    cards = {}
+    cards, pinned = {}, {}
     with techcards_factory() as techcards:
         for task in tasks:
             card = issued_card_for_item(techcards, task.project, task.item)
@@ -152,15 +152,23 @@ def restructure(project, *, factory, techcards_factory, actor, now, dry_run=True
                 cards[task.id] = "нет выданной ЭТК"
             else:
                 cards[task.id] = (card.id, card.revision, card.document, card.version)
+                # «Before» labels come from the revision the task is pinned to now, not from the reissued ETK: a
+                # changed label text must show up as a change. A missing pinned revision gives no «before» labels.
+                shown, info = pinned_card(techcards, card, task.techcard_revision)
+                pinned[task.id] = None if info["fallback"] and task.techcard_revision is not None else shown.document
     documents = {identifier: entry[2] for identifier, entry in cards.items() if not isinstance(entry, str)}
     ids = [task.id for task in tasks]
     with factory() as uow:
         before = _counts(uow, key, ids)
-        labels_before = _label_check(uow, [uow.production.get(i) for i in ids], documents)
+        labels_before = _label_check(uow, [uow.production.get(i) for i in ids], pinned)
         result = restructure_project(key, cards, actor, now, uow, task_ids=task_ids)
         uow.session.flush()
         after = _counts(uow, key, ids)
-        labels_after = _label_check(uow, [uow.production.get(i) for i in ids], documents)
+        current = [uow.production.get(i) for i in ids]
+        # A rebuilt task now runs on the reissued ETK; a refused one still on its pinned revision.
+        labels_after = _label_check(uow, current, {
+            task.id: documents.get(task.id) if task.techcard_revision == cards[task.id][1] else pinned.get(task.id)
+            for task in current if not isinstance(cards[task.id], str)})
         if not dry_run:
             uow.commit()
     kept = ("tasks", "serials", "marking_batches", "label_jobs", "mark_events")

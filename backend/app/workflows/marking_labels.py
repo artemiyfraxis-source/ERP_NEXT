@@ -401,16 +401,18 @@ def task_access(task, operation_id, principal, uow, *, historical=False):
         raise ConcurrentProductionUpdate("Задание отменено")
 
 
-def issued_document(task, uow):
+def issued_document(task, uow, *, lock=True):
+    """The task's pinned ETK document. `lock=False` — a plain read for views (GET /progress): no FOR UPDATE on the card."""
     techcards = SimpleNamespace(techcards=SqlAlchemyTechcardRepository(uow.session))
     card = issued_card_for_item(techcards, task.project, task.item)
     if card is None:
         raise KeyError("Нет выданной ЭТК по этой позиции")
-    uow.session.scalar(select(ProjectTechcardRow).where(ProjectTechcardRow.id == card.id).with_for_update()
-                       .execution_options(populate_existing=True))
-    card = issued_card_for_item(techcards, task.project, task.item)
-    if card is None:
-        raise ConcurrentProductionUpdate(STALE)
+    if lock:
+        uow.session.scalar(select(ProjectTechcardRow).where(ProjectTechcardRow.id == card.id).with_for_update()
+                           .execution_options(populate_existing=True))
+        card = issued_card_for_item(techcards, task.project, task.item)
+        if card is None:
+            raise ConcurrentProductionUpdate(STALE)
     shown, revision = pinned_card(techcards, card, task.techcard_revision)
     if task.techcard_revision is not None and revision["fallback"]:
         raise ConcurrentProductionUpdate("Закреплённая ревизия ЭТК не найдена")
@@ -444,6 +446,8 @@ def source_rows(source, selected, principal, uow, now, interleave=False, remaini
             raise ConcurrentProductionUpdate("Состав группы изменился — обновите предпросмотр")
         entries, group_snapshot = [(task, source.operation_id, member)], None
     rows, snapshots = [], []
+    # One print-queue read for every task of the source (keys carry the task id), not one per task under the locks.
+    printed = printed_counts(uow.session, [task.id for task, _operation, _member in entries if task]) if remaining else None
     for task, operation_id, member in entries:
         task_access(task, operation_id, principal, uow)
         if member:
@@ -461,7 +465,7 @@ def source_rows(source, selected, principal, uow, now, interleave=False, remaini
         serial = issue_mark_serials_in(task, False, principal.actor, now, uow)
         expanded = labels(document, task, serial, selected, interleave)
         if remaining:
-            expanded = remaining_rows(expanded, printed_counts(uow.session, [task.id]))
+            expanded = remaining_rows(expanded, printed)
         if any(row["serial"] is not None for row in expanded):
             issue_mark_serials_in(task, True, principal.actor, now, uow)
         rows.extend(expanded)
@@ -700,7 +704,8 @@ def progress(principal: ReadUser, factory: Factory, group_id: UUID | None = None
             rows = []
             for task, operation, document in entries:
                 task_access(task, operation, principal, uow, historical=True)
-                rows.append(task_progress(task, document or issued_document(task, uow)[0], serial_range_of(task, uow), counts))
+                rows.append(task_progress(task, document or issued_document(task, uow, lock=False)[0],
+                                          serial_range_of(task, uow), counts))
             return {"rows": rows, "printed": sum(row["printed"] for row in rows),
                     "remaining": sum(row["remaining"] for row in rows)}
     return checked(run)
