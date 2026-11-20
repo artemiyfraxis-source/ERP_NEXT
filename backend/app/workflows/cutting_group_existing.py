@@ -133,7 +133,8 @@ def _label_check(uow, tasks, documents):
             for row in (task_progress(task, documents.get(task.id), serial_range_of(task, uow), counts) for task in tasks)]
 
 
-def restructure(project, *, factory, techcards_factory, actor, now, dry_run=True, task_ids=None):
+def restructure(project, *, factory, techcards_factory, actor, now, dry_run=True, task_ids=None,
+                release_moved_equipment=False):
     """Rebuild unstarted tasks on their reissued ETK and regroup PFs by kind (one transaction; dry run rolls back)."""
     from app.modules.production.cutting_application import restructure_project
     from app.modules.production.domain import ProductionStatus
@@ -162,7 +163,8 @@ def restructure(project, *, factory, techcards_factory, actor, now, dry_run=True
     with factory() as uow:
         before = _counts(uow, key, ids)
         labels_before = _label_check(uow, [uow.production.get(i) for i in ids], pinned)
-        result = restructure_project(key, cards, actor, now, uow, task_ids=task_ids)
+        result = restructure_project(key, cards, actor, now, uow, task_ids=task_ids,
+                                     release_moved_equipment=release_moved_equipment)
         uow.session.flush()
         after = _counts(uow, key, ids)
         current = [uow.production.get(i) for i in ids]
@@ -191,6 +193,9 @@ def main(argv=None):
     parser.add_argument("--restructure", action="store_true",
                         help="перестроить не начатые задания по перевыпущенной ЭТК на месте и разложить ПФ по группам "
                              "резки/маркировки/трубок (с --apply; по умолчанию — пробный прогон с откатом)")
+    parser.add_argument("--release-moved-equipment", action="store_true",
+                        help="с --restructure: оборудование, назначенное на операции, которые уходят в новые ПФ "
+                             "(этикетки, трубки), снять с прежнего ПФ вместо отказа (по умолчанию — отказ)")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--apply", action="store_true", help="создать группы (одна транзакция на группу)")
     mode.add_argument("--dry-run", action="store_true", help="только показать план (по умолчанию)")
@@ -208,6 +213,10 @@ def main(argv=None):
         extra = {"task_ids": args.task_ids}
         if args.restructure and args.refresh_etk:
             parser.error("--restructure и --refresh-etk — разные режимы")
+        if args.release_moved_equipment:
+            if not args.restructure:
+                parser.error("--release-moved-equipment — только с --restructure")
+            extra["release_moved_equipment"] = True
         result = (restructure if args.restructure else refresh_etk if args.refresh_etk else run)(args.project, factory=build_production_uow_factory(engine),
             techcards_factory=build_techcards_uow_factory(engine),
             actor=Actor(uuid5(NAMESPACE_URL, "erp-next:cutting-group-existing"), "Группировка запущенных ПФ", "ERP"),

@@ -195,7 +195,8 @@ All control actions require production edit permission and an optimistic `versio
 - Re-pinning a grouped task (`tasks/{id}/norms/refresh`) is no longer refused while its group is open and has no work
   session: the row keeps its frozen document (the group shows `etk_stale`) until `refresh-etk` moves it. A row behind
   its task's revision counts as stale for `refresh-etk` (also when the card version was already revalidated), and both
-  starts (group start, a member's standalone start) refuse it with 409 until then, besides the card-version check.
+  starts refuse it until then with «Обновить из ЭТК» (group start: 422, a member's standalone start: 409), besides
+  the card-version check.
   A started/frozen group still refuses the re-pin.
 
 ## Kinds: cable cut, labels, tubes (owner 20.11)
@@ -225,20 +226,36 @@ transaction.
 ```powershell
 .\.venv\Scripts\python -m app.workflows.cutting_group_existing --project '708К.' --restructure            # dry run
 .\.venv\Scripts\python -m app.workflows.cutting_group_existing --project '708К.' --restructure --apply
+.\.venv\Scripts\python -m app.workflows.cutting_group_existing --project '708К.' --restructure --release-moved-equipment
 ```
 
 One transaction for the project (project lock, then its groups by id, then tasks). The dry run executes everything and
 rolls back. For every running task whose issued ETK revision differs from the pinned one: refused (task untouched)
 when it has any work trace (`worked`: session, output, box, defect, delivery, started share), a PF in a started/frozen
 group, a disappearing PF with cutting-group history or with an equipment allocation, a kept PF (e.g. the old
-«Заготовки» id keeping the cut) with equipment chosen for an ETK operation that moves to another PF or disappears.
-ETK operations are followed by code and occurrence among operations with that code, not by number: a reissued ETK that
-inserts an operation shifts numbers only, and a binding of an operation staying in its PF is renumbered to the new
-number. Otherwise the task keeps its id,
+«Заготовки» id keeping the cut) with equipment chosen for an ETK operation that moves to another PF or disappears,
+or whose code now occurs a different number of times in that PF (ЗАЧ-A/ЗАЧ-B: which one is meant is unknown — the
+master binds it again). Inside the PF an operation is followed by its code and its occurrence among the PF's
+operations with that code, not by number: an operation inserted elsewhere shifts numbers only, and the binding is
+renumbered. A bound number that is not an operation of the old PF stays allowed while the rebuilt PF has that number.
+Only current allocations (with a current member) are checked and renumbered; retired ones are history and stay as they
+are. CLI option `--release-moved-equipment` (only with `--restructure`, default off): a binding of the kept PF whose
+operation moved to another rebuilt PF (labels, tubes) is removed from the kept PF's current allocation instead of
+refusing the task — one audit `production.equipment_released` per binding (task id and number, PF, op code, ETK
+number, machine, allocation, the new PF and the op's new ETK number); the new PFs stay unbound (planning places them).
+Only operations landing in a NEW PF (not a kept one, e.g. assembly) are released, matched by occurrence among that
+code's operations of the new PFs; a different count, a disappearing operation or ambiguity still refuse; retired
+allocations are untouched. Renumbering that would put two bindings of one allocation on one ETK number refuses (rebind
+by hand). A dry run executes the rebuild and rolls back, but the resource reflow (`sync_reflow`, machine/person
+plan claims) runs only on commit, i.e. with `--apply`: a claim conflict can still appear there. Output `released` lists the bindings per КБ (in a dry run: what would be released).
+HTTP «Обновить из ЭТК» never releases. Otherwise the task keeps its id,
 number, quantity, serial numbers and mark events; operations are rebuilt from the new route
 (`restructured_operations`): same ETK operations → same operation (id, assignees, window), PFs split out of one old PF
 → the first keeps the old id and window, the others get its assignees without a window; same scheme block → same
-operation; the rest are new. Audit `production.restructured`. Then all unstarted preparation PFs of the project's
+operation; the rest are new. Audit `production.restructured` (with `origins`: new PF → the old PF it was split out
+of: the old PF that alone holds all its operation codes; else by code and occurrence across the whole task — an
+inserted or dropped same-code operation elsewhere can mislead it — and last the position rule of
+`restructured_operations`). Then all unstarted preparation PFs of the project's
 tasks are regrouped by recipe (`regroup`): the old group of the cut keeps its id and number; labels and tubes get their
 own explicit groups; emptied groups are cancelled. A rerun changes nothing.
 
@@ -250,13 +267,13 @@ Regrouping rules (review of PR #977):
   the group card or the group cancelled) stays standalone while its recipe key equals that row's key; with a changed
   key it is regrouped. Splits the system made (a rebuild, a regroup move) carry `split_by` in the row snapshot and do
   not count, so a PF a rebuild left ungrouped is regrouped on a rerun. New PFs a rebuild split out of such a PF (labels,
-  tubes) stay standalone too. A PF of a «Выдать отдельно» launch group (`joinable = false`, idempotency key `cutting:…`)
+  tubes) stay standalone too, also on a rerun: the lineage is read back from the stored `origins` of the task's audit. A PF of a «Выдать отдельно» launch group (`joinable = false`, idempotency key `cutting:…`)
   stays in that group alone: regrouping never moves it elsewhere and never puts other PFs into it; new PFs split out of
   it get one separate group each, as a separate launch makes; a separate group that cannot take its PF back is replaced
   by a new separate group (`cutting:separate:…`), so a rerun changes nothing. Explicit groups (`cutting-existing:…`, from
   existing work or regrouping) merge as before.
 
-Output: `restructured`, `unchanged`, `refused`, `groups`, `moved`, `cancelled`, `counts.before/after` (tasks,
+Output: `restructured`, `unchanged`, `refused`, `groups`, `moved`, `cancelled`, `released`, `counts.before/after` (tasks,
 operations, serials, groups by state and kind, members by state, marking batches, label jobs, mark events),
 `invariants` (tasks, serials, batches, jobs, mark events unchanged), `labels` (printed/remaining items and
 `remaining_labels` per КБ), `labels_unchanged` (printed, remaining and remaining_labels equal before and after — a
@@ -273,7 +290,7 @@ operation index. An item (serial) is printed when all its numbered labels are. A
 изделию» gives fixed labels the item serial too: a fixed row of a plain preview also takes fixed labels of interleaved
 items, a fixed row of an interleaved preview also takes fixed labels of plain batches — neither is printed again.
 A numbered label whose expanded text equals a fixed text (numbered «{№}» of item 1 and fixed «1») is never taken as a
-fixed one.
+fixed one (accepted: a fixed «1» printed inside an interleaved item 1 is then printed again — the safer error).
 A reprint job («Перепечатать номера…») resolves to the label it reprints; one label counts once.
 
 - `GET /api/production/marking/progress?group_id=…` or `?task_id=…&operation_id=…` (marking read gate):
