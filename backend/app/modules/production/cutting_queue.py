@@ -114,7 +114,11 @@ def _pool_machine(tool: Mapping, catalog: EquipmentCatalog) -> tuple[str, str] |
     if machine is None or not machine.model_id:
         return None
     units = catalog.get(machine.key, 0)
-    return machine.key, f"{machine.label} · любой свободный" + (f" ({units})" if units else "")
+    # The operator knows a machine by its model («ОБ.100 BZW-D2.0S»), not by the long catalogue name.
+    model = catalog.models.get(machine.key)
+    article = model.article.replace("(R)", "").strip() if model else ""
+    label = f"{machine.code} {article}" if article else machine.label
+    return machine.key, f"{label} · любой свободный" + (f" ({units})" if units else "")
 
 
 def _machine(op: Mapping, warnings: list[str], catalog: EquipmentCatalog = EMPTY) -> tuple[str | None, str]:

@@ -311,7 +311,7 @@ def test_pool_row_is_keyed_by_the_model_and_labelled_any_free(production_api):
                    issue("709К.", "КБ1", standalone(on_machine(document(), "ОБ.100.2")))])
     machines = client.get(f"{URL}/machines").json()["machines"]
     pool = next(item for item in machines if item["machine_name"].endswith("любой свободный (3)"))
-    assert pool["machine_name"] == "ОБ.100 Автомат · любой свободный (3)" and pool["rows"] == 1
+    assert pool["machine_name"] == "ОБ.100 BZW-D2.0S · любой свободный (3)" and pool["rows"] == 1
     assert pool["machine_id"] != POOL
     assert queue(client, pool["machine_id"])["rows"][0]["project"] == "708К."
     # A single-unit row keeps its inventory number as the key.
