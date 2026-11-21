@@ -135,3 +135,19 @@ def test_a_late_start_after_the_template_edit_records_the_stored_card_without_th
     expected = [{"position": 1, "source": TEMPLATE, "changed_at": ""}]
     assert _stored(operation_id) == expected
     assert _my_operation(client)["etk_cards"] == {"live": expected, "started": expected}
+
+
+def test_card_names_by_code_come_from_the_library_in_one_read(production_api):  # noqa: F811
+    """Названия карт по коду для этапов-кодов: одним чтением, правка ERP поверх шаблона учитывается."""
+    _seed_template_and_etk()
+    card = _parsed(_cut_template())
+    with app.state.techcards_uow_factory() as uow:
+        assert uow.operation_cards.names()[card.code] == card.name
+    edit = OperationRecordEdit.from_json({
+        "name": "Новое название", "safety": "", "defects": "", "revision": "", "steps": [], "tooling": [],
+    })
+    with app.state.techcards_uow_factory() as uow:
+        uow.operation_cards.edit(card.code, edit, changed_at=BUILT + timedelta(hours=1), changed_by="Технолог")
+        uow.commit()
+    with app.state.techcards_uow_factory() as uow:
+        assert uow.operation_cards.names()[card.code] == "Новое название"

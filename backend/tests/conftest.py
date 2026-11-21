@@ -49,3 +49,12 @@ def _remove_stale_runs(root: Path) -> None:
                 shutil.rmtree(path, ignore_errors=True)
         except OSError:
             continue
+
+
+@pytest.fixture(autouse=True)
+def _reset_stage_name_loader():
+    """Загрузчик названий карт — глобальное состояние процесса: тест, собравший приложение, не должен оставлять его другому."""
+    from app.modules.production.launchable import set_stage_name_loader
+    set_stage_name_loader(None)
+    yield
+    set_stage_name_loader(None)

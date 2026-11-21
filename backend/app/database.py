@@ -1,6 +1,6 @@
 """Shared database wiring; domain modules keep ownership of their tables."""
 
-from collections.abc import Callable, Collection
+from collections.abc import Callable
 import os
 
 from fastapi import FastAPI
@@ -24,7 +24,6 @@ from .modules.fulfillment.application import UnitOfWork as FulfillmentUnitOfWork
 from .modules.fulfillment.infrastructure import SqlAlchemyFulfillmentUnitOfWork
 from .modules.production.application import UnitOfWork as ProductionUnitOfWork
 from .modules.production.infrastructure import SqlAlchemyProductionUnitOfWork
-from .modules.production.launchable import set_stage_name_loader
 from .modules.shipping.application import UnitOfWork as ShippingUnitOfWork
 from .modules.shipping.infrastructure import SqlAlchemyShippingUnitOfWork
 from .modules.references.application import UnitOfWork as ReferencesUnitOfWork
@@ -34,6 +33,7 @@ from .modules.operations.infrastructure import SqlAlchemyOperationsUnitOfWork
 from .modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
 from .modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
 from .modules.purchasing.infrastructure import SqlAlchemyPurchasingUnitOfWork
+from .workflows.stage_names import install_stage_name_loader
 from .workflows import etk_refresh  # noqa: F401 — registers the refresh-request trigger on every session
 from .workflows.kitset_names import KitsetNameQueue
 from .workflows.new_operation import SqlAlchemyReferencesOperationsUnitOfWork
@@ -94,19 +94,6 @@ def pool_options() -> dict[str, int]:
             raise RuntimeError(f"{env}={raw!r}: нужно целое число (размер пула соединений с базой)")
         options[option] = int(raw)
     return options
-
-
-def _stage_names_from_library(factory: Callable[[], TechcardsUnitOfWork]) -> Callable[[Collection[str]], dict[str, str]]:
-    """Код карты операции → её название из библиотеки карточек (для этапов заданий, записанных одним кодом)."""
-    def load(codes: Collection[str]) -> dict[str, str]:
-        with factory() as techcards:
-            templates = techcards.operation_cards.matching((), sorted(codes))
-        names: dict[str, str] = {}
-        for template in templates:
-            if template.code and template.name.strip() and template.code not in names:
-                names[template.code] = template.name.strip()
-        return names
-    return load
 
 
 def build_engine(database_url: str) -> Engine:
@@ -227,5 +214,5 @@ def configure_database(app: FastAPI, database_url: str, *, equipment_enabled: bo
     app.state.kitset_name_queue = KitsetNameQueue(sessionmaker(bind=engine, expire_on_commit=False, class_=Session))
     app.state.rack_layout_store = SqlAlchemyRackLayoutStore(sessionmaker(bind=engine, expire_on_commit=False, class_=Session))
     set_rack_layout_loader(app.state.rack_layout_store.load)
-    set_stage_name_loader(_stage_names_from_library(app.state.techcards_uow_factory))
+    install_stage_name_loader(app.state.techcards_uow_factory)
     return engine

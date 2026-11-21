@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 from dataclasses import dataclass, replace
@@ -78,31 +79,40 @@ _CYRILLIC = re.compile(r"[А-Яа-яЁё]")
 
 _BARE_CODE = re.compile(r"^[A-Za-z]+_\S+$")
 _NAME_TTL = 60.0
-_name_loader: Callable[[Collection[str]], Mapping[str, str]] | None = None
-_name_cache: dict[str, tuple[float, str]] = {}
+_NAME_RETRY = 5.0
+_name_loader: Callable[[], Mapping[str, str]] | None = None
+_name_cache: tuple[float, Mapping[str, str]] | None = None
+_name_failed = False
+_log = logging.getLogger(__name__)
 
 
-def set_stage_name_loader(loader: Callable[[Collection[str]], Mapping[str, str]] | None) -> None:
-    """Названия карт операций по коду (из библиотеки карточек): этап, записанный одним кодом, показывается названием
-    карты, а не кодом (21.11). Подключает сборка приложения; без загрузчика этап остаётся как записан."""
-    global _name_loader
+def set_stage_name_loader(loader: Callable[[], Mapping[str, str]] | None) -> None:
+    """Названия карт операций по коду (вся библиотека одним чтением): этап, записанный одним кодом, показывается
+    названием карты, а не кодом (21.11). Подключают сборка приложения и воркер; без загрузчика этап остаётся как записан."""
+    global _name_loader, _name_cache, _name_failed
     _name_loader = loader
-    _name_cache.clear()
+    _name_cache = None
+    _name_failed = False
 
 
-def _card_name(code: str) -> str:
+def _card_names() -> Mapping[str, str]:
+    global _name_cache, _name_failed
     if _name_loader is None:
-        return ""
+        return {}
     now = time.monotonic()
-    hit = _name_cache.get(code)
-    if hit is not None and now - hit[0] < _NAME_TTL:
-        return hit[1]
+    if _name_cache is not None and now < _name_cache[0]:
+        return _name_cache[1]
     try:
-        name = str(_name_loader([code]).get(code) or "").strip()
+        names = dict(_name_loader())
+        _name_cache = (now + _NAME_TTL, names)
+        _name_failed = False
     except Exception:  # noqa: BLE001 — название не должно ронять экран
-        return hit[1] if hit else ""
-    _name_cache[code] = (now, name)
-    return name
+        if not _name_failed:
+            _log.warning("Названия карт операций не прочитаны, этапы остаются кодами", exc_info=True)
+        names = dict(_name_cache[1]) if _name_cache is not None else {}
+        _name_cache = (now + _NAME_RETRY, names)
+        _name_failed = True
+    return names
 
 
 def stage_name(value: str) -> str:
@@ -114,7 +124,7 @@ def stage_name(value: str) -> str:
     if prefixed and not _CYRILLIC.search(prefixed.group(1)):
         text = prefixed.group(2).strip()
     if _BARE_CODE.match(text):
-        return _card_name(text) or text
+        return _card_names().get(text) or text
     return OPERATION_TYPE_NAMES.get(text, text)
 
 
