@@ -78,7 +78,11 @@ def test_upgrade_keeps_every_job_and_names_its_purpose_and_constraints_hold(data
         _print_job(db, "cancelled", status="cancelled", finished_at=NOW, error="Отменено")
         refused_jobs = [
             {"copies": 51},
-            {"pages": 11, "copies": 50},                                             # 550 sheets
+            {"pages": 11, "copies": 10},                                             # 110 sheets
+            {"pages": 101},
+            {"idempotency_key": "k"},                                                # a key without the request
+            {"idempotency_key": " ", "fingerprint": "f" * 64, "requester_id": "u1"},
+            {"idempotency_key": "k", "fingerprint": "f" * 64},                     # a key with nobody's name
             {"status": "taken", "taken_at": NOW, "attempt": "a"},                   # taken without a lease
             {"status": "spooled", "finished_at": NOW},                               # finished without being taken
             {"status": "failed", "taken_at": NOW, "attempt": "a", "finished_at": NOW},  # failed without a reason
@@ -90,6 +94,13 @@ def test_upgrade_keeps_every_job_and_names_its_purpose_and_constraints_hold(data
         for number, values in enumerate(refused_jobs):
             with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
                 _print_job(db, f"bad-{number}", **values)
+        _print_job(db, "sheets-100", pages=10, copies=10)
+        keyed = {"idempotency_key": "k", "fingerprint": "f" * 64}
+        _print_job(db, "keyed", requester_id="u1", **keyed)
+        _print_job(db, "keyed-other-person", requester_id="u2", **keyed)
+        _print_job(db, "unkeyed-again", requester_id="u1")
+        with pytest.raises(sqlite3.IntegrityError, match="UNIQUE"):
+            _print_job(db, "keyed-twice", requester_id="u1", **keyed)
         with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
             _print_job(db, "nowhere", target_printer="Нет такого")
         with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):

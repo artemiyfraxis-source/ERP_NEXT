@@ -1533,10 +1533,11 @@ function Invoke-AgentUpdate {
 }
 
 # Отчёт серверу: кто я (номер, имя ПК), версия, сканеры, адрес в сети. Ответ может содержать update - новую версию.
+# -Cached (2.12.0, печать документа): устройства из прошлого отчёта, без поиска и без обновления агента посреди печати.
 function Send-Heartbeat {
-    param([string]$Base, [string]$AuthToken, [string]$PrinterName, [string]$ScannerAddress, [switch]$Lightweight, [string]$MarkingPrinterName)
+    param([string]$Base, [string]$AuthToken, [string]$PrinterName, [string]$ScannerAddress, [switch]$Lightweight, [string]$MarkingPrinterName, [switch]$Cached)
     $devices = $script:HeartbeatDevices
-    if (-not $Lightweight) {
+    if (-not $Lightweight -and -not $Cached) {
         $scannersFound = @(Get-AgentScanners -ScannerAddress $ScannerAddress)
         $devices = @{
             scanners = $scannersFound; printer = [string]$PrinterName
@@ -1573,7 +1574,7 @@ function Send-Heartbeat {
     $names = ($scanners | ForEach-Object { $_.name }) -join '; '
     $line = "Отчёт серверу: сканеры: $(if ($names) { $names } else { 'не найдены' })"
     if ($line -ne $script:LastHeartbeatLine) { Write-Log $line; $script:LastHeartbeatLine = $line }
-    if (-not $Lightweight -and $reply -and $reply.update) { [void](Invoke-AgentUpdate -Base $Base -Update $reply.update) }
+    if (-not $Lightweight -and -not $Cached -and $reply -and $reply.update) { [void](Invoke-AgentUpdate -Base $Base -Update $reply.update) }
 }
 
 function Start-AgentLoop {
@@ -2135,16 +2136,31 @@ function Get-PrintRectangle {
     return New-Object Drawing.RectangleF ([single](-$HardX)), ([single](-$HardY)), ([single]($width * $scale)), ([single]($height * $scale))
 }
 
+# Пока документ печатается, главный цикл стоит: не реже раза в 30 с агент продлевает задание и шлёт отчёт серверу
+# (иначе через 3 мин МФУ «не на связи», через 5 мин задание «не подтверждено»). Сбой связи печать не прерывает.
+$script:DocumentProgressEverySec = 30
+function Invoke-DocumentProgress {
+    param([hashtable]$State, [scriptblock]$OnProgress)
+    if (-not $OnProgress -or [DateTime]::UtcNow -lt $State.nextProgress) { return }
+    $State.nextProgress = [DateTime]::UtcNow.AddSeconds($script:DocumentProgressEverySec)
+    try { & $OnProgress } catch { Write-Log "Печать документа: продление не ушло: $($_.Exception.Message)" }
+}
+
 function Invoke-DocumentPrint {
-    param([string]$PrinterName, [byte[]]$Bytes, [int]$Copies, [string]$Title, [string]$ToFile)
+    param([string]$PrinterName, [byte[]]$Bytes, [int]$Copies, [string]$Title, [string]$ToFile, [int]$ExpectedPages, [scriptblock]$OnProgress)
     Add-Type -AssemblyName System.Drawing
     $opened = Open-PdfDocument -Bytes $Bytes
     $document = $opened.Document
     $pages = [int]$document.PageCount
     $print = New-Object Drawing.Printing.PrintDocument
-    $state = @{ next = 0; total = $pages * [Math]::Max(1, $Copies); failure = $null; printed = 0 }
+    $state = @{ next = 0; total = $pages * [Math]::Max(1, $Copies); failure = $null; printed = 0
+        nextProgress = [DateTime]::UtcNow.AddSeconds($script:DocumentProgressEverySec) }
     try {
         if ($pages -lt 1) { throw 'В PDF нет страниц' }
+        # ERP проверил страницы (pypdf) и ограничил листы; Windows видит другое число — не печатаем ничего.
+        if ($ExpectedPages -gt 0 -and $pages -ne $ExpectedPages) {
+            throw "Windows видит в PDF $pages стр., а ERP — ${ExpectedPages}: документ не напечатан, сохраните PDF заново и отправьте снова"
+        }
         $print.PrinterSettings.PrinterName = $PrinterName
         if (-not $print.PrinterSettings.IsValid) { throw "Очередь Windows «$PrinterName» не найдена" }
         # Только для проверки на ПК разработчика: «Microsoft Print to PDF» без окна выбора файла.
@@ -2170,6 +2186,7 @@ function Invoke-DocumentPrint {
                 $e.Graphics.DrawImage($page.Image, $rect)
                 $state.printed++
                 $state.next++
+                Invoke-DocumentProgress $state $OnProgress
                 $e.HasMorePages = $state.next -lt $state.total
             } catch {
                 $state.failure = $_.Exception.Message
@@ -2186,6 +2203,12 @@ function Invoke-DocumentPrint {
         $print.Dispose()
         $opened.Writer.Dispose(); $opened.Stream.Dispose()
     }
+}
+
+function Send-DocumentLease {
+    param([string]$Base, [string]$AuthToken, [string]$MachineId, $Job)
+    $body = @{ machine_id = $MachineId; attempt = [string]$Job.attempt }
+    Invoke-ErpApi -Url "$Base/api/stock/documents/agent/jobs/$($Job.id)/lease" -Body $body -AuthToken $AuthToken -MachineId $MachineId | Out-Null
 }
 
 function Send-DocumentResult {
@@ -2217,7 +2240,13 @@ function Invoke-DocumentPollOnce {
             $message = 'dry run'
             Write-Log "DRY RUN: документ $($job.id) «$($job.title)», $($job.pages) стр. × $copies — печать пропущена"
         } else {
-            $sheets = Invoke-DocumentPrint -PrinterName ([string]$job.printer) -Bytes $bytes -Copies $copies -Title ([string]$job.title)
+            # Вызывается из печати, пока эта функция ждёт её: $Base, $job и прочие видны из её области.
+            $progress = {
+                try { Send-Heartbeat -Base $Base -AuthToken $AuthToken -Cached } catch { Write-Log "Отчёт серверу не ушёл: $($_.Exception.Message)" }
+                Send-DocumentLease -Base $Base -AuthToken $AuthToken -MachineId $machineId -Job $job
+            }
+            $sheets = Invoke-DocumentPrint -PrinterName ([string]$job.printer) -Bytes $bytes -Copies $copies -Title ([string]$job.title) `
+                -ExpectedPages ([int]$job.pages) -OnProgress $progress
             $outcome = 'spooled'
             Write-Log "Документ отправлен на печать: $($job.id) «$($job.title)», листов $sheets, очередь «$($job.printer)»"
         }

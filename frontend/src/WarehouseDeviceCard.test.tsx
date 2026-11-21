@@ -116,7 +116,45 @@ it("MFP: plain scan with colour and resolution, the last scan to open, print wai
   expect(print.disabled).toBe(true);
   fireEvent.change(screen.getByLabelText("Файл для печати"), { target: { files: [new File(["%PDF-1.4"], "Паспорт.pdf", { type: "application/pdf" })] } });
   fireEvent.click(screen.getByRole("button", { name: "Печатать" }));
-  await waitFor(() => expect(calls.some((call) => call.url === "/api/stock/devices/mfp/pc/print?printer=Pantum+BM2300+Series&copies=1")).toBe(true));
+  await waitFor(() => expect(calls.some((call) => call.url.startsWith("/api/stock/devices/mfp/pc/print?printer=Pantum+BM2300+Series&copies=1&idempotency_key="))).toBe(true));
+});
+
+it("MFP: a retry after a lost answer keeps the key, a new print after success gets a new one", async () => {
+  const keys: Record<string, string[]> = { print: [], test: [], copy: [] };
+  let lose = true;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    if (url.includes("/print?")) keys.print.push(new URL(url, "http://x").searchParams.get("idempotency_key") ?? "");
+    if (url.endsWith("/print-test")) keys.test.push(JSON.parse(String(init?.body)).idempotency_key);
+    if (url.endsWith("/scans/s1/print")) keys.copy.push(JSON.parse(String(init?.body)).idempotency_key);
+    if (lose) throw new TypeError("Failed to fetch");
+    return json({ id: "p2", status: "pending" });
+  });
+  render(<MfpCardView view={mfp({ prints: [] })} reload={() => undefined} machineId="pc" />);
+  const passport = new File(["%PDF-1.4"], "Паспорт.pdf", { type: "application/pdf", lastModified: 1 });
+  fireEvent.change(screen.getByLabelText("Файл для печати"), { target: { files: [passport] } });
+  fireEvent.click(screen.getByRole("button", { name: "Печатать" }));
+  await waitFor(() => expect(keys.print).toHaveLength(1));
+  await waitFor(() => expect((screen.getByRole("button", { name: "Пробная страница" }) as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(screen.getByRole("button", { name: "Пробная страница" }));
+  await waitFor(() => expect(keys.test).toHaveLength(1));
+  lose = false;
+  fireEvent.click(screen.getByRole("button", { name: "Печатать" }));
+  await waitFor(() => expect(keys.print).toHaveLength(2));
+  expect(keys.print[1]).toBe(keys.print[0]);
+  expect(keys.print[0]).toMatch(/\S/);
+  fireEvent.click(screen.getByRole("button", { name: "Пробная страница" }));
+  await waitFor(() => expect(keys.test).toHaveLength(2));
+  expect(keys.test[1]).toBe(keys.test[0]);
+  fireEvent.click(screen.getByRole("button", { name: "Пробная страница" }));
+  await waitFor(() => expect(keys.test).toHaveLength(3));
+  expect(keys.test[2]).not.toBe(keys.test[1]);
+
+  fireEvent.click(screen.getByRole("button", { name: "Напечатать копию" }));
+  await waitFor(() => expect(keys.copy).toHaveLength(1));
+  fireEvent.click(await screen.findByRole("button", { name: "Напечатать копию" }));
+  await waitFor(() => expect(keys.copy).toHaveLength(2));
+  expect(keys.copy[1]).not.toBe(keys.copy[0]);
 });
 
 it("MFP: an old agent says what to update, and no link stops both actions", () => {

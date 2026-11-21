@@ -135,6 +135,82 @@ Describe 'Invoke-DocumentPollOnce: отказы' {
     }
 }
 
+Describe 'Invoke-DocumentPollOnce: долгая печать' {
+    BeforeEach {
+        $script:HeartbeatDevices = @{ printers = @(@{ name = 'Pantum BM2300 Series'; kind = 'document'; present = $true }) }
+        Mock Get-MachineId { 'pc-1' }
+    }
+    It 'во время печати продлевает задание и шлёт отчёт серверу без поиска устройств и без обновления' {
+        Mock Invoke-ErpApi -ParameterFilter { $Url -like '*/claim' } { [pscustomobject]@{ job = (New-DocJob) } }
+        Mock Invoke-ErpApi -ParameterFilter { $Url -like '*/lease' } {}
+        Mock Invoke-ErpApi -ParameterFilter { $Url -like '*/result' } {}
+        Mock Send-Heartbeat {}
+        Mock Invoke-DocumentPrint { & $OnProgress; & $OnProgress; 3 }
+        Invoke-DocumentPollOnce -Base 'http://x' -AuthToken 't' | Should Be 'done'
+        Assert-MockCalled Invoke-DocumentPrint -Times 1 -Exactly -Scope It -ParameterFilter { $ExpectedPages -eq 1 -and $OnProgress }
+        Assert-MockCalled Invoke-ErpApi -Times 2 -Exactly -Scope It -ParameterFilter {
+            $Url -eq 'http://x/api/stock/documents/agent/jobs/d1/lease' -and $Body.attempt -eq 'a1' -and $Body.machine_id -eq 'pc-1' }
+        Assert-MockCalled Send-Heartbeat -Times 2 -Exactly -Scope It -ParameterFilter { $Cached -and $Base -eq 'http://x' }
+    }
+    It 'отказ продления печать не прерывает' {
+        Mock Invoke-ErpApi -ParameterFilter { $Url -like '*/claim' } { [pscustomobject]@{ job = (New-DocJob) } }
+        Mock Invoke-ErpApi -ParameterFilter { $Url -like '*/lease' } { throw '409 Задание уже не ждёт печати' }
+        Mock Invoke-ErpApi -ParameterFilter { $Url -like '*/result' } {}
+        Mock Send-Heartbeat { throw 'сеть' }
+        Mock Invoke-DocumentPrint { Invoke-DocumentProgress @{ nextProgress = [DateTime]::MinValue } $OnProgress; 3 }
+        Invoke-DocumentPollOnce -Base 'http://x' -AuthToken 't' | Should Be 'done'
+        Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { $Url -like '*/result' -and $Body.outcome -eq 'spooled' }
+    }
+}
+
+Describe 'Invoke-DocumentProgress' {
+    It 'не чаще раза в 30 с' {
+        $script:ticks = 0
+        $state = @{ nextProgress = [DateTime]::UtcNow.AddSeconds(-1) }
+        Invoke-DocumentProgress $state { $script:ticks++ }
+        Invoke-DocumentProgress $state { $script:ticks++ }
+        $script:ticks | Should Be 1
+        ($state.nextProgress - [DateTime]::UtcNow).TotalSeconds | Should BeGreaterThan 25
+        $state.nextProgress = [DateTime]::UtcNow.AddSeconds(-1)
+        Invoke-DocumentProgress $state { $script:ticks++ }
+        $script:ticks | Should Be 2
+        Invoke-DocumentProgress @{ nextProgress = [DateTime]::MinValue } $null
+    }
+}
+
+Describe 'Invoke-DocumentPrint: страницы' {
+    It 'Windows видит другое число страниц — не печатает ничего' {
+        Mock Open-PdfDocument { @{ Document = [pscustomobject]@{ PageCount = 2 }; Stream = (New-Object IO.MemoryStream); Writer = (New-Object IO.MemoryStream) } }
+        $failed = $null
+        try { Invoke-DocumentPrint -PrinterName 'Нет такой очереди' -Bytes $script:PdfBytes -Copies 1 -Title 't' -ExpectedPages 1 }
+        catch { $failed = $_.Exception.Message }
+        $failed | Should Match 'Windows видит в PDF 2 стр\., а ERP — 1'
+    }
+    It 'то же число страниц проходит к проверке очереди' {
+        Mock Open-PdfDocument { @{ Document = [pscustomobject]@{ PageCount = 1 }; Stream = (New-Object IO.MemoryStream); Writer = (New-Object IO.MemoryStream) } }
+        $failed = $null
+        try { Invoke-DocumentPrint -PrinterName 'Нет такой очереди ERP' -Bytes $script:PdfBytes -Copies 1 -Title 't' -ExpectedPages 1 }
+        catch { $failed = $_.Exception.Message }
+        $failed | Should Match 'не найдена'
+    }
+}
+
+Describe 'Send-Heartbeat -Cached' {
+    It 'устройства из прошлого отчёта, без поиска и без обновления агента' {
+        $script:VnaControlInitialized = $false
+        $script:HeartbeatDevices = @{ scanners = @(); printer = 'TSC'; lan_ip = ''; arinst = $false
+            printers = @(@{ name = 'Pantum BM2300 Series'; kind = 'document'; present = $true }) }
+        Mock Get-MachineId { 'pc-1' }; Mock Get-VnaCapability { $null }
+        Mock Get-AgentScanners { throw 'must not discover' }
+        Mock Get-Printer { throw 'must not list printers' }
+        Mock Invoke-AgentUpdate { throw 'must not update while printing' }
+        Mock Invoke-ErpApi { [pscustomobject]@{ ok = $true; update = @{ version = '9.9.9' } } }
+        Send-Heartbeat 'http://test' 'token' -Cached
+        Assert-MockCalled Invoke-ErpApi -Times 1 -Exactly -Scope It -ParameterFilter { $Body.printers[0].name -eq 'Pantum BM2300 Series' }
+        Assert-MockCalled Invoke-AgentUpdate -Times 0 -Exactly -Scope It
+    }
+}
+
 Describe 'Get-PrintRectangle' {
     It 'A4 на A4 — в натуральную величину от угла листа' {
         $rect = Get-PrintRectangle 8.27 11.69 827 1169 16 17

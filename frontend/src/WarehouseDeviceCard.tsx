@@ -76,6 +76,19 @@ function Shell({ title, close, width = 1100, children }: { title: string; close:
   </PageWindow>;
 }
 
+/** Ключ повтора печати: тот же запрос после потерянного ответа идёт с тем же ключом (сервер вернёт уже поставленное
+    задание), другой запрос или повтор после успеха — с новым. */
+function useRetryKey() {
+  const last = useRef<{ request: string; key: string } | null>(null);
+  return useRef({
+    key(request: string) {
+      if (last.current?.request !== request) last.current = { request, key: crypto.randomUUID() };
+      return last.current.key;
+    },
+    done() { last.current = null; },
+  }).current;
+}
+
 /** Действие с итогом рядом с кнопкой: «Отправлено 10:05» или причина отказа. */
 function useAction(reload: () => void) {
   const [busy, setBusy] = useState("");
@@ -211,6 +224,7 @@ function ScanBlock({ view, reload, machineId }: { view: MfpView; reload: () => v
   const [note, setNote] = useState<Note>(null);
   const [copies, setCopies] = useState(1);
   const { busy, run } = useAction(reload);
+  const retry = useRetryKey();
   const live = view.scanners.filter((item) => item.present);
   const chosen = live.find((item) => item.id === scanner)?.id ?? live[0]?.id ?? "";
   const open = view.scans.find((scan) => scan.status === "pending" || scan.status === "claimed");
@@ -253,7 +267,10 @@ function ScanBlock({ view, reload, machineId }: { view: MfpView; reload: () => v
         <label className="device-copies">Копий<input type="number" inputMode="numeric" min={1} max={COPIES_MAX} value={copies} name="scan-copies"
           onChange={(event) => setCopies(Math.min(COPIES_MAX, Math.max(1, Number(event.target.value) || 1)))} /></label>
         <button type="button" className="secondary small" disabled={!!busy}
-          onClick={() => void run("copy", () => warehouseDevicesApi.printScan(last.id, printer, copies), "Копия скана отправлена на МФУ", setNote)}>
+          onClick={() => void run("copy", async () => {
+            await warehouseDevicesApi.printScan(last.id, printer, copies, retry.key(JSON.stringify(["copy", last.id, printer, copies])));
+            retry.done();
+          }, "Копия скана отправлена на МФУ", setNote)}>
           Напечатать копию</button>
       </span>}
     </div>}
@@ -267,13 +284,17 @@ function PrintBlock({ view, reload, machineId }: { view: MfpView; reload: () => 
   const [note, setNote] = useState<Note>(null);
   const picker = useRef<HTMLInputElement>(null);
   const { busy, run } = useAction(reload);
+  const retry = useRetryKey();
+  const testRetry = useRetryKey();
   const live = view.printers.filter((item) => item.present);
   const chosen = live.find((item) => item.name === printer)?.name ?? live[0]?.name ?? "";
   const why = !view.online ? "нет связи с ПК" : !chosen ? "принтер МФУ не найден" : "";
   const send = () => {
     if (!file) return;
     void run("print", async () => {
-      await warehouseDevicesApi.print(machineId, chosen, copies, file);
+      const request = JSON.stringify(["print", chosen, copies, file.name, file.size, file.lastModified]);
+      await warehouseDevicesApi.print(machineId, chosen, copies, file, retry.key(request));
+      retry.done();
       setFile(null);
       if (picker.current) picker.current.value = "";
     }, `«${file.name}» отправлен на МФУ`, setNote);
@@ -302,7 +323,10 @@ function PrintBlock({ view, reload, machineId }: { view: MfpView; reload: () => 
       <button type="button" className="primary device-main" disabled={!!busy || !!why || !file} onClick={send}>
         {file ? `Печатать${copies > 1 ? ` · ${copies} коп.` : ""}` : "Печатать — выберите файл"}</button>
       <button type="button" className="secondary device-main" disabled={!!busy || !!why}
-        onClick={() => void run("test", () => warehouseDevicesApi.testPage(machineId, chosen), "Пробная страница отправлена", setNote)}>
+        onClick={() => void run("test", async () => {
+          await warehouseDevicesApi.testPage(machineId, chosen, testRetry.key(JSON.stringify(["test", chosen])));
+          testRetry.done();
+        }, "Пробная страница отправлена", setNote)}>
         Пробная страница</button>
     </div>
     {why && <p className="machine-cmd-note machine-muted">Печатать нельзя: {why}</p>}

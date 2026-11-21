@@ -7,9 +7,12 @@ import io
 from datetime import timedelta
 from uuid import UUID, uuid4
 
+import warnings
+
 import pytest
 from fastapi.testclient import TestClient
 from pypdf import PdfReader, PdfWriter
+from PIL import Image
 from sqlalchemy import select
 
 from app.main import app
@@ -210,8 +213,10 @@ def test_what_the_printer_cannot_take_is_refused_before_the_queue(stand):
     admin, _agent, _clock, sessions, _read = stand
     assert _print(admin, _pdf(), copies=51).status_code == 422
     assert _print(admin, _pdf(), copies=0).status_code == 422
-    sheets = _print(admin, _pdf(11), copies=50)
-    assert sheets.status_code == 422 and "500 листов" in sheets.json()["detail"]
+    sheets = _print(admin, _pdf(11), copies=10)
+    assert sheets.status_code == 422 and "100 листов" in sheets.json()["detail"], "110 sheets keep the agent too long"
+    pages = _print(admin, _pdf(101))
+    assert pages.status_code == 422 and "до 100" in pages.json()["detail"]
     text = admin.post(f"{CARD}/print", headers=_csrf(admin), params={"printer": MFP},
                       files={"file": ("a.txt", b"hello", "text/plain")})
     assert text.status_code == 422 and "PDF, JPG или PNG" in text.json()["detail"]
@@ -303,3 +308,130 @@ def test_the_mfp_is_one_tile_named_by_its_model_and_the_tsc_names_itself(stand):
     assert [row["name"] for row in shown] == ["МФУ Pantum BM2300", "Принтер этикеток TSC MB341", "Станок"]
     assert shown[0]["station"] == {"kind": "mfp", "machine_id": PC, "scanners": [SCANNER], "printers": [MFP]}
     assert shown[1]["station"] == {"kind": "labels"} and "station" not in shown[2]
+
+
+# --- review of PR #1005 -----------------------------------------------------------------------------------------
+
+
+def _lease(agent: dict, job: dict, attempt: str | None = None):
+    return TestClient(app).post(f"/api/stock/documents/agent/jobs/{job['id']}/lease", headers=agent,
+                                json={"machine_id": PC, "attempt": attempt or job["attempt"]})
+
+
+def test_the_agent_extends_the_lease_while_it_prints_and_only_its_own_attempt(stand):
+    admin, agent, clock, _sessions, _read = stand
+    assert _print(admin, _pdf(10), copies=10).status_code == 200, "100 sheets still go"
+    job = admin.get(CARD).json()["prints"][0]
+    taken = _claim_doc(agent)
+    for _round in range(3):  # 12 minutes of printing, well past one lease
+        clock.now += LEASE - timedelta(minutes=1)
+        extended = _lease(agent, taken)
+        assert extended.status_code == 200, extended.text
+        assert extended.headers["content-type"] == "application/json; charset=utf-8"
+        assert admin.get(f"/api/stock/devices/prints/{job['id']}").json()["status"] == "taken"
+    assert _lease(agent, taken, attempt=str(uuid4())).status_code == 409, "a stale attempt does not keep the job"
+    other = _bearer(_issue(admin, scopes=("labels:print", "scan:upload"), name="Другой ПК")["token"])
+    other["X-Agent-Machine-Id"] = "other-pc"
+    assert _lease(other, taken).status_code == 403
+    assert admin.post(f"/api/stock/documents/agent/jobs/{job['id']}/lease", headers=_csrf(admin),
+                      json={"machine_id": PC, "attempt": taken["attempt"]}).status_code == 403
+    assert _report(agent, taken).json()["status"] == "spooled"
+    assert _lease(agent, taken).status_code == 409, "an answered job is not printing any more"
+    assert _report(agent, taken).json()["status"] == "spooled", "the repeated receipt changes nothing"
+    assert _report(agent, taken, "failed", "Бумага").status_code == 409, "nor flips the final state"
+
+
+def test_a_lease_that_ran_out_is_not_revived(stand):
+    admin, agent, clock, _sessions, _read = stand
+    job = _print(admin, _pdf()).json()
+    taken = _claim_doc(agent)
+    clock.now += LEASE + timedelta(seconds=1)
+    assert _lease(agent, taken).status_code == 409
+    assert admin.get(f"/api/stock/devices/prints/{job['id']}").json()["status"] == "unknown"
+    assert _report(agent, taken).json()["status"] == "spooled", "the late receipt still says what happened"
+
+
+def _png(width: int, height: int) -> bytes:
+    buffer = io.BytesIO()
+    Image.new("1", (width, height)).save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+def test_a_huge_picture_is_refused_before_it_is_decoded(stand, monkeypatch):
+    admin, _agent, _clock, sessions, _read = stand
+    big = admin.post(f"{CARD}/print", headers=_csrf(admin), params={"printer": MFP},
+                     files={"file": ("plan.png", _png(7000, 6000), "image/png")})
+    assert big.status_code == 422 and "40 Мп" in big.json()["detail"]
+    small = admin.post(f"{CARD}/print", headers=_csrf(admin), params={"printer": MFP},
+                       files={"file": ("plan.png", _png(100, 100), "image/png")})
+    assert small.status_code == 200 and small.json()["title"] == "plan.pdf"
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)  # Pillow's own bomb guard: 2× the limit is an error
+    bomb = admin.post(f"{CARD}/print", headers=_csrf(admin), params={"printer": MFP},
+                      files={"file": ("bomb.png", _png(100, 100), "image/png")})
+    assert bomb.status_code == 422 and "слишком большая" in bomb.json()["detail"]
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 6000)  # between 1× and 2× Pillow warns; as an error — refused too
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", Image.DecompressionBombWarning)
+        warned = admin.post(f"{CARD}/print", headers=_csrf(admin), params={"printer": MFP},
+                            files={"file": ("bomb.png", _png(100, 100), "image/png")})
+    assert warned.status_code == 422 and "слишком большая" in warned.json()["detail"]
+    broken = admin.post(f"{CARD}/print", headers=_csrf(admin), params={"printer": MFP},
+                        files={"file": ("broken.png", _png(10, 10)[:40], "image/png")})
+    assert broken.status_code == 422
+    with sessions() as session:
+        assert len(session.scalars(select(DocumentPrintJobRow)).all()) == 1
+
+
+def test_a_receipt_picture_is_still_kept_without_the_print_limits():
+    from app.modules.warehouse.receipts_application import as_pdf
+
+    name, kind, content = as_pdf("УПД.png", "image/png", _png(7000, 6000))
+    assert (name, kind) == ("УПД.pdf", "application/pdf") and content.startswith(b"%PDF-")
+    assert as_pdf("УПД.png", "image/png", b"PNG broken") == ("УПД.png", "image/png", b"PNG broken")
+
+
+def test_a_retry_with_the_same_key_answers_the_same_job(stand):
+    admin, agent, _clock, sessions, _read = stand
+    content = _pdf(2)
+
+    def upload(copies: int = 1, key: str = "k-upload", body: bytes = content):
+        return admin.post(f"{CARD}/print", headers=_csrf(admin),
+                          params={"printer": MFP, "copies": copies, "idempotency_key": key},
+                          files={"file": ("Паспорт.pdf", body, "application/pdf")})
+
+    first = upload()
+    assert first.status_code == 200, first.text
+    assert upload().json()["id"] == first.json()["id"], "the answer was lost: the retry prints nothing twice"
+    assert upload(copies=2).status_code == 409, "the same key for another request"
+    assert upload(body=_pdf(3)).status_code == 409
+    assert upload(key="k-other").json()["id"] != first.json()["id"], "a new key is a new print"
+    assert _print(admin, content).json()["id"] != first.json()["id"], "without a key every request prints"
+
+    test = {"printer": MFP, "idempotency_key": "k-test"}
+    page = admin.post(f"{CARD}/print-test", headers=_csrf(admin), json=test).json()
+    assert admin.post(f"{CARD}/print-test", headers=_csrf(admin), json=test).json()["id"] == page["id"]
+
+    scan = _scan(admin)
+    _claim_scan(agent)
+    _send_scan(agent, scan["id"], _pdf())
+    copy = {"printer": MFP, "copies": 2, "idempotency_key": "k-copy"}
+    made = admin.post(f"/api/stock/devices/scans/{scan['id']}/print", headers=_csrf(admin), json=copy).json()
+    again = admin.post(f"/api/stock/devices/scans/{scan['id']}/print", headers=_csrf(admin), json=copy)
+    assert again.json()["id"] == made["id"]
+    assert admin.post(f"/api/stock/devices/scans/{scan['id']}/print", headers=_csrf(admin),
+                      json={**copy, "copies": 3}).status_code == 409
+    blank = admin.post(f"{CARD}/print-test", headers=_csrf(admin), json={"printer": MFP, "idempotency_key": " "})
+    assert blank.status_code == 422
+    with sessions() as session:
+        assert len(session.scalars(select(DocumentPrintJobRow)).all()) == 5
+
+
+def test_agent_answers_name_their_charset(stand):
+    admin, agent, _clock, _sessions, _read = stand
+    _print(admin, _pdf())
+    claim = TestClient(app).post(DOC_CLAIM, headers=agent, json={"machine_id": PC, "printers": [MFP]})
+    assert claim.headers["content-type"] == "application/json; charset=utf-8"
+    assert claim.json()["job"]["title"] == "Паспорт.pdf"
+    assert _report(agent, claim.json()["job"]).headers["content-type"] == "application/json; charset=utf-8"
+    scan = TestClient(app).post(SCAN_CLAIM, headers=agent, json={"machine_id": PC, "kinds": ["scan"]})
+    assert scan.headers["content-type"] == "application/json; charset=utf-8"

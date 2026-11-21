@@ -17,6 +17,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Security
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from starlette.concurrency import run_in_threadpool
 
@@ -69,6 +70,13 @@ UowFactory = Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)]
 # (workflows/scan_agent_install.py) — whoever may scan may also set up their own PC's agent.
 scan_edit_principal = require_section("scan", "edit", detail="Сканирование документов вам не открыто.")
 ScanPerson = Annotated[Principal, Depends(scan_edit_principal)]
+
+
+class AgentJSON(JSONResponse):
+    """A job for the agent: Windows PowerShell 5.1 reads JSON without a charset as Latin-1, so Cyrillic queue, scanner
+    and document names need `charset=utf-8` (review of PR #1005)."""
+
+    media_type = "application/json; charset=utf-8"
 
 
 def scan_agent_principal(
@@ -326,7 +334,7 @@ class PrinterCapability(BaseModel):
 AgentHeartbeatInput.model_rebuild()
 
 
-@router.post("/scan/agent/claim")
+@router.post("/scan/agent/claim", response_class=AgentJSON)
 def scan_agent_claim(
     request: Request,
     _agent: Annotated[Principal, Depends(scan_agent_principal)],
@@ -387,7 +395,7 @@ def _error_text(body: bytes) -> str | None:
     return str(payload["error"] or "")
 
 
-@router.post("/scan/agent/jobs/{job_id}/result")
+@router.post("/scan/agent/jobs/{job_id}/result", response_class=AgentJSON)
 async def scan_agent_result(
     job_id: UUID,
     request: Request,

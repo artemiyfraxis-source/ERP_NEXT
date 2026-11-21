@@ -84,15 +84,17 @@ export const warehouseDevicesApi = {
   scan: (machineId: string, fields: { scanner: string; color: ScanColor; dpi: number; append_to?: string }) =>
     api<PlainScan>(`${mfpPath(machineId)}/scan`, { method: "POST", body: JSON.stringify(fields) }),
   cancelScan: (id: string) => api<PlainScan>(`/api/stock/devices/scans/${encodeURIComponent(id)}`, { method: "DELETE" }),
-  print: (machineId: string, printer: string, copies: number, file: File) => {
+  /** `key` — ключ повтора: тот же ключ с тем же запросом возвращает уже поставленное задание, а не печатает снова. */
+  print: (machineId: string, printer: string, copies: number, file: File, key: string) => {
     const form = new FormData();
     form.append("file", file);
-    const query = new URLSearchParams({ printer, copies: String(copies) });
+    const query = new URLSearchParams({ printer, copies: String(copies), idempotency_key: key });
     return api<DocumentPrint>(`${mfpPath(machineId)}/print?${query}`, { method: "POST", body: form });
   },
-  testPage: (machineId: string, printer: string) =>
-    api<DocumentPrint>(`${mfpPath(machineId)}/print-test`, { method: "POST", body: JSON.stringify({ printer }) }),
-  printScan: (scanId: string, printer: string, copies: number) =>
-    api<DocumentPrint>(`/api/stock/devices/scans/${encodeURIComponent(scanId)}/print`, { method: "POST", body: JSON.stringify({ printer, copies }) }),
+  testPage: (machineId: string, printer: string, key: string) =>
+    api<DocumentPrint>(`${mfpPath(machineId)}/print-test`, { method: "POST", body: JSON.stringify({ printer, idempotency_key: key }) }),
+  printScan: (scanId: string, printer: string, copies: number, key: string) =>
+    api<DocumentPrint>(`/api/stock/devices/scans/${encodeURIComponent(scanId)}/print`, {
+      method: "POST", body: JSON.stringify({ printer, copies, idempotency_key: key }) }),
   cancelPrint: (id: string) => api<DocumentPrint>(`/api/stock/devices/prints/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };

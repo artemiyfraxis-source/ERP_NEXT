@@ -10,18 +10,23 @@ Label printer (warehouse view; printing goes through the existing `POST /api/sto
 - `GET /api/stock/devices/mfp/{machine_id}` → `{pc, online, scanners, printers, scans, prints}`.
 - `POST /api/stock/devices/mfp/{machine_id}/scan` `{scanner, color: color|gray, dpi: 150|300|600, append_to?}` → the
   plain scan (never read as a УПД); `GET|DELETE /api/stock/devices/scans/{id}`, `GET …/scans/{id}/file` — the PDF.
-- `POST /api/stock/devices/mfp/{machine_id}/print?printer=&copies=` multipart `file` (PDF / JPG / PNG, ≤ 20 МБ);
-  `POST …/print-test` `{printer}`; `POST /api/stock/devices/scans/{id}/print` `{printer, copies}` (a copy of a scan);
-  `GET|DELETE /api/stock/devices/prints/{id}`.
+- `POST /api/stock/devices/mfp/{machine_id}/print?printer=&copies=&idempotency_key=` multipart `file` (PDF / JPG / PNG,
+  ≤ 20 МБ, a picture ≤ 40 Мп); `POST …/print-test` `{printer, idempotency_key}`; `POST /api/stock/devices/scans/{id}/print`
+  `{printer, copies, idempotency_key}` (a copy of a scan); `GET|DELETE /api/stock/devices/prints/{id}`. The retry key:
+  the same key with the same request answers the job it made, with another request — 409 (`document_print.queued`).
 
 The agent (`labels:print` token, PC-bound, agent 2.12.0+):
 - `POST /api/stock/documents/agent/claim` `{machine_id, printers: [queue…]}` → `{job: {id, attempt, printer, title,
   pages, copies, sha256, pdf_b64} | null}`;
+- `POST /api/stock/documents/agent/jobs/{id}/lease` `{machine_id, attempt}` → `{ok, lease_until}`: still printing, every
+  30 s; 403 / 409 as below;
 - `POST /api/stock/documents/agent/jobs/{id}/result` `{machine_id, attempt, outcome: spooled|failed, message}` →
-  `{ok, status}`; 403 — another PC or token, 409 — a stale attempt or an answered job."""
+  `{ok, status}`; 403 — another PC or token, 409 — a stale attempt or an answered job.
+The agent's answers carry `charset=utf-8` (`AgentJSON`): queue names and titles are Cyrillic."""
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from datetime import datetime
 from typing import Annotated, Literal
@@ -49,7 +54,7 @@ from .receipts_api import multipart_file
 from .receipts_application import as_pdf
 from .scan_agents import LIVE_FOR, ScanAgentRow
 from .scan_jobs import AgentMachineRefused, AgentTokenRow, ScanJobClosed, ScanJobRow, agent_machine
-from .scan_jobs_api import scan_edit_principal
+from .scan_jobs_api import AgentJSON, scan_edit_principal
 
 router = APIRouter(prefix="/api/stock", tags=["warehouse"])
 UowFactory = Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)]
@@ -171,6 +176,7 @@ async def print_upload(
     uow_factory: UowFactory,
     printer: Annotated[str, Query(min_length=1, max_length=255)],
     copies: Annotated[int, Query(ge=1, le=document_print.COPIES_MAX)] = 1,
+    idempotency_key: Annotated[str | None, Query(min_length=1, max_length=128, pattern=r"\S")] = None,
 ) -> dict:
     body = await request.body()
     if len(body) > document_print.PDF_LIMIT + UPLOAD_SLACK:
@@ -180,49 +186,69 @@ async def print_upload(
         raise HTTPException(422, "Файл не передан: нужен multipart с полем «file»")
     name, content = upload
 
-    def queue() -> dict:
+    title = str(name or "").strip() or "Документ.pdf"
+
+    def build(request: str) -> dict:
         kind = sniffed_type(content)
         if kind not in ("application/pdf", "image/jpeg", "image/png"):
             raise WarehouseValidationError("Печатать можно PDF, JPG или PNG")
-        title, _kind, pdf = as_pdf(str(name or "").strip() or "Документ.pdf", kind, content)
-        return document_print.enqueue(uow_factory(), machine_id=machine_id, printer=printer, pdf=pdf, title=title,
-                                      source="upload", copies=copies, actor=principal.actor, now=now)
+        shown, _kind, pdf = as_pdf(title, kind, content, max_pixels=document_print.PIXELS_MAX)
+        return document_print.enqueue(uow_factory(), machine_id=machine_id, printer=printer, pdf=pdf, title=shown,
+                                      source="upload", copies=copies, actor=principal.actor, now=now,
+                                      key=idempotency_key, request=request)
 
-    return await run_in_threadpool(lambda: _answer(queue))
+    request = {"source": "upload", "machine_id": machine_id, "printer": printer, "copies": copies, "title": title,
+               "sha256": hashlib.sha256(content).hexdigest()}
+    return await run_in_threadpool(lambda: _answer(lambda: document_print.queued(
+        uow_factory, actor=principal.actor, key=idempotency_key, request=request, build=build)))
+
+
+RetryKey = Annotated[str | None, Field(min_length=1, max_length=128, pattern=r"\S")]
 
 
 class TestPageInput(BaseModel):
     printer: str = Field(min_length=1, max_length=255)
+    idempotency_key: RetryKey = None
 
 
 @router.post("/devices/mfp/{machine_id}/print-test")
 def print_test(machine_id: str, payload: TestPageInput, principal: ScanPerson, now: Now, uow_factory: UowFactory) -> dict:
-    with uow_factory() as uow:
-        agent = uow.session.get(ScanAgentRow, machine_id)
-        pc = agent.pc_name if agent else ""
-    pdf = document_print.test_page(payload.printer, pc, principal.actor.name, now)
-    return _answer(lambda: document_print.enqueue(uow_factory(), machine_id=machine_id, printer=payload.printer, pdf=pdf,
-        title="Пробная страница", source="test", copies=1, actor=principal.actor, now=now))
+    def build(request: str) -> dict:
+        with uow_factory() as uow:
+            agent = uow.session.get(ScanAgentRow, machine_id)
+            pc = agent.pc_name if agent else ""
+        pdf = document_print.test_page(payload.printer, pc, principal.actor.name, now)
+        return document_print.enqueue(uow_factory(), machine_id=machine_id, printer=payload.printer, pdf=pdf,
+                                      title="Пробная страница", source="test", copies=1, actor=principal.actor, now=now,
+                                      key=payload.idempotency_key, request=request)
+
+    request = {"source": "test", "machine_id": machine_id, "printer": payload.printer}
+    return _answer(lambda: document_print.queued(uow_factory, actor=principal.actor, key=payload.idempotency_key,
+                                                 request=request, build=build))
 
 
 class CopyInput(BaseModel):
     printer: str = Field(min_length=1, max_length=255)
     copies: int = Field(default=1, ge=1, le=document_print.COPIES_MAX)
+    idempotency_key: RetryKey = None
 
 
 @router.post("/devices/scans/{job_id}/print")
 def print_scan(job_id: UUID, payload: CopyInput, principal: ScanPerson, now: Now, uow_factory: UowFactory) -> dict:
-    def queue() -> dict:
+    def build(request: str) -> dict:
         name, content = plain_scans.file_of(uow_factory(), job_id)
         with uow_factory() as uow:
             machine = uow.session.scalar(select(ScanJobRow.target_machine_id).where(ScanJobRow.id == job_id))
         kind = "application/pdf" if content[:5] == b"%PDF-" else sniffed_type(content) or ""
-        title, _kind, pdf = as_pdf(name, kind, content)
+        title, _kind, pdf = as_pdf(name, kind, content, max_pixels=document_print.PIXELS_MAX)
         # The copy goes to a document printer of the PC that scanned it (`enqueue` checks the queue is there now).
         return document_print.enqueue(uow_factory(), machine_id=machine or "", printer=payload.printer, pdf=pdf,
-                                      title=title, source="scan", copies=payload.copies, actor=principal.actor, now=now)
+                                      title=title, source="scan", copies=payload.copies, actor=principal.actor, now=now,
+                                      key=payload.idempotency_key, request=request)
 
-    return _answer(queue)
+    request = {"source": "scan", "scan": str(job_id), "printer": payload.printer, "copies": payload.copies}
+    return _answer(lambda: document_print.queued(uow_factory, actor=principal.actor, key=payload.idempotency_key,
+                                                 request=request, build=build))
 
 
 @router.get("/devices/prints/{job_id}")
@@ -250,7 +276,7 @@ class AgentClaimInput(BaseModel):
     printers: list[Annotated[str, Field(min_length=1, max_length=255)]] = Field(default_factory=list, max_length=20)
 
 
-@router.post("/documents/agent/claim")
+@router.post("/documents/agent/claim", response_class=AgentJSON)
 def agent_claim(payload: AgentClaimInput, agent: Agent, now: Now, uow_factory: UowFactory) -> dict:
     machine = _answer(lambda: _bound_machine(uow_factory, agent.actor.id, payload.machine_id))
     with uow_factory() as uow:
@@ -271,7 +297,24 @@ class AgentResultInput(BaseModel):
     message: str = Field(default="", max_length=2000)
 
 
-@router.post("/documents/agent/jobs/{job_id}/result")
+class AgentLeaseInput(BaseModel):
+    machine_id: str = Field(default="", max_length=80)
+    attempt: str = Field(min_length=1, max_length=36)
+
+
+@router.post("/documents/agent/jobs/{job_id}/lease", response_class=AgentJSON)
+def agent_lease(job_id: UUID, payload: AgentLeaseInput, agent: Agent, now: Now, uow_factory: UowFactory) -> dict:
+    """Still printing: the job's lease runs on, so a long document is not taken for lost (review of PR #1005)."""
+    def answer() -> dict:
+        machine = _bound_machine(uow_factory, agent.actor.id, payload.machine_id)
+        until = document_print.extend(uow_factory(), job_id, machine_id=machine, token_id=agent.actor.id,
+                                      attempt=payload.attempt, now=now)
+        return {"ok": True, "lease_until": until.isoformat()}
+
+    return _answer(answer)
+
+
+@router.post("/documents/agent/jobs/{job_id}/result", response_class=AgentJSON)
 def agent_result(job_id: UUID, payload: AgentResultInput, agent: Agent, now: Now, uow_factory: UowFactory) -> dict:
     def answer() -> dict:
         machine = _bound_machine(uow_factory, agent.actor.id, payload.machine_id)
