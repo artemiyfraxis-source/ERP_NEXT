@@ -83,7 +83,7 @@ export interface EquipmentModel {
   /** Stable id of the model (БД.ОБ `equipment_model_id`); empty for records the server did not tag. */
   id: string;
   role: EquipmentRole;
-  /** Код «Группы на экране» (БД.ОБ); null — по операциям. */
+  /** Код «Группы на экране» (БД.ОБ); null — «авто» (по названию и операциям). */
   screenGroup: string | null;
   items: TechOperationRecord[]; // units, by inventory number
   name: string;

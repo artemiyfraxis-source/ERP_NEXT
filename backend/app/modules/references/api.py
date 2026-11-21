@@ -1154,9 +1154,10 @@ def equipment_model_role(
 
 
 # «Группа на экране» (owner 21.11.2026, migration 0216): the group of «Производство → Оборудование» the model's machines
-# stand in; null — the keyword rule decides. Journaled; answers the model as GET /equipment-models lists it.
+# stand in; null — «авто» (the keyword rule). Journaled; answers the model as GET /equipment-models lists it. The code is
+# checked by the repository against `domain.SCREEN_GROUPS` (a Russian 422), not here.
 class ScreenGroupPayload(BaseModel):
-    group: Literal["cut", "cut_crimp", "strip", "crimp", "solder", "marking", "analyzers", "printers", "other"] | None
+    group: str | None
 
 
 @router.put("/equipment-models/{model_id}/screen-group",

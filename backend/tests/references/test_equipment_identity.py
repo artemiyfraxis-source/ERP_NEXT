@@ -426,11 +426,12 @@ def test_screen_group_is_set_per_model_listed_carried_by_the_rows_and_journaled(
         events = session.scalars(select(AuditEventRow).where(
             AuditEventRow.event_type == "references.equipment_screen_group_set")).all()
         assert sorted((event.details["screen_group"] or "", event.details["label"]) for event in events) == [
-            ("", "по ключевым словам"), ("solder", "Пайка и усадка")]
+            ("", "авто"), ("solder", "Пайка и усадка")]
         assert all(event.details["model_id"] == station for event in events)
 
     for bad in ("xxx", "Резка", ""):
-        assert references_api.put(url, json={"group": bad}).status_code == 422
+        refused = references_api.put(url, json={"group": bad})
+        assert refused.status_code == 422 and "«Группа на экране»: одна из Резка" in str(refused.json()["detail"])
     assert references_api.put("/api/references/equipment-models/00000000-0000-0000-0000-0000000000ff/screen-group",
                               json={"group": "cut"}).status_code == 404
     app.dependency_overrides[authenticated_principal] = lambda: Principal(

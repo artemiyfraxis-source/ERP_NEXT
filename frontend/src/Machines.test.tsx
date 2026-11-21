@@ -124,7 +124,7 @@ it("shows one list grouped by purpose; the link is a badge; «Только по�
   expect(within(devices).getAllByText("СИ.002")).toHaveLength(1);
 
   const only = screen.getByRole("checkbox", { name: /Только подключённые/ });
-  expect(only.closest("label")!.textContent).toBe("Только подключённые3");
+  expect(only.closest("label")!.textContent).toBe("Только подключённые2");  // ОБ.019 и Planar; TSC — нет связи с ПК
   fireEvent.click(only);
   expect(screen.queryByText("ОБ.005")).toBeNull();
   expect(screen.queryByText("ОБ.037")).toBeNull();
@@ -148,6 +148,37 @@ it("shows one list grouped by purpose; the link is a badge; «Только по�
   expect(calls).toContain("/api/production/machines/u19");
   fireEvent.click(within(dialog).getByRole("button", { name: "Наладка · ждёт" }));
   expect(await screen.findByRole("dialog", { name: "Наладка ОБ.019" })).toBeTruthy();
+});
+
+it("«Только подключённые» keeps only what is on line now, not everything with an agent", async () => {
+  const stale: MachineRow = { ...OB019, key: "machine:u94", equipment_id: "u94", inventory: "ОБ.094", card: false,
+    link: { code: "stale", text: "Нет связи с ПК станка", tone: "danger" }, state: { text: "—", tone: "neutral" } };
+  const lost: MachineRow = { ...TSC, key: "printer:pc:lost", device: "Godex G500", pc: "Маркировка",
+    link: { code: "ok", text: "На связи", tone: "ok" }, state: { text: "Принтер не найден", tone: "warn" } };
+  const seen: MachineRow = { ...TSC, key: "printer:pc:seen", device: "TSC TE200", pc: "Склад-2",
+    link: { code: "ok", text: "На связи", tone: "ok" }, state: { text: "Принтер виден", tone: "ok" } };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    json({ now: "2026-11-18T10:00:02+03:00", rows: [OB019, stale, lost, seen, PLANAR], families: FAMILIES }));
+  render(<MachinesPage />);
+  const only = await screen.findByRole("checkbox", { name: /Только подключённые/ });
+  expect(only.closest("label")!.textContent).toBe("Только подключённые3");
+  fireEvent.click(only);
+  expect(screen.getByText("ОБ.019")).toBeTruthy();
+  expect(screen.queryByText("ОБ.094")).toBeNull();  // мост станка молчит
+  expect(screen.queryByText("Godex G500")).toBeNull();  // агент на связи, а принтера не видно
+  expect(screen.getByText("Склад-2", { exact: false })).toBeTruthy();
+  expect(screen.getByText("СИ.002")).toBeTruthy();
+});
+
+it("a row whose group the API does not list stands in its own group before «Прочее»", async () => {
+  const odd: MachineRow = { ...TWISTER, key: "machine:u12", equipment_id: "u12", inventory: "ОБ.012", family: "Плазма" };
+  const other: MachineRow = { ...TWISTER, key: "machine:u13", equipment_id: "u13", inventory: "ОБ.013", family: "Прочее" };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    json({ now: "2026-11-18T10:00:02+03:00", rows: [other, odd, OB019], families: FAMILIES }));
+  render(<MachinesPage />);
+  expect(await screen.findByRole("region", { name: "Плазма" })).toBeTruthy();
+  expect(screen.getAllByRole("region").map((region) => region.getAttribute("aria-label"))).toEqual(["Резка", "Плазма", "Прочее"]);
+  expect(within(screen.getByRole("region", { name: "Плазма" })).getByText("ОБ.012")).toBeTruthy();
 });
 
 it("filters by site and searches by number, name, article, PC or IP", async () => {

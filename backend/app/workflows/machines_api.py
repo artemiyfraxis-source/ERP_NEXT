@@ -236,7 +236,7 @@ def pending_setup(session) -> dict[str, int]:
         .group_by(SetupTaskRow.machine_id))}
 
 
-def _machine_rows(session, equipment, printers: list[dict], now) -> list[dict]:
+def _machine_rows(session, equipment, printers: list[dict], now, groups: dict[UUID, str | None]) -> list[dict]:
     """The machines of «Оборудование» (owner 19.11.2026: «просто галочку для вытягивания»): a unit of БД.ОБ
     «Оборудование» with the checkbox «Показывать в «Оборудовании»» (`show_in_equipment`, 0206) plus every unit an ERP
     agent reaches whatever the checkbox — a machine bridge (live state), a supported or planned bridge not installed
@@ -244,7 +244,7 @@ def _machine_rows(session, equipment, printers: list[dict], now) -> list[dict]:
     an agent now; a ticked unit without one says «Нет подключения». Every row carries the БД.ОБ article, site,
     operations and group (`family`), its setup class and the open setup tasks waiting for it."""
     rows, shown = [], set()
-    classes, pending, groups = _setup_classes(session), pending_setup(session), _screen_groups(session)
+    classes, pending = _setup_classes(session), pending_setup(session)
     # «Ждёт наладки» only where БД.ОБ says «Кто налаживает: Наладчик» (owner 20.11), keyed by the row's own unit id.
     technicians = {str(unit.id) for units in equipment.values() for unit in units if unit.setup_by == "technician"}
 
@@ -364,10 +364,9 @@ def _present(present: bool, seen: datetime | None, now: datetime, live: str, gon
     return {"text": live, "tone": "ok"} if present and _fresh(seen, now) else {"text": gone, "tone": "warn"}
 
 
-def _printer_rows(session, equipment, now) -> list[dict]:
+def _printer_rows(session, equipment, now, groups: dict[UUID, str | None]) -> list[dict]:
     units = {row.id: row for rows in equipment.values() for row in rows}
     bound = {(row.machine_id, row.printer): row.equipment_id for row in session.scalars(select(MarkingBindingRow))}
-    groups = _screen_groups(session)
     rows = []
     for printer, agent in session.execute(select(PrinterRow, ScanAgentRow).join(
             ScanAgentRow, ScanAgentRow.machine_id == PrinterRow.machine_id)
@@ -741,8 +740,9 @@ def machines(_principal: Reader, factory: Factory, now: Now) -> dict:
     with factory() as uow:
         session = uow.session
         equipment = _equipment(session)
-        printers = _printer_rows(session, equipment, now)
-        machines = _machine_rows(session, equipment, printers, now)
+        groups = _screen_groups(session)  # one read of «Группа на экране» per poll
+        printers = _printer_rows(session, equipment, now, groups)
+        machines = _machine_rows(session, equipment, printers, now, groups)
         # The printer of a marking machine is that machine's connection, not a second tile (ОБ.101, ОБ.102).
         units = {row["equipment_id"] for row in machines if row["equipment_id"]}
         printers = [row for row in printers if row["equipment_id"] not in units]

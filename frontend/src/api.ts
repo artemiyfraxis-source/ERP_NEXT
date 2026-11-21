@@ -2329,7 +2329,7 @@ export interface TechOperationRecord {
   instrument_id?: string | null;
   instrument_passport?: { serial_number: string; status: string; verification_number: string | null; verified_at: string | null; verification_due: string | null };
   equipment_role?: EquipmentRole | null;
-  /** БД.ОБ: «Группа на экране» модели — код группы экрана «Оборудование»; null — по операциям. */
+  /** БД.ОБ: «Группа на экране» модели — код группы экрана «Оборудование»; null — «авто» (по названию и операциям). */
   equipment_screen_group?: string | null;
   tool_unit_id?: string | null;
   serves_unit_ids?: string[];

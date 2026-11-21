@@ -191,7 +191,7 @@ it("sets the screen group of a model from its card and shows it in the model lis
   const puts: Array<{ path: string; body: unknown }> = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
-    if ((init?.method ?? "GET") === "PUT") { puts.push({ path, body: JSON.parse(String(init?.body)) }); return new Response(JSON.stringify({ id: "m1", screen_group: "cut_crimp" }), { status: 200 }); }
+    if ((init?.method ?? "GET") === "PUT") { const body = JSON.parse(String(init?.body)); puts.push({ path, body }); return new Response(JSON.stringify({ id: "m1", screen_group: body.group }), { status: 200 }); }
     if (path === "/api/references/equipment-shown") return new Response(JSON.stringify({ ids: [] }), { status: 200 });
     if (path === "/api/references/equipment-setup-by") return new Response(JSON.stringify({ technician_ids: [] }), { status: 200 });
     throw new Error(`Unexpected request: ${path}`);
@@ -209,11 +209,13 @@ it("sets the screen group of a model from its card and shows it in the model lis
     onChanged={vi.fn()} onNotice={vi.fn()} onError={vi.fn()} />);
   const select = await screen.findByRole("combobox", { name: "Группа на экране" });
   await waitFor(() => expect(select).toHaveValue("cut"));
-  expect(within(select).getAllByRole("option").map((option) => option.textContent)).toEqual(["по операциям", "Резка", "Резка и опрессовка"]);
+  expect(screen.queryByText(/Авто — группа/)).toBeNull();
+  expect(within(select).getAllByRole("option").map((option) => option.textContent)).toEqual(["авто", "Резка", "Резка и опрессовка"]);
   expect(screen.getByRole("columnheader", { name: "Группа на экране" })).toBeInTheDocument();
   fireEvent.change(select, { target: { value: "cut_crimp" } });
   await waitFor(() => expect(puts).toEqual([{ path: "/api/references/equipment-models/m1/screen-group", body: { group: "cut_crimp" } }]));
   await waitFor(() => expect(screen.getByRole("combobox", { name: "Группа на экране" })).toHaveValue("cut_crimp"));
   fireEvent.change(screen.getByRole("combobox", { name: "Группа на экране" }), { target: { value: "" } });
   await waitFor(() => expect(puts[1]).toEqual({ path: "/api/references/equipment-models/m1/screen-group", body: { group: null } }));
+  expect(await screen.findByText("Авто — группа по названию и операциям.")).toBeInTheDocument();
 });

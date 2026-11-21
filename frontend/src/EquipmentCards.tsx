@@ -298,12 +298,14 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
                   setInfos((list) => list.some((info) => info.id === model.id)
                     ? list.map((info) => info.id === model.id ? { ...info, screen_group: group } : info) : list);
                 }, "Группа на экране записана")}>
-                <option value="">по операциям</option>
+                <option value="">авто</option>
                 {screenGroups.map((group) => <option key={group.code} value={group.code}>{group.label}</option>)}
               </select>
-              : <b>{screenGroupLabel(model) || "по операциям"}</b>}
+              : <b>{screenGroupLabel(model) || "авто"}</b>}
           </div>}
-          {tab === "ob" && model.id && model.items.length > 1 && <p className="eq-hint">Группа действует на все {model.items.length} ед. модели.</p>}
+          {tab === "ob" && model.id && (!screenGroupOf(model) || model.items.length > 1) && <p className="eq-hint">
+            {[!screenGroupOf(model) && "Авто — группа по названию и операциям.",
+              model.items.length > 1 && `Группа действует на все ${model.items.length} ед. модели.`].filter(Boolean).join(" ")}</p>}
           {model.role === "supporting" && <p className="eq-hint">Обеспечивающее оборудование не бывает машиной операции — оно обслуживает машины.</p>}
         </div>
         {model.role === "supporting" && <ServesEditor model={model} records={familyRecords} canEdit={canEdit} busy={busy}
@@ -367,9 +369,9 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
     { key: "type", title: "Подтип", value: (model) => pick(model.items[0].fields, "Подтип") || (model.type === CRIMP_TOOL_TYPE ? CRIMP_TOOL_TYPE : ""), filter: true },
     { key: "code", title: "Код", value: (model) => codeOf(model), render: (model) => <span className="tnum">{codeOf(model) || "—"}</span> },
     { key: "role", title: "Вид", value: (model) => ROLE_LABELS[model.role], filter: true },
-    { key: "screenGroup", title: "Группа на экране", value: (model) => screenGroupLabel(model) || "по операциям", filter: true,
-      render: (model) => screenGroupLabel(model) || <span style={{ color: "var(--muted-foreground)" }}>по операциям</span>,
-      hint: "Группа модели на экране «Производство → Оборудование»; «по операциям» — группу определяют операции" },
+    { key: "screenGroup", title: "Группа на экране", value: (model) => screenGroupLabel(model) || "авто", filter: true,
+      render: (model) => screenGroupLabel(model) || <span style={{ color: "var(--muted-foreground)" }}>авто</span>,
+      hint: "Группа модели на экране «Производство → Оборудование»; «авто» — группа по названию и операциям" },
     { key: "kind", title: "Вид аппликатора", value: (model) => applicatorKindOf(codeOf(model)), filter: true },
     { key: "article", title: "Артикул", value: (model) => model.article },
     { key: "maker", title: "Производитель", value: (model) => model.maker },

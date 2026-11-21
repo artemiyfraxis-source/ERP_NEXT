@@ -164,7 +164,7 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
     return () => { live = false; };
   }, [setupViewer, chosen]);
   // «Запросы на наладку» — только тому, кому открыта наладка (её ключ проверяет App).
-  const view: View = chosen === null || (chosen === "setup" && !setupViewer) ? "equipment" : chosen === "setup" ? "setup" : "equipment";
+  const view: View = chosen === "setup" && setupViewer ? "setup" : "equipment";
   const [site, setSite] = useState<Site>("");
   /** Идёт ручная работа на этом станке — открываем её (завершить / отменить), иначе — новую с этим станком. */
   const openManual = useCallback(async (row: MachineRow) => {
@@ -203,7 +203,9 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
       : rows;
   }, [rows, query]);
   const atSite = (row: MachineRow) => row.kind !== "machine" || !site || row.site === site;
-  const connected = (row: MachineRow) => row.controlled;
+  /** «Только подключённые» — на связи сейчас (координатор 21.11.2026), а не «есть агент»: станок — связь «На связи»;
+   *  принтер и прибор — ещё и сам виден агенту («Принтер виден», «Подключён»). */
+  const connected = (row: MachineRow) => row.link.code === "ok" && (row.kind === "machine" || row.state.tone === "ok");
   const connectedCount = found.filter((row) => atSite(row) && connected(row)).length;
   // Принтеры и приборы без участка видны на любом участке — и в счётчике тоже.
   const siteCount = (which: Site) => found.filter((row) => (row.kind !== "machine" || !which || row.site === which) && (!onlyConnected || connected(row))).length;

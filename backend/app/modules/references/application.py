@@ -1158,7 +1158,7 @@ def set_equipment_screen_group(model_id: UUID, group: str | None, actor: Actor, 
         if changed:
             _audit("references.equipment_screen_group_set", actor, now, {
                 "model_id": str(model_id), "inventory_numbers": result["inventory_numbers"],
-                "screen_group": group, "label": SCREEN_GROUPS.get(group or "", "по ключевым словам")}, uow)
+                "screen_group": group, "label": SCREEN_GROUPS.get(group or "", "авто")}, uow)
             uow.commit()
     return result
 
