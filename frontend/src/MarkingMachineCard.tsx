@@ -226,8 +226,8 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
   // Сервер сверяет профиль с размером из ЭТК; не совпал — партия (и пробная) только с причиной.
   const needsReason = jobPreview?.profile_matches === false;
   const reasonMissing = needsReason && !reason.trim();
-  // Причина — к выбранному профилю: сменили профиль — причину пишут заново.
-  useEffect(() => { setReason(""); }, [profile?.id]);
+  // Причина — к выбранному профилю: сменили профиль — причину пишут заново; итог прошлой постановки к новому не относится.
+  useEffect(() => { setReason(""); setNotice(""); }, [profile?.id]);
 
   const running = Boolean(batch?.jobs.some((job) => ["pending", "taken"].includes(job.status)));
   const blocker = !canPrint ? "Печать маркировки вам не открыта"
@@ -236,6 +236,9 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
         : !profile ? "Нет откалиброванного профиля — «Наладка» → «Профили и принтер»"
           : !profile.calibrated ? "Профиль не откалиброван — «Наладка» → «Профили и принтер»"
             : printer?.hold ? "Маркировка на паузе" : "";
+
+  /** Другая вкладка — итог и ошибка прошлой постановки к ней не относятся. */
+  function switchTab(next: Tab) { if (next !== tab) { setTab(next); setNotice(""); setError(""); } }
 
   function chooseProfile(id: string) { setProfileId(id); remember(`${storage}:profile`, id); }
 
@@ -367,9 +370,9 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
         <div className="marking-card-what-head">
           <h3>Что печатаем</h3>
           <div className="seg-tabs" role="tablist" aria-label="Что печатаем">
-            <button type="button" role="tab" aria-selected={tab === "jobs"} className={tab === "jobs" ? "on" : ""} onClick={() => setTab("jobs")}>
+            <button type="button" role="tab" aria-selected={tab === "jobs"} className={tab === "jobs" ? "on" : ""} onClick={() => switchTab("jobs")}>
               Из заданий<span className="ship-tab-count">{jobs ? waitingJobs : "…"}</span></button>
-            <button type="button" role="tab" aria-selected={tab === "text"} className={tab === "text" ? "on" : ""} onClick={() => setTab("text")}>Свой текст</button>
+            <button type="button" role="tab" aria-selected={tab === "text"} className={tab === "text" ? "on" : ""} onClick={() => switchTab("text")}>Свой текст</button>
           </div>
           <label className="marking-card-profile">Профиль этикетки
             <select name="marking-card-profile" autoComplete="off" value={profile?.id ?? ""} disabled={!profiles.length || busy}
@@ -496,7 +499,6 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
         <header className="machine-card-head"><h2>Наладка · {title}</h2>
           <button type="button" className="secondary small machine-manual" onClick={() => setProfilesOpen(true)}>Профили и принтер</button>
           <button type="button" className="secondary small" onClick={() => setSetupOpen(false)}>Закрыть</button></header>
-        <p className="machine-muted">«Профили и принтер» — размер этикетки, калибровка, привязка к принтеру, очистка очереди</p>
         {row.equipment_id && <MachineSetupPart inventory={row.inventory} canWrite={canWrite} saved={() => undefined} />}
       </section>
     </PageWindow>}

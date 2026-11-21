@@ -413,3 +413,22 @@ it("clears the reason when the profile changes", async () => {
   await waitFor(() => expect(markingApi.preview).toHaveBeenLastCalledWith(expect.objectContaining({ profile_id: "small" }), expect.anything()));
   expect(await screen.findByLabelText(/— причина/)).toHaveValue("");
 });
+
+it("drops the result of the last enqueue when the tab, the job or the profile changes", async () => {
+  vi.spyOn(markingApi, "machines").mockResolvedValue(TWO_PROFILES());
+  vi.spyOn(markingApi, "enqueue").mockResolvedValue({ id: "b1", status: "spooled", status_label: "", total: 1, reprint_of: null, jobs: [] });
+  vi.spyOn(markingApi, "batch").mockResolvedValue({ id: "b1", status: "spooled", status_label: "", total: 1, reprint_of: null, jobs: [] });
+  await pickGroup();
+  const trial = async () => {
+    await waitFor(() => expect(screen.getByRole("button", { name: "Пробная (1 этикетка)" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Пробная (1 этикетка)" }));
+    expect(await screen.findByText(/Пробная этикетка поставлена в очередь/)).toBeVisible();
+  };
+  await trial();
+  fireEvent.click(screen.getByRole("tab", { name: "Свой текст" }));
+  expect(screen.queryByText(/Пробная этикетка поставлена в очередь/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: /Из заданий/ }));
+  await trial();
+  fireEvent.change(screen.getByLabelText("Профиль этикетки"), { target: { value: "small" } });
+  await waitFor(() => expect(screen.queryByText(/Пробная этикетка поставлена в очередь/)).not.toBeInTheDocument());
+});
