@@ -349,3 +349,67 @@ it("shows the server's refusal when everything left is already queued", async ()
   expect(screen.getByRole("button", { name: "Печатать 40 этикеток" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Пробная (1 этикетка)" })).toBeDisabled();
 });
+
+it("does not enqueue a trial whose fresh first label differs from the preview on screen: refreshes it and asks again", async () => {
+  vi.spyOn(markingApi, "enqueue");
+  await pickGroup();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Пробная (1 этикетка)" })).toBeEnabled());
+  const shown = vi.mocked(markingApi.preview).mock.calls.length;
+  vi.mocked(markingApi.preview).mockResolvedValueOnce(jobPreview("t", 1, { labels: [label("КБ1-3")] }));
+  fireEvent.click(screen.getByRole("button", { name: "Пробная (1 этикетка)" }));
+  expect(await screen.findByText("Предпросмотр изменился — проверьте и нажмите ещё раз")).toBeVisible();
+  expect(markingApi.enqueue).not.toHaveBeenCalled();
+  // The trial preview plus a fresh on-screen preview.
+  await waitFor(() => expect(vi.mocked(markingApi.preview).mock.calls.length).toBe(shown + 2));
+});
+
+it("does not enqueue a trial when the fresh preview says the profile no longer matches the ETK", async () => {
+  vi.spyOn(markingApi, "enqueue");
+  await pickGroup();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Пробная (1 этикетка)" })).toBeEnabled());
+  vi.mocked(markingApi.preview).mockResolvedValueOnce(jobPreview("t", 1, { etk_size: { width_mm: 25, height_mm: 9 }, profile_matches: false }));
+  fireEvent.click(screen.getByRole("button", { name: "Пробная (1 этикетка)" }));
+  expect(await screen.findByText("Предпросмотр изменился — проверьте и нажмите ещё раз")).toBeVisible();
+  expect(markingApi.enqueue).not.toHaveBeenCalled();
+});
+
+it("after a 409 reloads the jobs (new version), the remaining count and the preview, so the next click is not the same refusal", async () => {
+  vi.mocked(markingApi.cuttingGroups).mockResolvedValueOnce({ groups: [GROUP] }).mockResolvedValue({ groups: [{ ...GROUP, version: 5 } as CuttingGroup] });
+  vi.spyOn(markingApi, "enqueue").mockRejectedValueOnce(new ApiError("Задание изменилось — обновите предпросмотр", 409, "Задание изменилось — обновите предпросмотр"))
+    .mockResolvedValue({ id: "b1", status: "spooled", status_label: "", total: 40, reprint_of: null, jobs: [] });
+  vi.spyOn(markingApi, "batch").mockResolvedValue({ id: "b1", status: "spooled", status_label: "", total: 40, reprint_of: null, jobs: [] });
+  await pickGroup();
+  const print = await screen.findByRole("button", { name: "Печатать 40 этикеток" });
+  await waitFor(() => expect(print).toBeEnabled());
+  const progressCalls = vi.mocked(markingApi.progress).mock.calls.length;
+  fireEvent.click(print);
+  expect(await screen.findByText(/Задание изменилось — обновите предпросмотр — задания и предпросмотр обновлены/)).toBeVisible();
+  await waitFor(() => expect(markingApi.cuttingGroups).toHaveBeenCalledTimes(2));
+  expect(vi.mocked(markingApi.progress).mock.calls.length).toBeGreaterThan(progressCalls);
+  await waitFor(() => expect(markingApi.preview).toHaveBeenLastCalledWith(expect.objectContaining({ source: { group_id: "g1", version: 5 } }), expect.anything()));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Печатать 40 этикеток" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Печатать 40 этикеток" }));
+  await waitFor(() => expect(markingApi.enqueue).toHaveBeenCalledTimes(2));
+  expect(vi.mocked(markingApi.enqueue).mock.calls[1][0].source).toEqual({ group_id: "g1", version: 5 });
+});
+
+it("refreshes the task preview on «Обновить предпросмотр»", async () => {
+  await pickGroup();
+  const refresh = await screen.findByRole("button", { name: "Обновить предпросмотр" });
+  await waitFor(() => expect(refresh).toBeEnabled());
+  await screen.findByAltText("Этикетка: КБ1-2");
+  const calls = vi.mocked(markingApi.preview).mock.calls.length;
+  fireEvent.click(refresh);
+  await waitFor(() => expect(vi.mocked(markingApi.preview).mock.calls.length).toBe(calls + 1));
+});
+
+it("clears the reason when the profile changes", async () => {
+  vi.spyOn(markingApi, "machines").mockResolvedValue(TWO_PROFILES());
+  vi.mocked(markingApi.preview).mockResolvedValue(jobPreview("m", 40, { etk_size: { width_mm: 25, height_mm: 9 }, profile_matches: false }));
+  await pickGroup();
+  fireEvent.change(await screen.findByLabelText(/— причина/), { target: { value: "нет ленты" } });
+  expect(screen.getByLabelText(/— причина/)).toHaveValue("нет ленты");
+  fireEvent.change(screen.getByLabelText("Профиль этикетки"), { target: { value: "small" } });
+  await waitFor(() => expect(markingApi.preview).toHaveBeenLastCalledWith(expect.objectContaining({ profile_id: "small" }), expect.anything()));
+  expect(await screen.findByLabelText(/— причина/)).toHaveValue("");
+});
