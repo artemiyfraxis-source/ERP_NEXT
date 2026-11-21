@@ -186,3 +186,34 @@ it("shows a visible error when terminal links cannot be loaded", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent("Нет связи с ERP");
   expect(screen.getByText("GHR")).toBeInTheDocument();
 });
+
+it("sets the screen group of a model from its card and shows it in the model list", async () => {
+  const puts: Array<{ path: string; body: unknown }> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if ((init?.method ?? "GET") === "PUT") { puts.push({ path, body: JSON.parse(String(init?.body)) }); return new Response(JSON.stringify({ id: "m1", screen_group: "cut_crimp" }), { status: 200 }); }
+    if (path === "/api/references/equipment-shown") return new Response(JSON.stringify({ ids: [] }), { status: 200 });
+    if (path === "/api/references/equipment-setup-by") return new Response(JSON.stringify({ technician_ids: [] }), { status: 200 });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  vi.spyOn(referencesApi, "crimpCodes").mockResolvedValue({ owners: {}, missing: [] });
+  vi.spyOn(referencesApi, "equipmentModels").mockResolvedValue({
+    models: [{ id: "m1", screen_group: "cut" } as never],
+    screen_groups: [{ code: "cut", label: "Резка" }, { code: "cut_crimp", label: "Резка и опрессовка" }],
+  });
+  vi.spyOn(referencesApi, "equipmentLinksReport").mockRejectedValue(new Error("unavailable"));
+  const record = { id: "unit", tab: "ob", display_text: "Станок", source_sheet: "", equipment_model_id: "m1", equipment_screen_group: "cut", fields: {
+    Тип: "Оборудование", "Инв. номер": "ОБ.019", Наменование: "Станок",
+  } } as TechOperationRecord;
+  render(<EquipmentCards records={[record]} operations={[]} canEdit focusId="unit" onEdit={vi.fn()} onCreate={vi.fn()}
+    onChanged={vi.fn()} onNotice={vi.fn()} onError={vi.fn()} />);
+  const select = await screen.findByRole("combobox", { name: "Группа на экране" });
+  await waitFor(() => expect(select).toHaveValue("cut"));
+  expect(within(select).getAllByRole("option").map((option) => option.textContent)).toEqual(["по операциям", "Резка", "Резка и опрессовка"]);
+  expect(screen.getByRole("columnheader", { name: "Группа на экране" })).toBeInTheDocument();
+  fireEvent.change(select, { target: { value: "cut_crimp" } });
+  await waitFor(() => expect(puts).toEqual([{ path: "/api/references/equipment-models/m1/screen-group", body: { group: "cut_crimp" } }]));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Группа на экране" })).toHaveValue("cut_crimp"));
+  fireEvent.change(screen.getByRole("combobox", { name: "Группа на экране" }), { target: { value: "" } });
+  await waitFor(() => expect(puts[1]).toEqual({ path: "/api/references/equipment-models/m1/screen-group", body: { group: null } }));
+});

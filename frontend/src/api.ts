@@ -2329,6 +2329,8 @@ export interface TechOperationRecord {
   instrument_id?: string | null;
   instrument_passport?: { serial_number: string; status: string; verification_number: string | null; verified_at: string | null; verification_due: string | null };
   equipment_role?: EquipmentRole | null;
+  /** БД.ОБ: «Группа на экране» модели — код группы экрана «Оборудование»; null — по операциям. */
+  equipment_screen_group?: string | null;
   tool_unit_id?: string | null;
   serves_unit_ids?: string[];
   equipment_links?: Array<{ column: string; position: number; model_id: string }>;
@@ -2339,7 +2341,9 @@ export type EquipmentRole = "operational" | "supporting";
 export interface EquipmentModelInfo {
   id: string; name: string; article: string; maker: string; role: EquipmentRole; role_confirmed: boolean; display: string;
   unit_ids: string[]; inventory_numbers: string[]; operations: number;
+  screen_group?: string | null;
 }
+export interface EquipmentScreenGroup { code: string; label: string }
 export interface EquipmentUnresolvedOperation {
   operation_id: string; number: string; column: string; position: number; text: string;
   reason: "unmatched" | "ambiguous" | "supporting"; candidates: Array<{ model_id: string; display: string }>;
@@ -4681,7 +4685,9 @@ export const referencesApi = {
   duplicateRecord: (id: string) =>
     api<TechOperationRecord>(`/api/references/tech-operations/${id}/duplicate`, { method: "POST" }),
   crimps: (id: string) => api<CrimpOverview>(`/api/references/tech-operations/${id}/crimps`),
-  equipmentModels: () => visitRead<{ models: EquipmentModelInfo[] }>("/api/references/equipment-models"),
+  equipmentModels: () => visitRead<{ models: EquipmentModelInfo[]; screen_groups?: EquipmentScreenGroup[] }>("/api/references/equipment-models"),
+  setEquipmentScreenGroup: (modelId: string, group: string | null) =>
+    api<EquipmentModelInfo>(`/api/references/equipment-models/${modelId}/screen-group`, { method: "PUT", body: JSON.stringify({ group }) }),
   equipmentLinksReport: () => visitRead<EquipmentLinksReport>("/api/references/equipment-links/report"),
   setEquipmentRole: (modelId: string, role: EquipmentRole) =>
     api<EquipmentModelInfo>(`/api/references/equipment-models/${modelId}/role`, { method: "PUT", body: JSON.stringify({ role }) }),

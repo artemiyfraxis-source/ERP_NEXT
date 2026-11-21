@@ -83,6 +83,8 @@ export interface EquipmentModel {
   /** Stable id of the model (БД.ОБ `equipment_model_id`); empty for records the server did not tag. */
   id: string;
   role: EquipmentRole;
+  /** Код «Группы на экране» (БД.ОБ); null — по операциям. */
+  screenGroup: string | null;
   items: TechOperationRecord[]; // units, by inventory number
   name: string;
   article: string;
@@ -107,6 +109,7 @@ export function groupModels(records: TechOperationRecord[]): EquipmentModel[] {
     const first = sorted[0];
     return {
       key, id: first.equipment_model_id ?? "", role: sorted.find((item) => item.equipment_role)?.equipment_role ?? "operational",
+      screenGroup: sorted.find((item) => item.equipment_screen_group)?.equipment_screen_group ?? null,
       items: sorted, name: nameOf(first), article: articleOf(first), maker: makerOf(first), type: typeOf(first),
       places: [...new Set(sorted.map(placeOf).filter(Boolean))], base: baseOf(first),
     };
