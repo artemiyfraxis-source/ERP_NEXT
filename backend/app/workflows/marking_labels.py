@@ -380,8 +380,17 @@ class PreviewInput(BaseModel):
     # its serial spent and counted by /progress like any printed one.
     limit: int | None = Field(default=None, ge=1, le=MAX_LABELS, strict=True)
 
+    @model_validator(mode="after")
+    def limit_takes_remaining(self):
+        # Without «оставшиеся» the first N would repeat a printed (issued) serial as a «Пробная печать».
+        if self.limit is not None and not self.remaining:
+            raise ValueError("Ограничение числа этикеток — только для оставшихся надписей")
+        return self
+
 
 TRIAL_REASON = "Пробная печать"
+TRIAL_PREFIX = f"{TRIAL_REASON} · "
+REASON_MAX = 1000  # MarkingBatchRow.reason
 SIZE_DEVIATION = "Размер этикетки не как в ЭТК — укажите причину"
 
 
@@ -389,14 +398,14 @@ class BatchInput(PreviewInput):
     manifest_hash: str = Field(min_length=64, max_length=64)
     idempotency_key: str = Field(min_length=1, max_length=128, pattern=r"\S")
     reprint_of: UUID | None = None
-    reason: str = Field(default="", max_length=1000)
+    reason: str = Field(default="", max_length=REASON_MAX)
 
     @model_validator(mode="after")
     def trial_is_not_a_reprint(self):
         if self.reprint_of is not None and self.limit is not None:
             raise ValueError("Повторная печать — всей исходной партии, без ограничения числа этикеток")
-        if self.limit == 1 and len(batch_reason(self)) > 1000:
-            raise ValueError("Причина пробной печати — не длиннее 980 знаков")
+        if self.limit == 1 and len(batch_reason(self)) > REASON_MAX:
+            raise ValueError(f"Причина пробной печати — не длиннее {REASON_MAX - len(TRIAL_PREFIX)} знаков")
         return self
 
 
@@ -405,7 +414,7 @@ def batch_reason(payload):
     if payload.limit != 1:
         return payload.reason
     reason = " ".join(payload.reason.split())
-    return f"{TRIAL_REASON} · {reason}" if reason else TRIAL_REASON
+    return f"{TRIAL_PREFIX}{reason}" if reason else TRIAL_REASON
 
 
 def task_access(task, operation_id, principal, uow, *, historical=False):

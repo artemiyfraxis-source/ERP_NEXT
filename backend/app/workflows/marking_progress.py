@@ -209,22 +209,25 @@ def task_progress(task, document: Mapping | None, serial_range, counts: Counter)
 
 
 # «W×H мм» in the ETK mark material (plan 21.11): × or x/х/X/Х/* between the numbers, decimals with a comma or a dot,
-# «мм» optional. Only Godex label sizes (5…150 мм, marking_render.Geometry) count; a tube material is never a label.
-_SIZE = re.compile(r"(?<![\d.,])(\d{1,3}(?:[.,]\d+)?)\s*[×xXхХ*]\s*(\d{1,3}(?:[.,]\d+)?)(?!\d)(?![.,]\d)")
+# «мм» optional after each number. A size followed by «м» (metres: a ribbon or tape roll) or «шт» is not a label.
+# Only Godex label sizes (5…150 мм, marking_render.Geometry) count; a tube material is never a label.
+_NUMBER = r"(\d{1,3}(?:[.,]\d+)?)(?!\d)(?![.,]\d)(?:\s*мм)?"
+_SIZE = re.compile(rf"(?<![\d.,]){_NUMBER}\s*[×xXхХ*]\s*{_NUMBER}(?!\s*(?:м|шт))", re.IGNORECASE)
 _TUBE = re.compile(r"термоусад|трубк|\bтут\b|tube|sleeve", re.IGNORECASE)
 SIZE_TOLERANCE_MM = 0.5
 
 
 def label_size(material) -> dict | None:
-    """{width_mm, height_mm, material} of the first «W×H» in the material; None — the ETK does not say the size."""
+    """{width_mm, height_mm, material} of the first «W×H» in the material that is a label size (a cable section
+    «4х0,75» before it is skipped); None — the ETK does not say the size."""
     text = str(material or "").strip()
-    match = _SIZE.search(text)
-    if not match or _TUBE.search(text):
+    if _TUBE.search(text):
         return None
-    width, height = (float(value.replace(",", ".")) for value in match.groups())
-    if not (5 <= width <= 150 and 5 <= height <= 150):
-        return None
-    return {"width_mm": width, "height_mm": height, "material": text}
+    for match in _SIZE.finditer(text):
+        width, height = (float(value.replace(",", ".")) for value in match.groups())
+        if 5 <= width <= 150 and 5 <= height <= 150:
+            return {"width_mm": width, "height_mm": height, "material": text}
+    return None
 
 
 def same_size(size: Mapping, width: float, height: float) -> bool:
