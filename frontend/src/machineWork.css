@@ -1,0 +1,47 @@
+/* Рабочая карточка станка без управления (MachineWorkCard.tsx). Цвета — токены :root. */
+.mw-card { display: grid; gap: 10px; padding: 16px; }
+.mw-head { display: flex; align-items: center; gap: 8px; }
+.mw-head h2 { flex: 1; margin: 0; font-size: 18px; }
+.mw-h { margin: 4px 0 0; font-size: 14px; font-weight: 600; }
+.mw-sub { color: var(--muted-foreground); font-size: 12px; font-weight: 400; }
+.mw-hint { margin: 0; color: var(--muted-foreground); font-size: 13px; }
+.mw-card .success-banner, .mw-card .error-banner { margin-bottom: 0; }
+.mw-status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; padding: 10px 12px; border: 1px solid var(--border);
+  border-left-width: 4px; border-radius: 6px; background: var(--card); font-size: 15px; }
+.mw-status.tone-bar-ok { border-left-color: var(--tone-ok); }
+.mw-status.tone-bar-warn { border-left-color: var(--tone-warn); background: color-mix(in srgb, var(--tone-warn) 10%, var(--card)); }
+.mw-status.tone-bar-neutral { border-left-color: var(--border); }
+.mw-status-act { margin-left: auto; }
+.mw-table { font-size: 13px; }
+.mw-table th, .mw-table td { padding: 4px 8px; vertical-align: middle; }
+.mw-table thead th { white-space: nowrap; font-size: 12px; font-weight: 500; color: var(--muted-foreground); }
+.mw-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.mw-table tbody tr { cursor: pointer; }
+.mw-table tbody tr:hover > td { background: var(--accent); }
+.mw-table tr.mw-current > td { background: color-mix(in srgb, var(--primary) 12%, transparent); }
+.mw-table tr.mw-current > td:first-child { box-shadow: inset 3px 0 0 var(--primary); }
+.mw-table .mw-warn { min-width: 160px; color: var(--tone-warn); }
+.mw-table .mw-act { white-space: nowrap; }
+.mw-badge { font-weight: 600; color: var(--tone-ok); }
+.mw-etk { display: grid; gap: 6px; }
+.mw-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.mw-chips li { padding: 4px 10px; border: 1px solid var(--border); border-radius: 14px; background: var(--card); font-size: 13px; }
+.mw-chips li.is-missing { border-color: var(--tone-warn); background: color-mix(in srgb, var(--tone-warn) 12%, var(--card)); color: var(--tone-warn); }
+.mw-chip-label { color: var(--muted-foreground); }
+.mw-chips li.is-missing .mw-chip-label { color: inherit; }
+.mw-main { display: grid; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.mw-counter { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.mw-counter button { min-height: 44px; min-width: 56px; }
+.mw-counter input { width: 96px; min-height: 44px; font-size: 20px; text-align: right; font-variant-numeric: tabular-nums; }
+.mw-plan { font-size: 15px; font-variant-numeric: tabular-nums; }
+.mw-spacer { flex: 1; }
+.mw-inline { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 13px; }
+.mw-inline input[type="number"] { width: 80px; text-align: right; font-variant-numeric: tabular-nums; }
+.mw-cancel { margin: 0; }
+.mw-fold > summary { cursor: pointer; font-size: 13px; color: var(--muted-foreground); }
+.mw-log { margin: 6px 0 0; padding-left: 16px; display: grid; gap: 2px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.mw-facts { display: grid; gap: 2px; margin: 6px 0 0; font-size: 13px; }
+.mw-facts > div { display: flex; gap: 8px; }
+.mw-facts dt { min-width: 90px; color: var(--muted-foreground); }
+.mw-facts dd { margin: 0; }
+@media (pointer: coarse) { .mw-card button, .mw-card input, .mw-card select { min-height: 40px; } }

@@ -208,3 +208,22 @@ it("has a section title and keeps a long wire name on one line with a tooltip", 
   expect(clip).toHaveAttribute("title", long);
   expect(screen.getByTitle(`Заправьте ${long}`)).toBeInTheDocument();
 });
+
+it("with equipmentId reads the unit queue, has no machine picker and sends equipment_id on Done", async () => {
+  const calls: { url: string; body: string }[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input);
+    calls.push({ url, body: String(init?.body ?? "") });
+    if (url.includes("/cutting-queue/done")) return json({ notice: "Готово: 708К. · КБ3 · 120 шт", assigned: false, output_id: "x" });
+    return json({ machine_id: null, equipment_id: "u100", version: "v", rows: [row({})] });
+  });
+  render(<CuttingQueue equipmentId="u100" />);
+  await screen.findByText("708К.");
+  expect(screen.queryByLabelText("Станок")).toBeNull();
+  expect(calls.some((call) => call.url.includes("/cutting-queue/machines"))).toBe(false);
+  expect(calls[0].url).toContain("/api/production/cutting-queue?equipment_id=u100");
+  fireEvent.click(screen.getByRole("button", { name: "Готово" }));
+  await waitFor(() => expect(calls.some((call) => call.url.includes("/cutting-queue/done"))).toBe(true));
+  const done = calls.find((call) => call.url.includes("/cutting-queue/done"))!;
+  expect(JSON.parse(done.body)).toEqual({ task_id: "t1", operation_id: "o1", quantity: 120, equipment_id: "u100" });
+});

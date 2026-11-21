@@ -42,10 +42,12 @@ export const cuttingQueueApi = {
   machines: () => api<{ machines: CuttingQueueMachine[] }>("/api/production/cutting-queue/machines").then((result) => result.machines ?? []),
   queue: (machineId: string | null) =>
     api<CuttingQueue>(`/api/production/cutting-queue?machine_id=${machineId === null ? "none" : encodeURIComponent(machineId)}`),
+  /** Станок конкретного агрегата: его строки и строки «любого свободного» его модели (карточка станка без управления). */
+  queueOfUnit: (equipmentId: string) => api<CuttingQueue>(`/api/production/cutting-queue?equipment_id=${encodeURIComponent(equipmentId)}`),
   /** Тот же ключ с тем же телом возвращает уже сделанное (повтор после обрыва не удваивает выпуск). */
-  done: (taskId: string, operationId: string, quantity: number, idempotencyKey: string, onBehalfOf = "") =>
+  done: (taskId: string, operationId: string, quantity: number, idempotencyKey: string, onBehalfOf = "", equipmentId = "") =>
     api<CuttingDoneResult>(`/api/production/cutting-queue/done${onBehalfOf ? `?on_behalf_of=${encodeURIComponent(onBehalfOf)}` : ""}`, {
       method: "POST", headers: { "Idempotency-Key": idempotencyKey },
-      body: JSON.stringify({ task_id: taskId, operation_id: operationId, quantity }),
+      body: JSON.stringify({ task_id: taskId, operation_id: operationId, quantity, ...(equipmentId ? { equipment_id: equipmentId } : {}) }),
     }),
 };

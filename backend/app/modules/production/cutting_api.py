@@ -26,6 +26,7 @@ from .cutting_execution import execute_group
 from .downtime import DowntimeReason, COMMENT_LIMIT
 from .autoplan_api import references_uow_factory
 from .equipment_catalog import EMPTY, load_catalog
+from .machine_queue_api import router as machine_queue_router
 
 router = APIRouter(prefix="/api/production/cutting-groups", tags=["production"])
 
@@ -361,3 +362,4 @@ groups_router = router
 router = APIRouter()
 router.include_router(groups_router)
 router.include_router(queue_router)
+router.include_router(machine_queue_router)
