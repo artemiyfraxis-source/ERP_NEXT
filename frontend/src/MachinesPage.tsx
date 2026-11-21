@@ -5,6 +5,7 @@ import { equipmentSetupApi, type SetupViewer } from "./equipmentSetupApi";
 import { EquipmentSetupPage } from "./EquipmentSetupPage";
 import { machinesApi, usePolled, type MachineRow, type Tone } from "./machinesApi";
 import { MachineSetupPart } from "./MachineSetup";
+import { MachineWorkCard } from "./MachineWorkCard";
 import { ManualJobWindow } from "./ManualJobWindow";
 import { MarkingMachineCard } from "./MarkingMachineCard";
 import { manualJobsApi, type ManualJob } from "./manualJobsApi";
@@ -40,6 +41,8 @@ const known = (value: string) => Boolean(value && value !== EMPTY);
 const byNumber = (a: MachineRow, b: MachineRow) => a.inventory.localeCompare(b.inventory, "ru", { numeric: true }) || a.name.localeCompare(b.name, "ru");
 /** Принтеры и приборы агентов ERP достаёт сама — они «С управлением». */
 const viewOf = (row: MachineRow): View => (row.kind !== "machine" || row.controlled ? "controlled" : "manual");
+/** Станок цеха без управления, внесённый в БД.ОБ: рабочая карточка с очередью; принтеры, приборы и станки без записи в БД.ОБ — сведения. */
+const hasWorkCard = (row: MachineRow) => row.kind === "machine" && !row.controlled && Boolean(row.equipment_id);
 const titleOf = (row: MachineRow) => [row.inventory, row.name].filter(Boolean).join(" · ");
 
 function searchText(row: MachineRow): string {
@@ -253,7 +256,9 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
         : open === "bench" || opened?.vna
           ? <AnalyserCard row={opened} benchNumber={benchNumber} canQuality={canQuality} close={() => setOpen(null)} />
           : opened?.station ? <WarehouseDeviceCard row={opened} station={opened.station} close={() => setOpen(null)} />
-          : opened && <MachineInfo row={opened} close={() => setOpen(null)} canWrite={canWrite} saved={() => undefined}
+          : opened && hasWorkCard(opened)
+            ? <MachineWorkCard row={opened} canWrite={canWrite} close={() => setOpen(null)} openSetup={() => setSetupOf(opened)} />
+            : opened && <MachineInfo row={opened} close={() => setOpen(null)} canWrite={canWrite} saved={() => undefined}
             manual={opened.kind === "machine" ? () => void openManual(opened) : undefined} />}
     {setupOf && <SetupWindow row={setupOf} canWrite={canWrite} setupViewer={setupViewer} close={() => setSetupOf(null)} saved={() => undefined} />}
     {manual && <ManualJobWindow job={manual.job} equipmentId={manual.row.equipment_id} inventory={manual.row.inventory}

@@ -41,7 +41,33 @@ export interface ManualJob {
   started_at: string;
   finished_at: string | null;
   version: number;
+  /** «Сделано», введённое у станка без управления (миграция 0209); `progress_over_plan` — больше плана (не отказ). */
+  progress_quantity?: number | null;
+  progress_at?: string | null;
+  progress_over_plan?: boolean;
+  /** Строка очереди станка, по которой начата работа (`null` — «Вне задания»). */
+  source?: ManualJobSource | null;
 }
+
+export interface ManualJobSource { task_id: string; operation_id: string; etk_position: string | number | null; label?: string }
+
+/** Простой станка (не задания): открытый — `ended_at === null`. */
+export interface MachineDowntime {
+  id: string;
+  equipment_id: string;
+  machine: string;
+  reason: string;
+  reason_name: string;
+  comment: string;
+  started_at: string;
+  started_by: string;
+  ended_at: string | null;
+  ended_by: string;
+  open: boolean;
+  seconds: number;
+}
+
+export interface DowntimeReasonOption { key: string; name: string }
 
 export interface ManualJobsList {
   date_from: string;
@@ -54,6 +80,8 @@ export interface ManualJobsList {
   can_decide?: boolean;
   /** Сколько завершённых работ «Ждёт решения склада» — за любые даты. */
   waiting_count?: number;
+  /** Открытые простои станков (станка `equipment_id`, если он задан). */
+  downtimes?: MachineDowntime[];
 }
 
 /** Партия склада, которую можно списать на работу; числа — строки сервера («12.5»). */
@@ -110,7 +138,9 @@ export interface ManualJobMaterialView {
 
 export interface ManualJobIssueLine { lot_id: string; lot_version: number; quantity: string }
 
-export interface ManualJobMachine { id: string; inventory: string; name: string; running: string | null }
+export interface ManualJobMachine {
+  id: string; inventory: string; name: string; running: string | null; downtime?: MachineDowntime | null;
+}
 export interface ManualJobReference { id: string; equipment_id: string; wire: string; contact: string; version: number; label: string }
 
 export interface ManualJobOptions {
@@ -119,6 +149,8 @@ export interface ManualJobOptions {
   contacts: { label: string; maker: string }[];
   references: ManualJobReference[];
   can_edit: boolean;
+  /** Причины простоя станка (те же, что у простоя задания). */
+  reasons?: DowntimeReasonOption[];
 }
 
 export interface ManualJobStart {
@@ -129,6 +161,8 @@ export interface ManualJobStart {
   length_mm: string;
   quantity_planned: number | null;
   reference_id: string | null;
+  /** Строка очереди станка, по которой начинается работа; без неё — «Вне задания». */
+  source?: { task_id: string; operation_id: string; etk_position: string | number | null };
 }
 
 export interface ManualJobFinish {
@@ -155,6 +189,13 @@ export const manualJobsApi = {
     api<ManualJob>(`${BASE}/${encodeURIComponent(id)}/finish`, { method: "POST", body: JSON.stringify(body) }),
   cancel: (id: string, version: number, reason: string) =>
     api<ManualJob>(`${BASE}/${encodeURIComponent(id)}/cancel`, { method: "POST", body: JSON.stringify({ version, reason }) }),
+  /** «Сделано» у станка без управления: итог, не прирост (больше плана можно — работа помечается). */
+  progress: (id: string, version: number, quantity: number) =>
+    api<ManualJob>(`${BASE}/${encodeURIComponent(id)}/progress`, { method: "POST", body: JSON.stringify({ version, quantity }) }),
+  startDowntime: (equipmentId: string, reason: string, comment: string) =>
+    api<{ downtime: MachineDowntime }>(`${BASE}/downtime`, { method: "POST", body: JSON.stringify({ equipment_id: equipmentId, reason, comment }) }),
+  stopDowntime: (id: string) =>
+    api<{ downtime: MachineDowntime }>(`${BASE}/downtime/${encodeURIComponent(id)}/stop`, { method: "POST" }),
   /** Окно «Материал»: расход, партии под провод / контакт, `q` — поиск другой партии. */
   material: (id: string, q = "", signal?: AbortSignal) =>
     api<ManualJobMaterialView>(`${BASE}/${encodeURIComponent(id)}/material${q.trim() ? `?${new URLSearchParams({ q: q.trim() })}` : ""}`, { signal }),

@@ -421,7 +421,9 @@ def issued_document(task, uow, *, lock=True):
     return shown.document, {"card_id": str(card.id), "card_version": card.version, "revision": shown.revision}
 
 
-def source_rows(source, selected, principal, uow, now, interleave=False, remaining=False):
+def source_rows(source, selected, principal, uow, now, interleave=False, remaining=False, issue=True):
+    """`issue=False` (preview, owner 20.11: «предпросмотр маркировки не должен выдавать серийные номера») computes the
+    numbers without recording their issue; only the enqueue that persists the batch issues them."""
     if len(set(selected)) != len(selected):
         raise ValueError("Надпись выбрана несколько раз")
     if source.group_id:
@@ -463,12 +465,12 @@ def source_rows(source, selected, principal, uow, now, interleave=False, remaini
             revision = {"member_id": str(member.id), "revision": member.row_snapshot.get("techcard_revision")}
         else:
             document, revision = issued_document(task, uow)
-        # Calculate and reserve through the established issuance semantics in this same transaction.
+        # Calculate (numbered=False only reads) and, on enqueue, issue through the established semantics in this transaction.
         serial = issue_mark_serials_in(task, False, principal.actor, now, uow)
         expanded = labels(document, task, serial, selected, interleave)
         if remaining:
             expanded = remaining_rows(expanded, printed, fixed_keys(document, task), numbered_keys(document, task, serial))
-        if any(row["serial"] is not None for row in expanded):
+        if issue and any(row["serial"] is not None for row in expanded):
             issue_mark_serials_in(task, True, principal.actor, now, uow)
         rows.extend(expanded)
         snapshots.append({"task_id": str(task.id), "operation_id": str(operation_id), "version": task.version,
@@ -510,9 +512,9 @@ def profile_target(session, profile_id, version, now, *, calibration=False, onli
     return profile, binding
 
 
-def build_preview(payload, principal, uow, now):
+def build_preview(payload, principal, uow, now, issue=True):
     rows, source = source_rows(payload.source, payload.selected, principal, uow, now, payload.interleave,
-                               payload.remaining)
+                               payload.remaining, issue)
     profile, binding = profile_target(uow.session, payload.profile_id, payload.profile_version, now, online=False)
     return rendered_manifest(rows, source, profile, binding), binding
 
@@ -538,8 +540,8 @@ def rendered_manifest(rows, source, profile, binding):
 def preview(payload: PreviewInput, principal: PrintUser, factory: Factory, now: Now):
     def run():
         with factory() as uow:
-            result, _binding = build_preview(payload, principal, uow, now)
-            uow.commit()
+            # A pure read: no serial issue, nothing committed (the unit of work rolls back on exit).
+            result, _binding = build_preview(payload, principal, uow, now, issue=False)
             return result
     return checked(run)
 
