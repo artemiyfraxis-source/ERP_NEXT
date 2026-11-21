@@ -73,7 +73,7 @@ def _stocked(client, item_index="КБ1", quantity="6", **accept) -> dict:
         "ordered": "40", "unit": "шт",
     }).json()["good"]
     return client.post(f"/api/shipping/goods/{created['id']}/accept", json={
-        "version": created["version"], "quantity": quantity, **accept,
+        "version": created["version"], "quantity": quantity, "confirm_beyond_tasks": True, **accept,
     }).json()["good"]
 
 
@@ -231,7 +231,7 @@ def test_accept_sets_location_and_an_empty_one_keeps_it():
 def test_single_accept_stores_location(shipping_api):
     client = shipping_api
     placed = _stocked(client, quantity="2", location="Стеллаж 3")
-    again = client.post(f"/api/shipping/goods/{placed['id']}/accept", json={"version": placed["version"], "quantity": "1"})
+    again = client.post(f"/api/shipping/goods/{placed['id']}/accept", json={"confirm_beyond_tasks": True, "version": placed["version"], "quantity": "1"})
     listed = client.get("/api/shipping/goods").json()["goods"]
 
     assert placed["location"] == "Стеллаж 3"

@@ -60,6 +60,7 @@ function stub() {
     if (url.startsWith("/api/shipping/item-addressees?")) return json({ items: itemDeliveries });
     if (url === "/api/shipping/project-addressees") return json({ addressees });
     if (url === "/api/shipping/finished-goods/accept") return json({ goods: [], replayed: false });
+    if (url.endsWith("/rollback")) return json({ grn: decodeURIComponent(url.split("/")[4]), quantity: "14", replayed: false, good: {} });
     if (url.startsWith("/api/shipping/intake/") && url.endsWith("/label")) return json({ status: "queued", reason: "В очереди принтера.", file: "j1", copies: 1, job_id: "j1" });
     if (url.startsWith("/api/shipping/project-addressee?")) return json({ addressee: dispatchCard });
     if (url === "/api/shipping/project-ship") return json({ shipment: { ...packedShipment, id: "s9", number: "ОТГ-9", pl_number: "PL591К.3-9" }, shipped: false, closed: false, why: "", replayed: false });
@@ -507,7 +508,7 @@ describe("Приёмка с производства: свои колонки и
     });
   });
 
-  it("«Готово»: «Принять · 6» предлагает штуки строки; «В производстве» — «Принять досрочно» с предупреждением", async () => {
+  it("«Готово»: «Принять · 6» предлагает штуки строки; «В производстве» — «Принять досрочно»: поле пустое, сверх сданного — подтверждение", async () => {
     intakeRows = [multi()];
     render(<ProductionIntakePage principal={principal} />);
     fireEvent.click(await screen.findByRole("button", { name: "Принять 591К.3 КБ1: 6" }));
@@ -525,12 +526,25 @@ describe("Приёмка с производства: свои колонки и
     expect(screen.queryByRole("button", { name: /Принять всё/ })).not.toBeInTheDocument();
     fireEvent.click(early);
     dialog = await screen.findByRole("dialog", { name: "Приёмка 591К.3 КБ1" });
-    expect(within(dialog).getByLabelText("Сколько принять 591К.3 КБ1")).toHaveValue(14);
+    // 20.11: остаток до тиража не подставляется — количество вписывают.
+    expect(within(dialog).getByLabelText("Сколько принять 591К.3 КБ1")).toHaveValue(null);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Принять на склад · 0 шт" }));
+    expect(await within(dialog).findByText("укажите количество больше 0")).toBeInTheDocument();
+    fireEvent.change(within(dialog).getByLabelText("Сколько принять 591К.3 КБ1"), { target: { value: "14" } });
     fireEvent.change(within(dialog).getByLabelText("Дата приёмки"), { target: { value: "2026-10-12" } });
     fireEvent.change(within(dialog).getByLabelText("Место хранения 591К.3 КБ1"), { target: { value: "Стеллаж 3" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Принять на склад · 14 шт" }));
+    // Цех сдал по заданиям 26 − 20 = 6: сверх сданного — только через окно подтверждения; «Отмена» ничего не шлёт.
+    let confirm = await screen.findByRole("dialog", { name: "Цех сдал по заданиям 6, принимаете 14" });
+    expect(within(confirm).getByRole("row", { name: /КБ1/ })).toHaveTextContent(/6s*14s*8/);
+    fireEvent.click(within(confirm).getByRole("button", { name: "Отмена" }));
+    expect(screen.queryByRole("dialog", { name: /Цех сдал/ })).not.toBeInTheDocument();
+    expect(writes()).toEqual([]);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Принять на склад · 14 шт" }));
+    confirm = await screen.findByRole("dialog", { name: "Цех сдал по заданиям 6, принимаете 14" });
+    fireEvent.click(within(confirm).getByRole("button", { name: "Принять 14, из них сверх сданного 8" }));
     await screen.findByText("Принято на склад: 14 шт");
-    expect(calls.find((call) => call.method === "POST")!.body).toEqual({ lines: [{ project: "591К.3", item_index: "КБ1", quantity: "14", location: "Стеллаж 3" }], received_at: "2026-10-12" });
+    expect(calls.find((call) => call.method === "POST")!.body).toEqual({ lines: [{ project: "591К.3", item_index: "КБ1", quantity: "14", location: "Стеллаж 3", confirm_beyond_tasks: true }], received_at: "2026-10-12" });
   });
 
   it("«Принять всё» — только в «Готово» (готовое) и «Все» (всё, что можно принять)", async () => {
@@ -550,10 +564,15 @@ describe("Приёмка с производства: свои колонки и
     dialog = await screen.findByRole("dialog", { name: "Принять всё 591К.3" });
     expect(within(dialog).getAllByLabelText("Сколько принять 591К.3 КБ1")).toHaveLength(1);
     fireEvent.click(within(dialog).getByRole("button", { name: "Принять на склад · 110 шт" }));
+    // КБ1: цех сдал 20, принимают 100 — в окне только она; КБ2 (сдано 10, принимают 10) — без вопросов.
+    const confirm = await screen.findByRole("dialog", { name: "Цех сдал по заданиям 20, принимаете 100" });
+    expect(within(confirm).queryByText("КБ2")).not.toBeInTheDocument();
+    fireEvent.click(within(confirm).getByRole("button", { name: "Принять 110, из них сверх сданного 80" }));
     await screen.findByText("Принято на склад: 110 шт");
     expect(calls.find((call) => call.method === "POST")!.body).toMatchObject({ lines: [
-      { project: "591К.3", item_index: "КБ1", quantity: "100" }, { project: "591К.3", item_index: "КБ2", quantity: "10" },
+      { project: "591К.3", item_index: "КБ1", quantity: "100", confirm_beyond_tasks: true }, { project: "591К.3", item_index: "КБ2", quantity: "10" },
     ] });
+    expect((calls.find((call) => call.method === "POST")!.body as { lines: object[] }).lines[1]).not.toHaveProperty("confirm_beyond_tasks");
   });
 
   it("по умолчанию — первая вкладка с настоящим действием склада; «В ожидании» — только когда больше ничего нет", async () => {
@@ -966,5 +985,128 @@ describe("Приёмка с производства: «Упаковать вс�
     expect(ask).toHaveBeenCalledWith(expect.stringContaining("ОТГ-z — № УПД, трек-номер"));
     expect(writes().map((call) => call.url)).toEqual(["/api/shipping/shipments/a/ship", "/api/shipping/shipments/b/ship"]);
     expect(writes()[0].body).toEqual({ version: 3 });
+  });
+});
+
+describe("Приёмка с производства: подтверждение сверх сданного и «Откатить приёмку» (20.11)", () => {
+  it("«Принять всё» с несколькими КБ сверх сданного: окно перечисляет их, остальные КБ идут без флага", async () => {
+    intakeRows = [row({ needed: "40", accepted: "0", delivered: "5", remaining: "40" }),
+      row({ item_index: "КБ2", name: "Кабель", needed: "10", accepted: "0", delivered: "10", remaining: "10" }),
+      row({ item_index: "КБ3", name: "Шлейф", needed: "8", accepted: "2", delivered: "2", remaining: "6", tasks: [] })];
+    render(<ProductionIntakePage principal={principal} />);
+    fireEvent.click(await screen.findByRole("tab", { name: /^Все/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Принять всё: 3 КБ · 56 шт" }));
+    const dialog = await screen.findByRole("dialog", { name: "Принять всё 591К.3" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Принять на склад · 56 шт" }));
+    const confirm = await screen.findByRole("dialog", { name: "Сверх сданного цехом — 2 КБ" });
+    const lines = within(confirm).getAllByRole("row").slice(1).map((tr) => tr.textContent);
+    expect(lines).toEqual(["КБ1Жгут54035", "КБ3Шлейфнет заданий66"]);  // у КБ3 нет заданий в ERP
+    fireEvent.click(within(confirm).getByRole("button", { name: "Принять 56, из них сверх сданного 41" }));
+    await screen.findByText("Принято на склад: 56 шт");
+    expect((calls.find((call) => call.method === "POST")!.body as { lines: unknown[] }).lines).toEqual([
+      { project: "591К.3", item_index: "КБ1", quantity: "40", confirm_beyond_tasks: true },
+      { project: "591К.3", item_index: "КБ2", quantity: "10" },
+      { project: "591К.3", item_index: "КБ3", quantity: "6", confirm_beyond_tasks: true },
+    ]);
+  });
+
+  it("сервер насчитал сданного меньше, чем экран: окно подтверждения с N сервера и повтор с новым ключом", async () => {
+    intakeRows = [row({ needed: "40", accepted: "0", delivered: "20", remaining: "40" })];
+    render(<ProductionIntakePage principal={principal} />);
+    const detail = "591К.3 КБ1: Цех сдал по заданиям 10, принимаете 20 — подтвердите приёмку сверх сданного";
+    fireEvent.click(await screen.findByRole("button", { name: "Принять 591К.3 КБ1: 20" }));
+    const dialog = await screen.findByRole("dialog", { name: "Приёмка 591К.3 КБ1" });
+    // Экран считает N = 20 и не спрашивает; сервер видит 10 и отвечает 409 со строками.
+    vi.mocked(fetch).mockImplementationOnce(async () => json({ detail, code: "beyond_tasks", rows: [
+      { project: "591К.3", item_index: "КБ1", good_id: "g1", handed_over: "10", quantity: "20", beyond: "10", has_tasks: true },
+    ] }, 409));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Принять на склад · 20 шт" }));
+    const confirm = await screen.findByRole("dialog", { name: "Цех сдал по заданиям 10, принимаете 20" });
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(within(confirm).getByRole("button", { name: "Принять 20, из них сверх сданного 10" }));
+    await screen.findByText("Принято на склад: 20 шт");
+    const posts = vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === "/api/shipping/finished-goods/accept");
+    expect(posts).toHaveLength(2);
+    const key = (index: number) => new Headers(posts[index][1]!.headers).get("Idempotency-Key");
+    expect(key(0)).toBeTruthy();
+    expect(key(1)).not.toBe(key(0));
+    expect(JSON.parse(String(posts[1][1]!.body)).lines).toEqual([{ project: "591К.3", item_index: "КБ1", quantity: "20", confirm_beyond_tasks: true }]);
+  });
+
+  it("другой отказ сервера — причина у строки, окна подтверждения нет", async () => {
+    intakeRows = [row({ needed: "40", accepted: "0", delivered: "20", remaining: "40" })];
+    render(<ProductionIntakePage principal={principal} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Принять 591К.3 КБ1: 20" }));
+    const dialog = await screen.findByRole("dialog", { name: "Приёмка 591К.3 КБ1" });
+    vi.mocked(fetch).mockImplementationOnce(async () => json({ detail: "591К.3 КБ1: тираж 40 шт, уже принято 30 — принять можно ещё 10" }, 422));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Принять на склад · 20 шт" }));
+    expect(await within(dialog).findByText("тираж 40 шт, уже принято 30 — принять можно ещё 10")).toHaveClass("ship-row-error");
+    expect(screen.queryByRole("dialog", { name: /Цех сдал/ })).not.toBeInTheDocument();
+  });
+
+  it("у КБ без заданий в ERP окно говорит «нет заданий», а не «цех сдал 0»; колонка — «Сдано, не принято»", async () => {
+    intakeRows = [row({ stage: "Готово", needed: "8", accepted: "2", delivered: "0", remaining: "6", tasks: [] })];
+    render(<ProductionIntakePage principal={principal} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Принять 591К.3 КБ1: 6" }));
+    const dialog = await screen.findByRole("dialog", { name: "Приёмка 591К.3 КБ1" });
+    expect(within(dialog).getByRole("columnheader", { name: "Сдано, не принято" })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Принять на склад · 6 шт" }));
+    const confirm = await screen.findByRole("dialog", { name: "У КБ нет заданий в ERP — принимаете 6" });
+    expect(within(confirm).getByText("нет заданий")).toBeInTheDocument();
+    expect(within(confirm).getByRole("button", { name: "Принять 6, из них сверх сданного 6" })).toBeInTheDocument();
+  });
+
+  const accepted = () => row({ needed: "40", delivered: "1", accepted: "15", packed: "0", remaining: "25", pack_decided: true, pack_permission_remaining: "0",
+    acts: [{ ...act("ГП.26.0000001", "1"), actor: "Кладовщик" }, { ...act("ГП.26.0000002", "14", "2026-11-20"), actor: "Кладовщик", location: "Стеллаж 2" }] });
+
+  it("руководитель: ГРН акта открывает его карточку; откат — с причиной, только последнего акта", async () => {
+    window.history.replaceState({}, "", "/?tab=accepted");
+    intakeRows = [accepted()];
+    render(<ProductionIntakePage principal={admin} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Акт приёмки ГП.26.0000001" }));
+    let card = await screen.findByRole("dialog", { name: "Акт приёмки ГП.26.0000001" });
+    expect(within(card).getByRole("status")).toHaveTextContent("После этого акта есть приёмка ГП.26.0000002 — сначала откатите её");
+    fireEvent.change(within(card).getByLabelText("Причина отката ГП.26.0000001"), { target: { value: "ошибка" } });
+    expect(within(card).getByRole("button", { name: /^Откатить приёмку/ })).toBeDisabled();
+    fireEvent.click(within(card).getByRole("button", { name: "Закрыть" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Акт приёмки ГП.26.0000002" }));
+    card = await screen.findByRole("dialog", { name: "Акт приёмки ГП.26.0000002" });
+    expect(card).toHaveTextContent("Принято по акту14 шт");
+    expect(card).toHaveTextContent("Дата приёмки20.11.2026");
+    expect(card).toHaveTextContent("Место храненияСтеллаж 2");
+    expect(card).toHaveTextContent("ПринялКладовщик");
+    expect(card).toHaveTextContent("Сдано цехом по заданиям1 шт");
+    const button = within(card).getByRole("button", { name: "Откатить приёмку · 14 шт" });
+    expect(button).toBeDisabled();  // причина обязательна
+    fireEvent.change(within(card).getByLabelText("Причина отката ГП.26.0000002"), { target: { value: "   " } });
+    expect(button).toBeDisabled();
+    fireEvent.change(within(card).getByLabelText("Причина отката ГП.26.0000002"), { target: { value: "приняли больше, чем сдал цех" } });
+    fireEvent.click(button);
+    await screen.findByText("Приёмка откатена: ГП.26.0000002 · 14 шт снова в производстве");
+    expect(writes()).toEqual([expect.objectContaining({ url: `/api/shipping/acts/${encodeURIComponent("ГП.26.0000002")}/rollback`, body: { reason: "приняли больше, чем сдал цех" } })]);
+    const sent = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith("/rollback"))!;
+    expect(new Headers(sent[1]!.headers).get("Idempotency-Key")).toBeTruthy();
+  });
+
+  it("часть штук акта уже набрана в отправку — откат выключен с причиной", async () => {
+    window.history.replaceState({}, "", "/?tab=accepted");
+    intakeRows = [row({ needed: "40", delivered: "1", accepted: "14", packed: "4", remaining: "26", pack_decided: true, pack_permission_remaining: "0",
+      acts: [act("ГП.26.0000002", "14")] })];
+    shipments = [{ ...packedShipment, status: "Новая", lines: [shipmentLine({ grn: "ГП.26.0000002", lots: [{ grn: "ГП.26.0000002", quantity: "4" }] })] }];
+    render(<ProductionIntakePage principal={admin} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Акт приёмки ГП.26.0000002" }));
+    const card = await screen.findByRole("dialog", { name: "Акт приёмки ГП.26.0000002" });
+    expect(within(card).getByRole("status")).toHaveTextContent("Из акта уже набрано в отправки 4 шт — сначала верните их на склад");
+    fireEvent.change(within(card).getByLabelText("Причина отката ГП.26.0000002"), { target: { value: "ошибка" } });
+    expect(within(card).getByRole("button", { name: /^Откатить приёмку/ })).toBeDisabled();
+  });
+
+  it("без прав руководителя ГРН — просто текст, карточки отката нет", async () => {
+    window.history.replaceState({}, "", "/?tab=accepted");
+    intakeRows = [accepted()];
+    render(<ProductionIntakePage principal={principal} />);
+    await screen.findAllByText("ГП.26.0000002");
+    expect(screen.queryByRole("button", { name: /^Акт приёмки/ })).not.toBeInTheDocument();
   });
 });

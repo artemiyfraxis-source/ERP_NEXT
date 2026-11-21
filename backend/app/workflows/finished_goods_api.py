@@ -13,6 +13,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.modules.shipping.api import _good_result, _number, _run
@@ -24,6 +25,7 @@ from .finished_goods import (
     AcceptBatchCommand,
     AcceptLine,
     AcceptOneCommand,
+    BeyondTasksNotConfirmed,
     accept_batch,
     accept_one,
     flow_uow_factory,
@@ -41,6 +43,8 @@ class AcceptOnePayload(BaseModel):
     received_at: date | None = None
     # Место хранения на складе ГП; пусто — прежнее.
     location: str = Field(default="", max_length=255)
+    # Принимают больше сданного цехом по заданиям — подтверждено кладовщиком (без флага — 409).
+    confirm_beyond_tasks: bool = False
 
 
 class AcceptLinePayload(BaseModel):
@@ -48,6 +52,7 @@ class AcceptLinePayload(BaseModel):
     item_index: str = Field(min_length=1, max_length=255)
     quantity: Quantity
     location: str = Field(default="", max_length=255)
+    confirm_beyond_tasks: bool = False
 
 
 class AcceptBatchPayload(BaseModel):
@@ -62,6 +67,18 @@ def _flow(request: Request) -> Callable[[], object]:
     if factory is None:
         raise HTTPException(status_code=503, detail="База ERP не настроена")
     return factory
+
+
+def _guarded(operation):
+    """Приёмка сверх сданного по заданиям без подтверждения — 409: `detail` словами для кладовщика, `code`
+    «beyond_tasks» и `rows` [{project, item_index, good_id, handed_over, quantity, beyond, has_tasks}] — N сервера;
+    ничего не принято. Повтор — с `confirm_beyond_tasks` у этих строк."""
+    try:
+        return _run(operation)
+    except BeyondTasksNotConfirmed as error:
+        return JSONResponse(status_code=409, content={
+            "detail": str(error), "code": error.code, "rows": [row.as_dict() for row in error.rows],
+        })
 
 
 def _share(task) -> dict:
@@ -95,12 +112,16 @@ def accept_from_production(
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=1, max_length=255)],
     flow: Annotated[Callable[[], object], Depends(_flow)],
 ) -> dict:
-    """Приёмка пакетом: отмеченные КБ с количеством — все или ни одной; не больше сданного цехом."""
-    result = _run(lambda: accept_batch(AcceptBatchCommand(
+    """Приёмка пакетом: отмеченные КБ с количеством — все или ни одной; до предела КБ (`_limit`). Строка сверх сданного
+    цехом по заданиям — только с `confirm_beyond_tasks: true`, иначе 409 «Цех сдал по заданиям N, принимаете M — …»."""
+    result = _guarded(lambda: accept_batch(AcceptBatchCommand(
         idempotency_key=idempotency_key,
-        lines=tuple(AcceptLine(line.project, line.item_index, line.quantity, line.location.strip() or payload.location) for line in payload.lines),
+        lines=tuple(AcceptLine(line.project, line.item_index, line.quantity, line.location.strip() or payload.location,
+                               line.confirm_beyond_tasks) for line in payload.lines),
         received_at=payload.received_at, actor=principal.actor, now=now,
     ), flow))
+    if isinstance(result, JSONResponse):
+        return result
     return {"goods": [_good_result(good) for good in result.goods], "replayed": result.replayed}
 
 
@@ -111,10 +132,13 @@ def receive_good(
     now: Annotated[datetime, Depends(moscow_now)],
     flow: Annotated[Callable[[], object], Depends(_flow)],
 ) -> dict:
-    good = _run(lambda: accept_one(AcceptOneCommand(
+    good = _guarded(lambda: accept_one(AcceptOneCommand(
         good_id=good_id, expected_version=payload.version, quantity=payload.quantity,
         received_at=payload.received_at, actor=principal.actor, now=now, location=payload.location,
+        confirm_beyond_tasks=payload.confirm_beyond_tasks,
     ), flow))
+    if isinstance(good, JSONResponse):
+        return good
     return {"good": _good_result(good)}
 
 

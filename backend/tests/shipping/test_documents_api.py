@@ -14,7 +14,7 @@ def _stocked(client, *, item_index="КБ1", ordered="40", accepted="6", project=
         "name": "Жгут " + item_index, "ordered": ordered, "unit": "шт",
     }).json()["good"]
     if accepted:
-        good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": accepted}).json()["good"]
+        good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"confirm_beyond_tasks": True, "version": good["version"], "quantity": accepted}).json()["good"]
     return good
 
 

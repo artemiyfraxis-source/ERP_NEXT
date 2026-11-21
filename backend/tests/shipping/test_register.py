@@ -181,10 +181,10 @@ def test_every_shipping_path_writes_the_journal_and_it_sums_to_the_counters(regi
         "project": "708К.4", "item_index": "КБ1", "customer": "Заказчик", "name": "Жгут", "ordered": "50",
     }).json()["good"]
     # КБ без заданий в ERP: принять можно до тиража, причина — в журнале.
-    accepted = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "30"})
+    accepted = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"confirm_beyond_tasks": True, "version": good["version"], "quantity": "30"})
     assert accepted.status_code == 200, accepted.text
     good = accepted.json()["good"]
-    over = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "21"})
+    over = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"confirm_beyond_tasks": True, "version": good["version"], "quantity": "21"})
     assert over.status_code == 422 and "тираж 50 шт, уже принято 30 — принять можно ещё 20" in over.json()["detail"]
 
     permit_fixture_goods(client)
@@ -232,7 +232,7 @@ def test_only_the_head_rolls_back_shipped_and_never_without_a_reason(register_ap
     good = client.post("/api/shipping/goods", json={
         "project": "708К.4", "item_index": "КБ1", "name": "Жгут", "ordered": "5",
     }).json()["good"]
-    good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "5"}).json()["good"]
+    good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"confirm_beyond_tasks": True, "version": good["version"], "quantity": "5"}).json()["good"]
     permit_fixture_goods(client)
     shipment = client.post("/api/shipping/shipments", json={
         "receiver": "П", "shipping_point": "Москва", "phone": "+7 900", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО", "upd_number": "1", "lines": [{"good_id": good["id"], "quantity": "5"}],
@@ -283,7 +283,7 @@ def test_a_good_with_a_journal_outlives_its_project_card(register_api):
     good = client.post("/api/shipping/goods", json={
         "project": "708К.4", "item_index": "КБ1", "name": "Жгут", "ordered": "5",
     }).json()["good"]
-    client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "2"})
+    client.post(f"/api/shipping/goods/{good['id']}/accept", json={"confirm_beyond_tasks": True, "version": good["version"], "quantity": "2"})
     dropped = client.post("/api/shipping/project-queue/drop", json={"project": "708К.4"})
     assert dropped.json() == {"deleted": 0, "kept": 1}
 
@@ -293,7 +293,7 @@ def test_ship_without_data_needs_full_access_and_a_reason_and_audits_the_gaps(re
     good = client.post("/api/shipping/goods", json={
         "project": "708К.4", "item_index": "КБ1", "name": "Жгут", "ordered": "10",
     }).json()["good"]
-    good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "10"}).json()["good"]
+    good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"confirm_beyond_tasks": True, "version": good["version"], "quantity": "10"}).json()["good"]
     permit_fixture_goods(client)
     made = client.post("/api/shipping/shipments", json={
         "receiver": "П", "shipping_point": "Москва", "terms": "САМОВЫВОЗ", "upd_type": "ЭДО", "upd_number": "1",
@@ -339,7 +339,7 @@ def test_ship_without_data_also_records_the_no_upd_permit_on_the_actors_name(reg
     good = client.post("/api/shipping/goods", json={
         "project": "708К.4", "item_index": "КБ1", "name": "Жгут", "ordered": "10",
     }).json()["good"]
-    good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "10"}).json()["good"]
+    good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"confirm_beyond_tasks": True, "version": good["version"], "quantity": "10"}).json()["good"]
     permit_fixture_goods(client)
     made = client.post("/api/shipping/shipments", json={
         "receiver": "П", "shipping_point": "Москва", "terms": "САМОВЫВОЗ", "upd_type": "БЕЗ УПД",

@@ -662,7 +662,8 @@ def shipping():
     box = S.get("last_box2")
     if box and g2 and box.get("status") == "Подтверждена":
         h = wh.ok("POST", "/api/shipping/finished-goods/accept", "acceptances",
-                 json={"lines": [{"project": g2["project"], "item_index": g2["item_index"], "quantity": box["quantity"]}]})
+                 json={"lines": [{"project": g2["project"], "item_index": g2["item_index"], "quantity": box["quantity"],
+                                    "confirm_beyond_tasks": True}]})
         handed = bool(h)
         print("  acceptance:", handed)
     # Принимаем по КБ фактическое количество подтверждённой ОТК коробки (39 из 40), не весь заказ.

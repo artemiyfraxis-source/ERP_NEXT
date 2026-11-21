@@ -428,6 +428,12 @@ class SqlAlchemyFinishedGoodsRepository:
             good_id: roll_back_acts(tuple(items), tuple(rollbacks.get(good_id, ())))
             for good_id, items in found.items()
         }
+    def act_owner(self, grn: str) -> UUID | None:
+        """Строка ГП акта приёмки с этим ГРН или None."""
+        wanted = str(grn or "").strip()
+        if not wanted:
+            return None
+        return self.session.scalar(select(FinishedGoodsActRow.finished_good_id).where(FinishedGoodsActRow.grn == wanted))
     def in_journal(self, good_ids) -> set[UUID]:
         if not good_ids: return set()
         return set(self.session.scalars(select(FinishedGoodMoveRow.finished_good_id).where(FinishedGoodMoveRow.finished_good_id.in_(list(good_ids))).distinct()))

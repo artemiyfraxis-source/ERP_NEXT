@@ -197,6 +197,14 @@ class FinishedGood:
             raise ShippingValidationError("Откатить можно только отгруженное в ERP, не больше уехавшего")
         return replace(self, sent=self.sent - amount, version=self.version + 1)
 
+    def unaccept(self, quantity: Decimal) -> FinishedGood:
+        """Откат приёмки (руководитель, с причиной): принятое снова «В производстве». Только то, что лежит на складе
+        неупакованным и принято в ERP: упакованное и отгруженное сначала возвращают своими откатами."""
+        amount = _positive(quantity, "Количество отката приёмки")
+        if amount > self.accepted - self.shipped or amount > self.accepted - self.before_erp:
+            raise ShippingValidationError("Откатить приёмку можно только принятое в ERP и не упакованное")
+        return replace(self, accepted=self.accepted - amount, version=self.version + 1)
+
     @property
     def register(self) -> GoodsRegister:
         return GoodsRegister(

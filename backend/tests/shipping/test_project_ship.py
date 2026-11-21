@@ -63,7 +63,7 @@ def _stock(client, item_index="КБ1", quantity="6") -> dict:
         "project": PROJECT, "item_index": item_index, "customer": "Заказчик", "name": "Жгут " + item_index,
         "ordered": "40", "unit": "шт",
     }).json()["good"]
-    return client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": quantity}).json()["good"]
+    return client.post(f"/api/shipping/goods/{good['id']}/accept", json={"confirm_beyond_tasks": True, "version": good["version"], "quantity": quantity}).json()["good"]
 
 
 def _card(client, **fields) -> dict:
@@ -107,7 +107,7 @@ def test_incomplete_order_accepts_canonical_project_alias_only_with_explicit_cap
         "project": stored_project, "item_index": "КБ1", "customer": "Заказчик", "name": "Жгут",
         "ordered": "16", "unit": "шт",
     }).json()["good"]
-    good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"version": good["version"], "quantity": "15"}).json()["good"]
+    good = client.post(f"/api/shipping/goods/{good['id']}/accept", json={"confirm_beyond_tasks": True, "version": good["version"], "quantity": "15"}).json()["good"]
     body = {"project": requested_project, "lines": [{"good_id": good["id"], "quantity": "15"}]}
     if endpoint == "project-ship":
         body.update(addressee_version=0, ship=False)

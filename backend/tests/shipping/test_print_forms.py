@@ -214,7 +214,7 @@ def test_part_number_skips_an_article_that_is_only_project_and_kb(shipping_api):
         "project": "591К.3", "item_index": "КБ1", "customer": "Заказчик", "article": "591К.3 КБ1", "name": "Жгут КБ1",
         "ordered": "5", "unit": "шт",
     }).json()["good"]
-    plain = client.post(f"/api/shipping/goods/{plain['id']}/accept", json={"version": plain["version"], "quantity": "5"}).json()["good"]
+    plain = client.post(f"/api/shipping/goods/{plain['id']}/accept", json={"confirm_beyond_tasks": True, "version": plain["version"], "quantity": "5"}).json()["good"]
     shipment = _shipment(client, [{"good_id": plain["id"], "quantity": "5"}])
 
     # «КБ1 591К.3 КБ1» не повторяется — в «Чертежный номер/Артикул» только «КБ1».

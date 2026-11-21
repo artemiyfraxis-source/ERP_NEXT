@@ -199,7 +199,7 @@ def _good(client, item_index="КБ1", accepted="6") -> dict:
     if not accepted:
         return created
     return client.post(f"/api/shipping/goods/{created['id']}/accept", json={
-        "version": created["version"], "quantity": accepted,
+        "version": created["version"], "quantity": accepted, "confirm_beyond_tasks": True,
     }).json()["good"]
 
 
@@ -260,7 +260,7 @@ def test_decision_can_be_withdrawn_before_anything_is_picked_and_then_picking_st
     card = client.get("/api/shipping/project-addressee", params={"project": PROJECT}).json()["addressee"]
     withdrawn = _decision(client, False, granted.json()["permissions"][0]["version"])
     fresh = client.get("/api/shipping/goods").json()["goods"][0]
-    client.post(f"/api/shipping/goods/{fresh['id']}/accept", json={"version": fresh["version"], "quantity": "3"})
+    client.post(f"/api/shipping/goods/{fresh['id']}/accept", json={"confirm_beyond_tasks": True, "version": fresh["version"], "quantity": "3"})
     _as(STOREKEEPER)
     pick = client.post(f"/api/shipping/shipments/{made['id']}/pick", json={"version": made["version"]})
 

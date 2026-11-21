@@ -117,7 +117,7 @@ def manager_request(client, good, quantity):
 
 def accept(client, quantity):
     fresh = client.get("/api/shipping/goods").json()["goods"][0]
-    response = client.post(f"/api/shipping/goods/{fresh['id']}/accept", json={"version": fresh["version"], "quantity": quantity})
+    response = client.post(f"/api/shipping/goods/{fresh['id']}/accept", json={"confirm_beyond_tasks": True, "version": fresh["version"], "quantity": quantity})
     assert response.status_code == 200, response.text
 
 
@@ -207,14 +207,14 @@ def test_limit_is_checked_against_what_is_picked_not_what_is_ordered(shipping_ap
     assert grant(client, "2").status_code == 200
     fresh = client.get("/api/shipping/goods").json()["goods"][0]
     _as(STOREKEEPER)
-    assert client.post(f"/api/shipping/goods/{fresh['id']}/accept", json={"version": fresh["version"], "quantity": "2"}).status_code == 200
+    assert client.post(f"/api/shipping/goods/{fresh['id']}/accept", json={"confirm_beyond_tasks": True, "version": fresh["version"], "quantity": "2"}).status_code == 200
     picked = client.post(f"/api/shipping/shipments/{made['id']}/pick", json={"version": made["version"]})
     assert picked.status_code == 200, picked.text
     assert picked.json()["shipment"]["lines"][0]["picked"] == "2"
     assert permission_view(client)["quantity"] == "2"
     # Кладовщик лимит не поднимает: больше на складе — больше разрешённого — отказ.
     fresh = client.get("/api/shipping/goods").json()["goods"][0]
-    assert client.post(f"/api/shipping/goods/{fresh['id']}/accept", json={"version": fresh["version"], "quantity": "3"}).status_code == 200
+    assert client.post(f"/api/shipping/goods/{fresh['id']}/accept", json={"confirm_beyond_tasks": True, "version": fresh["version"], "quantity": "3"}).status_code == 200
     again = client.post(f"/api/shipping/shipments/{made['id']}/pick", json={"version": picked.json()["shipment"]["version"]})
     assert again.status_code == 422 and "разрешено ещё 0" in again.json()["detail"]
 
