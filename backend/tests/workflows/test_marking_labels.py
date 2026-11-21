@@ -570,11 +570,11 @@ def test_trial_is_a_real_one_label_batch_that_spends_the_first_remaining_serial(
 
 def test_limit_cuts_label_pieces_and_a_trial_keeps_the_operator_reason(marking):
     client, _factory, payload, _task, *_ = marking
-    six = preview(marking, {**payload, "limit": 6})
+    six = preview(marking, {**payload, "limit": 6, "remaining": True})
     assert [(row["text"], row["quantity"]) for row in six["labels"]] == [
         ("КБ-001", 1), ("КБ-002", 1), ("КБ-003", 1), ("КБ-004", 1), ("КБ-005", 1), ("АБВ", 1)]
     assert six["total"] == 6
-    trial = {**payload, "limit": 1}
+    trial = {**payload, "limit": 1, "remaining": True}
     response = client.post(BASE + "/batches", json={**trial, "idempotency_key": "trial-reason", "reason": "  проверка  ",
                                                      "manifest_hash": preview(marking, trial)["manifest_hash"]})
     assert response.status_code == 200 and response.json()["reason"] == "Пробная печать · проверка", response.text
@@ -582,17 +582,20 @@ def test_limit_cuts_label_pieces_and_a_trial_keeps_the_operator_reason(marking):
     assert two["reason"] == "" and [job["text"] for job in two["jobs"]] == ["КБ-002", "КБ-003"]
 
 
-@pytest.mark.parametrize("extra", [{"limit": 0}, {"limit": 501}, {"limit": 1.5}])
-def test_limit_is_one_to_five_hundred_labels(marking, extra):
-    response = marking[0].post(BASE + "/preview", json={**marking[2], **extra})
+@pytest.mark.parametrize("extra", [{"limit": 0}, {"limit": 501}, {"limit": 1.5}, {"limit": 1, "remaining": False}])
+def test_limit_is_one_to_five_hundred_remaining_labels(marking, extra):
+    """Without «оставшиеся» a limited print could repeat an already printed serial as «Пробная печать»."""
+    response = marking[0].post(BASE + "/preview", json={**marking[2], "remaining": True, **extra})
     assert response.status_code == 422, response.text
+    batch = {**marking[2], "remaining": True, **extra, "idempotency_key": "limit", "manifest_hash": "0" * 64}
+    assert marking[0].post(BASE + "/batches", json=batch).status_code == 422
 
 
 def test_a_trial_is_never_a_reprint(marking):
     client = marking[0]
     first, request, _ = enqueue(marking)
     response = client.post(BASE + "/batches", json={**request, "idempotency_key": "rp", "reprint_of": first["id"],
-                                                     "reason": "Брак", "limit": 1})
+                                                     "reason": "Брак", "limit": 1, "remaining": True})
     assert response.status_code == 422, response.text
 
 
@@ -601,7 +604,7 @@ def test_a_trial_in_a_group_issues_serials_only_for_the_printed_task(marking):
 
     _client, factory, payload, task, *_ = marking
     group_id, tasks = make_group(marking, "second")
-    trial = {**payload, "source": {"group_id": group_id, "version": 1}, "limit": 1}
+    trial = {**payload, "source": {"group_id": group_id, "version": 1}, "limit": 1, "remaining": True}
     batch, _request, shown = enqueue(marking, key="group-trial", payload=trial)
     assert batch["total"] == 1 and shown["labels"][0]["task_id"] == str(task.id)
     with factory() as uow:
@@ -613,8 +616,8 @@ def test_released_serials_refuse_a_trial_too(marking, monkeypatch):
 
     client, factory, payload, *_ = marking
     monkeypatch.setattr(workflow, "issue_mark_serials_in", lambda *args, **kwargs: None)
-    for path, body in (("/preview", {**payload, "limit": 1}),
-                       ("/batches", {**payload, "limit": 1, "idempotency_key": "released", "manifest_hash": "0" * 64})):
+    trial = {**payload, "limit": 1, "remaining": True}
+    for path, body in (("/preview", trial), ("/batches", {**trial, "idempotency_key": "released", "manifest_hash": "0" * 64})):
         response = client.post(BASE + path, json=body)
         assert response.status_code == 422 and "освобождены" in response.json()["detail"], response.text
     with factory() as uow:
@@ -633,21 +636,23 @@ def test_label_size_off_the_etk_needs_a_reason_and_is_journaled(marking):
     with factory() as uow:
         assert uow.session.scalar(select(LabelJobRow.id)) is None
         assert task.id not in uow.production.marks_issued([task.id])
-    accepted = client.post(BASE + "/batches", json={**request, "idempotency_key": "size-2", "reason": "Нет ленты 25×9"})
-    assert accepted.status_code == 200, accepted.text
-    assert accepted.json()["reason"] == "Нет ленты 25×9"
-    [event] = audit_events(factory, "size_deviation")
-    assert event["reason"] == "Нет ленты 25×9" and event["batch_id"] == accepted.json()["id"]
-    assert event["etk_size"] == {"width_mm": 25.0, "height_mm": 9.0, "material": "Этикетка 25×9 мм"}
-    assert (event["profile"]["width_mm"], event["profile"]["height_mm"]) == (92.5, 20)
     # A trial on the deviating profile asks the same reason and keeps it after «Пробная печать».
-    trial = {**payload, "limit": 1}
+    trial = {**payload, "limit": 1, "remaining": True}
     trial_hash = preview(marking, trial)["manifest_hash"]
     no_reason = client.post(BASE + "/batches", json={**trial, "idempotency_key": "t", "manifest_hash": trial_hash})
     assert no_reason.status_code == 422 and no_reason.json()["detail"] == MISMATCH
     with_reason = client.post(BASE + "/batches", json={**trial, "idempotency_key": "t2", "manifest_hash": trial_hash,
                                                         "reason": "Нет ленты"})
     assert with_reason.status_code == 200 and with_reason.json()["reason"] == "Пробная печать · Нет ленты"
+    accepted = client.post(BASE + "/batches", json={**request, "idempotency_key": "size-2", "reason": "Нет ленты 25×9"})
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["reason"] == "Нет ленты 25×9"
+    events = {event["batch_id"]: event for event in audit_events(factory, "size_deviation")}
+    assert set(events) == {with_reason.json()["id"], accepted.json()["id"]}
+    event = events[accepted.json()["id"]]
+    assert event["reason"] == "Нет ленты 25×9" and events[with_reason.json()["id"]]["reason"] == "Нет ленты"
+    assert event["etk_size"] == {"width_mm": 25.0, "height_mm": 9.0, "material": "Этикетка 25×9 мм"}
+    assert (event["profile"]["width_mm"], event["profile"]["height_mm"]) == (92.5, 20)
 
 
 @pytest.mark.parametrize("material, size", [
@@ -684,3 +689,13 @@ def test_a_reprint_of_a_deviating_batch_asks_only_its_own_reason(marking):
                                                  "reprint_of": first.json()["id"], "reason": "Повтор"})
     assert whole.status_code == 200, whole.text
     assert len(audit_events(factory, "size_deviation")) == 1
+
+
+def test_a_trial_reason_fits_the_stored_reason_and_says_its_real_limit(marking):
+    client, _factory, payload, *_ = marking
+    trial = {**payload, "limit": 1, "remaining": True, "idempotency_key": "long", "manifest_hash": "0" * 64}
+    response = client.post(BASE + "/batches", json={**trial, "reason": "а" * 984})
+    assert response.status_code == 422 and "983" in response.text, response.text
+    shown = preview(marking, {**payload, "limit": 1, "remaining": True})
+    fits = client.post(BASE + "/batches", json={**trial, "reason": "а" * 983, "manifest_hash": shown["manifest_hash"]})
+    assert fits.status_code == 200 and len(fits.json()["reason"]) == 1000, fits.text
