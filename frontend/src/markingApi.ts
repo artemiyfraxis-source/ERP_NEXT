@@ -1,5 +1,6 @@
 import { ApiError, api, failureText, productionApi, type ProductionOperation } from "./api";
 import type { CuttingGroup } from "./cuttingGroups";
+import { formatNumber } from "./format";
 
 export interface MarkingRect { x: number; y: number; width: number; height: number }
 export interface MarkingGeometry {
@@ -32,8 +33,13 @@ export interface MarkingPrinter {
 }
 export interface MarkingCatalog { machines: MarkingMachine[]; printers: MarkingPrinter[] }
 export type MarkingSource = { task_id: string; operation_id: string; version: number } | { group_id: string; version: number };
-/** `remaining` — «Печатать оставшиеся»: the server drops labels already printed or queued. */
-export interface MarkingRequest { profile_id: string; profile_version: number; source: MarkingSource; selected: string[]; remaining?: boolean }
+/** `remaining` — «Печатать оставшиеся»: the server drops labels already printed or queued. `interleave` — order «по изделию»
+ *  (per item: fixed marks, then numbered ones). `limit` — only the first N labels after the remaining filter («Пробная» = 1:
+ *  a real label that spends its serial and counts as printed). */
+export interface MarkingRequest { profile_id: string; profile_version: number; source: MarkingSource; selected: string[]; remaining?: boolean
+  interleave?: boolean; limit?: number }
+/** Label size from the ETK («25×9 мм» in the mark material). */
+export interface MarkingLabelSize { width_mm: number; height_mm: number; material?: string }
 export interface MarkingDimensions { width_mm: number; height_mm: number; orientation: string; dpi: number }
 export interface MarkingRaster extends MarkingDimensions { png_b64: string; sha256: string }
 /** `halves` — the text of each text zone: «X1 | X2» in the ETK prints X1 on the left half of a flag and X2 on the right. */
@@ -41,6 +47,9 @@ export interface MarkingLabel { key: string; task_id: string; text: string; mate
 export interface MarkingPreview extends MarkingDimensions {
   manifest_hash: string; profile_id: string; profile_version: number; binding_version: number;
   source_snapshot: unknown; labels: MarkingLabel[]; total: number;
+  /** Task sources: the size in the ETK (null — not given) and whether the chosen profile has it (±0,5 мм, either way round).
+   *  `profile_matches: false` — the batch needs a reason (server: 422 «Размер этикетки не как в ЭТК — укажите причину»). */
+  etk_size?: MarkingLabelSize | null; profile_matches?: boolean;
 }
 export type MarkingStatus = "pending" | "taken" | "spooled" | "failed" | "unknown" | "cancelled";
 export type MarkingPrintState = "queued" | "printed" | "error" | "cancelled" | "untracked";
@@ -67,6 +76,8 @@ export interface MarkingManualRequest {
   numbering?: { first: number; last: number } | null;
   /** «Пробная»: только первая этикетка, одна копия. */
   trial?: boolean;
+  /** Ø провода, мм (0,1…60) — только в журнал партии; номера изделий «Свой текст» не выдаёт. */
+  wire_mm?: number | null;
 }
 export interface MarkingManualBatchRequest extends MarkingManualRequest { manifest_hash: string; idempotency_key: string }
 /** Состояние станка маркировки для строки состояния карточки: `GET /api/production/machines/card/{инв. №}`. */
@@ -79,15 +90,18 @@ export interface MarkingMachineState {
     last_seen: string | null; extra: [string, string][]; error: string };
   journal: { at: string | null; text: string; tone: string }[];
 }
-/** Напечатано / осталось по КБ источника (`GET /marking/progress`). */
-export interface MarkingSourceProgress { printed: number; remaining: number; remaining_labels: number }
+/** Напечатано / осталось по КБ источника (`GET /marking/progress`); размер этикетки и Ø провода — из ЭТК
+ *  (`label_size` null и `sizes_differ` — у КБ разные размеры). */
+export interface MarkingProgressRow { printed: number; remaining: number; remaining_labels: number; label_size?: MarkingLabelSize | null; wire_mm?: number[] }
+export interface MarkingSourceProgress { printed: number; remaining: number; remaining_labels: number
+  rows?: MarkingProgressRow[]; label_size?: MarkingLabelSize | null; sizes_differ?: boolean; wire_mm?: number[] }
 
 const root = "/api/production/marking";
 const post = <T>(path: string, body: unknown, safe = false, signal?: AbortSignal) =>
   api<T>(root + path, { method: "POST", body: JSON.stringify(body), safe, signal });
 export const markingApi = {
   machines: (signal?: AbortSignal) => api<MarkingCatalog>(`${root}/machines`, { signal }),
-  preview: (body: MarkingRequest) => post<MarkingPreview>("/preview", body),
+  preview: (body: MarkingRequest, signal?: AbortSignal) => post<MarkingPreview>("/preview", body, false, signal),
   enqueue: (body: MarkingBatchRequest) => post<MarkingBatch>("/batches", body),
   batch: (id: string, signal?: AbortSignal) => api<MarkingBatch>(`${root}/batches/${encodeURIComponent(id)}`, { signal }),
   profile: (profile: MarkingProfile, geometry: MarkingGeometry, calibrated: boolean, name = profile.name) => api<MarkingProfile>(`${root}/profiles/${encodeURIComponent(profile.id)}`, {
@@ -163,6 +177,23 @@ export const joinHalves = (left: string, right: string) => `${left.trim()} ${MAR
 export function splitHalves(text: string): [string, string] | null {
   const parts = text.split(MARKING_HALF).map((part) => part.trim());
   return parts.length === 2 ? [parts[0], parts[1]] : null;
+}
+
+/** «25 × 9» — размер этикетки в мм. */
+export const formatSize = (size: { width_mm: number; height_mm: number }) => `${formatNumber(size.width_mm)} × ${formatNumber(size.height_mm)}`;
+/** Профиль подходит к размеру из ЭТК: ±0,5 мм, этикетка может лежать любой стороной (как сверяет сервер). */
+export function sizeMatches(geometry: { width_mm: number; height_mm: number }, size: { width_mm: number; height_mm: number }): boolean {
+  // Допуск как у сервера (marking_progress.same_size): 0,5 мм плюс запас на двоичную дробь (9,4 − 8,9 = 0,5000…09).
+  const near = (a: number, b: number) => Math.abs(a - b) <= 0.5 + 1e-9;
+  return (near(geometry.width_mm, size.width_mm) && near(geometry.height_mm, size.height_mm))
+    || (near(geometry.width_mm, size.height_mm) && near(geometry.height_mm, size.width_mm));
+}
+/** «1,6» / «1.6» → 1.6; пусто → null; не число или вне 0,1…60 мм → undefined. */
+export function parseWireMm(text: string): number | null | undefined {
+  const value = text.trim().replace(",", ".");
+  if (!value) return null;
+  const number = /^\d+(?:\.\d+)?$/.test(value) ? Number(value) : NaN;
+  return number >= 0.1 && number <= 60 ? number : undefined;
 }
 
 export function boundPrinter(catalog: MarkingCatalog, machine: MarkingMachine | undefined) {

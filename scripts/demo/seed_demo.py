@@ -584,6 +584,131 @@ def production():
     S["task1"] = task
 
 
+# ── 7b. Marking pult (ОБ.101 / ОБ.102 on one Godex, a labels group with a sized ETK) ────────────────────────────────
+
+LABEL_MATERIAL = "Этикетка 25×9 мм, лента Vell VL-S641"
+GODEX = {"machine_id": "demo-godex-pc", "pc": "Цех-Godex", "printer": "Godex EZ2350i"}
+
+
+def _sqlite_path():
+    if not DB_URL.startswith("sqlite"):
+        raise RuntimeError("Marking pult fixtures write straight into a local SQLite demo base")
+    path = DB_URL.split(":///", 1)[1]
+    path = path if os.path.isabs(path) else os.path.join(BACKEND, path)
+    if not os.path.isfile(path):  # sqlite3.connect would silently create an empty file
+        raise RuntimeError(f"Marking pult fixtures: SQLite-файл демо-базы не найден: {path}")
+    return path
+
+
+def _marking_card(eng, m):
+    """716К.1 КБ1 — the FAKRA cable of the generator fixtures: tape labels PF (own «Этикетки» block), {№} mark, label size
+    in the mark material and a wire diameter, issued and launched as a task → a «labels» cutting group."""
+    import sqlite3
+    fixture = os.path.join(BACKEND, "..", "frontend", "src", "__fixtures__", "fakra1116Configs.json")
+    cfgs = {row["kb"]: row["config"] for row in json.load(open(fixture, encoding="utf-8"))}
+    cfg = json.loads(json.dumps(cfgs["КБ1"]))
+    cfg.update(projectNo="716К.1", assemblyIndex="КБ1", assemblyName="Кабель FAKRA камеры", partQty=12)
+    numbered = "716К.1-{№:3}"
+    cfg["coax"]["marks"][0]["text"] = numbered
+    for op in cfg["ops"]:
+        if op.get("markMaterial") == "tape":
+            op["marks"][0]["text"] = numbered
+    db = sqlite3.connect(_sqlite_path())
+    # The server resolves a template by its stored id (a slug); the generator fixtures name it by the code.
+    ids = dict(db.execute("SELECT code, id FROM techcard_operation_templates"))
+    for op in cfg["ops"]:
+        op["templateId"] = ids.get(op["templateId"], op["templateId"])
+    created = eng.ok("POST", "/api/techcards/projects", "techcards", json={
+        "project": "716К.1", "item_index": "КБ1", "product_name": "Кабель FAKRA камеры", "deadline": D(25)})
+    built = created and eng.ok("POST", f"/api/techcards/projects/{created['id']}/build", "techcards_built",
+                               json={"version": created["version"], "config": cfg})
+    if not built:
+        db.close()
+        return None
+    # What the generator does not write today: the label size in the mark material (the pult reads «W×H мм» from it)
+    # and a wire with its outer diameter (БД.ПРОВ). Patched before the issue, so the issued revision carries both.
+    keys = (created["id"], created["id"].replace("-", ""))
+    row = db.execute("SELECT document FROM techcard_projects WHERE id IN (?, ?)", keys).fetchone()
+    if row is None:
+        db.close()
+        raise RuntimeError("716К.1: карта не найдена в базе")
+    document = json.loads(row[0])
+    for op in document["operations"]:
+        for mark in (op.get("fields") or {}).get("marks") or []:
+            mark["material"] = LABEL_MATERIAL
+        if op["type"] == "coaxCut":
+            op["fields"]["wires"] = [{"name": "RTK 031", "art": "RTK 031", "qty": 1, "length": "4855", "pins": [],
+                                      "outerDiameter": 2.9, "conductorDiameter": 0.81}]
+    db.execute("UPDATE techcard_projects SET document = ? WHERE id IN (?, ?)",
+               (json.dumps(document, ensure_ascii=False), *keys))
+    db.commit()
+    db.close()
+    issued = eng.ok("POST", f"/api/techcards/projects/{created['id']}/issue", "techcards_issued",
+                    json={"version": built["version"]})
+    card = issued or built
+    made = m.ok("POST", "/api/production/tasks", "tasks", json={"techcard_id": card["id"], "quantity": 12, "deadline": D(20)})
+    print("  716К.1 task:", (made or {}).get("task", {}).get("number"))
+    return made
+
+
+def _godex():
+    """The print PC of the Godex: an agent and its printer in the registry. last_seen is set a month ahead — «на связи» is
+    «seen within 3 minutes», and a demo that goes offline while you look at it shows nothing."""
+    import sqlite3
+    from datetime import datetime
+    seen = str(datetime.now() + timedelta(days=30))
+    db = sqlite3.connect(_sqlite_path())
+    db.execute("DELETE FROM warehouse_scan_agents WHERE machine_id = ?", (GODEX["machine_id"],))
+    db.execute("INSERT INTO warehouse_scan_agents (machine_id, pc_name, version, ip_seen, ip_lan, scanners, legacy,"
+               " first_seen, last_seen) VALUES (?, ?, '2.11.0', '192.168.1.40', '192.168.1.40', '[]', 0, ?, ?)",
+               (GODEX["machine_id"], GODEX["pc"], seen, seen))
+    db.execute("INSERT INTO warehouse_agent_printers (machine_id, name, driver, port, kind, present, last_seen,"
+               " queue_version, hold) VALUES (?, ?, 'Godex EZ2350i', 'USB001', 'gdi_png', 1, ?, 0, '')",
+               (GODEX["machine_id"], GODEX["printer"], seen))
+    db.commit()
+    db.close()
+
+
+@step("7b. Marking pult")
+def marking_pult():
+    if not BASE.startswith(("http://127.0.0.1:", "http://localhost:")):
+        raise RuntimeError("Marking pult fixtures: только локальный демо-API (127.0.0.1 / localhost)")
+    _sqlite_path()  # refuses a non-SQLite or missing base before any HTTP write
+    adm, eng, m = S["adm"], S["orlova.eng"], S["ivanov.master"]
+    _marking_card(eng, m)
+    _godex()
+    base = "/api/production/marking"
+
+    def machines():
+        return {item["inventory_number"]: item for item in (adm.ok("GET", base + "/machines") or {}).get("machines", [])}
+
+    label = {"width_mm": 25, "height_mm": 9, "zones": [{"x": 1, "y": 1, "width": 23, "height": 7}], "blank_zones": [],
+             "max_lines": 2, "max_font_mm": 4}
+    for inventory, preset in (("ОБ.101", "92,5×20"), ("ОБ.102", "30×60")):
+        machine = machines().get(inventory)
+        if not machine:
+            FAILS.append(f"marking: {inventory} нет в оборудовании")
+            continue
+        adm.ok("POST", f"{base}/machines/{machine['equipment_id']}/profiles", "marking_profiles",
+               json={"name": "25×9", "geometry": label})
+        for profile in machines()[inventory]["profiles"]:
+            if profile["name"] in {"25×9", preset} and not profile["calibrated"]:
+                adm.ok("PUT", f"{base}/profiles/{profile['id']}", "marking_calibrated", json={
+                    "version": profile["version"], "calibrated": True, "geometry": profile["geometry"]})
+        adm.ok("PUT", f"{base}/machines/{machine['equipment_id']}/binding", "marking_bindings", json={
+            "version": 0, "machine_id": GODEX["machine_id"], "printer": GODEX["printer"]})
+    # One manual batch for the journal of ОБ.101 («Свой текст»: no serials, journaled).
+    machine = machines().get("ОБ.101") or {}
+    profile = next((p for p in machine.get("profiles", []) if p["name"] == "25×9"), None)
+    if profile:
+        body = {"profile_id": profile["id"], "profile_version": profile["version"], "order": "listed", "trial": False,
+                "lines": [{"text": "X1 питание", "quantity": 2}, {"text": "X2 сигнал", "quantity": 2}]}
+        shown = adm.ok("POST", base + "/manual/preview", json=body)
+        if shown:
+            adm.ok("POST", base + "/manual/batches", "marking_manual_batches", json={
+                **body, "manifest_hash": shown["manifest_hash"], "idempotency_key": "demo-manual-1"})
+
+
 # ── 8. Fulfillment (issues) ─────────────────────────────────────────────────────────────────────────
 
 
@@ -683,6 +808,12 @@ def shipping():
         if made:
             sh = made["shipment"]
             print("  shipment 1:", sh["status"])
+            # Отгрузить можно только с № УПД и треком ТК (правило владельца 29.10 / 20.11): впишем их перед отгрузкой.
+            docs = wh.ok("PUT", f"/api/shipping/shipments/{sh['id']}/documents", json={
+                "version": sh["version"], "upd_type": "ЭДО", "upd_number": "УПД-0614/1", "upd_date": D(-1),
+                "track_number": "СДЭК-1048822031"})
+            if docs:
+                sh = docs["shipment"]
             s2 = wh.ok("POST", f"/api/shipping/shipments/{sh['id']}/ship", "shipments_shipped", json={"version": sh["version"]})
             if s2:
                 print("  shipment 1 ->", s2["shipment"]["status"])
@@ -805,7 +936,7 @@ def quality_screen():
 
 def main():
     S["adm"] = Client()
-    for fn in (staff, requests_, handoff, procurement, rfq, receiving, stock, techcards, production, fulfillment, shipping, notifications, quality_screen):
+    for fn in (staff, requests_, handoff, procurement, rfq, receiving, stock, techcards, production, marking_pult, fulfillment, shipping, notifications, quality_screen):
         fn()
     print("\nCOUNTS:", json.dumps(COUNT, ensure_ascii=False))
     print(f"FAILURES ({len(FAILS)}):")

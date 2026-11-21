@@ -301,7 +301,8 @@ A reprint job («Перепечатать номера…») resolves to the lab
 
 - `GET /api/production/marking/progress?group_id=…` or `?task_id=…&operation_id=…` (marking read gate):
   `{rows: [{task_id, task_number, item, quantity, serial_first, serial_last, printed, remaining, printed_serials,
-  remaining_serials, remaining_labels}], printed, remaining, remaining_labels}`. A plain read: the issued ETK is read
+  remaining_serials, remaining_labels, label_size, sizes_differ, wire_mm}], printed, remaining, remaining_labels,
+  label_size, sizes_differ, wire_mm}`. A plain read: the issued ETK is read
   without `FOR UPDATE`. `printed`/`remaining` count items by serial; `remaining_labels` counts label pieces still to
   print, numbered and fixed (0 when the task released its serials). «Печатать оставшиеся» on the labels group card is
   enabled while `remaining_labels > 0`, so fixed labels left after every serial is printed can still be printed.
@@ -309,6 +310,37 @@ A reprint job («Перепечатать номера…») resolves to the lab
   The print queue is read once per preview for all tasks of the source.
 - Batches are found by a text match of the task id over every manifest (base64 PNG included): no table links batches
   to tasks; an indexed lookup needs one (a migration, not done).
+
+## Marking pult: trial, ETK label size, wire Ø (plan 21.11)
+
+- ETK label size = the first «W×H» of a mark `material` that is 5…150 мм on both sides (`marking_progress.label_size`;
+  a cable section «4х0,75» before it is skipped): `×`, Latin `x`/`X`, Cyrillic `х`/`Х` or `*` between the numbers,
+  decimal comma or dot, «мм» optional after each number; a size followed by the whole word «м» (metres: «Риббон 40х74 м») or «шт» is
+  not a label, a tube material never is. `{width_mm, height_mm, material}` or `null` («размер в ЭТК не указан»). Two sizes are the same within
+  ±0,5 мм in either orientation (`same_size`).
+- `/progress` rows: `label_size` — the one size of the task's ETK marks (`null` when none parses or they disagree,
+  then `sizes_differ: true`); `wire_mm` — sorted distinct `fields.wires[].outerDiameter` (mm, numbers > 0) over the
+  ETK operations. Top level: `label_size` when every row's known size agrees, else `null` with `sizes_differ: true`
+  (rows without a size do not disagree); `wire_mm` — distinct over the rows.
+- Preview/batch input `limit: int|null` (strict, 1…500, only with `remaining: true` — otherwise 422: the first N could
+  repeat a printed serial): only the first N label pieces after the `remaining` filter (a row's `quantity` is cut).
+  Materials are checked over everything chosen before the cut, so a trial is refused for materials exactly when the
+  full print would be; the source's 500-label cap applies after the cut (a trial of a group whose tasks together
+  exceed 500 is allowed; one task over 500 is still refused when its labels are expanded). Serials are issued (on enqueue only) to the tasks whose numbered labels are in the limited rows.
+  `limit: 1` = «Пробная»: a real one-label batch of the first remaining label — its serial is spent and `/progress`
+  counts it. Released serials still refuse (422 «Номера задания освобождены — печать недоступна»). `limit` with
+  `reprint_of` → 422.
+- Preview output adds `etk_size` (`label_size` of the batch material, one per batch) and `profile_matches: bool`
+  (`true` when `etk_size` is `null`); both are inside the manifest hash.
+- `POST /batches`: `etk_size` known, profile off it (`profile_matches: false`) and not `reprint_of` → a blank
+  `reason` is 422 «Размер этикетки не как в ЭТК — укажите причину» (after the manifest hash check, nothing persisted);
+  with a reason the batch stores it and the journal gets `production.marking_size_deviation`
+  `{batch_id, etk_size, profile {id, name, width_mm, height_mm}, reason}`. Enforced for every caller (machine card,
+  cutting group card, project ETK). `/batches/{id}/reprint` and `reprint_of` keep their own reason only.
+  Stored `reason` with `limit: 1`: «Пробная печать» or «Пробная печать · <причина>» (whitespace collapsed; the
+  operator's part ≤ 983 знаков, else 422, so the stored reason fits 1000).
+- «Свой текст» input `wire_mm: float|null` (0,1…60): kept in `source_snapshot.manual.wire_mm` (in the hash) and in
+  `production.marking_manual_queued`; it checks nothing and issues no serials.
 
 All controls return `{group: ...}`. Stale versions/concurrent resource changes: 409; forbidden site: 403;
 invalid state/settings: 422. The first row start or manual output freezes membership and recipe.

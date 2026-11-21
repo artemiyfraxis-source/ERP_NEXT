@@ -199,3 +199,23 @@ def test_journal_keeps_the_first_hundred_lines_and_says_it_was_cut(marking):
         whole, cut = details
         assert (whole["lines_total"], whole["lines_cut"]) == (100, False)
         assert (cut["lines_total"], cut["lines_cut"], len(cut["lines"])) == (120, True, 100)
+
+
+def test_wire_diameter_is_kept_with_the_manual_batch_and_issues_no_serials(marking):
+    """«Ø провода, мм» of «Свой текст» (plan 21.11): in the manifest and the journal; still no product serials."""
+    client, factory, _payload, task, *_ = marking
+    batch, shown = manual_print(marking, body(marking, [{"text": "X1", "quantity": 1}], wire_mm=1.6), key="wire")
+    assert shown["source_snapshot"]["manual"]["wire_mm"] == 1.6
+    plain, plain_shown = manual_print(marking, body(marking, [{"text": "X1", "quantity": 1}]), key="no-wire")
+    assert plain_shown["source_snapshot"]["manual"]["wire_mm"] is None
+    with factory() as uow:
+        assert not uow.production.marks_issued([task.id])
+        events = {event.aggregate_id: event.details for event in uow.session.scalars(
+            select(AuditEventRow).where(AuditEventRow.event_type == "production.marking_manual_queued"))}
+        assert events[UUID(batch["id"])]["wire_mm"] == 1.6 and events[UUID(plain["id"])]["wire_mm"] is None
+
+
+@pytest.mark.parametrize("wire_mm", [0, 0.05, 60.5, "толстый"])
+def test_wire_diameter_is_point_one_to_sixty_millimetres(marking, wire_mm):
+    response = marking[0].post(BASE + "/manual/preview", json=body(marking, [{"text": "X1", "quantity": 1}], wire_mm=wire_mm))
+    assert response.status_code == 422, response.text

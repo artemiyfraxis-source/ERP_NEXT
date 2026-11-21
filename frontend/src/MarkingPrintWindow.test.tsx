@@ -250,3 +250,37 @@ it("reprints from the batch only by label numbers or serials, the whole batch by
   await waitFor(() => expect(markingApi.batch).toHaveBeenCalledWith("batch-2", expect.anything()));
   expect(markingApi.enqueue).toHaveBeenCalledTimes(1);
 });
+
+it("asks for a reason when the profile size is not the ETK size, and sends it with the batch", async () => {
+  vi.mocked(markingApi.preview).mockResolvedValue({ ...structuredClone(preview), etk_size: { width_mm: 25, height_mm: 9 }, profile_matches: false });
+  await openPrint();
+  const enqueue = screen.getByRole("button", { name: "Поставить в очередь" });
+  expect(enqueue).toBeDisabled();
+  const reason = screen.getByLabelText(/Профиль 92,5 × 20 мм, в ЭТК 25 × 9 мм — причина/);
+  fireEvent.change(reason, { target: { value: "  нет ленты 25 × 9  " } });
+  expect(enqueue).toBeEnabled();
+  fireEvent.click(enqueue);
+  await screen.findByRole("region", { name: "Очередь печати" });
+  expect(vi.mocked(markingApi.enqueue).mock.calls[0][0]).toMatchObject({ manifest_hash: "manifest-1", reason: "нет ленты 25 × 9" });
+});
+
+it("asks for no reason when the profile matches the ETK", async () => {
+  vi.mocked(markingApi.preview).mockResolvedValue({ ...structuredClone(preview), etk_size: { width_mm: 92.5, height_mm: 20 }, profile_matches: true });
+  await openPrint();
+  expect(screen.queryByLabelText(/причина/)).toBeNull();
+  expect(screen.getByRole("button", { name: "Поставить в очередь" })).toBeEnabled();
+});
+
+it("clears the reason when the profile changes", async () => {
+  const other = { ...profile, id: "profile-2", name: "Другой материал" };
+  vi.mocked(markingApi.machines).mockResolvedValue({ ...catalog, machines: [{ ...catalog.machines[0], profiles: [profile, other] }] });
+  vi.mocked(markingApi.preview).mockResolvedValue({ ...structuredClone(preview), etk_size: { width_mm: 25, height_mm: 9 }, profile_matches: false });
+  render(<MarkingPrintWindow source={source} title="Задание" close={vi.fn()} />);
+  await screen.findByRole("option", { name: "Другой материал" });
+  fireEvent.change(screen.getByLabelText("Материал / профиль"), { target: { value: "profile" } });
+  fireEvent.click(screen.getByRole("button", { name: "Обновить предпросмотр" }));
+  fireEvent.change(await screen.findByLabelText(/— причина/), { target: { value: "нет ленты" } });
+  fireEvent.change(screen.getByLabelText("Материал / профиль"), { target: { value: "profile-2" } });
+  fireEvent.click(screen.getByRole("button", { name: "Обновить предпросмотр" }));
+  expect(await screen.findByLabelText(/— причина/)).toHaveValue("");
+});

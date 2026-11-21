@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
+import re
 from uuid import UUID
 
 from sqlalchemy import Text, cast, or_, select
@@ -175,8 +176,11 @@ def remaining_rows(rows: Sequence[Mapping], counts: Counter, fixed: Iterable[str
 def task_progress(task, document: Mapping | None, serial_range, counts: Counter) -> dict:
     """Printed / remaining KB items: an item (serial) is printed when all its numbered labels are; without numbered
     labels — whole sets of the fixed labels. `remaining_labels` — label pieces still to print, numbered and fixed
-    (what «Печатать оставшиеся» would print); 0 when the task released its serials (printing unavailable)."""
+    (what «Печатать оставшиеся» would print); 0 when the task released its serials (printing unavailable).
+    `label_size` / `sizes_differ` — the label size of the ETK marks; `wire_mm` — the ETK wire diameters (plan 21.11)."""
+    size, differ = document_label_size(document)
     view = {"task_id": str(task.id), "task_number": task.number, "item": task.item, "quantity": task.quantity,
+            "label_size": size, "sizes_differ": differ, "wire_mm": wire_diameters(document),
             "serial_first": serial_range[0] if serial_range else None,
             "serial_last": serial_range[1] if serial_range else None,
             "printed": 0, "remaining": task.quantity, "printed_serials": [], "remaining_serials": [],
@@ -202,6 +206,70 @@ def task_progress(task, document: Mapping | None, serial_range, counts: Counter)
     printed = min(sets) if sets else 0
     view.update(printed=printed, remaining=task.quantity - printed)
     return view
+
+
+# «W×H мм» in the ETK mark material (plan 21.11): × or x/х/X/Х/* between the numbers, decimals with a comma or a dot,
+# «мм» optional after each number. A size followed by «м» (metres: a ribbon or tape roll) or «шт» is not a label.
+# Only Godex label sizes (5…150 мм, marking_render.Geometry) count; a tube material is never a label.
+_NUMBER = r"(\d{1,3}(?:[.,]\d+)?)(?!\d)(?![.,]\d)(?:\s*мм)?"
+# «м» / «шт» as whole words only: «матовая», «мелованная», «штучная» after the size do not make it a roll.
+_SIZE = re.compile(rf"(?<![\d.,]){_NUMBER}\s*[×xXхХ*]\s*{_NUMBER}(?!\s*(?:м|шт)(?![а-яёa-z]))", re.IGNORECASE)
+_TUBE = re.compile(r"термоусад|трубк|\bтут\b|tube|sleeve", re.IGNORECASE)
+SIZE_TOLERANCE_MM = 0.5
+
+
+def label_size(material) -> dict | None:
+    """{width_mm, height_mm, material} of the first «W×H» in the material that is a label size (a cable section
+    «4х0,75» before it is skipped); None — the ETK does not say the size."""
+    text = str(material or "").strip()
+    if _TUBE.search(text):
+        return None
+    for match in _SIZE.finditer(text):
+        width, height = (float(value.replace(",", ".")) for value in match.groups())
+        if 5 <= width <= 150 and 5 <= height <= 150:
+            return {"width_mm": width, "height_mm": height, "material": text}
+    return None
+
+
+def same_size(size: Mapping, width: float, height: float) -> bool:
+    """The label fits the size ±0,5 мм in either orientation (a flag 92,5×20 is a 20×92,5 roll turned)."""
+    return any(abs(float(size["width_mm"]) - w) <= SIZE_TOLERANCE_MM + 1e-9
+               and abs(float(size["height_mm"]) - h) <= SIZE_TOLERANCE_MM + 1e-9
+               for w, h in ((width, height), (height, width)))
+
+
+def size_summary(sizes: Iterable[Mapping | None]) -> tuple[dict | None, bool]:
+    """(the one size, False) when every known size agrees; (None, True) when they differ; (None, False) — none known."""
+    distinct: list[Mapping] = []
+    for size in sizes:
+        if size is not None and not any(same_size(size, item["width_mm"], item["height_mm"]) for item in distinct):
+            distinct.append(size)
+    if len(distinct) == 1:
+        return dict(distinct[0]), False
+    return None, len(distinct) > 1
+
+
+def _marks(document: Mapping | None):
+    for operation in (document or {}).get("operations") or []:
+        for mark in (operation.get("fields") or {}).get("marks") or []:
+            if isinstance(mark, Mapping) and str(mark.get("text") or "").strip():
+                yield mark
+
+
+def document_label_size(document: Mapping | None) -> tuple[dict | None, bool]:
+    """The label size of the ETK marks (label_size of each mark material) and whether the marks disagree."""
+    return size_summary(label_size(mark.get("material")) for mark in _marks(document))
+
+
+def wire_diameters(document: Mapping | None) -> list[float]:
+    """Distinct outer wire diameters, mm, of the ETK operations (fields.wires[].outerDiameter, techcard_build)."""
+    values = set()
+    for operation in (document or {}).get("operations") or []:
+        for wire in (operation.get("fields") or {}).get("wires") or []:
+            value = wire.get("outerDiameter") if isinstance(wire, Mapping) else None
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+                values.add(round(float(value), 3))
+    return sorted(values)
 
 
 def serial_range_of(task, uow):
