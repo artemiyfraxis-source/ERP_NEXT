@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, replace
 from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal, InvalidOperation
 from datetime import date
+from collections.abc import Callable
 from typing import Any, Collection, Iterable, Mapping, Sequence
 from uuid import UUID
 
@@ -75,18 +77,44 @@ _CYRILLIC = re.compile(r"[А-Яа-яЁё]")
 
 
 _BARE_CODE = re.compile(r"^[A-Za-z]+_\S+$")
+_NAME_TTL = 60.0
+_name_loader: Callable[[Collection[str]], Mapping[str, str]] | None = None
+_name_cache: dict[str, tuple[float, str]] = {}
 
 
-def stage_name(value: str, names: Mapping[str, str] | None = None) -> str:
+def set_stage_name_loader(loader: Callable[[Collection[str]], Mapping[str, str]] | None) -> None:
+    """Названия карт операций по коду (из библиотеки карточек): этап, записанный одним кодом, показывается названием
+    карты, а не кодом (21.11). Подключает сборка приложения; без загрузчика этап остаётся как записан."""
+    global _name_loader
+    _name_loader = loader
+    _name_cache.clear()
+
+
+def _card_name(code: str) -> str:
+    if _name_loader is None:
+        return ""
+    now = time.monotonic()
+    hit = _name_cache.get(code)
+    if hit is not None and now - hit[0] < _NAME_TTL:
+        return hit[1]
+    try:
+        name = str(_name_loader([code]).get(code) or "").strip()
+    except Exception:  # noqa: BLE001 — название не должно ронять экран
+        return hit[1] if hit else ""
+    _name_cache[code] = (now, name)
+    return name
+
+
+def stage_name(value: str) -> str:
     """Русское название этапа: служебный тип генератора → название; «CUT_WIRE+1crimp | Автомат резка» → название
     без кода (владелец, 30.09: в ячейках часов служебный код вместо названия; код показывается отдельно).
-    Этап из одного кода карты («INS_terminal_1.00») → название карты из `names` (код → имя; 21.11: монтажник видел код)."""
+    Этап из одного кода карты («INS_terminal_1.00») → название карты библиотеки (21.11: монтажник видел код)."""
     text = str(value or "").strip()
     prefixed = _CODE_PREFIX.match(text)
     if prefixed and not _CYRILLIC.search(prefixed.group(1)):
         text = prefixed.group(2).strip()
-    if names and _BARE_CODE.match(text) and names.get(text):
-        return names[text]
+    if _BARE_CODE.match(text):
+        return _card_name(text) or text
     return OPERATION_TYPE_NAMES.get(text, text)
 
 
