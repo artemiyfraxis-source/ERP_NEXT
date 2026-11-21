@@ -12,7 +12,7 @@ afterEach(() => { vi.restoreAllMocks(); });
 
 const ROW: MachineRow = {
   key: "machine:u71", kind: "machine", equipment_id: "u71", inventory: "ОБ.071.1", name: "Паяльная станция", pc: "", ip: "", service: "",
-  version: "", link: { code: "not_connected", text: "Нет подключения к ERP", tone: "neutral" }, last_seen: null, device: "",
+  version: "", link: { code: "not_connected", text: "Нет подключения", tone: "neutral" }, last_seen: null, device: "",
   state: { text: "—", tone: "neutral" }, card: false, others: "", article: "T21", site: "ЦАР", operations: ["Пайка"], family: "Пайка и усадка",
   controlled: false, setup: { code: "none", label: "нет" }, pending_setup: 0,
 };

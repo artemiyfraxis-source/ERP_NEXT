@@ -18,7 +18,7 @@ import "./machineWork.css";
 
 export const QUEUE_REFRESH_MS = 60_000;
 type Tab = "queue" | "cut" | "free";
-const CUT_FAMILIES = new Set(["Резка", "Зачистка"]);
+const CUT_FAMILIES = new Set(["Резка", "Резка и опрессовка", "Зачистка"]);
 const OTHER_REASON = "other";
 const SOURCE_MATERIAL = "Материал из задания";
 
