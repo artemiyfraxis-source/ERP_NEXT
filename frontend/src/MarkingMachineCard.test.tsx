@@ -317,3 +317,35 @@ it("sends the wire Ø of own text to the journal and refuses a wrong one", async
   fireEvent.change(screen.getByLabelText("Ø провода, мм"), { target: { value: "" } });
   await waitFor(() => expect(spy.mock.calls.at(-1)?.[0]).not.toHaveProperty("wire_mm"));
 });
+
+it("sends the reason only to the batch, never to the preview, and shows the server's string 422 as is", async () => {
+  vi.spyOn(markingApi, "progress").mockResolvedValue(structuredClone(ETK_PROGRESS));
+  vi.mocked(markingApi.preview).mockResolvedValue(jobPreview("m", 12, { etk_size: { width_mm: 25, height_mm: 9 }, profile_matches: false }));
+  vi.spyOn(markingApi, "enqueue").mockRejectedValue(new ApiError("Размер этикетки не как в ЭТК — укажите причину", 422,
+    "Размер этикетки не как в ЭТК — укажите причину"));
+  await pickGroup();
+  fireEvent.change(await screen.findByLabelText(/— причина/), { target: { value: "нет ленты" } });
+  fireEvent.click(screen.getByRole("button", { name: "Пробная (1 этикетка)" }));
+  expect(await screen.findByText("Размер этикетки не как в ЭТК — укажите причину")).toBeVisible();
+  for (const [body] of vi.mocked(markingApi.preview).mock.calls) expect(body).not.toHaveProperty("reason");
+  expect(vi.mocked(markingApi.enqueue).mock.calls[0][0]).toMatchObject({ limit: 1, reason: "нет ленты" });
+});
+
+it("takes the wire Ø from the КБ rows when the task has no common list; no ETK size in the preview asks no reason", async () => {
+  vi.spyOn(markingApi, "progress").mockResolvedValue({ printed: 0, remaining: 12, remaining_labels: 12, label_size: null, sizes_differ: false, wire_mm: [],
+    rows: [{ printed: 0, remaining: 6, remaining_labels: 6, label_size: null, wire_mm: [2.1] }, { printed: 0, remaining: 6, remaining_labels: 6, label_size: null, wire_mm: [1.6, 2.1] }] });
+  vi.mocked(markingApi.preview).mockResolvedValue(jobPreview("n", 12, { etk_size: null, profile_matches: true }));
+  await pickGroup();
+  expect(await screen.findByText("Ø провода 1,6; 2,1 мм · из ЭТК")).toBeVisible();
+  expect(await screen.findByText("30 × 12 мм · размер в ЭТК не указан")).toBeVisible();
+  expect(screen.queryByLabelText(/— причина/)).not.toBeInTheDocument();
+});
+
+it("shows the server's refusal when everything left is already queued", async () => {
+  vi.mocked(markingApi.preview).mockRejectedValue(new ApiError("Все выбранные надписи уже напечатаны или стоят в очереди печати", 422,
+    "Все выбранные надписи уже напечатаны или стоят в очереди печати"));
+  await pickGroup();
+  expect(await screen.findByText("Все выбранные надписи уже напечатаны или стоят в очереди печати")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Печатать 40 этикеток" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Пробная (1 этикетка)" })).toBeDisabled();
+});

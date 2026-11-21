@@ -205,6 +205,9 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
 
   const job = jobs?.find((item) => item.key === chosenJob) ?? null;
   const etkSize = job?.progress?.label_size ?? null;
+  // Ø провода — только из /progress (предпросмотр его не несёт): общий список задания, иначе — по строкам КБ.
+  const wireList = job?.progress ? (job.progress.wire_mm?.length ? job.progress.wire_mm
+    : [...new Set((job.progress.rows ?? []).flatMap((item) => item.wire_mm ?? []))].sort((a, b) => a - b)) : [];
   const jobLeft = job?.progress ? job.progress.remaining_labels : null;
   const jobRequest: MarkingRequest | null = job && profile && jobLeft !== 0 ? { profile_id: profile.id, profile_version: profile.version,
     source: job.source, selected: [], remaining: true, ...(interleave ? { interleave: true } : {}) } : null;
@@ -307,7 +310,8 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
         : "Выберите задание или введите свой текст и нажмите «Печатать»";
   const title = [row.inventory, row.name].filter(Boolean).join(" · ");
   // Профиль рядом с размером из ЭТК: совпал — «· из ЭТК», нет — «· в ЭТК 25 × 9 мм» янтарём (уставка против источника).
-  const shownEtk = jobPreview?.etk_size ?? etkSize;
+  // Размер из ЭТК: показанный предпросмотр — правда сервера (null — в ЭТК не указан, причина не нужна); до него — /progress.
+  const shownEtk = jobPreview ? jobPreview.etk_size ?? null : etkSize;
   const etkMode = tab === "jobs" && job && jobLeft !== 0;
   const profileFits = profile && shownEtk ? (jobPreview ? jobPreview.profile_matches !== false : sizeMatches(profile.geometry, shownEtk)) : null;
   const profileNote = !profile?.calibrated ? "не откалиброван"
@@ -373,8 +377,8 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
             ]} />}
           {job && jobLeft !== 0 && <div className="marking-card-pult" role="group" aria-label="Печать задания">
             <div className="marking-card-facts">
-              {job.progress?.wire_mm?.length
-                ? <span className="tnum">Ø провода {job.progress.wire_mm.map((value) => formatNumber(value)).join("; ")} мм · из ЭТК</span>
+              {wireList.length
+                ? <span className="tnum">Ø провода {wireList.map((value) => formatNumber(value)).join("; ")} мм · из ЭТК</span>
                 : <span className="machine-muted">Ø провода в ЭТК не указан</span>}
               <div role="radiogroup" aria-label="Порядок этикеток" className="marking-card-order is-row"><span>Порядок</span>
                 <label className="check-inline"><input type="radio" name="marking-card-job-order" checked={!interleave} disabled={busy} onChange={() => setInterleave(false)} />как в ЭТК</label>
