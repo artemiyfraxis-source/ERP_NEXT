@@ -315,7 +315,7 @@ A reprint job («Перепечатать номера…») resolves to the lab
 
 - ETK label size = the first «W×H» of a mark `material` that is 5…150 мм on both sides (`marking_progress.label_size`;
   a cable section «4х0,75» before it is skipped): `×`, Latin `x`/`X`, Cyrillic `х`/`Х` or `*` between the numbers,
-  decimal comma or dot, «мм» optional after each number; a size followed by «м» (metres: «Риббон 40х74 м») or «шт» is
+  decimal comma or dot, «мм» optional after each number; a size followed by the whole word «м» (metres: «Риббон 40х74 м») or «шт» is
   not a label, a tube material never is. `{width_mm, height_mm, material}` or `null` («размер в ЭТК не указан»). Two sizes are the same within
   ±0,5 мм in either orientation (`same_size`).
 - `/progress` rows: `label_size` — the one size of the task's ETK marks (`null` when none parses or they disagree,

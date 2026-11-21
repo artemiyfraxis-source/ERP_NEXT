@@ -212,7 +212,8 @@ def task_progress(task, document: Mapping | None, serial_range, counts: Counter)
 # «мм» optional after each number. A size followed by «м» (metres: a ribbon or tape roll) or «шт» is not a label.
 # Only Godex label sizes (5…150 мм, marking_render.Geometry) count; a tube material is never a label.
 _NUMBER = r"(\d{1,3}(?:[.,]\d+)?)(?!\d)(?![.,]\d)(?:\s*мм)?"
-_SIZE = re.compile(rf"(?<![\d.,]){_NUMBER}\s*[×xXхХ*]\s*{_NUMBER}(?!\s*(?:м|шт))", re.IGNORECASE)
+# «м» / «шт» as whole words only: «матовая», «мелованная», «штучная» after the size do not make it a roll.
+_SIZE = re.compile(rf"(?<![\d.,]){_NUMBER}\s*[×xXхХ*]\s*{_NUMBER}(?!\s*(?:м|шт)(?![а-яёa-z]))", re.IGNORECASE)
 _TUBE = re.compile(r"термоусад|трубк|\bтут\b|tube|sleeve", re.IGNORECASE)
 SIZE_TOLERANCE_MM = 0.5
 
