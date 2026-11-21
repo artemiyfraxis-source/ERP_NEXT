@@ -12,7 +12,7 @@ from alembic import command
 from alembic.config import Config
 
 REVISION = "0216_equipment_screen_group"
-PREVIOUS = "0213_equipment_setup_by"
+PREVIOUS = "0214_warehouse_document_devices"
 
 
 def _config(path: Path) -> Config:

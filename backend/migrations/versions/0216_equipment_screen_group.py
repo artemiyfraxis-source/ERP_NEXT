@@ -21,7 +21,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "0216_equipment_screen_group"
-down_revision = "0213_equipment_setup_by"
+down_revision = "0214_warehouse_document_devices"
 branch_labels = None
 depends_on = None
 DESTRUCTIVE = False
