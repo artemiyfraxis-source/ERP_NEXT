@@ -497,3 +497,21 @@ def test_new_profile_geometry_overrides_the_copy_and_is_validated(marking):
     assert response.json()["geometry"]["width_mm"] == 10 and response.json()["geometry"]["peel"] is True and response.json()["calibrated"] is False
     bad = {**raw, "zones": [{"x": 1, "y": 1, "width": 50, "height": 13}]}
     assert client.post(path, json={"name": "Кривой", "geometry": bad}).status_code == 422
+
+
+def test_preview_does_not_issue_serials_only_the_batch_does(marking):
+    """Owner 20.11: «предпросмотр маркировки не должен выдавать серийные номера» — a preview (plain and «оставшиеся»)
+    records nothing; the enqueue that persists the batch issues the numbers, and the manifest matches the preview."""
+    client, factory, payload, task, *_ = marking
+    shown = preview(marking)
+    assert [row["text"] for row in shown["labels"]][:2] == ["КБ-001", "КБ-002"]
+    preview(marking, {**payload, "remaining": True})
+    with factory() as uow:
+        assert task.id not in uow.production.marks_issued([task.id])
+        assert not uow.session.scalars(select(AuditEventRow).where(
+            AuditEventRow.aggregate_id == task.id, AuditEventRow.event_type == "production.marks_issued")).all()
+        assert not uow.session.scalars(select(MarkingBatchRow)).all()
+    batch, _request, again = enqueue(marking)
+    assert again["manifest_hash"] == shown["manifest_hash"] and batch["total"] == shown["total"]
+    with factory() as uow:
+        assert task.id in uow.production.marks_issued([task.id])
