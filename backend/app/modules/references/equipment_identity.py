@@ -31,7 +31,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
-from .domain import EQUIPMENT_TABS, ReferenceValidationError
+from .domain import EQUIPMENT_TABS, SCREEN_GROUPS, ReferenceValidationError
 from .equipment import ARTICLE_KEY, BASE_KEY, INV_KEY, SUPPORTING_TYPE, TOOL_KEY, field, inv_key, name_of, parse_inventory, type_of
 from .infrastructure import (
     EQUIPMENT_ROLES, OP_LINK_COLUMNS, EquipmentModelRow, EquipmentOperationLinkRow, EquipmentTemplateToolRow,
@@ -461,7 +461,8 @@ def _model_json(state: _State, model: EquipmentModelRow, operations: int) -> dic
     units = state.by_model.get(model.id, [])
     return {
         "id": str(model.id), "name": model.name, "article": model.article, "maker": model.maker,
-        "role": model.role, "role_confirmed": model.role_confirmed, "display": state.display(model.id),
+        "role": model.role, "role_confirmed": model.role_confirmed, "screen_group": model.screen_group,
+        "display": state.display(model.id),
         "unit_ids": [str(unit.id) for unit in units],
         "inventory_numbers": [field(unit.fields or {}, INV_KEY) for unit in units],
         "operations": operations,
@@ -489,17 +490,18 @@ class SqlAlchemyEquipmentRepository:
                 EquipmentTemplateToolRow.template_id, EquipmentTemplateToolRow.position))]
 
     def record_extras(self, records: Sequence) -> dict[UUID, dict]:
-        """What a list row of БД.ОБ / БД.ОП carries besides its cells: the model (id, role) of a unit with its tool and
-        the units it serves; the models a БД.ОП row's cells link to."""
+        """What a list row of БД.ОБ / БД.ОП carries besides its cells: the model (id, role, «Группа на экране») of a
+        unit with its tool and the units it serves; the models a БД.ОП row's cells link to."""
         units = [item.id for item in records if item.tab in EQUIPMENT_TABS]
         operations = [item.id for item in records if item.tab.value == OP]
         extras: dict[UUID, dict] = {}
         if units:
             bindings = {row.unit_id: str(row.instrument_id) for row in self.session.scalars(
                 select(EquipmentInstrumentBindingRow).where(EquipmentInstrumentBindingRow.unit_id.in_(units)))}
-            roles = dict(self.session.execute(select(EquipmentRecordRow.id, EquipmentModelRow.role).join(
+            models = {unit: (role, group) for unit, role, group in self.session.execute(select(
+                EquipmentRecordRow.id, EquipmentModelRow.role, EquipmentModelRow.screen_group).join(
                 EquipmentModelRow, EquipmentModelRow.id == EquipmentRecordRow.equipment_model_id).where(
-                EquipmentRecordRow.id.in_(units))).all())
+                EquipmentRecordRow.id.in_(units)))}
             links: dict[UUID, dict] = defaultdict(lambda: {"tool_unit_id": None, "serves_unit_ids": []})
             for link in self.session.scalars(select(EquipmentUnitLinkRow).where(EquipmentUnitLinkRow.unit_id.in_(units))):
                 if link.kind == TOOL:
@@ -508,7 +510,9 @@ class SqlAlchemyEquipmentRepository:
                     links[link.unit_id]["serves_unit_ids"].append(str(link.target_id))
             for item in records:
                 if item.tab in EQUIPMENT_TABS:
-                    extras[item.id] = {"equipment_role": roles.get(item.id), "instrument_id": bindings.get(item.id), **links[item.id]}
+                    role, group = models.get(item.id, (None, None))
+                    extras[item.id] = {"equipment_role": role, "equipment_screen_group": group,
+                                       "instrument_id": bindings.get(item.id), **links[item.id]}
         if operations:
             by_operation: dict[UUID, list[dict]] = defaultdict(list)
             for link in self.session.scalars(select(EquipmentOperationLinkRow).where(
@@ -582,8 +586,11 @@ class SqlAlchemyEquipmentRepository:
         unit = self._unit(unit_id)
         if model_id is None:
             name, article, maker = unit_attrs(unit.fields or {})
+            old = self.session.get(EquipmentModelRow, unit.equipment_model_id)
+            # The unit keeps its «Группа на экране» in a model of its own (owner 21.11.2026).
             model = EquipmentModelRow(id=uuid4(), name=name, article=article, maker=maker,
-                                      role=role_of(name, type_of(unit.fields or {})), role_confirmed=False)
+                                      role=role_of(name, type_of(unit.fields or {})), role_confirmed=False,
+                                      screen_group=old.screen_group if old is not None else None)
             self.session.add(model)
             self.session.flush([model])
         else:
@@ -598,6 +605,22 @@ class SqlAlchemyEquipmentRepository:
         repository._put(repository._domain(unit), row=unit)
         prune_models(self.session)
         return str(model.id)
+
+    def set_screen_group(self, model_id: UUID, group: str | None) -> tuple[dict, bool]:
+        """«Группа на экране» of a model (owner 21.11.2026, migration 0216): a code of SCREEN_GROUPS, None — the
+        keyword rule decides. → (the model, changed)."""
+        if group is not None and group not in SCREEN_GROUPS:
+            raise ReferenceValidationError(f"«Группа на экране»: одна из {', '.join(SCREEN_GROUPS.values())}")
+        model = self.session.get(EquipmentModelRow, model_id)
+        if model is None:
+            raise LookupError("Модель оборудования не найдена")
+        changed = model.screen_group != group
+        model.screen_group = group
+        self.session.flush()
+        counts = dict(self.session.execute(select(EquipmentOperationLinkRow.model_id, func.count(
+            EquipmentOperationLinkRow.operation_id.distinct())).where(EquipmentOperationLinkRow.model_id == model_id)
+            .group_by(EquipmentOperationLinkRow.model_id)).all())
+        return _model_json(_State.load(self.session), model, counts.get(model_id, 0)), changed
 
     # «Показывать в «Оборудовании»» (owner 19.11.2026, migration 0206): machines of the tab «Оборудование» only.
     def shown_ids(self) -> list[str]:

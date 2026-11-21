@@ -14,7 +14,7 @@ afterEach(() => { vi.restoreAllMocks(); });
 const BASE = {
   equipment_id: null, inventory: "", pc: "DESKTOP-F40DLD9", ip: "192.168.1.50", service: "Агент ERP · печать, приборы",
   version: "2.12.0", link: { code: "ok", text: "На связи", tone: "ok" as const }, last_seen: "2026-11-20T10:00:00+03:00",
-  card: false, others: "", article: "", site: "", operations: [], family: "Принтеры склада", controlled: true,
+  card: false, others: "", article: "", site: "", operations: [], family: "Принтеры и МФУ", controlled: true,
 };
 const TSC: MachineRow = { ...BASE, key: "printer:pc:TSC MB341", kind: "printer", name: "Принтер этикеток TSC MB341", device: "TSC MB341",
   state: { text: "Принтер виден", tone: "ok" }, station: { kind: "labels" } };
@@ -52,7 +52,7 @@ function page(calls: { url: string; init?: RequestInit }[]) {
     if (url.endsWith("/api/stock/devices/labels")) return json(LABELS);
     if (url.includes("/label") && init?.method === "POST") return json({ status: "queued" });
     if (url.endsWith("/api/stock/devices/mfp/pc")) return json(mfp());
-    return json({ now: "2026-11-20T10:00:05+03:00", rows: [TSC, MFP], families: ["Принтеры склада"] });
+    return json({ now: "2026-11-20T10:00:05+03:00", rows: [TSC, MFP], families: ["Принтеры и МФУ"] });
   });
 }
 
@@ -60,7 +60,7 @@ it("names the warehouse devices by what they are and opens the label printer car
   const calls: { url: string; init?: RequestInit }[] = [];
   page(calls);
   render(<MachinesPage />);
-  const printers = await screen.findByRole("region", { name: "Принтеры склада" });
+  const printers = await screen.findByRole("region", { name: "Принтеры и МФУ" });
   expect(within(printers).queryByText("Без номера")).toBeNull();
   expect(within(printers).getByText("МФУ Pantum BM2300")).toBeTruthy();
   fireEvent.click(within(printers).getByText("Принтер этикеток TSC MB341"));

@@ -14,6 +14,7 @@ docs/data/ob019-register-map-2026-11-18.md). Staleness is computed on read: no r
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -24,6 +25,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.modules.production import ob099
+from app.modules.references.domain import SCREEN_GROUPS
 from app.shared.persistence import Base
 
 SCOPE = "machine:report"
@@ -88,37 +90,59 @@ LINK_TEXTS = {
     "no_service": ("Служба mbd на ПК не отвечает", "danger"),
     "stale": ("Нет связи с ПК станка", "danger"),
     "not_installed": ("Агент не установлен", "neutral"),
-    # A machine of БД.ОБ no ERP agent is planned for yet (owner 19.11.2026: «почему не все видны»).
-    "not_connected": ("Нет подключения к ERP", "neutral"),
+    # A machine of БД.ОБ no ERP agent is planned for yet (owner 19.11.2026: «почему не все видны»; 21.11: «Нет подключения»).
+    "not_connected": ("Нет подключения", "neutral"),
 }
 
-# Families of «Станки» (owner 19.11.2026): the machines of БД.ОБ grouped by what they do. The field «Операции» decides,
-# the name only when it says nothing; the first family in this order wins («Автомат резка + опрессовка» → резка, «Пайка,
-# Усадка» → пайка). Matched by word stems, so «Опрессовка терминалов» and «Ленточный обжим» are both опрессовка.
-# «Резка» — everything that cuts, with stripping or crimping too; «Зачистка» — stripping and twisting without a cut
-# (owner 20.11.2026: ОБ.100.x apart from ОБ.094–098).
-FAMILY_STEMS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("Резка", ("резк",)),
-    ("Зачистка", ("разделк", "свивк", "изоляци", "скрутк")),
-    ("Опрессовка", ("опрессовк", "обжим")),
-    ("Пайка и усадка", ("пайк", "лужен", "усадк")),
-    ("Маркировка", ("маркир", "маркер", "этикет")),
+# Groups of «Оборудование» (owner 21.11.2026: by purpose, not «С управлением / Без управления»): the group is set per
+# equipment MODEL in БД.ОБ («Группа на экране», `equipment_models.screen_group`, migration 0216; codes and labels —
+# `references.domain.SCREEN_GROUPS`, in the screen's order). A model without one falls back to the keyword rule below
+# (migration 0216 holds a frozen copy for the backfill), first match wins:
+# R1 «Принтеры и МФУ» — «принтер» / «МФУ» in the name, article or maker, or a printer maker (Supvan, Bixolon, Godex,
+#    TSC, Pantum); never a 3D printer. R2 «Анализаторы цепей» — «анализатор цепей», «ВАЦ», «VNA», «стоячей волны».
+# R3..R5 read «Операции» first, the name only when the operations say nothing: R3 «Резка и опрессовка» — a cut with a
+#    crimp («Автомат резка + опрессовка»); R4 by word stems in this order — «резк» → «Резка» («Резка с разделкой» too),
+#    «разделк» / «зачист» / «изоляци» / «свивк» / «скрутк» → «Зачистка» («Разделка» is stripping, ОБ.007/010/035/100),
+#    then «Опрессовка», «Пайка и усадка», «Маркировка»; R5 «Прочее».
+GROUP_STEMS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("cut", ("резк",)),
+    ("strip", ("разделк", "зачист", "изоляци", "свивк", "скрутк")),
+    ("crimp", ("опрессовк", "обжим")),
+    ("solder", ("пайк", "лужен", "усадк")),
+    ("marking", ("маркир", "маркер", "этикет")),
 )
-# What the agents reach besides machines (owner 20.11.2026): network analysers are their own group, the printer and
-# the MFP of the warehouse another; a printer bound to a marking machine stays in «Маркировка» as that machine.
-ANALYSER_FAMILY = "Анализаторы цепей"
-WAREHOUSE_PRINTERS = "Принтеры склада"
-OTHER_FAMILY = "Прочее оборудование"
-FAMILIES = (*(family for family, _stems in FAMILY_STEMS), ANALYSER_FAMILY, WAREHOUSE_PRINTERS, OTHER_FAMILY)
+_PRINTER_WORDS = re.compile(r"принтер|\bмфу\b")
+_PRINTER_MAKERS = re.compile(r"supvan|bixolon|godex|\btsc\b|pantum")
+_NOT_PRINTER = re.compile(r"3d|3д")
+_ANALYSER_WORDS = re.compile(r"анализатор\w*\s+цеп|\bвац\b|\bvna\b|стоячей\s+волны")
+_CRIMP_STEMS = ("опрессовк", "обжим")
+ANALYSER_FAMILY = SCREEN_GROUPS["analyzers"]
+WAREHOUSE_PRINTERS = SCREEN_GROUPS["printers"]  # label printers and the MFP the agents see, a model in «Принтеры и МФУ»
+OTHER_FAMILY = SCREEN_GROUPS["other"]
+FAMILIES = tuple(SCREEN_GROUPS.values())
 
 
-def machine_family(operations: list[str] | tuple[str, ...], name: str) -> str:
-    for text in (", ".join(operations), name):
-        words = text.casefold()
-        for family, stems in FAMILY_STEMS:
-            if any(stem in words for stem in stems):
-                return family
-    return OTHER_FAMILY
+def screen_group_of(operations: list[str] | tuple[str, ...], name: str, article: str = "", maker: str = "") -> str:
+    """The keyword rule (R1..R5 above) → a code of `SCREEN_GROUPS`."""
+    label = " ".join((name, article, maker)).casefold()
+    if not _NOT_PRINTER.search(label) and (_PRINTER_WORDS.search(label) or _PRINTER_MAKERS.search(maker.casefold())):
+        return "printers"
+    operations_text = ", ".join(operations).casefold()
+    if _ANALYSER_WORDS.search(" ".join((operations_text, name, article)).casefold()):
+        return "analyzers"
+    for text in (operations_text, name.casefold()):
+        if "резк" in text and any(stem in text for stem in _CRIMP_STEMS):
+            return "cut_crimp"
+        for group, stems in GROUP_STEMS:
+            if any(stem in text for stem in stems):
+                return group
+    return "other"
+
+
+def machine_family(group: str | None, operations: list[str] | tuple[str, ...], name: str, article: str = "",
+                   maker: str = "") -> str:
+    """The group label of a machine: its model's «Группа на экране», else the keyword rule."""
+    return SCREEN_GROUPS.get(group or "") or SCREEN_GROUPS[screen_group_of(operations, name, article, maker)]
 
 
 class MachineRefused(Exception):

@@ -393,6 +393,8 @@ TOKEN_REFUSED_IN_ENDPOINT = {
     ("PUT", "/api/references/column-views/{view}"),
     # … and the role of an equipment model (05.11.2026): the owner confirms «операционное» / «обеспечивающее».
     ("PUT", "/api/references/equipment-models/{model_id}/role"),
+    # … and its «Группа на экране» (21.11.2026): the owner groups the screen «Оборудование».
+    ("PUT", "/api/references/equipment-models/{model_id}/screen-group"),
     # Deleting a material catalog row (16.11.2026): a person with reference edit rights only, never a token.
     ("DELETE", "/api/references/tech-operations/{record_id}"),
 }

@@ -38,7 +38,7 @@ export interface MachineRow {
   site: string;
   operations: string[];
   family: string;
-  /** Станок: ERP достаёт его через агента (вкладка «С управлением»). */
+  /** Станок: ERP достаёт его через агента (значок связи на плитке, фильтр «Только подключённые»). */
   controlled?: boolean;
   /** Модель наладки: нет / простая / полная; `code: null` — модель не задана. */
   setup?: { code: SetupClass | null; label: string };
@@ -48,7 +48,7 @@ export interface MachineRow {
   vna?: "s2vna" | "arinst" | null;
   /** СИ реестра, которым этот прибор является; null — прибора нет в реестре. */
   instrument_id?: string | null;
-  /** «Принтеры склада»: карточка принтера этикеток или МФУ (WarehouseDeviceCard.tsx). */
+  /** «Принтеры и МФУ»: карточка принтера этикеток или МФУ (WarehouseDeviceCard.tsx). */
   station?: WarehouseStation;
 }
 

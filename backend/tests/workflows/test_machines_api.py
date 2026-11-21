@@ -165,11 +165,11 @@ def test_list_shows_the_machine_printers_and_devices_and_staleness_means_no_link
     assert "printer:ОБ.101" not in rows
     vna = rows["device:Планар S50180"]
     assert (vna["name"], vna["state"]["text"]) == ("Анализатор цепей", "Подключён")
-    # Owner 20.11.2026: analysers are their own group, the warehouse printer and MFP another, all «С управлением».
+    # Owner 20.11.2026: analysers are their own group, the warehouse printer and MFP another (21.11: «Принтеры и МФУ»).
     assert (vna["family"], vna["controlled"]) == ("Анализаторы цепей", True)
     label, scanner = rows["printer:TSC MB341"], rows["device:Pantum BM2300 Series Scanner"]
     assert (label["family"], label["controlled"], scanner["family"], scanner["controlled"]) == (
-        "Принтеры склада", True, "Принтеры склада", True)
+        "Принтеры и МФУ", True, "Принтеры и МФУ", True)
     # One name for the PC's agent, whatever it does there (owner 18.11: «Мост ERP» vs «Агент печати» confused).
     assert printer["service"] == vna["service"] == "Агент ERP · печать, приборы"
     assert machine["service"] == "Агент ERP · станок"
@@ -451,8 +451,8 @@ def test_the_screen_shows_ticked_machines_and_every_agent_linked_one(machines_ap
         session.flush()
         session.add(MarkingBindingRow(equipment_id=ob102, version=1, machine_id="godex-pc", printer="Godex EZ2350i"))
     body = admin.get(LIST).json()
-    assert body["families"] == ["Резка", "Зачистка", "Опрессовка", "Пайка и усадка", "Маркировка", "Анализаторы цепей",
-                                "Принтеры склада", "Прочее оборудование"]
+    assert body["families"] == ["Резка", "Резка и опрессовка", "Зачистка", "Опрессовка", "Пайка и усадка", "Маркировка",
+                                "Анализаторы цепей", "Принтеры и МФУ", "Прочее"]
     machines = {row["inventory"]: row for row in body["rows"] if row["kind"] == "machine"}
     # ОБ.017 is not ticked; СИ.110 is no machine; ОБ.019 / ОБ.094 wait for their bridge; ОБ.101 has an agent.
     assert sorted(machines) == ["ОБ.005", "ОБ.019", "ОБ.070.1", "ОБ.094", "ОБ.101", "ОБ.102"]
@@ -460,7 +460,7 @@ def test_the_screen_shows_ticked_machines_and_every_agent_linked_one(machines_ap
     assert machines["ОБ.102"]["controlled"] is True and machines["ОБ.102"]["equipment_id"] == str(ob102)
     row = machines["ОБ.005"]
     assert (row["article"], row["site"], row["operations"], row["family"]) == ("SR-W01", "ЦАР", ["Свивка"], "Зачистка")
-    assert row["link"] == {"code": "not_connected", "text": "Нет подключения к ERP", "tone": "neutral"}
+    assert row["link"] == {"code": "not_connected", "text": "Нет подключения", "tone": "neutral"}
     assert row["equipment_id"] == str(twist) and row["card"] is False and row["controlled"] is False
     assert (machines["ОБ.070.1"]["site"], machines["ОБ.070.1"]["family"]) == ("ЖУК", "Пайка и усадка")
     assert machines["ОБ.019"]["controlled"] is False and machines["ОБ.019"]["link"]["code"] == "not_installed"
@@ -469,6 +469,11 @@ def test_the_screen_shows_ticked_machines_and_every_agent_linked_one(machines_ap
         "На связи", "Цех", str(ob101), True)
     # The Godex is the link of ОБ.101 and ОБ.102, not a third tile (owner 20.11.2026).
     assert [row for row in body["rows"] if row["kind"] == "printer"] == []
+    # «Группа на экране» of the model in БД.ОБ wins over the keyword rule (owner 21.11.2026).
+    with sessions.begin() as session:
+        session.get(EquipmentModelRow, session.get(EquipmentMachineRow, solder).equipment_model_id).screen_group = "other"
+    regrouped = {row["inventory"]: row for row in admin.get(LIST).json()["rows"] if row["kind"] == "machine"}
+    assert (regrouped["ОБ.070.1"]["family"], regrouped["ОБ.005"]["family"]) == ("Прочее", "Зачистка")
     # The bridge of ОБ.019 reports → «С управлением», with or without the checkbox.
     assert _report(_bridge(admin)).status_code == 200
     linked = {row["inventory"]: row for row in admin.get(LIST).json()["rows"] if row["kind"] == "machine"}["ОБ.019"]
@@ -714,18 +719,32 @@ def test_the_article_of_an_instrument_comes_from_its_si_card(machines_api):
     assert (row["family"], row["controlled"]) == ("Анализаторы цепей", True)
 
 
-@pytest.mark.parametrize("operations, name, family", [
-    (["Резка", "Резка с разделкой", "Резка с разделкой+ маркировка"], "Автомат", "Резка"),
-    (["Автомат резка + опрессовка", "Лужение"], "Автомат", "Резка"),
-    (["Разделка"], "Полуавтомат для снятия изоляции с проводов", "Зачистка"),
-    (["Опрессовка наконечников", "Опрессовка"], "Пресс", "Опрессовка"),
-    (["Ленточный обжим"], "Пресс", "Опрессовка"),
-    (["Пайка", "Монтаж корпуса"], "Установка", "Пайка и усадка"),
-    (["Монтаж маркировки"], "Полуавтомат", "Маркировка"),
-    ([], "Маркиратор флажковый", "Маркировка"),
-    ([], "Полуавтомат для снятия изоляции с проводов", "Зачистка"),
-    (["Литье пластика"], "Машина литьевая", "Прочее оборудование"),
-    ([], "Принтер 3D экструзионный", "Прочее оборудование"),
+@pytest.mark.parametrize("operations, name, article, maker, family", [
+    (["Резка", "Резка с разделкой", "Резка с разделкой+ маркировка"], "Автомат", "", "", "Резка"),
+    (["Автомат резка + опрессовка", "Лужение"], "Автомат", "", "", "Резка и опрессовка"),
+    ([], "Станок резки/ обжим+обжим", "", "", "Резка и опрессовка"),
+    (["Разделка"], "Полуавтомат для снятия изоляции с проводов", "", "", "Зачистка"),
+    ([], "Станок для зачистки чего?", "", "", "Зачистка"),
+    (["Свивка"], "Машина крутильная", "", "", "Зачистка"),
+    (["Опрессовка наконечников", "Опрессовка"], "Пресс", "", "", "Опрессовка"),
+    (["Опрессовка терминалов", "Ленточный обжим"], "Автомат для снятия изоляции и опрессовки контактов", "", "",
+     "Опрессовка"),
+    (["Пайка", "Монтаж корпуса"], "Установка", "", "", "Пайка и усадка"),
+    (["Монтаж маркировки"], "Полуавтомат", "", "", "Маркировка"),
+    ([], "Маркиратор флажковый", "", "", "Маркировка"),
+    ([], "Принтер маркировочный портативный", "SPP-L410", "Bixolon", "Принтеры и МФУ"),
+    ([], "Принтер кабельных маркеров", "TP80E", "Supvan technology", "Принтеры и МФУ"),
+    ([], "МФУ лазерное", "", "", "Принтеры и МФУ"),
+    (["ОТК"], "Измеритель коэффициента стоячей волны по напряжению", "", "Agilent", "Анализаторы цепей"),
+    ([], "ВАЦ Планар", "S50180", "", "Анализаторы цепей"),
+    (["Литье пластика"], "Машина литьевая", "", "", "Прочее"),
+    ([], "Принтер 3D экструзионный", "X1-Carbon", "Bambu Lab", "Прочее"),
+    ([], "Активатор поверхности", "", "", "Прочее"),  # «вац» only as a word
 ])
-def test_machine_family_by_operations_then_name(operations, name, family):
-    assert rules.machine_family(operations, name) == family
+def test_machine_family_falls_back_to_the_keyword_rule(operations, name, article, maker, family):
+    assert rules.machine_family(None, operations, name, article, maker) == family
+
+
+@pytest.mark.parametrize("group, family", [(code, label) for code, label in rules.SCREEN_GROUPS.items()])
+def test_the_stored_screen_group_wins_over_the_keywords(group, family):
+    assert rules.machine_family(group, ["Опрессовка"], "Пресс", "", "Supvan") == family

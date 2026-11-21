@@ -23,7 +23,7 @@ const TSC: MachineRow = {
   ip: "192.168.1.50", service: "Агент ERP · печать", version: "2.9.1",
   link: { code: "stale", text: "Нет связи с ПК", tone: "danger" }, last_seen: null, device: "TSC MB341",
   state: { text: "Принтер не найден", tone: "warn" }, card: false, others: "", article: "", site: "", operations: [],
-  family: "Принтеры склада", controlled: true,
+  family: "Принтеры и МФУ", controlled: true,
 };
 const PLANAR: MachineRow = {
   key: "device:instrument:si2", kind: "device", equipment_id: null, inventory: "СИ.002", name: "Planar S50180", pc: "DESKTOP-PTA57QF",
@@ -60,7 +60,7 @@ const NOT_INSTALLED: MachineRow = {
 };
 const TWISTER: MachineRow = {
   key: "machine:u05", kind: "machine", equipment_id: "u05", inventory: "ОБ.005", name: "Полуавтомат для скрутки проводов", pc: "", ip: "",
-  service: "", version: "", link: { code: "not_connected", text: "Нет подключения к ERP", tone: "neutral" }, last_seen: null, device: "",
+  service: "", version: "", link: { code: "not_connected", text: "Нет подключения", tone: "neutral" }, last_seen: null, device: "",
   state: { text: "—", tone: "neutral" }, card: false, others: "", article: "SR-W01", site: "ЖУК", operations: ["Свивка"],
   family: "Зачистка", controlled: false, setup: { code: "simple", label: "простая" }, pending_setup: 0,
 };
@@ -68,8 +68,8 @@ const SOLDER: MachineRow = {
   ...TWISTER, key: "machine:u70", equipment_id: "u70", inventory: "ОБ.070.1", name: "Станция паяльная термовоздушная", article: "8620DX-Pro",
   site: "ЦАР", operations: ["Пайка", "Усадка"], family: "Пайка и усадка", setup: { code: "none", label: "нет" },
 };
-const FAMILIES = ["Резка", "Зачистка", "Опрессовка", "Пайка и усадка", "Маркировка", "Анализаторы цепей", "Принтеры склада",
-  "Прочее оборудование"];
+const FAMILIES = ["Резка", "Резка и опрессовка", "Зачистка", "Опрессовка", "Пайка и усадка", "Маркировка", "Анализаторы цепей",
+  "Принтеры и МФУ", "Прочее"];
 const SETUP: UnitSetup = {
   unit_id: "u05", inventory: "ОБ.005", name: TWISTER.name, model: "SR-W01", requires_setup: { code: "simple", label: "простая" }, reason: "",
   parameters: [{ key: "twist_pitch_mm", label: "Шаг скрутки", unit: "мм", source: "ЭТК", source_field: "Шаг", register: "" }],
@@ -93,18 +93,17 @@ function machines(calls: string[] = []) {
   });
 }
 
-it("splits equipment into «С управлением» and «Без управления»; printers and analysers are controlled groups", async () => {
+it("shows one list grouped by purpose; the link is a badge; «Только подключённые» filters", async () => {
   const calls: string[] = [];
   machines(calls);
   render(<MachinesPage />);
-  const controlled = await screen.findByRole("tab", { name: /С управлением/ });
-  expect(controlled.getAttribute("aria-selected")).toBe("true");
-  expect(controlled.textContent).toBe("С управлением3");
-  expect(screen.getByRole("tab", { name: /Без управления/ }).textContent).toBe("Без управления3");
-  expect(screen.queryByRole("tab", { name: /Принтеры и приборы/ })).toBeNull();  // владелец 20.11.2026: лишняя вкладка
-  expect(screen.getByRole("tab", { name: /^Все/ }).textContent).toBe("Все6");
-  expect(screen.queryByRole("tab", { name: "Запросы на наладку" })).toBeNull();  // наладка этому сотруднику закрыта
-  // ОБ.019 — in its family block, with the article, the site, the operations and «Ждёт наладки».
+  expect(await screen.findByRole("region", { name: "Резка" })).toBeTruthy();
+  expect(screen.queryByRole("tab")).toBeNull();  // наладка этому сотруднику закрыта, других вкладок нет
+  expect(screen.queryByText(/С управлением|Без управления/)).toBeNull();
+  // Groups follow the order of the API's families; an empty group is not drawn.
+  expect(screen.getAllByRole("region").map((region) => region.getAttribute("aria-label"))).toEqual(
+    ["Резка", "Зачистка", "Пайка и усадка", "Анализаторы цепей", "Принтеры и МФУ"]);
+  // ОБ.019 — in its group, with the article, the site, the operations and «Ждёт наладки».
   const cutting = screen.getByRole("region", { name: "Резка" });
   const tile = within(cutting).getByText("ОБ.019").closest("button")!;
   expect(within(tile).getByText("EW-3185+L · ЦАР")).toBeTruthy();
@@ -112,24 +111,28 @@ it("splits equipment into «С управлением» and «Без управ�
   expect(within(tile).getByText("Ждёт наладки").className).toContain("tone-warn");
   expect(within(tile).getByText("Наладка: полная")).toBeTruthy();
   expect(within(tile).getByText("Аварийный стоп").className).toContain("tone-danger");
-  expect(screen.queryByText("ОБ.037")).toBeNull();
-
-  fireEvent.click(screen.getByRole("tab", { name: /Без управления/ }));
-  expect(screen.getByRole("region", { name: "Резка" })).toBeTruthy();
-  expect(within(screen.getByRole("region", { name: "Зачистка" })).getByText("ОБ.005")).toBeTruthy();
-  expect(screen.getByRole("region", { name: "Пайка и усадка" })).toBeTruthy();
+  // The connection stays a badge on the tile, also for equipment without control.
   const absent = screen.getByText("ОБ.037").closest("button")!;
   expect(absent.className).toContain("is-absent");
   const twister = screen.getByText("ОБ.005").closest("button")!;
-  expect(within(twister).getByText("Нет подключения к ERP")).toBeTruthy();
+  expect(within(twister).getByText("Нет подключения")).toBeTruthy();
   expect(within(twister).getByText("SR-W01 · ЖУК")).toBeTruthy();
   expect(within(screen.getByText("ОБ.070.1").closest("button")!).getByText("Без наладки")).toBeTruthy();
-
-  fireEvent.click(screen.getByRole("tab", { name: /С управлением/ }));
-  const printers = screen.getByRole("region", { name: "Принтеры склада" });
+  const printers = screen.getByRole("region", { name: "Принтеры и МФУ" });
   const devices = screen.getByRole("region", { name: "Анализаторы цепей" });
   expect(within(printers).getByText("Нет связи с ПК").className).toContain("tone-danger");
   expect(within(devices).getAllByText("СИ.002")).toHaveLength(1);
+
+  const only = screen.getByRole("checkbox", { name: /Только подключённые/ });
+  expect(only.closest("label")!.textContent).toBe("Только подключённые2");  // ОБ.019 и Planar; TSC — нет связи с ПК
+  fireEvent.click(only);
+  expect(screen.queryByText("ОБ.005")).toBeNull();
+  expect(screen.queryByText("ОБ.037")).toBeNull();
+  expect(screen.getByText("ОБ.019")).toBeTruthy();
+  expect(screen.queryByRole("region", { name: "Зачистка" })).toBeNull();
+  fireEvent.click(only);
+  expect(screen.getByText("ОБ.005")).toBeTruthy();
+
   fireEvent.click(within(devices).getByText("СИ.002"));
   const info = await screen.findByRole("dialog", { name: /СИ\.002/ });
   expect(within(info).getByText("DESKTOP-5O46RH6 — не найден")).toBeTruthy();
@@ -137,9 +140,6 @@ it("splits equipment into «С управлением» and «Без управ�
   fireEvent.click(within(info).getByRole("button", { name: "Закрыть" }));
   expect(calls.some((url) => url.includes("/setup-model/"))).toBe(false);
 
-  fireEvent.click(screen.getByRole("tab", { name: /^Все/ }));
-  for (const title of ["Резка", "Зачистка", "Пайка и усадка", "Анализаторы цепей", "Принтеры склада"]) expect(screen.getByRole("region", { name: title })).toBeTruthy();
-  fireEvent.click(screen.getByRole("tab", { name: /С управлением/ }));
   fireEvent.click(screen.getByText("ОБ.019"));
   const dialog = await screen.findByRole("dialog", { name: /ОБ\.019/ });
   // The drawing shows what is on the machine now.
@@ -150,11 +150,41 @@ it("splits equipment into «С управлением» and «Без управ�
   expect(await screen.findByRole("dialog", { name: "Наладка ОБ.019" })).toBeTruthy();
 });
 
+it("«Только подключённые» keeps only what is on line now, not everything with an agent", async () => {
+  const stale: MachineRow = { ...OB019, key: "machine:u94", equipment_id: "u94", inventory: "ОБ.094", card: false,
+    link: { code: "stale", text: "Нет связи с ПК станка", tone: "danger" }, state: { text: "—", tone: "neutral" } };
+  const lost: MachineRow = { ...TSC, key: "printer:pc:lost", device: "Godex G500", pc: "Маркировка",
+    link: { code: "ok", text: "На связи", tone: "ok" }, state: { text: "Принтер не найден", tone: "warn" } };
+  const seen: MachineRow = { ...TSC, key: "printer:pc:seen", device: "TSC TE200", pc: "Склад-2",
+    link: { code: "ok", text: "На связи", tone: "ok" }, state: { text: "Принтер виден", tone: "ok" } };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    json({ now: "2026-11-18T10:00:02+03:00", rows: [OB019, stale, lost, seen, PLANAR], families: FAMILIES }));
+  render(<MachinesPage />);
+  const only = await screen.findByRole("checkbox", { name: /Только подключённые/ });
+  expect(only.closest("label")!.textContent).toBe("Только подключённые3");
+  fireEvent.click(only);
+  expect(screen.getByText("ОБ.019")).toBeTruthy();
+  expect(screen.queryByText("ОБ.094")).toBeNull();  // мост станка молчит
+  expect(screen.queryByText("Godex G500")).toBeNull();  // агент на связи, а принтера не видно
+  expect(screen.getByText("Склад-2", { exact: false })).toBeTruthy();
+  expect(screen.getByText("СИ.002")).toBeTruthy();
+});
+
+it("a row whose group the API does not list stands in its own group before «Прочее»", async () => {
+  const odd: MachineRow = { ...TWISTER, key: "machine:u12", equipment_id: "u12", inventory: "ОБ.012", family: "Плазма" };
+  const other: MachineRow = { ...TWISTER, key: "machine:u13", equipment_id: "u13", inventory: "ОБ.013", family: "Прочее" };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    json({ now: "2026-11-18T10:00:02+03:00", rows: [other, odd, OB019], families: FAMILIES }));
+  render(<MachinesPage />);
+  expect(await screen.findByRole("region", { name: "Плазма" })).toBeTruthy();
+  expect(screen.getAllByRole("region").map((region) => region.getAttribute("aria-label"))).toEqual(["Резка", "Плазма", "Прочее"]);
+  expect(within(screen.getByRole("region", { name: "Плазма" })).getByText("ОБ.012")).toBeTruthy();
+});
+
 it("filters by site and searches by number, name, article, PC or IP", async () => {
   machines();
   render(<MachinesPage />);
-  fireEvent.click(await screen.findByRole("tab", { name: /Без управления/ }));
-  fireEvent.click(screen.getByRole("radio", { name: /ЖУК/ }));
+  fireEvent.click(await screen.findByRole("radio", { name: /ЖУК/ }));
   expect(screen.getByText("ОБ.005")).toBeTruthy();
   expect(screen.queryByText("ОБ.037")).toBeNull();
   fireEvent.click(screen.getByRole("radio", { name: /Все участки/ }));
@@ -162,9 +192,7 @@ it("filters by site and searches by number, name, article, PC or IP", async () =
   fireEvent.change(search, { target: { value: "8620dx" } });
   expect(screen.getByText("ОБ.070.1")).toBeTruthy();
   expect(screen.queryByText("ОБ.005")).toBeNull();
-  expect(screen.getByRole("tab", { name: /Без управления/ }).textContent).toBe("Без управления1");
   fireEvent.change(search, { target: { value: "pc-108" } });
-  fireEvent.click(screen.getByRole("tab", { name: /С управлением/ }));
   expect(screen.getByText("ОБ.019")).toBeTruthy();
   fireEvent.change(search, { target: { value: "нет такого" } });
   expect(screen.getByText("Ничего не найдено по «нет такого»")).toBeTruthy();
@@ -182,8 +210,7 @@ it("records the machine setup by the task from its card, by hand only with a rea
     return json({ now: "", rows: [TWISTER], families: FAMILIES });
   });
   render(<MachinesPage canWrite />);
-  fireEvent.click(await screen.findByRole("tab", { name: /Без управления/ }));
-  fireEvent.click(screen.getByText("ОБ.005"));
+  fireEvent.click(await screen.findByText("ОБ.005"));
   // A machine without control opens its work card; «Наладка» (the setup table) is a window over it.
   const card = await screen.findByRole("dialog", { name: /ОБ\.005/ });
   fireEvent.click(within(card).getByRole("button", { name: "Наладка" }));
@@ -207,12 +234,12 @@ it("records the machine setup by the task from its card, by hand only with a rea
   expect(byHand.disabled).toBe(false);
 });
 
-it("shows an honest empty text on each tab", async () => {
+it("shows an honest empty text, and another one when the filter hides everything", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ now: "", rows: [] }));
   render(<MachinesPage />);
-  expect(await screen.findByText(/Нет оборудования с агентом ERP/)).toBeTruthy();
-  fireEvent.click(screen.getByRole("tab", { name: /Без управления/ }));
-  expect(screen.getByText(/отметьте станок в БД\.ОБ галочкой/)).toBeTruthy();
+  expect(await screen.findByText(/отметьте станок в БД\.ОБ галочкой/)).toBeTruthy();
+  fireEvent.click(screen.getByRole("checkbox", { name: /Только подключённые/ }));
+  expect(screen.getByText(/Нет подключённого оборудования/)).toBeTruthy();
 });
 
 it("polls every 3 seconds only while the tab is visible", async () => {
@@ -301,8 +328,7 @@ it("a planned machine without a БД.ОБ entry says so calmly instead of a setu
   const calls: string[] = [];
   machines(calls);
   render(<MachinesPage canWrite />);
-  fireEvent.click(await screen.findByRole("tab", { name: /Без управления/ }));
-  fireEvent.click(screen.getByText("ОБ.037"));
+  fireEvent.click(await screen.findByText("ОБ.037"));
   const dialog = await screen.findByRole("dialog", { name: /ОБ\.037/ });
   expect(within(dialog).getByText(/Станка нет в БД\.ОБ/)).toBeTruthy();
   expect(within(dialog).queryByRole("alert")).toBeNull();
@@ -332,8 +358,7 @@ it("opens the work card only for a machine without control that is in БД.ОБ;
     return json({ now: "", rows: [SOLDER, NOT_INSTALLED, TSC], families: FAMILIES });
   });
   render(<MachinesPage canWrite />);
-  fireEvent.click(await screen.findByRole("tab", { name: /Без управления/ }));
-  fireEvent.click(screen.getByText("ОБ.070.1"));
+  fireEvent.click(await screen.findByText("ОБ.070.1"));
   const card = await screen.findByRole("dialog", { name: /ОБ\.070\.1/ });
   expect(within(card).getByRole("status", { name: "Состояние станка" }).textContent).toContain("Свободен");
   expect(within(card).queryByRole("button", { name: "Ручная работа" })).toBeNull();

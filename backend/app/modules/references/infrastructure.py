@@ -25,7 +25,7 @@ from .cable_structure import (
 )
 from .search_text import search_rows, search_words
 from .domain import (
-    EDITABLE_TABS, EQUIPMENT_TABS, MATERIAL_TABS, TERMINAL_TABS, ReferenceEntry, ReferenceKind, StockArticle, StockLinkChange, StockLinkEntry,
+    EDITABLE_TABS, EQUIPMENT_TABS, MATERIAL_TABS, SCREEN_GROUPS, TERMINAL_TABS, ReferenceEntry, ReferenceKind, StockArticle, StockLinkChange, StockLinkEntry,
     StockLinkEvent, TechOperationRecord, TechOperationTab, ReferenceValidationError, family_root,
 )
 from .equipment_catalogs import CATALOG_TABLES, equipment_tab
@@ -103,6 +103,9 @@ class EquipmentModelRow(Base):
     __tablename__ = "equipment_models"
     __table_args__ = (
         CheckConstraint("role IN ('operational', 'supporting')", name="ck_equipment_models_role"),
+        CheckConstraint("screen_group IS NULL OR screen_group IN ("
+                        + ", ".join(f"'{code}'" for code in SCREEN_GROUPS) + ")",
+                        name="ck_equipment_models_screen_group"),
     )
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     name: Mapped[str] = mapped_column(String(512), nullable=False, default="", server_default="")
@@ -111,6 +114,8 @@ class EquipmentModelRow(Base):
     role: Mapped[str] = mapped_column(String(16), nullable=False, default="operational", server_default="operational")
     # False — the role was given by default (or by a word of the name), the owner has not confirmed it (the report).
     role_confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=sa_false())
+    # «Группа на экране» (owner 21.11.2026, migration 0216): a code of `domain.SCREEN_GROUPS`; NULL — the keyword rule.
+    screen_group: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
 
 class EquipmentUnitRow(Base):

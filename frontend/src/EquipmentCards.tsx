@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
-import { api, failureText, referencesApi, type CrimpCodes, type CrimpTargets, type EquipmentLinksReport, type EquipmentModelInfo, type EquipmentRole, type TechOperationRecord } from "./api";
+import { api, failureText, referencesApi, type CrimpCodes, type CrimpTargets, type EquipmentLinksReport, type EquipmentModelInfo, type EquipmentRole, type EquipmentScreenGroup, type TechOperationRecord } from "./api";
 import { EQUIPMENT_TABS, type EquipmentTab } from "./referenceTabs";
 import { filledIn, useColumnRemoval } from "./CustomColumn";
 import { PageWindow } from "./PageWindow";
@@ -140,6 +140,7 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
   const targetsByModel = useMemo(() => new Map(groupModels(records).map((model) => [model.key, crimpLines(model, targets?.by_code ?? {})])), [records, targets]);
   // Roles / counts of the models and the «Без привязки» report come from the server (links by id, migration 0171).
   const [infos, setInfos] = useState<EquipmentModelInfo[]>([]);
+  const [screenGroups, setScreenGroups] = useState<EquipmentScreenGroup[]>([]);
   const [report, setReport] = useState<EquipmentLinksReport | null>(null);
   const [reportError, setReportError] = useState("");
   const [view, setView] = useState<"all" | "unlinked">("all");
@@ -163,11 +164,18 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
   }, [records]);
   useEffect(() => {
     let live = true;
-    referencesApi.equipmentModels().then((result) => { if (live) setInfos(result?.models ?? []); }).catch(() => { if (live) setInfos([]); });
+    referencesApi.equipmentModels().then((result) => { if (live) { setInfos(result?.models ?? []); setScreenGroups(result?.screen_groups ?? []); } }).catch(() => { if (live) setInfos([]); });
     referencesApi.equipmentLinksReport().then((result) => { if (live) { setReport(result?.operations ? result : null); setReportError(""); } }).catch((reason) => { if (live) { setReport(null); setReportError(failureText(reason, "Не удалось загрузить связи оборудования")); } });
     return () => { live = false; };
   }, [records]);
   const infoById = useMemo(() => new Map(infos.map((info) => [info.id, info])), [infos]);
+  // «Группа на экране» (владелец 21.11.2026): группа модели на экране «Оборудование»; пусто — решают операции.
+  const groupLabels = useMemo(() => new Map(screenGroups.map((group) => [group.code, group.label])), [screenGroups]);
+  const screenGroupOf = (model: EquipmentModel) => {
+    const info = model.id ? infoById.get(model.id) : undefined;
+    return info && info.screen_group !== undefined ? info.screen_group : model.screenGroup;
+  };
+  const screenGroupLabel = (model: EquipmentModel) => { const code = screenGroupOf(model); return code ? groupLabels.get(code) ?? code : ""; };
   // «Показывать в «Оборудовании»» (владелец 19.11.2026, миграция 0206): станок вкладки «Оборудование» выходит на экран
   // «Производство → Оборудование». Галочка — у каждого экземпляра; правка — с правом на справочник, пишется в журнал.
   const [shownIds, setShownIds] = useState<Set<string> | null>(null);
@@ -280,6 +288,24 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
             {canEdit && model.id && infoById.get(model.id)?.role_confirmed === false && <button type="button" className="secondary small" disabled={busy}
               onClick={() => void guarded(() => referencesApi.setEquipmentRole(model.id, model.role), "Вид подтверждён")}>Подтвердить</button>}
           </div>
+          {tab === "ob" && model.id && <div className="eq-role" style={{ marginTop: 8 }}>
+            <span style={{ color: "var(--muted-foreground)" }}>Группа на экране</span>
+            {canEdit
+              ? <select aria-label="Группа на экране" value={screenGroupOf(model) ?? ""} disabled={busy}
+                onChange={(event) => void guarded(async () => {
+                  const saved = await referencesApi.setEquipmentScreenGroup(model.id, event.target.value || null);
+                  const group = saved && saved.screen_group !== undefined ? saved.screen_group : event.target.value || null;
+                  setInfos((list) => list.some((info) => info.id === model.id)
+                    ? list.map((info) => info.id === model.id ? { ...info, screen_group: group } : info) : list);
+                }, "Группа на экране записана")}>
+                <option value="">авто</option>
+                {screenGroups.map((group) => <option key={group.code} value={group.code}>{group.label}</option>)}
+              </select>
+              : <b>{screenGroupLabel(model) || "авто"}</b>}
+          </div>}
+          {tab === "ob" && model.id && (!screenGroupOf(model) || model.items.length > 1) && <p className="eq-hint">
+            {[!screenGroupOf(model) && "Авто — группа по названию и операциям.",
+              model.items.length > 1 && `Группа действует на все ${model.items.length} ед. модели.`].filter(Boolean).join(" ")}</p>}
           {model.role === "supporting" && <p className="eq-hint">Обеспечивающее оборудование не бывает машиной операции — оно обслуживает машины.</p>}
         </div>
         {model.role === "supporting" && <ServesEditor model={model} records={familyRecords} canEdit={canEdit} busy={busy}
@@ -343,6 +369,9 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
     { key: "type", title: "Подтип", value: (model) => pick(model.items[0].fields, "Подтип") || (model.type === CRIMP_TOOL_TYPE ? CRIMP_TOOL_TYPE : ""), filter: true },
     { key: "code", title: "Код", value: (model) => codeOf(model), render: (model) => <span className="tnum">{codeOf(model) || "—"}</span> },
     { key: "role", title: "Вид", value: (model) => ROLE_LABELS[model.role], filter: true },
+    { key: "screenGroup", title: "Группа на экране", value: (model) => screenGroupLabel(model) || "авто", filter: true,
+      render: (model) => screenGroupLabel(model) || <span style={{ color: "var(--muted-foreground)" }}>авто</span>,
+      hint: "Группа модели на экране «Производство → Оборудование»; «авто» — группа по названию и операциям" },
     { key: "kind", title: "Вид аппликатора", value: (model) => applicatorKindOf(codeOf(model)), filter: true },
     { key: "article", title: "Артикул", value: (model) => model.article },
     { key: "maker", title: "Производитель", value: (model) => model.maker },
@@ -362,7 +391,7 @@ export function EquipmentCards({ records, operations, canEdit, onEdit, onCreate,
     + report.counts.models_without_units + report.counts.models_units_disagree + report.counts.roles_unconfirmed : 0;
   const allowed = new Set(["inv", "name", "count", "maker", "place", ...(tab === "ob_applicators" ? [] : ["article"]),
     ...(withTargets ? [TARGETS_KEY] : []),
-    ...(tab === "ob_applicators" ? ["kind"] : []), ...(tab === "ob" ? ["ops", ...(shownIds ? ["shown"] : []), ...(technicianIds ? ["setupBy"] : [])] : []),
+    ...(tab === "ob_applicators" ? ["kind"] : []), ...(tab === "ob" ? ["ops", "screenGroup", ...(shownIds ? ["shown"] : []), ...(technicianIds ? ["setupBy"] : [])] : []),
     ...(tab === "ob_tools" ? ["type", "code"] : []), ...(tab === "ob_dies" ? ["code"] : [])]);
   const visibleColumns = columns.filter((column) => allowed.has(column.key));
   for (const field of [...new Set([...fieldColumns, ...ownColumns])].filter((name) => !["Инв. номер", "Наименование", "Наменование", "Артикул", "Производитель", "Расположение", "Подтип", "Код в базе терминалов", TARGETS_KEY].includes(name))) visibleColumns.push({

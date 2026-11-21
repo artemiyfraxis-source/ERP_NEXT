@@ -349,3 +349,8 @@ button.machine-stop { min-width: 160px; min-height: 48px; font-size: 18px; font-
 .device-table tr.is-chosen td { background: color-mix(in srgb, var(--primary) 10%, var(--card)); }
 .device-cancel { margin-left: 8px; }
 @media (pointer: coarse) { .device-copies input, .device-field select { height: 44px; } .device-card button.small { min-height: 40px; } }
+
+.machine-toolbar label.machine-only-connected { display: inline-flex; flex: none; align-items: center; gap: 8px; height: 36px; padding: 0 12px;
+  border-radius: 12px; background: var(--seg-bg); color: var(--foreground); font-size: 13px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.machine-toolbar label.machine-only-connected input { width: 16px; height: 16px; margin: 0; accent-color: var(--primary); }
+@media (pointer: coarse) { .machine-toolbar label.machine-only-connected { height: 44px; } }

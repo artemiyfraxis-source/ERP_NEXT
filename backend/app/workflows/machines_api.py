@@ -2,10 +2,11 @@
 
 - `GET /api/production/machines` (Производство or Задания, view) → `{now, rows, families}`: one row per machine of
   «Оборудование» — a БД.ОБ unit with the checkbox «Показывать в «Оборудовании»» or any unit an ERP agent reaches
-  (owner 19.11.2026), with its article, site, operations and family (`families` — their order), `controlled`, setup
+  (owner 19.11.2026), with its article, site, operations and group `family` — the model's «Группа на экране» of БД.ОБ,
+  else the keyword rule (owner 21.11.2026; `families` — the nine groups in the screen's order), `controlled`, setup
   class and open setup tasks — then the label printers of the print agents (a marking machine's printer is that
   machine's row, not its own), scanners and network analysers the agents see; these are `controlled` too, in the
-  families «Принтеры склада» and «Анализаторы цепей» (owner 20.11.2026). One value per column: № (ОБ or СИ), Название, ПК, IP, Служба, Версия,
+  groups «Принтеры и МФУ» and «Анализаторы цепей» (owner 20.11.2026). One value per column: № (ОБ or СИ), Название, ПК, IP, Служба, Версия,
   Связь, Последний сигнал, Устройство, Состояние, Также на ПК. One row per physical device: an analyser several PCs
   report (by serial / the registry СИ) stands on the PC with the latest real presence, the others are named in «Также
   на ПК» (owner 18.11.2026). ОБ with a planned bridge (`rules.PLANNED`) show «Агент не установлен». Column «Агент»: one name «Агент ERP · <parts>»
@@ -42,7 +43,9 @@ from app.modules.production.api import production_uow_factory
 from app.modules.production.infrastructure import ProductionInstrumentRow
 from app.modules.production.machine_load import normalized_site
 from app.modules.references.equipment import ARTICLE_KEY, INV_KEY, NAME_KEYS, field
-from app.modules.references.infrastructure import EquipmentMachineRow, EquipmentMeasuringRow, EquipmentUnitRow
+from app.modules.references.infrastructure import (
+    EquipmentMachineRow, EquipmentMeasuringRow, EquipmentModelRow, EquipmentUnitRow,
+)
 from app.modules.warehouse.agent_release import version_tuple
 from app.modules.warehouse.devices import DeviceRow, PrinterRow
 from app.modules.warehouse.label_jobs import OPEN_STATUSES as LABEL_OPEN, LabelAgentRow, LabelJobRow
@@ -179,17 +182,26 @@ def _machine_state(kind: str, link_code: str, snapshot: rules.MachineSnapshotRow
 
 OPERATIONS_KEY = "Операции"
 SITE_KEY = "Расположение"
+MAKER_KEY = "Производитель"
 NO_CATALOG = {"article": "", "site": "", "operations": [], "family": ""}
 
 
-def _catalog(unit: EquipmentMachineRow | None) -> dict:
-    """What БД.ОБ says about a machine for its tile: article (model), site ЦАР/ЖУК, operations and their family."""
+def _screen_groups(session) -> dict[UUID, str | None]:
+    """«Группа на экране» of every equipment model (migration 0216); None — the keyword rule decides."""
+    return dict(session.execute(select(EquipmentModelRow.id, EquipmentModelRow.screen_group)).all())
+
+
+def _catalog(unit: EquipmentMachineRow | None, groups: dict[UUID, str | None]) -> dict:
+    """What БД.ОБ says about a machine for its tile: article (model), site ЦАР/ЖУК, operations and its group — the
+    model's «Группа на экране», else the keyword rule (owner 21.11.2026)."""
     if unit is None:
         return dict(NO_CATALOG)
     fields = unit.fields or {}
     operations = [item.strip() for item in field(fields, OPERATIONS_KEY).split(",") if item.strip()]
-    return {"article": field(fields, ARTICLE_KEY), "site": normalized_site(field(fields, SITE_KEY)),
-            "operations": operations, "family": rules.machine_family(operations, _name(unit))}
+    article = field(fields, ARTICLE_KEY)
+    return {"article": article, "site": normalized_site(field(fields, SITE_KEY)), "operations": operations,
+            "family": rules.machine_family(groups.get(unit.equipment_model_id), operations, _name(unit), article,
+                                           field(fields, MAKER_KEY))}
 
 
 SETUP_OPEN = ("New", "InProgress", "Blocked")
@@ -224,13 +236,13 @@ def pending_setup(session) -> dict[str, int]:
         .group_by(SetupTaskRow.machine_id))}
 
 
-def _machine_rows(session, equipment, printers: list[dict], now) -> list[dict]:
+def _machine_rows(session, equipment, printers: list[dict], now, groups: dict[UUID, str | None]) -> list[dict]:
     """The machines of «Оборудование» (owner 19.11.2026: «просто галочку для вытягивания»): a unit of БД.ОБ
     «Оборудование» with the checkbox «Показывать в «Оборудовании»» (`show_in_equipment`, 0206) plus every unit an ERP
     agent reaches whatever the checkbox — a machine bridge (live state), a supported or planned bridge not installed
     yet («Агент не установлен»), the print agent of a marking machine's printer. `controlled` — ERP reaches it through
-    an agent now (the tab «С управлением»); a ticked unit without one says «Нет подключения к ERP». Every row carries
-    the БД.ОБ article, site, operations and family, its setup class and the open setup tasks waiting for it."""
+    an agent now; a ticked unit without one says «Нет подключения». Every row carries the БД.ОБ article, site,
+    operations and group (`family`), its setup class and the open setup tasks waiting for it."""
     rows, shown = [], set()
     classes, pending = _setup_classes(session), pending_setup(session)
     # «Ждёт наладки» only where БД.ОБ says «Кто налаживает: Наладчик» (owner 20.11), keyed by the row's own unit id.
@@ -242,7 +254,7 @@ def _machine_rows(session, equipment, printers: list[dict], now) -> list[dict]:
 
     def add(row: dict, unit: EquipmentMachineRow | None, controlled: bool) -> None:
         unit_id = row["equipment_id"]
-        rows.append({**row, **_catalog(unit), "controlled": controlled,
+        rows.append({**row, **_catalog(unit, groups), "controlled": controlled,
                      "setup": classes.get(UUID(unit_id), NO_SETUP) if unit_id else NO_SETUP,
                      "pending_setup": pending.get(unit_id, 0) if unit_id in technicians else 0})
 
@@ -352,7 +364,7 @@ def _present(present: bool, seen: datetime | None, now: datetime, live: str, gon
     return {"text": live, "tone": "ok"} if present and _fresh(seen, now) else {"text": gone, "tone": "warn"}
 
 
-def _printer_rows(session, equipment, now) -> list[dict]:
+def _printer_rows(session, equipment, now, groups: dict[UUID, str | None]) -> list[dict]:
     units = {row.id: row for rows in equipment.values() for row in rows}
     bound = {(row.machine_id, row.printer): row.equipment_id for row in session.scalars(select(MarkingBindingRow))}
     rows = []
@@ -370,7 +382,7 @@ def _printer_rows(session, equipment, now) -> list[dict]:
             "device": printer.name,
             "state": _present(printer.present, printer.last_seen, now, "Принтер виден", "Принтер не найден"),
             "card": False, "others": "", "controlled": True,
-            **(_catalog(unit) if unit else {**NO_CATALOG, "family": rules.WAREHOUSE_PRINTERS}),
+            **(_catalog(unit, groups) if unit else {**NO_CATALOG, "family": rules.WAREHOUSE_PRINTERS}),
         })
     # The TSC of the warehouse PC: an agent that reports no printer list is known only by its singleton heartbeat.
     if session.scalar(select(PrinterRow.name).where(PrinterRow.kind == "tspl").limit(1)) is None:
@@ -728,8 +740,9 @@ def machines(_principal: Reader, factory: Factory, now: Now) -> dict:
     with factory() as uow:
         session = uow.session
         equipment = _equipment(session)
-        printers = _printer_rows(session, equipment, now)
-        machines = _machine_rows(session, equipment, printers, now)
+        groups = _screen_groups(session)  # one read of «Группа на экране» per poll
+        printers = _printer_rows(session, equipment, now, groups)
+        machines = _machine_rows(session, equipment, printers, now, groups)
         # The printer of a marking machine is that machine's connection, not a second tile (ОБ.101, ОБ.102).
         units = {row["equipment_id"] for row in machines if row["equipment_id"]}
         printers = [row for row in printers if row["equipment_id"] not in units]

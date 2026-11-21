@@ -19,28 +19,25 @@ import "./machines.css";
 
 /** «Оборудование» (Производство; бывшие «Станки», владелец 19.11.2026): «Запросы на наладку» — список заданий наладки
  *  с окном задания (все шаги бывшего экрана «Наладка оборудования»: назначить, начать, продолжить, подтвердить
- *  готовность, заблокировать, отменить, рецепт и пробные измерения); станки цеха — «С управлением» (ERP достаёт их
- *  через агента: живое состояние, запись на станок) и «Без управления» (отмечены в БД.ОБ галочкой «Показывать в
- *  «Оборудовании»»), плитками по семействам операций; принтеры склада и анализаторы цепей — своими группами среди
- *  «С управлением» (владелец 20.11.2026); «Все» — всё сразу.
+ *  готовность, заблокировать, отменить, рецепт и пробные измерения); «Всё оборудование» — один список плитками по
+ *  группам назначения (`family` строки: «Резка», «Опрессовка», «Принтеры и МФУ», …; порядок — `families` ответа API;
+ *  владелец 20.11.2026: «почему тут по разным раскидано»). Связь — значок на плитке; фильтр «Только подключённые»
+ *  оставляет станки и приборы, которыми ERP управляет через агента.
  *  На плитке — артикул, участок, «Ждёт наладки» по открытому заданию; в карточке станка — «Наладка» и «Ручная работа».
  *  Анализатор цепей открывает свою карточку (`AnalyserCard`): Planar — рабочее место ВАЦ (бывшая вкладка ОТК, владелец
  *  20.11.2026; старая ссылка `?section=quality&tab=vna` ведёт сюда, `&tab=vna` открывает эту карточку), Arinst — замер файлом. */
 
-export type View = "setup" | "controlled" | "manual" | "all";
+export type View = "setup" | "equipment";
 type Site = "" | "ЦАР" | "ЖУК";
-const VIEWS: [View, string][] = [["setup", "Запросы на наладку"], ["controlled", "С управлением"], ["manual", "Без управления"],
-  ["all", "Все"]];
+const VIEWS: [View, string][] = [["setup", "Запросы на наладку"], ["equipment", "Всё оборудование"]];
 const SITES: [Site, string][] = [["", "Все участки"], ["ЦАР", "ЦАР"], ["ЖУК", "ЖУК"]];
-const OTHER_FAMILY = "Прочее оборудование";
+const OTHER_FAMILY = "Прочее";
 
 const toneClass = (tone: Tone) => (tone === "neutral" ? "machine-muted" : `tone-${tone}`);
 const text = (value: string) => value || EMPTY;
 /** «—» с сервера — состояние неизвестно: на плитке его не показываем. */
 const known = (value: string) => Boolean(value && value !== EMPTY);
 const byNumber = (a: MachineRow, b: MachineRow) => a.inventory.localeCompare(b.inventory, "ru", { numeric: true }) || a.name.localeCompare(b.name, "ru");
-/** Принтеры и приборы агентов ERP достаёт сама — они «С управлением». */
-const viewOf = (row: MachineRow): View => (row.kind !== "machine" || row.controlled ? "controlled" : "manual");
 /** Станок цеха без управления, внесённый в БД.ОБ: рабочая карточка с очередью; принтеры, приборы и станки без записи в БД.ОБ — сведения. */
 const hasWorkCard = (row: MachineRow) => row.kind === "machine" && !row.controlled && Boolean(row.equipment_id);
 const titleOf = (row: MachineRow) => [row.inventory, row.name].filter(Boolean).join(" · ");
@@ -157,7 +154,7 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
   const [setupOf, setSetupOf] = useState<MachineRow | null>(null);
   const [manual, setManual] = useState<{ row: MachineRow; job: ManualJob | null } | null>(null);
   const wantsBench = useRef(urlParam("tab") === "vna");
-  const [chosen, setView] = useState<View | null>(initialView ?? (wantsBench.current ? "controlled" : null));
+  const [chosen, setView] = useState<View | null>(initialView ?? (wantsBench.current ? "equipment" : null));
   useEffect(() => {
     if (!setupViewer || chosen !== null) return;
     let live = true;
@@ -167,8 +164,7 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
     return () => { live = false; };
   }, [setupViewer, chosen]);
   // «Запросы на наладку» — только тому, кому открыта наладка (её ключ проверяет App).
-  const view: View = chosen === null || (chosen === "setup" && !setupViewer) ? "controlled" : chosen;
-  const views = VIEWS.filter(([id]) => id !== "setup" || setupViewer);
+  const view: View = chosen === "setup" && setupViewer ? "setup" : "equipment";
   const [site, setSite] = useState<Site>("");
   /** Идёт ручная работа на этом станке — открываем её (завершить / отменить), иначе — новую с этим станком. */
   const openManual = useCallback(async (row: MachineRow) => {
@@ -200,23 +196,27 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
     if (benchOpen) url.searchParams.set("tab", "vna"); else url.searchParams.delete("tab");
     window.history.replaceState(window.history.state, "", url);
   }, [benchOpen]);
+  const [onlyConnected, setOnlyConnected] = useState(false);
   const found = useMemo(() => {
     const words = query.toLocaleLowerCase("ru").split(/\s+/).filter(Boolean);
     return words.length ? rows.filter((row) => { const haystack = searchText(row); return words.every((word) => haystack.includes(word)); })
       : rows;
   }, [rows, query]);
   const atSite = (row: MachineRow) => row.kind !== "machine" || !site || row.site === site;
-  const inView = (row: MachineRow, which: View) => which === "all" || viewOf(row) === which;
-  const count = (which: View) => found.filter((row) => inView(row, which) && atSite(row)).length;
+  /** «Только подключённые» — на связи сейчас (координатор 21.11.2026), а не «есть агент»: станок — связь «На связи»;
+   *  принтер и прибор — ещё и сам виден агенту («Принтер виден», «Подключён»). */
+  const connected = (row: MachineRow) => row.link.code === "ok" && (row.kind === "machine" || row.state.tone === "ok");
+  const connectedCount = found.filter((row) => atSite(row) && connected(row)).length;
   // Принтеры и приборы без участка видны на любом участке — и в счётчике тоже.
-  const siteCount = (which: Site) => found.filter((row) => inView(row, view) && (row.kind !== "machine" || !which || row.site === which)).length;
-  const shown = view === "setup" ? [] : found.filter((row) => inView(row, view) && atSite(row)).sort(byNumber);
+  const siteCount = (which: Site) => found.filter((row) => (row.kind !== "machine" || !which || row.site === which) && (!onlyConnected || connected(row))).length;
+  const shown = view === "setup" ? [] : found.filter((row) => atSite(row) && (!onlyConnected || connected(row))).sort(byNumber);
   const families = data?.families ?? [];
-  const groups: [string, MachineRow[]][] = [...families, ...new Set(shown.map((row) => row.family || OTHER_FAMILY)
-    .filter((family) => !families.includes(family)))].map((family) => [family, shown.filter((row) => (row.family || OTHER_FAMILY) === family)]);
-  const empty = view === "controlled" ? "Нет оборудования с агентом ERP — установите агент на ПК станка или прибора"
-    : view === "manual" ? "Нет станков без управления — отметьте станок в БД.ОБ галочкой «Показывать в «Оборудовании»»"
-      : "Ничего не подключено и не отмечено — установите агент ERP или отметьте станок в БД.ОБ";
+  // Группа строки — её `family`; группа, которой нет в `families` ответа, встаёт перед «Прочее», а не прячется в нём.
+  const inGroup = (row: MachineRow) => row.family || OTHER_FAMILY;
+  const order = [...new Set([...families, ...shown.map(inGroup)].filter((family) => family !== OTHER_FAMILY)), OTHER_FAMILY];
+  const groups: [string, MachineRow[]][] = order.map((family) => [family, shown.filter((row) => inGroup(row) === family)]);
+  const empty = onlyConnected && !query.trim() ? "Нет подключённого оборудования — снимите «Только подключённые» или установите агент ERP на ПК станка или прибора"
+    : "Нет оборудования — установите агент ERP или отметьте станок в БД.ОБ галочкой «Показывать в «Оборудовании»»";
   return <section className="page machines-page">
     <header className="page-head"><h1>Оборудование</h1></header>
     {error && <div className="error-banner" role="alert">{error}</div>}
@@ -224,14 +224,17 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
       ? <p className="empty">Загрузка…</p>
       : <>
         <div className="machine-toolbar">
-          <div className="seg-tabs" role="tablist" aria-label="Оборудование">
-            {views.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={view === id} className={view === id ? "on" : ""}
-              onClick={() => setView(id)}>{label}{id !== "setup" && <span className="ship-tab-count">{count(id)}</span>}</button>)}
-          </div>
+          {setupViewer && <div className="seg-tabs" role="tablist" aria-label="Оборудование">
+            {VIEWS.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={view === id} className={view === id ? "on" : ""}
+              onClick={() => setView(id)}>{label}</button>)}
+          </div>}
           {view !== "setup" && <div className="seg-tabs sub" role="radiogroup" aria-label="Участок">
             {SITES.map(([id, label]) => <button key={id || "all"} type="button" role="radio" aria-checked={site === id} className={site === id ? "on" : ""}
               onClick={() => setSite(id)}>{label}<span className={`ship-tab-count${siteCount(id) ? "" : " is-zero"}`}>{siteCount(id)}</span></button>)}
           </div>}
+          {view !== "setup" && <label className="machine-only-connected">
+            <input type="checkbox" checked={onlyConnected} onChange={(event) => setOnlyConnected(event.target.checked)} />
+            Только подключённые<span className="ship-tab-count">{connectedCount}</span></label>}
           {view !== "setup" && <input className="search" type="search" name="equipment-search" autoComplete="off" spellCheck={false} aria-label="Поиск оборудования" placeholder="№, название, артикул, ПК или IP"
             value={query} onChange={(event) => setQuery(event.target.value)} />}
         </div>

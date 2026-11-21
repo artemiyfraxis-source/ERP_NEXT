@@ -43,7 +43,7 @@ it("hosts the setup task list with every step of the old «Наладка» scre
   render(<MachinesPage setupViewer canWrite />);
   const tab = await screen.findByRole("tab", { name: "Запросы на наладку" });
   expect(screen.getAllByRole("tab").map((item) => item.textContent?.replace(/\d+$/, ""))).toEqual(
-    ["Запросы на наладку", "С управлением", "Без управления", "Все"]);
+    ["Запросы на наладку", "Всё оборудование"]);
   fireEvent.click(tab);
   expect(tab.getAttribute("aria-selected")).toBe("true");
   expect(await screen.findByRole("button", { name: "Назначить наладку" })).toBeTruthy();
@@ -66,19 +66,19 @@ it("hosts the setup task list with every step of the old «Наладка» scre
   expect(within(dialog).getByRole("button", { name: "Продолжить наладку" })).toBeTruthy();
 });
 
-it("opens on «Запросы на наладку» when open setup tasks wait, otherwise on «С управлением»", async () => {
+it("opens on «Запросы на наладку» when open setup tasks wait, otherwise on «Всё оборудование»", async () => {
   const first = render(<MachinesPage setupViewer />);
   await waitFor(() => expect(screen.getByRole("tab", { name: "Запросы на наладку" }).getAttribute("aria-selected")).toBe("true"));
   first.unmount();
   vi.mocked(equipmentSetupApi.tasks).mockClear().mockResolvedValue(page([task("t-done", "m1", "Ready"), task("t-off", "m2", "Cancelled")]));
   render(<MachinesPage setupViewer />);
   await waitFor(() => expect(equipmentSetupApi.tasks).toHaveBeenCalledTimes(1));
-  expect((await screen.findByRole("tab", { name: /С управлением/ })).getAttribute("aria-selected")).toBe("true");
+  expect((await screen.findByRole("tab", { name: "Всё оборудование" })).getAttribute("aria-selected")).toBe("true");
 });
 
 it("a tab chosen by the link wins over open setup tasks", async () => {
-  render(<MachinesPage setupViewer initialView="controlled" />);
-  expect((await screen.findByRole("tab", { name: /С управлением/ })).getAttribute("aria-selected")).toBe("true");
+  render(<MachinesPage setupViewer initialView="equipment" />);
+  expect((await screen.findByRole("tab", { name: "Всё оборудование" })).getAttribute("aria-selected")).toBe("true");
   expect(equipmentSetupApi.tasks).not.toHaveBeenCalled();
 });
 
