@@ -594,7 +594,10 @@ def _sqlite_path():
     if not DB_URL.startswith("sqlite"):
         raise RuntimeError("Marking pult fixtures write straight into a local SQLite demo base")
     path = DB_URL.split(":///", 1)[1]
-    return path if os.path.isabs(path) else os.path.join(BACKEND, path)
+    path = path if os.path.isabs(path) else os.path.join(BACKEND, path)
+    if not os.path.isfile(path):  # sqlite3.connect would silently create an empty file
+        raise RuntimeError(f"Marking pult fixtures: SQLite-файл демо-базы не найден: {path}")
+    return path
 
 
 def _marking_card(eng, m):
@@ -668,6 +671,9 @@ def _godex():
 
 @step("7b. Marking pult")
 def marking_pult():
+    if not BASE.startswith(("http://127.0.0.1:", "http://localhost:")):
+        raise RuntimeError("Marking pult fixtures: только локальный демо-API (127.0.0.1 / localhost)")
+    _sqlite_path()  # refuses a non-SQLite or missing base before any HTTP write
     adm, eng, m = S["adm"], S["orlova.eng"], S["ivanov.master"]
     _marking_card(eng, m)
     _godex()
