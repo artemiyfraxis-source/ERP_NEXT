@@ -350,5 +350,7 @@ button.machine-stop { min-width: 160px; min-height: 48px; font-size: 18px; font-
 .device-cancel { margin-left: 8px; }
 @media (pointer: coarse) { .device-copies input, .device-field select { height: 44px; } .device-card button.small { min-height: 40px; } }
 
-.machine-only-connected { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
-.machine-only-connected input { margin: 0; }
+.machine-toolbar label.machine-only-connected { display: inline-flex; flex: none; align-items: center; gap: 8px; height: 36px; padding: 0 12px;
+  border-radius: 12px; background: var(--seg-bg); color: var(--foreground); font-size: 13px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.machine-toolbar label.machine-only-connected input { width: 16px; height: 16px; margin: 0; accent-color: var(--primary); }
+@media (pointer: coarse) { .machine-toolbar label.machine-only-connected { height: 44px; } }
