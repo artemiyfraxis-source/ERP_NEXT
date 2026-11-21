@@ -7,9 +7,11 @@ from uuid import uuid4
 from sqlalchemy import update
 
 from app.modules.warehouse.label_jobs import LabelJobRow
-from app.workflows.marking_progress import remaining_rows, task_progress
+import pytest
+
+from app.workflows.marking_progress import label_size, remaining_rows, size_summary, task_progress
 from tests.production.test_api import production_api  # noqa: F401
-from tests.workflows.test_marking_labels import BASE, NOW, enqueue, marking, preview  # noqa: F401
+from tests.workflows.test_marking_labels import BASE, NOW, enqueue, marking, preview, set_material  # noqa: F401
 
 
 def _keep_only_first(factory):
@@ -214,3 +216,95 @@ def test_a_serial_marked_printed_outside_the_erp_counts_as_printed(marking):
     assert client.post(OUTSIDE + "/undo", json=body(group_id)).status_code == 200
     again = client.get(BASE + "/progress", params={"group_id": group_id}).json()["rows"][0]
     assert (again["printed"], again["remaining"]) == (0, task.quantity)
+
+
+# --- Пульт маркировки (plan 21.11): размер этикетки и Ø провода из ЭТК ------------------------------------------------
+
+@pytest.mark.parametrize("material, size", [
+    ("Этикетка 25×9 мм", (25.0, 9.0)),
+    ("Этикетка 25x9мм", (25.0, 9.0)),
+    ("Наклейка 25 Х 9 мм, белая", (25.0, 9.0)),
+    ("Флажок 92,5*20", (92.5, 20.0)),
+    ("Флажок 100×20, рулон", (100.0, 20.0)),
+    ("Этикетка", None),
+    ("Лента Vell VL-S641, 18 мм", None),
+    ("Этикетка 3×1 мм", None),  # smaller than any Godex label: not a label size
+    ("Этикетка 25×900 мм", None),
+    ("Термоусадка 25×9 мм", None),  # a tube is never a label
+    ("", None),
+    (None, None),
+])
+def test_label_size_is_parsed_from_the_mark_material(material, size):
+    parsed = label_size(material)
+    if size is None:
+        assert parsed is None
+    else:
+        assert (parsed["width_mm"], parsed["height_mm"], parsed["material"]) == (*size, material.strip())
+
+
+def test_sizes_agree_in_either_orientation_and_differ_otherwise():
+    a = {"width_mm": 25.0, "height_mm": 9.0, "material": "Этикетка 25×9 мм"}
+    turned = {"width_mm": 9.0, "height_mm": 25.0, "material": "Этикетка 9×25 мм"}
+    other = {"width_mm": 30.0, "height_mm": 9.0, "material": "Этикетка 30×9 мм"}
+    assert size_summary([a, None, turned]) == (a, False)
+    assert size_summary([None, None]) == (None, False)
+    assert size_summary([]) == (None, False)
+    assert size_summary([a, other]) == (None, True)
+
+
+def _with_wires_and_material(marking, material, wires):
+    from copy import deepcopy
+
+    from app.modules.techcards.infrastructure import ProjectTechcardRow
+
+    set_material(marking, material)
+    factory, card = marking[1], marking[4]
+    with factory() as uow:
+        row = uow.session.get(ProjectTechcardRow, card.id)
+        document = deepcopy(row.document)
+        document["operations"][1]["fields"] = {"wires": wires}
+        row.document = document
+        uow.commit()
+
+
+def test_progress_shows_the_etk_label_size_and_wire_diameters(marking):
+    _with_wires_and_material(marking, "Этикетка 25×9 мм", [
+        {"name": "МГШВ 0,35", "outerDiameter": 1.6}, {"name": "МГШВ 0,5", "outerDiameter": 2.2},
+        {"name": "МГШВ 0,35", "outerDiameter": 1.6}, {"name": "Без размера"}])
+    body = _progress(marking)
+    size = {"width_mm": 25.0, "height_mm": 9.0, "material": "Этикетка 25×9 мм"}
+    row = body["rows"][0]
+    assert (row["label_size"], row["sizes_differ"], row["wire_mm"]) == (size, False, [1.6, 2.2])
+    assert (body["label_size"], body["sizes_differ"], body["wire_mm"]) == (size, False, [1.6, 2.2])
+
+
+def test_progress_without_a_size_or_wires_says_null(marking):
+    body = _progress(marking)  # the fixture material is just «Этикетка», no wires
+    assert (body["rows"][0]["label_size"], body["rows"][0]["wire_mm"]) == (None, [])
+    assert (body["label_size"], body["sizes_differ"], body["wire_mm"]) == (None, False, [])
+
+
+def test_group_rows_with_different_sizes_leave_the_top_size_empty(marking):
+    from copy import deepcopy
+
+    from app.modules.production.cutting_infrastructure import CuttingMemberRow
+    from sqlalchemy import select
+    from tests.workflows.test_marking_outside import make_group
+
+    client, factory, *_ = marking
+    _with_wires_and_material(marking, "Этикетка 25×9 мм", [{"outerDiameter": 1.6}])
+    group_id, tasks = make_group(marking, "second")
+    with factory() as uow:
+        member = uow.session.scalar(select(CuttingMemberRow).where(CuttingMemberRow.task_id == tasks[1].id))
+        snapshot = deepcopy(member.row_snapshot)
+        for mark in snapshot["document"]["operations"][0]["fields"]["marks"]:
+            mark["material"] = "Этикетка 30×9 мм"
+        snapshot["document"]["operations"][1]["fields"]["wires"] = [{"outerDiameter": 2.2}]
+        member.row_snapshot = snapshot
+        uow.commit()
+    response = client.get(BASE + "/progress", params={"group_id": group_id})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert [row["label_size"]["width_mm"] for row in body["rows"]] == [25.0, 30.0]
+    assert [row["wire_mm"] for row in body["rows"]] == [[1.6], [2.2]]
+    assert (body["label_size"], body["sizes_differ"], body["wire_mm"]) == (None, True, [1.6, 2.2])
