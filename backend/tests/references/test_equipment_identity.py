@@ -385,3 +385,55 @@ def test_setup_by_is_the_operator_by_default_changes_by_edit_right_and_is_journa
         email="staff@example.test", roles=frozenset({"staff"}), permissions={"erpref": "view"})
     assert references_api.get("/api/references/equipment-setup-by").status_code == 200
     assert references_api.put(f"/api/references/equipment/{station}/setup-by", json={"setup_by": "technician"}).status_code == 403
+
+
+def test_screen_group_is_set_per_model_listed_carried_by_the_rows_and_journaled(references_api):
+    """«Группа на экране» (owner 21.11.2026, migration 0216): a code of the nine groups or null (keyword rule) per model;
+    every unit row of the model carries it, a unit moved to a model of its own keeps it; a change is journaled, a repeat
+    writes nothing, an unknown code is 422, a viewer cannot change it."""
+    from app.modules.references.domain import SCREEN_GROUPS
+    from app.shared.http_auth import Principal, authenticated_principal
+    from app.shared.persistence import AuditEventRow
+    from tests.factories import Actor
+
+    _snapshot(references_api)
+    units = _rows(references_api, "ob")
+    station = units["ОБ.070.1"]["equipment_model_id"]
+    assert units["ОБ.070.1"]["equipment_screen_group"] is None
+    listed = references_api.get("/api/references/equipment-models").json()
+    assert listed["screen_groups"] == [{"code": code, "label": label} for code, label in SCREEN_GROUPS.items()]
+    assert [item["label"] for item in listed["screen_groups"]] == [
+        "Резка", "Резка и опрессовка", "Зачистка", "Опрессовка", "Пайка и усадка", "Маркировка", "Анализаторы цепей",
+        "Принтеры и МФУ", "Прочее"]
+    assert {item["id"]: item["screen_group"] for item in listed["models"]}[station] is None
+
+    url = f"/api/references/equipment-models/{station}/screen-group"
+    changed = references_api.put(url, json={"group": "solder"})
+    assert changed.status_code == 200, changed.text
+    assert (changed.json()["id"], changed.json()["screen_group"]) == (station, "solder")
+    assert references_api.put(url, json={"group": "solder"}).status_code == 200  # a repeat writes nothing
+    units = _rows(references_api, "ob")
+    assert units["ОБ.070.1"]["equipment_screen_group"] == units["ОБ.070.2"]["equipment_screen_group"] == "solder"
+    assert {item["id"]: item["screen_group"] for item in references_api.get(
+        "/api/references/equipment-models").json()["models"]}[station] == "solder"
+    _snapshot(references_api)  # a reload of БД.ОБ keeps the model and its group
+    assert _rows(references_api, "ob")["ОБ.070.1"]["equipment_screen_group"] == "solder"
+    moved = references_api.put(f"{BASE}/{units['ОБ.070.2']['id']}/equipment-model", json={"model_id": None})
+    assert moved.status_code == 200
+    assert _rows(references_api, "ob")["ОБ.070.2"]["equipment_screen_group"] == "solder"
+    assert references_api.put(url, json={"group": None}).json()["screen_group"] is None
+    with _sessions()() as session:
+        events = session.scalars(select(AuditEventRow).where(
+            AuditEventRow.event_type == "references.equipment_screen_group_set")).all()
+        assert sorted((event.details["screen_group"] or "", event.details["label"]) for event in events) == [
+            ("", "по ключевым словам"), ("solder", "Пайка и усадка")]
+        assert all(event.details["model_id"] == station for event in events)
+
+    for bad in ("xxx", "Резка", ""):
+        assert references_api.put(url, json={"group": bad}).status_code == 422
+    assert references_api.put("/api/references/equipment-models/00000000-0000-0000-0000-0000000000ff/screen-group",
+                              json={"group": "cut"}).status_code == 404
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=Actor(id=UUID("10000000-0000-0000-0000-000000000002"), name="Сотрудник", department="Производство"),
+        email="staff@example.test", roles=frozenset({"staff"}), permissions={"erpref": "view"})
+    assert references_api.put(url, json={"group": "cut"}).status_code == 403

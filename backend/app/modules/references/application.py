@@ -27,7 +27,8 @@ from .cables import (
 )
 from .domain import (
     CABLE_COLUMNS, CABLE_DROPPED, CABLE_KIND_BY_TAB, CABLE_KIND_VALUES, CABLE_TABS, CABLE_WRITABLE, COAX_DROPPED_COLUMNS,
-    TERMINAL_TABS, cable_fields, cable_list_own, cable_tab, custom_column_prefix, family_root, tab_family, ter_tab,
+    SCREEN_GROUPS, TERMINAL_TABS, cable_fields, cable_list_own, cable_tab, custom_column_prefix, family_root, tab_family,
+    ter_tab,
 )
 from .domain import WIRE_COLOR_FIELD, WIRE_ROW_OWN, check_wire_color, wire_color_rows, wire_identity
 from .domain import BASE_COLUMNS, CUSTOM_COLUMN_TABS, EDITABLE_TABS, MAX_COLUMN_NAME, cable_key, MAP_KINDS, MAX_ROW_EDITS, SHEET_TABLE_TABS, _clean_cell, normalized_cable_key, pair_is_blank, ReferenceEntry, ReferenceKind, ReferenceValidationError, StaleRecordError, TechOperationRecord, TechOperationTab, validate_entries
@@ -1140,6 +1141,25 @@ def set_equipment_role(model_id: UUID, role: str, actor: Actor, now: datetime, u
         result = uow.equipment.set_role(model_id, role)
         _audit("references.equipment_role_set", actor, now, {"model_id": str(model_id), "role": role}, uow)
         uow.commit()
+    return result
+
+
+def equipment_screen_groups() -> list[dict]:
+    """«Группа на экране» (owner 21.11.2026): the groups of «Производство → Оборудование» in the screen's order."""
+    return [{"code": code, "label": label} for code, label in SCREEN_GROUPS.items()]
+
+
+def set_equipment_screen_group(model_id: UUID, group: str | None, actor: Actor, now: datetime, uow: UnitOfWork) -> dict:
+    """«Группа на экране» of a model (None — the keyword rule decides); every change is journaled."""
+    if group is not None and group not in SCREEN_GROUPS:
+        raise ReferenceValidationError(f"«Группа на экране»: одна из {', '.join(SCREEN_GROUPS.values())}")
+    with uow:
+        result, changed = uow.equipment.set_screen_group(model_id, group)
+        if changed:
+            _audit("references.equipment_screen_group_set", actor, now, {
+                "model_id": str(model_id), "inventory_numbers": result["inventory_numbers"],
+                "screen_group": group, "label": SCREEN_GROUPS.get(group or "", "по ключевым словам")}, uow)
+            uow.commit()
     return result
 
 

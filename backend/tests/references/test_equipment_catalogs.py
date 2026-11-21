@@ -27,6 +27,13 @@ RELATION_TABLES = ("equipment_unit_links", "equipment_setup_tasks", "equipment_s
                    "equipment_models", "equipment_operation_links", "equipment_template_tools", "equipment_setup_commands")
 
 
+def _table(connection, table: str, columns: tuple[str, ...] | None = None) -> tuple[tuple[str, ...], list]:
+    """The rows of a table in the columns it had before the upgrade: a later migration may add a column (0216
+    «Группа на экране» of equipment_models); what was there must stay as it was."""
+    columns = columns or tuple(row[1] for row in connection.execute(f"PRAGMA table_info({table})"))
+    return columns, sorted(connection.execute(f"SELECT {', '.join(columns)} FROM {table}").fetchall(), key=repr)
+
+
 @pytest.fixture
 def cutover_db(tmp_path, monkeypatch):
     monkeypatch.delenv("ERP_DATABASE_URL", raising=False)
@@ -73,8 +80,8 @@ def test_cutover_preserves_payloads_uuids_and_every_relation(cutover_db, reclass
             connection.execute("UPDATE tech_operation_records SET fields=? WHERE id=?",
                                (json.dumps(fields, ensure_ascii=False), ids[index].hex))
         source = {row[0]: row for row in connection.execute("SELECT id, fields, mirror_key, edited_in_erp, equipment_model_id FROM tech_operation_records WHERE tab='ob'")}
-        relations = {table: sorted(connection.execute(f"SELECT * FROM {table}").fetchall(), key=repr) for table in RELATION_TABLES}
-        assert all(relations.values()), "Every relation kind must have real rows before cutover"
+        relations = {table: _table(connection, table) for table in RELATION_TABLES}
+        assert all(rows for _, rows in relations.values()), "Every relation kind must have real rows before cutover"
     command.upgrade(config, "head")
     with sqlite3.connect(path) as connection:
         seen = set()
@@ -87,8 +94,7 @@ def test_cutover_preserves_payloads_uuids_and_every_relation(cutover_db, reclass
                 assert row[2:] == original[2:]
         assert seen == {item.hex for item in ids}
         assert len(source) == connection.execute("SELECT count(*) FROM tech_operation_records WHERE tab='ob'").fetchone()[0]
-        assert {table: sorted(connection.execute(f"SELECT * FROM {table}").fetchall(), key=repr)
-                for table in RELATION_TABLES} == relations
+        assert {table: _table(connection, table, columns) for table, (columns, _) in relations.items()} == relations
         assert connection.execute("SELECT catalog FROM equipment_units WHERE id=?", (ids[1].hex,)).fetchone()[0] == (
             "ob_measuring" if reclassified else "ob")
         assert connection.execute("SELECT catalog FROM equipment_units WHERE id=?", (ids[2].hex,)).fetchone()[0] == (
@@ -557,12 +563,12 @@ def test_cutover_keeps_operation_machine_links_and_fakra_inventory_resolves_to_t
             expected[number] = (unit.hex, model)
         links = sorted(connection.execute("SELECT * FROM equipment_operation_links").fetchall(), key=repr)
         tools = sorted(connection.execute("SELECT * FROM equipment_template_tools").fetchall(), key=repr)
-        models = sorted(connection.execute("SELECT * FROM equipment_models").fetchall(), key=repr)
+        models = _table(connection, "equipment_models")
     command.upgrade(config, "head")
     with sqlite3.connect(path) as connection:
         assert sorted(connection.execute("SELECT * FROM equipment_operation_links").fetchall(), key=repr) == links
         assert sorted(connection.execute("SELECT * FROM equipment_template_tools").fetchall(), key=repr) == tools
-        assert sorted(connection.execute("SELECT * FROM equipment_models").fetchall(), key=repr) == models
+        assert _table(connection, "equipment_models", models[0]) == models
         for unit, model in expected.values():
             assert connection.execute("SELECT model_id, catalog FROM equipment_units WHERE id=?", (unit,)).fetchone() == (model, "ob")
             assert connection.execute("SELECT equipment_model_id FROM equipment_machines WHERE id=?", (unit,)).fetchone()[0] == model

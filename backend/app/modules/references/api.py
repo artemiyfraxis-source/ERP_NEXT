@@ -34,6 +34,7 @@ from .application import LinkStockCommand, link_stock_article, stock_links
 from .application import (
     equipment_links_report, equipment_models, equipment_shown_ids, set_equipment_model, set_equipment_role,
     set_equipment_serves, set_equipment_shown, equipment_technician_ids, set_equipment_setup_by,
+    equipment_screen_groups, set_equipment_screen_group,
 )
 from .application import (
     CableCatalog, duplicate_equipment, SaveGaugeCommand, SaveHookupCommand, cable_catalog, coax_dia_rows, delete_gauge,
@@ -1128,8 +1129,9 @@ def equipment_model_list(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
 ) -> dict:
     """БД.ОБ as models: id, name / article / maker, role («operational» — does operations, «supporting» — serves
-    machines, never the machine of an operation), its units and how many operations link to it."""
-    return {"models": equipment_models(uow_factory())}
+    machines, never the machine of an operation), «Группа на экране» (`screen_group`, a code of `screen_groups` or
+    null), its units and how many operations link to it; `screen_groups` — [{code, label}] in the screen's order."""
+    return {"models": equipment_models(uow_factory()), "screen_groups": equipment_screen_groups()}
 
 
 @router.get("/equipment-links/report")
@@ -1149,6 +1151,23 @@ def equipment_model_role(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
 ) -> dict:
     return _run_edit(lambda: set_equipment_role(model_id, payload.role, principal.actor, now, uow_factory()))
+
+
+# «Группа на экране» (owner 21.11.2026, migration 0216): the group of «Производство → Оборудование» the model's machines
+# stand in; null — the keyword rule decides. Journaled; answers the model as GET /equipment-models lists it.
+class ScreenGroupPayload(BaseModel):
+    group: Literal["cut", "cut_crimp", "strip", "crimp", "solder", "marking", "analyzers", "printers", "other"] | None
+
+
+@router.put("/equipment-models/{model_id}/screen-group",
+            dependencies=[Depends(refuse_api_tokens("Токен API не меняет группу оборудования на экране."))])
+def equipment_model_screen_group(
+    model_id: UUID, payload: ScreenGroupPayload,
+    principal: Annotated[Principal, Depends(references_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(references_uow_factory)],
+) -> dict:
+    return _run_edit(lambda: set_equipment_screen_group(model_id, payload.group, principal.actor, now, uow_factory()))
 
 
 @router.put("/tech-operations/{record_id}/serves")

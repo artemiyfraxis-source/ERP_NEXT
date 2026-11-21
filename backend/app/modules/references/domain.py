@@ -81,6 +81,14 @@ class TechOperationTab(str, Enum):
 TERMINAL_TABS = (TechOperationTab.TERMINAL, TechOperationTab.LUG)
 EQUIPMENT_TABS = (TechOperationTab.EQUIPMENT, TechOperationTab.MEASURING, TechOperationTab.SUPPORTING,
                   TechOperationTab.APPLICATORS, TechOperationTab.DIES, TechOperationTab.TOOLS)
+# «Группа на экране» of an equipment model (owner 21.11.2026, migration 0216 holds the CHECK): the group of the screen
+# «Производство → Оборудование» its machines stand in, in the screen's order. Empty — the keyword rule of
+# `production.machines.screen_group_of` decides.
+SCREEN_GROUPS: dict[str, str] = {
+    "cut": "Резка", "cut_crimp": "Резка и опрессовка", "strip": "Зачистка", "crimp": "Опрессовка",
+    "solder": "Пайка и усадка", "marking": "Маркировка", "analyzers": "Анализаторы цепей",
+    "printers": "Принтеры и МФУ", "other": "Прочее",
+}
 CABLE_TABS = (TechOperationTab.CAB_COAX, TechOperationTab.WIRE, TechOperationTab.CAB_MULTI, TechOperationTab.CAB_LAN)
 MATERIAL_TABS = (TechOperationTab.MATERIAL, TechOperationTab.HEAT_SHRINK, TechOperationTab.COVERING)
 MATERIAL_CATALOG_TABS = MATERIAL_TABS[1:]
