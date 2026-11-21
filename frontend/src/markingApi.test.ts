@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { ApiError, productionApi, type ProductionOperation, type ProductionTask } from "./api";
 import type { CuttingGroup } from "./cuttingGroups";
-import { markingApi, markingTaskSource } from "./markingApi";
+import { formatSize, markingApi, markingTaskSource, parseWireMm, sizeMatches } from "./markingApi";
 
 afterEach(() => vi.restoreAllMocks());
 const operation = (id: string, position: number, positions?: number[]) => ({ id, position, code: id,
@@ -50,4 +50,21 @@ it("sends versioned source selections and idempotency as JSON through the shared
   expect(fetch.mock.calls[0][0]).toBe("/api/production/marking/batches");
   expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toEqual(request);
   expect(fetch.mock.calls[0][1]?.credentials).toBe("include");
+});
+
+it("matches a profile to the ETK label size within 0,5 mm either way round, as the server does", () => {
+  expect(sizeMatches({ width_mm: 25, height_mm: 9 }, { width_mm: 25.4, height_mm: 8.6 })).toBe(true);
+  expect(sizeMatches({ width_mm: 9, height_mm: 25 }, { width_mm: 25, height_mm: 9 })).toBe(true);
+  expect(sizeMatches({ width_mm: 30, height_mm: 12 }, { width_mm: 25, height_mm: 9 })).toBe(false);
+  expect(sizeMatches({ width_mm: 25, height_mm: 9 }, { width_mm: 25.6, height_mm: 9 })).toBe(false);
+  expect(formatSize({ width_mm: 92.5, height_mm: 20 })).toBe("92,5 × 20");
+});
+
+it("reads the wire Ø of own text: comma or dot, empty is none, out of 0,1…60 mm is refused", () => {
+  expect(parseWireMm(" 1,6 ")).toBe(1.6);
+  expect(parseWireMm("2.05")).toBe(2.05);
+  expect(parseWireMm("")).toBeNull();
+  expect(parseWireMm("0,05")).toBeUndefined();
+  expect(parseWireMm("61")).toBeUndefined();
+  expect(parseWireMm("1,6 мм")).toBeUndefined();
 });
