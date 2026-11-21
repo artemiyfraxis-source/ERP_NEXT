@@ -165,7 +165,6 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
   }, [setupViewer, chosen]);
   // «Запросы на наладку» — только тому, кому открыта наладка (её ключ проверяет App).
   const view: View = chosen === null || (chosen === "setup" && !setupViewer) ? "equipment" : chosen === "setup" ? "setup" : "equipment";
-  const views = VIEWS.filter(([id]) => id !== "setup" || setupViewer);
   const [site, setSite] = useState<Site>("");
   /** Идёт ручная работа на этом станке — открываем её (завершить / отменить), иначе — новую с этим станком. */
   const openManual = useCallback(async (row: MachineRow) => {
