@@ -219,6 +219,27 @@ def test_stage_name_drops_the_code_prefix():
     assert stage_name("CUT_WIRE+1crimp | Автомат резка + опрессовка") == "Автомат резка + опрессовка"
     assert stage_name("cutWireStrip") == "Резка с разделкой"
     assert stage_name("Резка | по месту") == "Резка | по месту"
+    # Этап из одного кода карты: название карты из библиотеки; без загрузчика или названия остаётся как есть.
+    from app.modules.production import launchable
+    from app.modules.production.launchable import set_stage_name_loader
+    set_stage_name_loader(lambda: {})
+    assert stage_name("PRS_TERMINAL_auto") == "PRS_TERMINAL_auto"
+    set_stage_name_loader(lambda: {"INS_terminal_1.00": "Монтаж терминалов в корпус"})
+    assert stage_name("INS_terminal_1.00") == "Монтаж терминалов в корпус"
+    assert stage_name("PRS_TERMINAL_auto") == "PRS_TERMINAL_auto"
+    assert stage_name("Резка") == "Резка"
+    assert stage_name("INS_terminal_1.00 | Монтаж (А)") == "Монтаж (А)"
+    # Сбой чтения: этап остаётся кодом, повтор не раньше чем через несколько секунд, ошибка не всплывает.
+    calls = []
+
+    def broken():
+        calls.append(1)
+        raise RuntimeError("нет связи")
+    set_stage_name_loader(broken)
+    assert stage_name("INS_terminal_1.00") == "INS_terminal_1.00"
+    assert stage_name("INS_terminal_1.00") == "INS_terminal_1.00"
+    assert len(calls) == 1
+    assert launchable._NAME_RETRY < launchable._NAME_TTL
 
 
 def test_next_stage_of_the_same_assembly_follows_the_fact(production_api):

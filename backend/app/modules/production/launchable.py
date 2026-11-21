@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import re
+import time
 from dataclasses import dataclass, replace
 from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal, InvalidOperation
 from datetime import date
+from collections.abc import Callable
 from typing import Any, Collection, Iterable, Mapping, Sequence
 from uuid import UUID
 
@@ -74,13 +77,54 @@ _CODE_PREFIX = re.compile(r"^\s*([^|\s]+)\s*\|\s*(.+)$")
 _CYRILLIC = re.compile(r"[А-Яа-яЁё]")
 
 
+_BARE_CODE = re.compile(r"^[A-Za-z]+_\S+$")
+_NAME_TTL = 60.0
+_NAME_RETRY = 5.0
+_name_loader: Callable[[], Mapping[str, str]] | None = None
+_name_cache: tuple[float, Mapping[str, str]] | None = None
+_name_failed = False
+_log = logging.getLogger(__name__)
+
+
+def set_stage_name_loader(loader: Callable[[], Mapping[str, str]] | None) -> None:
+    """Названия карт операций по коду (вся библиотека одним чтением): этап, записанный одним кодом, показывается
+    названием карты, а не кодом (21.11). Подключают сборка приложения и воркер; без загрузчика этап остаётся как записан."""
+    global _name_loader, _name_cache, _name_failed
+    _name_loader = loader
+    _name_cache = None
+    _name_failed = False
+
+
+def _card_names() -> Mapping[str, str]:
+    global _name_cache, _name_failed
+    if _name_loader is None:
+        return {}
+    now = time.monotonic()
+    if _name_cache is not None and now < _name_cache[0]:
+        return _name_cache[1]
+    try:
+        names = dict(_name_loader())
+        _name_cache = (now + _NAME_TTL, names)
+        _name_failed = False
+    except Exception:  # noqa: BLE001 — название не должно ронять экран
+        if not _name_failed:
+            _log.warning("Названия карт операций не прочитаны, этапы остаются кодами", exc_info=True)
+        names = dict(_name_cache[1]) if _name_cache is not None else {}
+        _name_cache = (now + _NAME_RETRY, names)
+        _name_failed = True
+    return names
+
+
 def stage_name(value: str) -> str:
     """Русское название этапа: служебный тип генератора → название; «CUT_WIRE+1crimp | Автомат резка» → название
-    без кода (владелец, 30.09: в ячейках часов служебный код вместо названия; код показывается отдельно)."""
+    без кода (владелец, 30.09: в ячейках часов служебный код вместо названия; код показывается отдельно).
+    Этап из одного кода карты («INS_terminal_1.00») → название карты библиотеки (21.11: монтажник видел код)."""
     text = str(value or "").strip()
     prefixed = _CODE_PREFIX.match(text)
     if prefixed and not _CYRILLIC.search(prefixed.group(1)):
         text = prefixed.group(2).strip()
+    if _BARE_CODE.match(text):
+        return _card_names().get(text) or text
     return OPERATION_TYPE_NAMES.get(text, text)
 
 

@@ -33,6 +33,7 @@ from .modules.operations.infrastructure import SqlAlchemyOperationsUnitOfWork
 from .modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
 from .modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
 from .modules.purchasing.infrastructure import SqlAlchemyPurchasingUnitOfWork
+from .workflows.stage_names import install_stage_name_loader
 from .workflows import etk_refresh  # noqa: F401 — registers the refresh-request trigger on every session
 from .workflows.kitset_names import KitsetNameQueue
 from .workflows.new_operation import SqlAlchemyReferencesOperationsUnitOfWork
@@ -213,4 +214,5 @@ def configure_database(app: FastAPI, database_url: str, *, equipment_enabled: bo
     app.state.kitset_name_queue = KitsetNameQueue(sessionmaker(bind=engine, expire_on_commit=False, class_=Session))
     app.state.rack_layout_store = SqlAlchemyRackLayoutStore(sessionmaker(bind=engine, expire_on_commit=False, class_=Session))
     set_rack_layout_loader(app.state.rack_layout_store.load)
+    install_stage_name_loader(app.state.techcards_uow_factory)
     return engine

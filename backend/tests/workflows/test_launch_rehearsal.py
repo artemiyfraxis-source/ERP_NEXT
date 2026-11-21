@@ -39,6 +39,7 @@ from app.database import build_warehouse_uow_factory, configure_database
 from app.main import app
 from app.modules.identity.domain import IdentityUser, hash_password, hash_pin
 from app.modules.identity.infrastructure import provision_user
+from app.modules.production import launchable
 from app.modules.production.launchable import OPERATION_TYPE_NAMES
 from app.modules.requests import google_sheets
 from app.modules.requests.application import CalcSpreadsheet
@@ -178,6 +179,7 @@ def shop(tmp_path, monkeypatch):
 
     saved_state = dict(app.state._state)
     saved_loader = warehouse_location._layout_loader
+    saved_names = launchable._name_loader
     engine = configure_database(app, url)
     clock = Clock(MONDAY)
     app.state.cookie_secure = False
@@ -228,6 +230,7 @@ def shop(tmp_path, monkeypatch):
         app.state._state.clear()
         app.state._state.update(saved_state)
         warehouse_location.set_rack_layout_loader(saved_loader)
+        launchable.set_stage_name_loader(saved_names)
         engine.dispose()
 
 

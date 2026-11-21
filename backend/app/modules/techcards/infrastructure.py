@@ -396,6 +396,20 @@ class SqlAlchemyOperationCardRepository:
         )
         return [self._domain(row) for row in rows]
 
+    def names(self) -> dict[str, str]:
+        """Код карты → её название (с правкой ERP поверх шаблона) одним запросом, без разбора карточек."""
+        result: dict[str, str] = {}
+        rows = self.session.execute(select(
+            OperationCardTemplateRow.code, OperationCardTemplateRow.name,
+            OperationCardTemplateRow.edited, OperationCardTemplateRow.edited_at,
+        ).order_by(OperationCardTemplateRow.code, OperationCardTemplateRow.id))
+        for code, name, edited, edited_at in rows:
+            if edited and edited_at is not None:
+                name = OperationRecordEdit.from_json(edited).name
+            if code and str(name or "").strip() and code not in result:
+                result[code] = str(name).strip()
+        return result
+
     def get(self, source_id: str) -> OperationCardTemplate | None:
         row = self.session.get(OperationCardTemplateRow, source_id)
         return self._domain(row) if row is not None else None

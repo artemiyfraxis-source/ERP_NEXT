@@ -46,6 +46,8 @@ from app.shared.notifications import NOTIFICATION_TOPIC
 from app.shared.persistence import SqlAlchemyOutboxRepository
 from app.shared.stop_file import watch_stop_file
 from app.workflows.supplier_directory import ReferencesSupplierDirectory
+from app.modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
+from app.workflows.stage_names import install_stage_name_loader
 from app.shared.warehouse_location import configured_rack_layout, set_rack_layout_loader
 from app.workflows.arbiter import TOPIC as ARBITER_TOPIC
 from app.workflows.arbiter import PoisonTriggerMessage, close_followed_up, dispatch_next_trigger, feed_triggers
@@ -427,6 +429,7 @@ def main() -> None:
     engine = build_engine(database_url)
     sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
     set_rack_layout_loader(SqlAlchemyRackLayoutStore(sessions).load)
+    install_stage_name_loader(lambda: SqlAlchemyTechcardsUnitOfWork(sessions))
     try:
         if args.once:
             run_timers(sessions)
