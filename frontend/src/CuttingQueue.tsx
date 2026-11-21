@@ -182,7 +182,10 @@ export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty 
               <tr className={current ? "cq-current" : undefined} aria-current={current ? "true" : undefined}>
                 <td>{row.project}</td>
                 <td title={row.group_number ?? undefined}>{row.item}</td>
-                {showMachine && <td><Dash value={(row.machines ?? []).map((machine) => machine.machine_name).join(", ")} /></td>}
+                {showMachine && (() => {
+                  const names = (row.machines ?? []).map((machine) => machine.machine_name).join(", ");
+                  return <td className="cq-machine">{names ? <div className="cq-clip" title={names}>{names}</div> : <Dash value="" />}</td>;
+                })()}
                 <td className="cq-wire"><div className="cq-clip" title={row.wire_title || row.wire_name || row.wire || undefined}><Dash value={row.wire_name || row.wire || ""} /></div></td>
                 <td className="num"><Dash value={num(row.length_mm)} /></td>
                 <td className="num"><b>{num(row.left)}</b></td>

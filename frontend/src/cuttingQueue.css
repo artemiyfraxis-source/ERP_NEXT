@@ -32,4 +32,6 @@
 /* Chrome игнорирует max-width у td: сжимаем ячейки (max-width:0 + width:100% у баннера), обрезаем блоком внутри. */
 .cq-table .cq-clip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .cq-table .cq-wire .cq-clip { max-width: 180px; }
+/* «Станок» в «Все станки»: длинное имя модели БД.ОБ — одна строка (прод 21.11: таблица на 21 px шире блока на 1920). */
+.cq-table .cq-machine .cq-clip { max-width: 160px; }
 .cq-table td.cq-setup-cell { max-width: 0; width: 100%; }
