@@ -4,7 +4,7 @@ import { DataTable } from "./DataTable";
 import { PageWindow } from "./PageWindow";
 import { formatNumber } from "./format";
 import { useCanAct, useCanPrint, useCurrentUserId } from "./rights";
-import { boundPrinter, markingApi, parseSequences, type MarkingBatch, type MarkingBatchRequest, type MarkingCatalog, type MarkingLabel, type MarkingPreview, type MarkingRequest, type MarkingSource } from "./markingApi";
+import { boundPrinter, formatSize, markingApi, parseSequences, type MarkingBatch, type MarkingBatchRequest, type MarkingCatalog, type MarkingLabel, type MarkingPreview, type MarkingRequest, type MarkingSource } from "./markingApi";
 import "./marking.css";
 
 type BatchHistory = { id: string; request: MarkingBatchRequest; total: number };
@@ -36,6 +36,8 @@ export function MarkingPrintWindow({ source, storageKey, title, close, remaining
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(restored.error);
   const [reload, setReload] = useState(0);
+  // Размер профиля не как в ЭТК (сервер: profile_matches=false) — партия только с причиной.
+  const [reason, setReason] = useState("");
   const inFlight = useRef(false);
   const retry = useRef({ payload: "", key: "" });
   const canPrint = useCanPrint();
@@ -112,9 +114,10 @@ export function MarkingPrintWindow({ source, storageKey, title, close, remaining
     }
     finally { inFlight.current = false; setBusy(false); }
   }
+  const needsReason = preview?.profile_matches === false;
   async function print() {
-    if (!preview || !approved || selectionChanged || overlapsPrevious || !online) return;
-    const payload = { ...approved, manifest_hash: preview.manifest_hash };
+    if (!preview || !approved || selectionChanged || overlapsPrevious || !online || (needsReason && !reason.trim())) return;
+    const payload = { ...approved, manifest_hash: preview.manifest_hash, ...(needsReason ? { reason: reason.trim() } : {}) };
     const fingerprint = JSON.stringify(payload);
     if (retry.current.payload !== fingerprint) retry.current = { payload: fingerprint, key: crypto.randomUUID() };
     await submit({ ...payload, idempotency_key: retry.current.key });
@@ -180,7 +183,11 @@ export function MarkingPrintWindow({ source, storageKey, title, close, remaining
         </div>}
         {selectionChanged && preview && <p className="warning-inline">Обновите предпросмотр выбранных надписей.</p>}
         {overlapsPrevious && <p className="warning-inline">В новую партию можно выбрать только оставшиеся надписи. Для уже поставленных в очередь — «Перепечатать номера…».</p>}
-        {choosing && <div className="form-actions marking-submit"><button type="button" className="primary" disabled={busy || !canPrint || !online || !preview?.total || !approved || selectionChanged || overlapsPrevious}
+        {choosing && needsReason && preview && profile && <label className="marking-reason">
+          <span className="tone-warn">Профиль {formatSize(profile.geometry)} мм, в ЭТК {preview.etk_size ? `${formatSize(preview.etk_size)} мм` : "другой размер"} — причина</span>
+          <input name="marking-reason" autoComplete="off" maxLength={1000} required disabled={busy} value={reason} placeholder="Почему печатаем не на той этикетке"
+            onChange={(event) => setReason(event.target.value)} /></label>}
+        {choosing && <div className="form-actions marking-submit"><button type="button" className="primary" disabled={busy || !canPrint || !online || !preview?.total || !approved || selectionChanged || overlapsPrevious || (needsReason && !reason.trim())}
           onClick={() => void print()}>{busy ? "Обработка…" : "Поставить в очередь"}</button>
           {creatingNew && <button type="button" className="secondary" disabled={busy} onClick={() => { setCreatingNew(false); invalidate(); }}>Отменить новую партию</button>}</div>}
       </>}

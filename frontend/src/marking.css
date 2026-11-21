@@ -94,9 +94,20 @@
 .marking-card-fold dl { margin-top: 8px; grid-template-columns: repeat(auto-fit, minmax(200px, max-content)); column-gap: 32px; }
 .marking-card-fold dl > div { grid-template-columns: max-content max-content; }
 .marking-card-journal { margin: 8px 0 0; padding-left: 0; list-style: none; display: grid; gap: 2px; font-size: 13px; }
+/* «Из заданий»: выбранное задание — пульт под списком: Ø и порядок, причина, предпросмотр оставшихся. */
+.marking-card-pult { display: grid; gap: 12px; min-width: 0; padding-top: 12px; border-top: 1px solid var(--border); }
+.marking-card-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; font-size: 14px; }
+.marking-card-order.is-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
+.marking-card-reason, .marking-window .marking-reason { display: flex; flex-direction: column; gap: 4px; max-width: 720px; font-size: 13px; }
+.marking-card-reason input { width: 100%; }
+.marking-card-options input[name="marking-card-wire"] { width: 96px; text-align: right; font-variant-numeric: tabular-nums; }
+.marking-card :is(button, input, select, textarea):focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+/* «Наладка» — окно поверх карточки. */
 .marking-card-setup { display: grid; gap: 8px; }
-.marking-card-setup > .machine-setup-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
-.marking-card-setup > .machine-setup-head > button { margin-left: 0; }
+.marking-card-setup > p { margin: 0; font-size: 13px; }
+@media (pointer: coarse) {
+  .marking-card-pult .check-inline, .marking-card-reason input, .marking-card-options input { min-height: 40px; }
+}
 @media (max-width: 1100px) {
   .marking-card-text { grid-template-columns: minmax(0, 1fr) minmax(180px, 220px); }
   .marking-card-preview { grid-column: 1 / -1; }

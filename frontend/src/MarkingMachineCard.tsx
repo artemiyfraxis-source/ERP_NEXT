@@ -5,25 +5,29 @@ import { DataTable } from "./DataTable";
 import { EMPTY, formatMoment, formatNumber } from "./format";
 import { MachineSetupPart } from "./MachineSetup";
 import { usePolled, type MachineRow } from "./machinesApi";
+import { MarkingOutsideWindow } from "./MarkingOutsideWindow";
 import { MarkingBatchProgress, MarkingPrintWindow } from "./MarkingPrintWindow";
 import { MarkingProfilesWindow } from "./MarkingProfilesWindow";
 import {
-  boundPrinter, markingApi, type MarkingBatch, type MarkingCatalog, type MarkingManualLine, type MarkingManualRequest,
-  markingProblem, type MarkingOrder, type MarkingPreview, type MarkingSource, type MarkingSourceProgress,
+  boundPrinter, formatSize, markingApi, type MarkingBatch, type MarkingCatalog, type MarkingManualLine, type MarkingManualRequest,
+  markingProblem, type MarkingOrder, type MarkingPreview, type MarkingRequest, type MarkingSource, type MarkingSourceProgress,
+  parseWireMm, sizeMatches,
 } from "./markingApi";
 import { PageWindow } from "./PageWindow";
 import { useCanAct, useCanPrint, useCurrentUserId } from "./rights";
 import "./marking.css";
 
-/** Карточка принтера маркировки (Godex ОБ.101 флажки, ОБ.102 намотка; владелец 20.11.2026: «вбить задание, текст,
- *  порядок»). Сверху — состояние принтера одной строкой; «Что печатаем»: «Из заданий» (группы печати этикеток и
- *  операции маркировки, остаток по каждой) или «Свой текст» (строка — этикетка, × копий, {№} — номера, порядок);
- *  профиль этикетки, предпросмотр первых этикеток, одна кнопка «Печатать N этикеток», ход партии и «Перепечатать».
- *  Наладка (профили, калибровка, привязка принтера, таблица наладки) — свёрнута под кнопкой «Наладка». */
+/** Карточка принтера маркировки — один пульт (Godex ОБ.101 флажки, ОБ.102 намотка; владелец 20–21.11.2026). Сверху —
+ *  состояние принтера одной строкой; «Что печатаем»: «Из заданий» — выбрал строку, и тут же размер этикетки и Ø провода
+ *  из ЭТК, порядок, предпросмотр оставшихся, «Пробная (1 этикетка)» и «Печатать N»; профиль не как в ЭТК — с причиной;
+ *  «Выбрать надписи…» — прежнее окно для выборочной печати. «Свой текст» — строка = этикетка, × копий, {№}, Ø провода.
+ *  Ход партии и «Перепечатать» — под ним. «Наладка» (профили, калибровка, привязка, таблица наладки) — отдельным окном. */
 
 type Tab = "jobs" | "text";
 type Job = { key: string; title: string; detail: string; planned: string | null; source: MarkingSource;
-  progressOf: { group_id: string } | { task_id: string; operation_id: string }; progress: MarkingSourceProgress | null };
+  progressOf: { group_id: string } | { task_id: string; operation_id: string }; progress: MarkingSourceProgress | null;
+  /** Группа печати этикеток: из неё «Отметить напечатанные вне ERP». */
+  group?: CuttingGroup };
 
 const TOKEN = /\{№(?::[1-6])?\}/;
 /** «ПИТАНИЕ +24В × 4» / «… * 4» — четыре копии этой строки. */
@@ -62,6 +66,7 @@ const labelsWord = (count: number) => {
   return tail >= 11 && tail <= 14 ? "этикеток" : last === 1 ? "этикетку" : last >= 2 && last <= 4 ? "этикетки" : "этикеток";
 };
 const printText = (count: number) => `Печатать ${formatNumber(count)} ${labelsWord(count)}`;
+const sizeText = (size: { width_mm: number; height_mm: number }) => `${formatSize(size)} мм`;
 const remember = (key: string, value: string | null) => {
   try { if (value === null) sessionStorage.removeItem(key); else sessionStorage.setItem(key, value); } catch { /* только удобство */ }
 };
@@ -83,7 +88,7 @@ async function loadJobs(signal: AbortSignal): Promise<Job[]> {
     if (group.state !== "open" || !(look === "labels" || (look === "mixed" && rows.some((row) => row.labels?.length)))) continue;
     jobs.push({ key: `group:${group.id}`, title: `${group.project} · ${group.number}`,
       detail: `${group.kind_name || "Печать этикеток"} · КБ: ${formatNumber(rows.length)}`, planned: group.planned_start,
-      source: { group_id: group.id, version: group.version }, progressOf: { group_id: group.id }, progress: null });
+      source: { group_id: group.id, version: group.version }, progressOf: { group_id: group.id }, progress: null, group });
   }
   for (const task of mine?.tasks ?? []) {
     for (const operation of task.operations.filter((item) => MARK_OPERATION.test(item.code) && !grouped.has(item.id) && item.state !== "выполнена")) {
@@ -124,8 +129,15 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
   const inflight = useRef("");
   const [batch, setBatch] = useState<MarkingBatch | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState("");
-  const [setupOpen, setSetupOpen] = useState(Boolean(row.pending_setup));
+  // «Наладка» — окно по кнопке; «· ждёт» на кнопке говорит о наладке, само окно не открывается (владелец 21.11).
+  const [setupOpen, setSetupOpen] = useState(false);
   const [profilesOpen, setProfilesOpen] = useState(false);
+  const [outside, setOutside] = useState<CuttingGroup | null>(null);
+  // «Из заданий»: порядок «по изделию», причина отступления от ЭТК, предпросмотр оставшихся выбранного задания.
+  const [interleave, setInterleave] = useState(false), [reason, setReason] = useState("");
+  const [jobShown, setJobShown] = useState<{ key: string; result: MarkingPreview } | null>(null), [jobPreviewError, setJobPreviewError] = useState("");
+  const [jobTick, setJobTick] = useState(0);
+  const [wire, setWire] = useState("");
   const keys = useRef<Record<string, { payload: string; key: string }>>({});
 
   useEffect(() => {
@@ -165,9 +177,11 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
   const firstNo = Number(first), lastNo = Number(last);
   const numberingValid = !numbered || (first.trim() !== "" && last.trim() !== "" && Number.isInteger(firstNo) && Number.isInteger(lastNo) && firstNo >= 0 && lastNo >= firstNo);
   const count = manualCount(lines, firstNo, lastNo);
-  const request: MarkingManualRequest | null = profile && lines.length && numberingValid && !copiesError ? {
+  const wireMm = parseWireMm(wire);
+  const wireError = wireMm === undefined ? "Ø провода — число от 0,1 до 60 мм" : "";
+  const request: MarkingManualRequest | null = profile && lines.length && numberingValid && !copiesError && !wireError ? {
     profile_id: profile.id, profile_version: profile.version, lines, order,
-    numbering: numbered ? { first: firstNo, last: lastNo } : null,
+    numbering: numbered ? { first: firstNo, last: lastNo } : null, ...(wireMm != null ? { wire_mm: wireMm } : {}),
   } : null;
   const requestText = request ? JSON.stringify(request) : "";
 
@@ -189,6 +203,27 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
   }, [requestText, tab, refreshTick]);
   const preview = shown && shown.key === requestText ? shown.result : null;
 
+  const job = jobs?.find((item) => item.key === chosenJob) ?? null;
+  const etkSize = job?.progress?.label_size ?? null;
+  const jobLeft = job?.progress ? job.progress.remaining_labels : null;
+  const jobRequest: MarkingRequest | null = job && profile && jobLeft !== 0 ? { profile_id: profile.id, profile_version: profile.version,
+    source: job.source, selected: [], remaining: true, ...(interleave ? { interleave: true } : {}) } : null;
+  const jobRequestText = jobRequest ? JSON.stringify(jobRequest) : "";
+  // Выбрал задание (профиль, порядок) — предпросмотр оставшихся сам; «Печатать» уходит с хэшем показанного.
+  useEffect(() => {
+    setJobShown(null); setJobPreviewError("");
+    if (!jobRequestText || tab !== "jobs") return;
+    const controller = new AbortController();
+    markingApi.preview(JSON.parse(jobRequestText) as MarkingRequest, controller.signal)
+      .then((result) => { if (!controller.signal.aborted) setJobShown({ key: jobRequestText, result }); })
+      .catch((problem) => { if (!controller.signal.aborted) setJobPreviewError(markingProblem(problem, "Предпросмотр не получен")); });
+    return () => controller.abort();
+  }, [jobRequestText, tab, jobTick]);
+  const jobPreview = jobShown && jobShown.key === jobRequestText ? jobShown.result : null;
+  // Сервер сверяет профиль с размером из ЭТК; не совпал — партия (и пробная) только с причиной.
+  const needsReason = jobPreview?.profile_matches === false;
+  const reasonMissing = needsReason && !reason.trim();
+
   const running = Boolean(batch?.jobs.some((job) => ["pending", "taken"].includes(job.status)));
   const blocker = !canPrint ? "Печать маркировки вам не открыта"
     : !machine?.binding ? "Принтер не привязан — «Наладка» → «Профили и принтер»"
@@ -198,6 +233,44 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
             : printer?.hold ? "Маркировка на паузе" : "";
 
   function chooseProfile(id: string) { setProfileId(id); remember(`${storage}:profile`, id); }
+
+  /** Выбор задания: профиль — тот, что по размеру как в ЭТК (если такой откалиброван). */
+  function chooseJob(item: Job) {
+    if (item.key === chosenJob) return;
+    setChosenJob(item.key); setReason(""); setError(""); setNotice("");
+    const size = item.progress?.label_size;
+    const fit = size ? calibrated.find((candidate) => sizeMatches(candidate.geometry, size)) : undefined;
+    if (fit) setProfileId(fit.id);
+  }
+
+  /** После постановки: остаток задания с сервера и свежий предпросмотр (поставленные в очередь уже не «осталось»). */
+  async function refreshJob(target: Job) {
+    try {
+      const progress = await markingApi.progress(target.progressOf);
+      setJobs((list) => list?.map((item) => item.key === target.key ? { ...item, progress } : item) ?? list);
+    } catch { /* остаток в списке прежний — обновится при следующем открытии */ }
+    setJobTick((tick) => tick + 1);
+  }
+
+  async function printJob(trial: boolean) {
+    if (!job || !jobRequest || !jobPreview || busy || blocker || reasonMissing || (!trial && running)) return;
+    // «Пробная» — первая из оставшихся настоящих этикеток: тратит свой номер и считается напечатанной.
+    const body: MarkingRequest = { ...jobRequest, ...(trial ? { limit: 1 } : {}) };
+    const extra = needsReason ? { reason: reason.trim() } : {};
+    const payload = JSON.stringify({ ...body, ...extra });
+    const slot = trial ? "job-trial" : "job-print";
+    if (keys.current[slot]?.payload !== payload) keys.current[slot] = { payload, key: crypto.randomUUID() };
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const hash = trial ? (await markingApi.preview(body)).manifest_hash : jobPreview.manifest_hash;
+      const result = await markingApi.enqueue({ ...body, ...extra, manifest_hash: hash, idempotency_key: keys.current[slot].key });
+      setBatch(result); remember(`${storage}:batch`, result.id);
+      keys.current[slot] = { payload: "", key: "" };
+      setNotice(trial ? "Пробная этикетка поставлена в очередь — проверьте её на проводе" : printText(result.total).replace("Печатать", "Поставлено в очередь:"));
+      void refreshJob(job);
+    } catch (problem) { setError(markingProblem(problem, "Печать не поставлена в очередь")); }
+    finally { setBusy(false); }
+  }
 
   async function printManual(trial: boolean) {
     if (!request || busy || blocker) return;
@@ -224,7 +297,6 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
     finally { setBusy(false); }
   }
 
-  const job = jobs?.find((item) => item.key === chosenJob) ?? null;
   const waitingJobs = jobs?.filter((item) => (item.progress?.remaining_labels ?? 1) > 0).length ?? 0;
   const tone = stateError ? "danger" : state?.state.tone ?? "neutral";
   const lastJob = state?.marking?.last_job;
@@ -234,12 +306,21 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
       : tone === "warn" ? "Проверьте кабель и питание принтера"
         : "Выберите задание или введите свой текст и нажмите «Печатать»";
   const title = [row.inventory, row.name].filter(Boolean).join(" · ");
+  // Профиль рядом с размером из ЭТК: совпал — «· из ЭТК», нет — «· в ЭТК 25 × 9 мм» янтарём (уставка против источника).
+  const shownEtk = jobPreview?.etk_size ?? etkSize;
+  const etkMode = tab === "jobs" && job && jobLeft !== 0;
+  const profileFits = profile && shownEtk ? (jobPreview ? jobPreview.profile_matches !== false : sizeMatches(profile.geometry, shownEtk)) : null;
+  const profileNote = !profile?.calibrated ? "не откалиброван"
+    : !etkMode ? "откалиброван"
+      : shownEtk ? (profileFits ? "из ЭТК" : `в ЭТК ${sizeText(shownEtk)}`)
+        : job?.progress?.sizes_differ ? "в ЭТК размеры разные" : "размер в ЭТК не указан";
+  const profileWarn = !profile?.calibrated || (etkMode && Boolean(shownEtk) && !profileFits);
 
   return <PageWindow label={title} close={close} width={1280} dismissable>
     <section className="panel machine-card marking-card">
       <header className="machine-card-head">
         <h2>{title}{row.article && <span className="machine-muted"> · {row.article}</span>}</h2>
-        <button type="button" className="secondary small machine-manual" aria-expanded={setupOpen} onClick={() => setSetupOpen(!setupOpen)}>
+        <button type="button" className="secondary small machine-manual" aria-haspopup="dialog" onClick={() => setSetupOpen(true)}>
           Наладка{row.pending_setup ? " · ждёт" : ""}</button>
         <button type="button" className="secondary small" onClick={close}>Закрыть</button>
       </header>
@@ -255,13 +336,6 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
       {printer?.hold && <p className="warning-inline" role="alert">Маркировка на паузе: {printer.hold}</p>}
       {catalogError && <div className="error-banner" role="alert">{catalogError} <button type="button" className="secondary small" onClick={() => setReload(reload + 1)}>Повторить</button></div>}
 
-      {setupOpen && <section className="marking-card-setup" aria-label="Наладка принтера">
-        <header className="machine-setup-head"><h3>Наладка принтера</h3>
-          <button type="button" className="secondary small" onClick={() => setProfilesOpen(true)}>Профили и принтер</button>
-          <span className="machine-muted">размер этикетки, калибровка, привязка к принтеру, очистка очереди</span></header>
-        {row.equipment_id && <MachineSetupPart inventory={row.inventory} canWrite={canWrite} saved={() => undefined} />}
-      </section>}
-
       <section className="marking-card-what" aria-label="Что печатаем">
         <div className="marking-card-what-head">
           <h3>Что печатаем</h3>
@@ -276,8 +350,7 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
               {!profiles.length && <option value="">{catalog ? "Нет профилей" : "Загрузка…"}</option>}
               {profiles.map((item) => <option key={item.id} value={item.id}>{item.name}{item.calibrated ? "" : " · не откалиброван"}</option>)}
             </select></label>
-          {profile && <span className={`marking-card-geometry tnum${profile.calibrated ? " machine-muted" : " tone-warn"}`}>
-            {formatNumber(profile.geometry.width_mm)} × {formatNumber(profile.geometry.height_mm)} мм{profile.calibrated ? " · откалиброван" : " · не откалиброван"}</span>}
+          {profile && <span className={`marking-card-geometry tnum${profileWarn ? " tone-warn" : " machine-muted"}`}>{sizeText(profile.geometry)} · {profileNote}</span>}
         </div>
 
         {tab === "jobs" && <div className="marking-card-jobs">
@@ -285,22 +358,51 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
           {!jobs && !jobsError && <p className="empty">Загрузка…</p>}
           {jobs && !jobs.length && !jobsError && <p className="empty">Нет заданий на печать маркировки — введите надписи во вкладке «Свой текст»</p>}
           {jobs && jobs.length > 0 && <DataTable rows={jobs} rowKey={(item) => item.key} label="Задания на печать маркировки" compactBelow={Infinity}
-            pageSize={50} phoneCards={false} hideSearch onRowClick={(item) => setChosenJob(item.key)}
+            pageSize={50} phoneCards={false} hideSearch onRowClick={chooseJob}
             rowClassName={(item) => item.key === chosenJob ? "is-selected" : ""} columns={[
               { key: "pick", title: "", value: () => "", render: (item) => <input type="radio" name="marking-card-job" aria-label={item.title}
-                checked={item.key === chosenJob} onChange={() => setChosenJob(item.key)} /> },
+                checked={item.key === chosenJob} onChange={() => chooseJob(item)} /> },
               { key: "title", title: "Задание", value: (item) => item.title, render: (item) => <strong>{item.title}</strong> },
               { key: "detail", title: "Что", value: (item) => item.detail, grow: true, wrap: true },
               { key: "planned", title: "План", value: (item) => item.planned ? formatMoment(item.planned) : EMPTY },
+              { key: "size", title: "Этикетка по ЭТК, мм", value: (item) => item.progress?.label_size ? formatSize(item.progress.label_size)
+                : item.progress?.sizes_differ ? "разные" : EMPTY },
               { key: "left", title: "Осталось этикеток", numeric: true, value: (item) => item.progress?.remaining_labels ?? EMPTY },
               { key: "done", title: "Изделий напечатано", numeric: true, value: (item) => item.progress
                 ? `${formatNumber(item.progress.printed)} из ${formatNumber(item.progress.printed + item.progress.remaining)}` : EMPTY },
             ]} />}
+          {job && jobLeft !== 0 && <div className="marking-card-pult" role="group" aria-label="Печать задания">
+            <div className="marking-card-facts">
+              {job.progress?.wire_mm?.length
+                ? <span className="tnum">Ø провода {job.progress.wire_mm.map((value) => formatNumber(value)).join("; ")} мм · из ЭТК</span>
+                : <span className="machine-muted">Ø провода в ЭТК не указан</span>}
+              <div role="radiogroup" aria-label="Порядок этикеток" className="marking-card-order is-row"><span>Порядок</span>
+                <label className="check-inline"><input type="radio" name="marking-card-job-order" checked={!interleave} disabled={busy} onChange={() => setInterleave(false)} />как в ЭТК</label>
+                <label className="check-inline"><input type="radio" name="marking-card-job-order" checked={interleave} disabled={busy} onChange={() => setInterleave(true)} />по изделию</label>
+              </div>
+            </div>
+            {needsReason && profile && <label className="marking-card-reason">
+              <span className="tone-warn">Профиль {sizeText(profile.geometry)}, в ЭТК {shownEtk ? sizeText(shownEtk) : "другой размер"} — причина</span>
+              <input name="marking-card-reason" autoComplete="off" maxLength={1000} required disabled={busy} value={reason}
+                placeholder="Почему печатаем на этикетке не того размера" onChange={(event) => setReason(event.target.value)} /></label>}
+            <div className="marking-card-preview" aria-label="Предпросмотр">
+              <div className="marking-card-preview-head"><strong>Предпросмотр оставшихся</strong>
+                <span className="machine-muted tnum">{jobPreview ? `${formatNumber(jobPreview.total)} ${labelsWord(jobPreview.total)} · ${formatNumber(jobPreview.width_mm)} × ${formatNumber(jobPreview.height_mm)} мм` : jobPreviewError ? EMPTY : "…"}</span></div>
+              {jobPreviewError && <p className="warning-inline">{jobPreviewError}</p>}
+              {jobPreview && <LabelStrip preview={jobPreview} />}
+            </div>
+          </div>}
           <div className="form-actions marking-card-actions">
-            <button type="button" className="primary" disabled={!job || Boolean(blocker) || job.progress?.remaining_labels === 0}
-              onClick={() => job && setPrinting(job)}>
-              {job?.progress ? (job.progress.remaining_labels ? printText(job.progress.remaining_labels) : "Всё напечатано") : "Печатать…"}</button>
-            <span className={blocker ? "tone-warn" : "machine-muted"}>{blocker || (job ? job.title : "Выберите задание в списке")}</span>
+            <button type="button" className="primary" disabled={!job || !jobPreview || busy || Boolean(blocker) || running || jobLeft === 0 || reasonMissing}
+              onClick={() => void printJob(false)}>
+              {busy ? "Обработка…" : !job ? "Печатать…" : jobLeft === 0 ? "Всё напечатано" : printText(jobPreview?.total ?? jobLeft ?? 0)}</button>
+            <button type="button" className="secondary" disabled={!job || !jobPreview || busy || Boolean(blocker) || jobLeft === 0 || reasonMissing}
+              onClick={() => void printJob(true)}>Пробная (1 этикетка)</button>
+            <button type="button" className="secondary" disabled={!job || busy || Boolean(blocker)} onClick={() => job && setPrinting(job)}>Выбрать надписи…</button>
+            {job?.group && <button type="button" className="secondary" disabled={busy} onClick={() => setOutside(job.group ?? null)}>Отметить напечатанные вне ERP</button>}
+            <span className={blocker || reasonMissing ? "tone-warn" : "machine-muted"}>{blocker || (!job ? "Выберите задание в списке"
+              : jobLeft === 0 ? "Все этикетки задания напечатаны" : reasonMissing ? "Укажите причину — размер этикетки не как в ЭТК"
+                : running ? "Дождитесь конца текущей партии" : "")}</span>
           </div>
         </div>}
 
@@ -313,12 +415,14 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
               onChange={(event) => setCopies(event.target.value)} /></label>
             <div role="radiogroup" aria-label="Порядок" className="marking-card-order"><span>Порядок</span>
               <label className="check-inline"><input type="radio" name="marking-card-order" checked={order === "listed"} onChange={() => setOrder("listed")} />как введено</label>
-              <label className="check-inline"><input type="radio" name="marking-card-order" checked={order === "number"} onChange={() => setOrder("number")} />по номеру</label>
+              <label className="check-inline"><input type="radio" name="marking-card-order" checked={order === "number"} onChange={() => setOrder("number")} />по № провода</label>
             </div>
             {numbered && <div className="marking-card-numbers">
               <label>{"{№}"} с<input type="number" name="marking-card-first" inputMode="numeric" min={0} step={1} value={first} disabled={busy} onChange={(event) => setFirst(event.target.value)} /></label>
               <label>по<input type="number" name="marking-card-last" inputMode="numeric" min={0} step={1} value={last} disabled={busy} onChange={(event) => setLast(event.target.value)} /></label>
             </div>}
+            <label>Ø провода, мм<input name="marking-card-wire" inputMode="decimal" autoComplete="off" spellCheck={false} placeholder="—" value={wire} disabled={busy}
+              aria-invalid={Boolean(wireError)} onChange={(event) => setWire(event.target.value)} /></label>
             <p className="machine-muted">«× 4» в конце строки — 4 копии; {"{№}"} заменяется номером</p>
           </div>
           <div className="marking-card-preview" aria-label="Предпросмотр">
@@ -326,19 +430,15 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
               <span className="machine-muted tnum">{preview ? `${formatNumber(preview.total)} ${labelsWord(preview.total)} · ${formatNumber(preview.width_mm)} × ${formatNumber(preview.height_mm)} мм` : lines.length ? "…" : EMPTY}</span></div>
             {previewError && <p className="warning-inline">{previewError}</p>}
             {!lines.length && <p className="empty">Введите надписи слева</p>}
-            {preview && <ol className="marking-card-strip">
-              {preview.labels.slice(0, PREVIEW_SHOWN).map((label, index) => <li key={`${label.key}:${index}`}>
-                <img src={`data:image/png;base64,${label.png_b64}`} alt={`Этикетка: ${label.text}`} />
-                <span className="tnum">{label.text}{label.quantity > 1 ? ` × ${formatNumber(label.quantity)}` : ""}</span></li>)}
-              {preview.labels.length > PREVIEW_SHOWN && <li className="machine-muted">ещё {formatNumber(preview.labels.length - PREVIEW_SHOWN)} надп.</li>}
-            </ol>}
+            {preview && <LabelStrip preview={preview} />}
           </div>
           <div className="form-actions marking-card-actions">
             <button type="button" className="primary" disabled={busy || !request || Boolean(blocker) || running} onClick={() => void printManual(false)}>
               {busy ? "Обработка…" : printText(preview?.total ?? count)}</button>
             <button type="button" className="secondary" disabled={busy || !request || Boolean(blocker)} onClick={() => void printManual(true)}>Пробная (1 этикетка)</button>
-            <span className={blocker || !numberingValid || copiesError ? "tone-warn" : "machine-muted"} role={copiesError ? "alert" : undefined}>
-              {blocker || (!numberingValid ? "Номера: «с» не больше «по»" : copiesError || (running ? "Дождитесь конца текущей партии" : ""))}</span>
+            <span className={blocker || !numberingValid || copiesError || wireError ? "tone-warn" : "machine-muted"} role={copiesError || wireError ? "alert" : undefined}>
+              {blocker || (!numberingValid ? "Номера: «с» не больше «по»" : copiesError || wireError
+                || (running ? "Дождитесь конца текущей партии" : "Номера изделий не выдаются · печать записывается в журнал"))}</span>
           </div>
         </div>}
         {error && <div className="error-banner" role="alert">{error}</div>}
@@ -362,8 +462,28 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
       </details>
     </section>
     {printing && <MarkingPrintWindow source={printing.source} remaining equipmentId={equipmentId} profileId={profile?.id}
-      title={`${printing.title} · ${row.inventory}`} close={() => { setPrinting(null); setReload(reload + 1); }} />}
+      title={`${printing.title} · ${row.inventory}`} close={() => { setPrinting(null); setReload(reload + 1); setJobTick((tick) => tick + 1); }} />}
+    {setupOpen && <PageWindow label="Наладка принтера" close={() => setSetupOpen(false)} width={1180}>
+      <section className="panel machine-card marking-card-setup">
+        <header className="machine-card-head"><h2>Наладка · {title}</h2>
+          <button type="button" className="secondary small machine-manual" onClick={() => setProfilesOpen(true)}>Профили и принтер</button>
+          <button type="button" className="secondary small" onClick={() => setSetupOpen(false)}>Закрыть</button></header>
+        <p className="machine-muted">«Профили и принтер» — размер этикетки, калибровка, привязка к принтеру, очистка очереди</p>
+        {row.equipment_id && <MachineSetupPart inventory={row.inventory} canWrite={canWrite} saved={() => undefined} />}
+      </section>
+    </PageWindow>}
+    {outside && <MarkingOutsideWindow group={outside} close={() => setOutside(null)} onChange={() => { if (job) void refreshJob(job); }} />}
     {profilesOpen && <MarkingProfilesWindow equipmentIds={[equipmentId]} canEdit={canConfigure}
       close={() => { setProfilesOpen(false); setReload(reload + 1); }} />}
   </PageWindow>;
+}
+
+/** Первые этикетки предпросмотра картинками; остальные — числом. */
+function LabelStrip({ preview }: { preview: MarkingPreview }) {
+  return <ol className="marking-card-strip">
+    {preview.labels.slice(0, PREVIEW_SHOWN).map((label, index) => <li key={`${label.key}:${index}`}>
+      <img src={`data:image/png;base64,${label.png_b64}`} alt={`Этикетка: ${label.text}`} />
+      <span className="tnum">{label.text}{label.quantity > 1 ? ` × ${formatNumber(label.quantity)}` : ""}</span></li>)}
+    {preview.labels.length > PREVIEW_SHOWN && <li className="machine-muted">ещё {formatNumber(preview.labels.length - PREVIEW_SHOWN)} надп.</li>}
+  </ol>;
 }
