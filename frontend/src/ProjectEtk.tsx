@@ -334,8 +334,8 @@ function MarksView({ marks, batch }: { marks: EtkMark[]; batch: string }) {
 /** Операция ЭТК в порядке, который задал производство (SUPPLYMAP renderEtk_, доведённый): безопасность (свёрнута) →
  *  1 вход: комплектующие и полуфабрикаты → 2 инструмент, оборудование, расходники + режим пайки (жало, температура) →
  *  3 ход операции → 4 типовые дефекты с пиктограммами → 5 эскиз → 6 результат и расчётное время. */
-function EtkOperationCard({ operation, number, total, batch = "", route = null, actions, sketch, units, setupUnits }: {
-  operation: EtkOperation; number: number; total: number; batch?: string; route?: EtkRoute | null; actions?: ReactNode; sketch?: ReactNode;
+function EtkOperationCard({ operation, number, total, batch = "", route = null, actions, sketch, units, setupUnits, showCode = true }: {
+  operation: EtkOperation; number: number; total: number; batch?: string; /** Код карты — технологу; в задании монтажника его нет. */ showCode?: boolean; route?: EtkRoute | null; actions?: ReactNode; sketch?: ReactNode;
   /** Task view only: ready setups of concrete units by ETK position. */
   units?: EtkSetupUnit[];
   /** Card view only: all ready setups on open tasks (several per position), shown on the pool rows. */
@@ -363,7 +363,7 @@ function EtkOperationCard({ operation, number, total, batch = "", route = null, 
       <span className="operation-number">{number}</span>
       <div>
         <h3>{etkTitle(operation)}{operation.connector && !/^\d+$/.test(operation.connector) && <span className="etk-conn"> — {operation.connector}</span>}</h3>
-        <small>{opCode(operation) && <><code>{opCode(operation)}</code> · </>}операция {number} из {total}
+        <small>{showCode && opCode(operation) && <><code>{opCode(operation)}</code> · </>}операция {number} из {total}
           {operation.edited && <b className="tr-edited"> · правлена {operation.edited.at}{operation.edited.by ? ` · ${operation.edited.by}` : ""}</b>}</small>
         {etkCardSourceNote(operation) && <small className="etk-card-source">{etkCardSourceNote(operation)}</small>}
       </div>
@@ -656,7 +656,7 @@ function EtkView({ card, canEdit, canTemplate = false, onSaved, onRouteSaved, sk
   // Схема ПФ — навигация ЭТК (владелец 17.10): блок ПФ с эскизом и операциями, щелчок по операции открывает её ниже.
   // ЭТК без схемы (до версии 3) — прежний список операций слева.
   const grouped = !task && route !== null;
-  const subOf = (item: EtkOperation) => [navSub(item), item.edited ? "правлена" : ""].filter(Boolean).join(" · ");
+  const subOf = (item: EtkOperation) => [navSub(item, !task), item.edited ? "правлена" : ""].filter(Boolean).join(" · ");
   // В блоке ПФ операция — своим названием из генератора («Надеть ТТК X4 «A6» — ТТК 12/4»), не именем карты («Монтаж»
   // дважды); нет строки генератора — название карты (владелец 17.10).
   const configOp = etkConfigOp(card.document as Record<string, unknown> | null);
@@ -677,8 +677,8 @@ function EtkView({ card, canEdit, canTemplate = false, onSaved, onRouteSaved, sk
     return <>{taskScheme}<div className="etk-task-ops" aria-label="Операции задания">{several.map((position) => {
       const item = list[position - 1];
       return <details key={`${etkOperationKey(item)}:${position}`} className="etk-task-op">
-        <summary><span className="etk-no">{String(item.position || position).padStart(2, "0")}</span><b>{etkTitle(item)}</b>{navSub(item) && <small>{navSub(item)}</small>}</summary>
-        <EtkOperationCard operation={item} number={item.position || position} total={list.length} batch={batch} route={route} units={units} setupUnits={setupUnits}
+        <summary><span className="etk-no">{String(item.position || position).padStart(2, "0")}</span><b>{etkTitle(item)}</b>{navSub(item, false) && <small>{navSub(item, false)}</small>}</summary>
+        <EtkOperationCard operation={item} number={item.position || position} total={list.length} batch={batch} route={route} units={units} setupUnits={setupUnits} showCode={false}
           sketch={<OperationSketchView cardId={card.id} operationKey={etkOperationKey(item)} canEdit={false} url={sketchUrl}
             sketch={sketches.find((sketch) => sketch.operation_key === etkOperationKey(item))} onChanged={onSketches} />} />
       </details>;
@@ -713,7 +713,7 @@ function EtkView({ card, canEdit, canTemplate = false, onSaved, onRouteSaved, sk
         onSave={save}
       /> : <>
         <EtkOperationCard operation={operation} number={operation.position || index + 1} total={list.length}
-          batch={batch} route={route} units={units} setupUnits={setupUnits}
+          batch={batch} route={route} units={units} setupUnits={setupUnits} showCode={!task}
           actions={canEdit && operation.card && card.status === "Выдана" ? <button className="secondary small" onClick={() => setEditing(true)}>Править операцию</button> : null}
           sketch={<OperationSketchView cardId={card.id} operationKey={etkOperationKey(operation)} canEdit={canEdit} url={sketchUrl}
             sketch={sketches.find((item) => item.operation_key === etkOperationKey(operation))} onChanged={onSketches} />} />

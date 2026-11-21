@@ -52,15 +52,17 @@ export function opCode(operation: EtkDocOperation): string {
 }
 
 /** Вторая строка пункта маршрута: код карты операции и сторона/разъём; номер разъёма без букв не показываем. */
-export function navSub(operation: EtkDocOperation): string {
+export function navSub(operation: EtkDocOperation, withCode = true): string {
   const connector = String(operation.connector || "").trim();
-  return [opCode(operation), /^\d+$/.test(connector) ? "" : connector].filter(Boolean).join(" · ");
+  return [withCode ? opCode(operation) : "", /^\d+$/.test(connector) ? "" : connector].filter(Boolean).join(" · ");
 }
 
 /** Русское название операции: имя карты → название шаблона без кода («CUT_WIRE+1crimp | Автомат резка…») →
  *  категория по коду карты. Код и тип операции (cutWireCrimp) названием не бывают. */
 export function etkTitle(operation: EtkDocOperation): string {
-  const title = String(operation.title || "").split("|").map((part) => part.trim()).filter(Boolean).at(-1) || "";
+  const last = String(operation.title || "").split("|").map((part) => part.trim()).filter(Boolean).at(-1) || "";
+  // Название из одного кода карты («INS_terminal_1.00») названием не бывает.
+  const title = /[А-Яа-яЁё]/.test(last) || !/^[A-Za-z]+_\S+$/.test(last) ? last : "";
   const category = opCode(operation) ? recordCategory(opCode(operation)) : "";
   return etkOperationName(operation.card?.name || "", operation.type) || title || (category && category !== "Прочее" ? category : "") || "Операция";
 }

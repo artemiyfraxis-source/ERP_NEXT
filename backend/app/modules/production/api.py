@@ -1,5 +1,6 @@
 """HTTP contract for production resource planning."""
 
+import re
 from collections.abc import Callable
 from datetime import date, datetime, time, timedelta
 from decimal import ROUND_FLOOR, Decimal
@@ -417,7 +418,29 @@ def _fact_result(fact: dict | None, quantity: Decimal) -> dict:
     }
 
 
-def _result(task: ProductionTask, facts: dict | None = None, delivered: int | None = None) -> dict:
+def _stage_names(factory: Callable[[], TechcardsUnitOfWork] | None, tasks) -> dict[str, str]:
+    """Русские названия карт библиотеки по коду — для этапов, записанных одним кодом («INS_terminal_1.00»)."""
+    codes = {
+        text for task in tasks for operation in task.operations
+        for text in (operation.stage, *(part.stage for part in (operation.etk_ops or ())))
+        if text and _BARE_STAGE_CODE.match(str(text).strip())
+    }
+    if factory is None or not codes:
+        return {}
+    with factory() as techcards:
+        library = getattr(techcards, "operation_cards", None)
+        templates = library.matching((), sorted(str(code).strip() for code in codes)) if library is not None else ()
+    result: dict[str, str] = {}
+    for template in templates:
+        if template.code and template.name.strip() and template.code not in result:
+            result[template.code] = template.name.strip()
+    return result
+
+
+_BARE_STAGE_CODE = re.compile(r"^[A-Za-z]+_\S+$")
+
+
+def _result(task: ProductionTask, facts: dict | None = None, delivered: int | None = None, names: dict[str, str] | None = None) -> dict:
     starts = [operation.planned_start for operation in task.operations if operation.planned_start]
     finishes = [operation.planned_finish for operation in task.operations if operation.planned_finish]
     positions = {operation.id: operation.position for operation in task.operations}
@@ -443,7 +466,7 @@ def _result(task: ProductionTask, facts: dict | None = None, delivered: int | No
         "assigned": sum(bool(operation.operator_ids) for operation in task.operations),
         "operations": [{
             "id": str(operation.id), "position": operation.position,
-            "code": operation_code(operation.code), "stage": stage_name(operation.stage),
+            "code": operation_code(operation.code), "stage": stage_name(operation.stage, names),
             "description": stage_name(operation.description),
             "seconds_per_unit": _number(operation.seconds_per_unit),
             "setup_seconds": _number(operation.setup_seconds),
@@ -459,7 +482,7 @@ def _result(task: ProductionTask, facts: dict | None = None, delivered: int | No
             "required_quantity": _number(required[operation.id]),
             "inputs": [{
                 "operation_id": str(item.input_operation_id), "position": positions.get(item.input_operation_id),
-                "stage": stage_name(stages.get(item.input_operation_id, "")),
+                "stage": stage_name(stages.get(item.input_operation_id, ""), names),
                 "per_unit": _number(item.per_unit),
                 "transfer_batch": _number(item.transfer_batch) if item.transfer_batch is not None else None,
             } for item in operation.inputs],
@@ -467,7 +490,7 @@ def _result(task: ProductionTask, facts: dict | None = None, delivered: int | No
             # Задание по ПФ (13.10): операции ЭТК этого полуфабриката по порядку; пусто — операция задания и есть
             # одна операция ЭТК (номер ЭТК = position).
             "etk_ops": [{
-                "position": item.position, "code": operation_code(item.code), "stage": stage_name(item.stage),
+                "position": item.position, "code": operation_code(item.code), "stage": stage_name(item.stage, names),
             } for item in operation.etk_ops],
             # Доли по людям: штуки (None — вся операция бригадой), своё окно, факт «взял»/«закончил».
             "shares": [{
@@ -597,6 +620,7 @@ def _execution(operation):
 def tasks(
     _principal: Annotated[Principal, Depends(production_overview_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(production_uow_factory)],
+    techcards_factory: Annotated[Callable[[], TechcardsUnitOfWork] | None, Depends(techcards_uow_factory)],
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
     after: UUID | None = None,
     task: UUID | None = None,
@@ -614,8 +638,9 @@ def tasks(
         page = rows[:limit]
         facts = _facts(uow, page)
         totals = uow.deliveries.totals(task.id for task in page) if hasattr(uow, "deliveries") else {}
+    names = _stage_names(techcards_factory, page)
     return {
-        "tasks": [_result(task, facts, totals.get(task.id, 0)) for task in page],
+        "tasks": [_result(task, facts, totals.get(task.id, 0), names) for task in page],
         "next_cursor": str(page[-1].id) if len(rows) > limit else None,
     }
 
@@ -744,7 +769,7 @@ _MY_TASK_LIMIT = 300
 _MY_BOX_LIMIT = 2_000
 
 
-def _readiness(task: ProductionTask, operation, boxes, state: str, progress: dict[str, dict] | None = None) -> dict:
+def _readiness(task: ProductionTask, operation, boxes, state: str, progress: dict[str, dict] | None = None, names: dict[str, str] | None = None) -> dict:
     """Готовность входов операции для карточки монтажника: можно ли начинать и какие сданные коробки
     этого ПЗ можно взять. Коробки другого ПЗ сюда не попадают.
 
@@ -767,7 +792,7 @@ def _readiness(task: ProductionTask, operation, boxes, state: str, progress: dic
             ready.extend({
                 "id": str(box.id), "number": box.number, "code": box.code, "quantity": _number(box.available),
                 "operation_position": box.operation_position,
-                "stage": (stage_name(source.stage) if source else "") or f"этап {position}",
+                "stage": (stage_name(source.stage, names) if source else "") or f"этап {position}",
             } for box in sorted(found, key=lambda item: (item.created_at, item.number or "")))
             per_unit = edge.per_unit if edge.per_unit > 0 else Decimal(1)
             pieces.append((sum((box.available for box in found), Decimal(0)) / per_unit).to_integral_value(rounding=ROUND_FLOOR))
@@ -778,7 +803,7 @@ def _readiness(task: ProductionTask, operation, boxes, state: str, progress: dic
                 "text": "готово к сборке" if len(operation.inputs) > 1 else "можно начинать", "boxes": ready,
                 "available": _number(min(pieces))}
     edge, source, position = missing[0]
-    label = (stage_name(source.stage) if source else "") or f"этап {position}"
+    label = (stage_name(source.stage, names) if source else "") or f"этап {position}"
     where = f"этап {position} «{label}»" if position else label
     # Сданные коробки входа берутся сразу (подтверждения мастера больше нет); ждать можно только коробку,
     # которую монтажник ещё исправляет. Состояние «waiting_master» — прежнее имя в API.
@@ -839,7 +864,7 @@ def my_operations(
         boxes = [box for task in mine for box in uow.boxes.list(task_id=task.id, limit=_MY_BOX_LIMIT)]
         outputs = list(uow.outputs.active_for_tasks(tuple(mine_ids)))
         facts = _facts(uow, mine, boxes, outputs)
-        names = {item.id: item.name for item in uow.operators.list()}
+        people = {item.id: item.name for item in uow.operators.list()}
         # «Факт / норма» сданного: сдачи исполнителя из журнала времени по его операциям.
         own_operations = tuple(operation.id for task in mine for operation in task.operations if viewed in operation.operator_ids)
         logged: dict[UUID, list[WorkTimeEntry]] = {}
@@ -880,9 +905,10 @@ def my_operations(
     etk_views = _issued_etk_views(techcards_factory, [
         (task.project, task.item) for task in mine if any(viewed in item.operator_ids for item in task.operations)
     ])
+    names = _stage_names(techcards_factory, mine)
     operations = []
     for task in mine:
-        result = _result(task, facts)
+        result = _result(task, facts, names=names)
         for index, operation in enumerate(task.operations):
             if viewed in operation.operator_ids:
                 # prodMyOps_: напарники по операции и первый ли это этап (вход без коробок). Сетевой график:
@@ -893,10 +919,10 @@ def my_operations(
                     # Своя доля монтажника: у раздробленной операции своё окно и свои штуки.
                     "my_share": next(item for item in result["operations"][index]["shares"] if item["operator_id"] == str(share.operator_id)) if share else None,
                     "first": not operation.inputs,
-                    "mates": [names.get(item, str(item)) for item in operation.operator_ids if item != viewed],
+                    "mates": [people.get(item, str(item)) for item in operation.operator_ids if item != viewed],
                     "readiness": _readiness(
                         task, operation, boxes_by_task.get(task.id, ()), result["operations"][index]["state"],
-                        {row["id"]: row for row in result["operations"]},
+                        {row["id"]: row for row in result["operations"]}, names,
                     ),
                     "remaining": _remaining(task, operation, viewed, outputs, result["operations"][index]),
                     "time_fact": _time_fact_result(logged.get(operation.id, ())),

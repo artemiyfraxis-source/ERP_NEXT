@@ -318,7 +318,7 @@ describe("task mode by ПФ", () => {
     const { container } = render(<EtkSheet card={techcard()} principal={editor} onChange={() => undefined} task focus={{ positions: [5, 3] }} />);
     const list = await screen.findByLabelText("Операции задания");
     const items = Array.from(list.querySelectorAll<HTMLDetailsElement>(":scope > details"));
-    expect(items.map((item) => item.querySelector("summary")?.textContent)).toEqual(["05МонтажMNT", "03Монтаж в колодкуINS"]);
+    expect(items.map((item) => item.querySelector("summary")?.textContent)).toEqual(["05Монтаж", "03Монтаж в колодку"]);
     expect(items.every((item) => !item.open)).toBe(true);
     expect(screen.queryByRole("navigation", { name: "Маршрут ЭТК" })).toBeNull();
     expect(container.querySelectorAll(".etk-op")).toHaveLength(2);

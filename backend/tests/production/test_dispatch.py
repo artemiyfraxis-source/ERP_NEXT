@@ -219,6 +219,11 @@ def test_stage_name_drops_the_code_prefix():
     assert stage_name("CUT_WIRE+1crimp | Автомат резка + опрессовка") == "Автомат резка + опрессовка"
     assert stage_name("cutWireStrip") == "Резка с разделкой"
     assert stage_name("Резка | по месту") == "Резка | по месту"
+    # Этап из одного кода карты: название карты из библиотеки; без названия остаётся как есть.
+    names = {"INS_terminal_1.00": "Монтаж терминалов в корпус"}
+    assert stage_name("INS_terminal_1.00", names) == "Монтаж терминалов в корпус"
+    assert stage_name("PRS_TERMINAL_auto", names) == "PRS_TERMINAL_auto"
+    assert stage_name("Резка", names) == "Резка"
 
 
 def test_next_stage_of_the_same_assembly_follows_the_fact(production_api):

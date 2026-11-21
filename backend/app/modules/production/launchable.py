@@ -74,13 +74,19 @@ _CODE_PREFIX = re.compile(r"^\s*([^|\s]+)\s*\|\s*(.+)$")
 _CYRILLIC = re.compile(r"[А-Яа-яЁё]")
 
 
-def stage_name(value: str) -> str:
+_BARE_CODE = re.compile(r"^[A-Za-z]+_\S+$")
+
+
+def stage_name(value: str, names: Mapping[str, str] | None = None) -> str:
     """Русское название этапа: служебный тип генератора → название; «CUT_WIRE+1crimp | Автомат резка» → название
-    без кода (владелец, 30.09: в ячейках часов служебный код вместо названия; код показывается отдельно)."""
+    без кода (владелец, 30.09: в ячейках часов служебный код вместо названия; код показывается отдельно).
+    Этап из одного кода карты («INS_terminal_1.00») → название карты из `names` (код → имя; 21.11: монтажник видел код)."""
     text = str(value or "").strip()
     prefixed = _CODE_PREFIX.match(text)
     if prefixed and not _CYRILLIC.search(prefixed.group(1)):
         text = prefixed.group(2).strip()
+    if names and _BARE_CODE.match(text) and names.get(text):
+        return names[text]
     return OPERATION_TYPE_NAMES.get(text, text)
 
 
