@@ -515,3 +515,172 @@ def test_preview_does_not_issue_serials_only_the_batch_does(marking):
     assert again["manifest_hash"] == shown["manifest_hash"] and batch["total"] == shown["total"]
     with factory() as uow:
         assert task.id in uow.production.marks_issued([task.id])
+
+
+# --- Пульт маркировки (plan 21.11): «Пробная» на задании, размер этикетки из ЭТК, причина отклонения ---------------
+
+MISMATCH = "Размер этикетки не как в ЭТК — укажите причину"
+
+
+def progress_of(marking):
+    return {"task_id": marking[2]["source"]["task_id"], "operation_id": marking[2]["source"]["operation_id"]}
+
+
+def set_material(marking, material):
+    """Every mark of the fixture ETK on this material (the profile is the ОБ.101 flag 92,5×20)."""
+    factory, card = marking[1], marking[4]
+    with factory() as uow:
+        row = uow.session.get(ProjectTechcardRow, card.id)
+        document = deepcopy(row.document)
+        for mark in document["operations"][0]["fields"]["marks"]:
+            mark["material"] = material
+        row.document = document
+        uow.commit()
+
+
+def audit_events(factory, kind):
+    with factory() as uow:
+        return [dict(row.details) for row in uow.session.scalars(
+            select(AuditEventRow).where(AuditEventRow.event_type == f"production.marking_{kind}"))]
+
+
+def test_trial_is_a_real_one_label_batch_that_spends_the_first_remaining_serial(marking):
+    client, factory, payload, task, *_ = marking
+    trial = {**payload, "limit": 1, "remaining": True}
+    shown = preview(marking, trial)
+    assert [(row["text"], row["serial"], row["quantity"]) for row in shown["labels"]] == [("КБ-001", 1, 1)]
+    assert shown["total"] == 1
+    with factory() as uow:
+        assert task.id not in uow.production.marks_issued([task.id])  # the trial preview issues nothing either
+    batch, request, _shown = enqueue(marking, key="trial", payload=trial)
+    assert batch["total"] == 1 and batch["reason"] == "Пробная печать"
+    assert [job["serial"] for job in batch["jobs"]] == [1]
+    with factory() as uow:
+        assert task.id in uow.production.marks_issued([task.id])
+    # The same request replays the same batch; the trial label counts as printed.
+    assert client.post(BASE + "/batches", json=request).json()["id"] == batch["id"]
+    progress = client.get(BASE + "/progress", params=progress_of(marking)).json()
+    row = progress["rows"][0]
+    assert (row["printed"], row["printed_serials"], row["remaining_labels"]) == (1, [1], 3 * task.quantity - 1)
+    # The next trial takes the next remaining label, the rest prints everything but the trial label.
+    assert preview(marking, trial)["labels"][0]["text"] == "КБ-002"
+    rest = preview(marking, {**payload, "remaining": True})
+    assert rest["total"] == preview(marking)["total"] - 1 and rest["labels"][0]["text"] == "КБ-002"
+
+
+def test_limit_cuts_label_pieces_and_a_trial_keeps_the_operator_reason(marking):
+    client, _factory, payload, _task, *_ = marking
+    six = preview(marking, {**payload, "limit": 6})
+    assert [(row["text"], row["quantity"]) for row in six["labels"]] == [
+        ("КБ-001", 1), ("КБ-002", 1), ("КБ-003", 1), ("КБ-004", 1), ("КБ-005", 1), ("АБВ", 1)]
+    assert six["total"] == 6
+    trial = {**payload, "limit": 1}
+    response = client.post(BASE + "/batches", json={**trial, "idempotency_key": "trial-reason", "reason": "  проверка  ",
+                                                     "manifest_hash": preview(marking, trial)["manifest_hash"]})
+    assert response.status_code == 200 and response.json()["reason"] == "Пробная печать · проверка", response.text
+    two, _request, _shown = enqueue(marking, key="two", payload={**payload, "limit": 2, "remaining": True})
+    assert two["reason"] == "" and [job["text"] for job in two["jobs"]] == ["КБ-002", "КБ-003"]
+
+
+@pytest.mark.parametrize("extra", [{"limit": 0}, {"limit": 501}, {"limit": 1.5}])
+def test_limit_is_one_to_five_hundred_labels(marking, extra):
+    response = marking[0].post(BASE + "/preview", json={**marking[2], **extra})
+    assert response.status_code == 422, response.text
+
+
+def test_a_trial_is_never_a_reprint(marking):
+    client = marking[0]
+    first, request, _ = enqueue(marking)
+    response = client.post(BASE + "/batches", json={**request, "idempotency_key": "rp", "reprint_of": first["id"],
+                                                     "reason": "Брак", "limit": 1})
+    assert response.status_code == 422, response.text
+
+
+def test_a_trial_in_a_group_issues_serials_only_for_the_printed_task(marking):
+    from tests.workflows.test_marking_outside import make_group
+
+    _client, factory, payload, task, *_ = marking
+    group_id, tasks = make_group(marking, "second")
+    trial = {**payload, "source": {"group_id": group_id, "version": 1}, "limit": 1}
+    batch, _request, shown = enqueue(marking, key="group-trial", payload=trial)
+    assert batch["total"] == 1 and shown["labels"][0]["task_id"] == str(task.id)
+    with factory() as uow:
+        assert set(uow.production.marks_issued([item.id for item in tasks])) == {task.id}
+
+
+def test_released_serials_refuse_a_trial_too(marking, monkeypatch):
+    import app.workflows.marking_labels as workflow
+
+    client, factory, payload, *_ = marking
+    monkeypatch.setattr(workflow, "issue_mark_serials_in", lambda *args, **kwargs: None)
+    for path, body in (("/preview", {**payload, "limit": 1}),
+                       ("/batches", {**payload, "limit": 1, "idempotency_key": "released", "manifest_hash": "0" * 64})):
+        response = client.post(BASE + path, json=body)
+        assert response.status_code == 422 and "освобождены" in response.json()["detail"], response.text
+    with factory() as uow:
+        assert uow.session.scalar(select(LabelJobRow.id)) is None
+
+
+def test_label_size_off_the_etk_needs_a_reason_and_is_journaled(marking):
+    client, factory, payload, task, *_ = marking
+    set_material(marking, "Этикетка 25×9 мм")
+    shown = preview(marking)
+    assert shown["etk_size"] == {"width_mm": 25.0, "height_mm": 9.0, "material": "Этикетка 25×9 мм"}
+    assert shown["profile_matches"] is False
+    request = {**payload, "idempotency_key": "size", "manifest_hash": shown["manifest_hash"]}
+    refused = client.post(BASE + "/batches", json={**request, "reason": "   "})
+    assert refused.status_code == 422 and refused.json()["detail"] == MISMATCH, refused.text
+    with factory() as uow:
+        assert uow.session.scalar(select(LabelJobRow.id)) is None
+        assert task.id not in uow.production.marks_issued([task.id])
+    accepted = client.post(BASE + "/batches", json={**request, "idempotency_key": "size-2", "reason": "Нет ленты 25×9"})
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["reason"] == "Нет ленты 25×9"
+    [event] = audit_events(factory, "size_deviation")
+    assert event["reason"] == "Нет ленты 25×9" and event["batch_id"] == accepted.json()["id"]
+    assert event["etk_size"] == {"width_mm": 25.0, "height_mm": 9.0, "material": "Этикетка 25×9 мм"}
+    assert (event["profile"]["width_mm"], event["profile"]["height_mm"]) == (92.5, 20)
+    # A trial on the deviating profile asks the same reason and keeps it after «Пробная печать».
+    trial = {**payload, "limit": 1}
+    trial_hash = preview(marking, trial)["manifest_hash"]
+    no_reason = client.post(BASE + "/batches", json={**trial, "idempotency_key": "t", "manifest_hash": trial_hash})
+    assert no_reason.status_code == 422 and no_reason.json()["detail"] == MISMATCH
+    with_reason = client.post(BASE + "/batches", json={**trial, "idempotency_key": "t2", "manifest_hash": trial_hash,
+                                                        "reason": "Нет ленты"})
+    assert with_reason.status_code == 200 and with_reason.json()["reason"] == "Пробная печать · Нет ленты"
+
+
+@pytest.mark.parametrize("material, size", [
+    ("Флажок 92,5×20 мм", {"width_mm": 92.5, "height_mm": 20.0}),
+    ("Флажок 20 x 92.5мм", {"width_mm": 20.0, "height_mm": 92.5}),  # the other orientation, Latin x
+    ("Флажок 93х19,6 мм", {"width_mm": 93.0, "height_mm": 19.6}),  # Cyrillic х, inside ±0,5 мм
+    ("Этикетка", None),
+    ("Лента Vell VL-S641, 18 мм", None),
+])
+def test_matching_or_unknown_etk_size_needs_no_reason(marking, material, size):
+    set_material(marking, material)
+    shown = preview(marking)
+    assert shown["etk_size"] == (None if size is None else {**size, "material": material})
+    assert shown["profile_matches"] is True
+    batch, _request, _shown = enqueue(marking, key="no-reason")
+    assert batch["reason"] == ""
+    assert audit_events(marking[1], "size_deviation") == []
+
+
+def test_a_reprint_of_a_deviating_batch_asks_only_its_own_reason(marking):
+    from tests.workflows.test_marking_control import spool_all
+
+    client, factory, payload, *_ = marking
+    set_material(marking, "Этикетка 25×9 мм")
+    shown = preview(marking)
+    first = client.post(BASE + "/batches", json={**payload, "idempotency_key": "dev", "manifest_hash": shown["manifest_hash"],
+                                                 "reason": "Нет ленты"})
+    assert first.status_code == 200, first.text
+    spool_all(factory, uuid4())
+    again = client.post(BASE + f"/batches/{first.json()['id']}/reprint",
+                        json={"sequences": [1], "reason": "Смялась", "idempotency_key": "dev-rp"})
+    assert again.status_code == 200 and again.json()["reason"] == "Смялась", again.text
+    whole = client.post(BASE + "/batches", json={**payload, "idempotency_key": "dev-rp2", "manifest_hash": shown["manifest_hash"],
+                                                 "reprint_of": first.json()["id"], "reason": "Повтор"})
+    assert whole.status_code == 200, whole.text
+    assert len(audit_events(factory, "size_deviation")) == 1

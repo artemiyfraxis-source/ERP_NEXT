@@ -19,8 +19,8 @@ from app.modules.production.cutting_application import locked_group
 from app.modules.production.domain import ProductionStatus
 from app.modules.production.machine_load import normalized_site
 from app.modules.production.marking_sources import MAX_LABELS, check_materials, labels, manual_labels
-from app.workflows.marking_progress import (fixed_keys, numbered_keys, printed_counts, remaining_rows, serial_range_of,
-                                            task_progress)
+from app.workflows.marking_progress import (fixed_keys, label_size, numbered_keys, printed_counts, remaining_rows,
+                                            same_size, serial_range_of, size_summary, task_progress)
 from app.modules.references.equipment import INV_KEY
 from app.modules.references.infrastructure import EquipmentMachineRow
 from app.modules.techcards.etk_read import issued_card_for_item, pinned_card
@@ -376,6 +376,13 @@ class PreviewInput(BaseModel):
     interleave: bool = False
     # «Печатать оставшиеся» (owner 20.11): skip labels already printed or queued for these tasks (marking_progress).
     remaining: bool = False
+    # Only the first N label pieces after the «оставшиеся» filter (plan 21.11). 1 = «Пробная»: a real label of the task,
+    # its serial spent and counted by /progress like any printed one.
+    limit: int | None = Field(default=None, ge=1, le=MAX_LABELS, strict=True)
+
+
+TRIAL_REASON = "Пробная печать"
+SIZE_DEVIATION = "Размер этикетки не как в ЭТК — укажите причину"
 
 
 class BatchInput(PreviewInput):
@@ -383,6 +390,22 @@ class BatchInput(PreviewInput):
     idempotency_key: str = Field(min_length=1, max_length=128, pattern=r"\S")
     reprint_of: UUID | None = None
     reason: str = Field(default="", max_length=1000)
+
+    @model_validator(mode="after")
+    def trial_is_not_a_reprint(self):
+        if self.reprint_of is not None and self.limit is not None:
+            raise ValueError("Повторная печать — всей исходной партии, без ограничения числа этикеток")
+        if self.limit == 1 and len(batch_reason(self)) > 1000:
+            raise ValueError("Причина пробной печати — не длиннее 980 знаков")
+        return self
+
+
+def batch_reason(payload):
+    """The stored reason: a trial (limit=1) is «Пробная печать[ · <причина>]», otherwise the reason as typed."""
+    if payload.limit != 1:
+        return payload.reason
+    reason = " ".join(payload.reason.split())
+    return f"{TRIAL_REASON} · {reason}" if reason else TRIAL_REASON
 
 
 def task_access(task, operation_id, principal, uow, *, historical=False):
@@ -421,9 +444,22 @@ def issued_document(task, uow, *, lock=True):
     return shown.document, {"card_id": str(card.id), "card_version": card.version, "revision": shown.revision}
 
 
-def source_rows(source, selected, principal, uow, now, interleave=False, remaining=False, issue=True):
+def first_pieces(rows, limit):
+    """The first `limit` label pieces of the rows (a row of 10 АБВ becomes 1 when only one piece is left)."""
+    result, left = [], limit
+    for row in rows:
+        if left <= 0:
+            break
+        part = min(int(row["quantity"]), left)
+        result.append({**row, "quantity": part})
+        left -= part
+    return result
+
+
+def source_rows(source, selected, principal, uow, now, interleave=False, remaining=False, issue=True, limit=None):
     """`issue=False` (preview, owner 20.11: «предпросмотр маркировки не должен выдавать серийные номера») computes the
-    numbers without recording their issue; only the enqueue that persists the batch issues them."""
+    numbers without recording their issue; only the enqueue that persists the batch issues them.
+    `limit` — only the first N label pieces (after «оставшиеся»); serials are issued only to the tasks they print."""
     if len(set(selected)) != len(selected):
         raise ValueError("Надпись выбрана несколько раз")
     if source.group_id:
@@ -449,7 +485,7 @@ def source_rows(source, selected, principal, uow, now, interleave=False, remaini
         if (member.id if member else None) != initial_member_id:
             raise ConcurrentProductionUpdate("Состав группы изменился — обновите предпросмотр")
         entries, group_snapshot = [(task, source.operation_id, member)], None
-    rows, snapshots = [], []
+    rows, snapshots, tasks = [], [], {}
     # One print-queue read for every task of the source (keys carry the task id), not one per task under the locks.
     printed = printed_counts(uow.session, [task.id for task, _operation, _member in entries if task]) if remaining else None
     for task, operation_id, member in entries:
@@ -465,13 +501,13 @@ def source_rows(source, selected, principal, uow, now, interleave=False, remaini
             revision = {"member_id": str(member.id), "revision": member.row_snapshot.get("techcard_revision")}
         else:
             document, revision = issued_document(task, uow)
-        # Calculate (numbered=False only reads) and, on enqueue, issue through the established semantics in this transaction.
+        # Calculate (numbered=False only reads); the enqueue issues below through the established semantics in this
+        # transaction. The range does not depend on issue events (mark_serial_range), so issuing after the loop is the same.
         serial = issue_mark_serials_in(task, False, principal.actor, now, uow)
         expanded = labels(document, task, serial, selected, interleave)
         if remaining:
             expanded = remaining_rows(expanded, printed, fixed_keys(document, task), numbered_keys(document, task, serial))
-        if issue and any(row["serial"] is not None for row in expanded):
-            issue_mark_serials_in(task, True, principal.actor, now, uow)
+        tasks[str(task.id)] = task
         rows.extend(expanded)
         snapshots.append({"task_id": str(task.id), "operation_id": str(operation_id), "version": task.version,
             "quantity": task.quantity, "serial": list(serial) if serial else None,
@@ -482,9 +518,15 @@ def source_rows(source, selected, principal, uow, now, interleave=False, remaini
         raise ConcurrentProductionUpdate("Выбранные надписи изменились — обновите предпросмотр")
     if not rows:
         raise ValueError("В ЭТК нет выбранных надписей fields.marks для печати")
-    if sum(row["quantity"] for row in rows) > 500:
-        raise ValueError("За один раз — не более 500 этикеток")
+    # Materials of everything chosen, not only of the first N: a trial is refused exactly when the full print would be.
     check_materials(rows)
+    if limit is not None:
+        rows = first_pieces(rows, limit)
+    if sum(row["quantity"] for row in rows) > MAX_LABELS:
+        raise ValueError("За один раз — не более 500 этикеток")
+    if issue:
+        for task_id in dict.fromkeys(row["task_id"] for row in rows if row["serial"] is not None):
+            issue_mark_serials_in(tasks[task_id], True, principal.actor, now, uow)
     return rows, {"group": group_snapshot, "tasks": snapshots}
 
 
@@ -514,12 +556,17 @@ def profile_target(session, profile_id, version, now, *, calibration=False, onli
 
 def build_preview(payload, principal, uow, now, issue=True):
     rows, source = source_rows(payload.source, payload.selected, principal, uow, now, payload.interleave,
-                               payload.remaining, issue)
+                               payload.remaining, issue, payload.limit)
     profile, binding = profile_target(uow.session, payload.profile_id, payload.profile_version, now, online=False)
-    return rendered_manifest(rows, source, profile, binding), binding
+    # The label size the ETK names (one material per batch, check_materials) against the profile's label: a profile off
+    # it needs a reason at enqueue (plan 21.11). No size in the material — nothing to compare, no reason asked.
+    etk_size = label_size(rows[0]["material"])
+    geometry = profile.geometry or {}
+    matches = etk_size is None or same_size(etk_size, float(geometry["width_mm"]), float(geometry["height_mm"]))
+    return rendered_manifest(rows, source, profile, binding, etk_size=etk_size, profile_matches=matches), binding
 
 
-def rendered_manifest(rows, source, profile, binding):
+def rendered_manifest(rows, source, profile, binding, **extra):
     """The PNG of every distinct text with the profile's geometry, and the manifest hash the batch must match."""
     geometry = Geometry.model_validate(profile.geometry)
     rendered, cache = [], {}
@@ -532,7 +579,7 @@ def rendered_manifest(rows, source, profile, binding):
     result = {"profile_id": str(profile.id), "profile_version": profile.version, "binding_version": binding.version,
         "profile_snapshot": {"equipment_id": str(profile.equipment_id), "geometry": profile.geometry},
         "machine_id": binding.machine_id, "printer": binding.printer, "source_snapshot": source,
-        "labels": rendered, "total": sum(row["quantity"] for row in rows), **dimensions}
+        "labels": rendered, "total": sum(row["quantity"] for row in rows), **dimensions, **extra}
     return {**result, "manifest_hash": digest(result)}
 
 
@@ -671,7 +718,21 @@ def enqueue(payload: BatchInput, principal: PrintUser, factory: Factory, now: No
                 content = lambda m: [(r["task_id"], r["key"], r["text"], r["quantity"], r["serial"]) for r in m["labels"]]
                 if content(original.manifest) != content(manifest):
                     raise ConcurrentProductionUpdate("Надписи повторной печати расходятся с исходной партией")
-            batch = persist_batch(uow, manifest, binding, payload, principal, now, fingerprint)
+            # A profile off the ETK label size prints only with a reason, for every caller (the card, the cutting group,
+            # the project ETK). A reprint repeats labels already printed so: its own reason covers it.
+            deviation = not payload.reprint_of and not manifest["profile_matches"]
+            if deviation and not payload.reason.strip():
+                raise ValueError(SIZE_DEVIATION)
+            request = SimpleNamespace(idempotency_key=payload.idempotency_key, reason=batch_reason(payload),
+                                      reprint_of=payload.reprint_of)
+            batch = persist_batch(uow, manifest, binding, request, principal, now, fingerprint)
+            if deviation:
+                geometry = manifest["profile_snapshot"]["geometry"]
+                profile = uow.session.get(MarkingProfileRow, batch.profile_id)
+                audit(uow, principal.actor, now, batch.id, "size_deviation", batch_id=str(batch.id),
+                      etk_size=manifest["etk_size"], reason=" ".join(payload.reason.split()),
+                      profile={"id": str(batch.profile_id), "name": profile.name if profile else "",
+                               "width_mm": geometry["width_mm"], "height_mm": geometry["height_mm"]})
             result = batch_view(batch, uow.session, now)
             uow.commit()
             return result
@@ -729,9 +790,14 @@ def progress(principal: ReadUser, factory: Factory, group_id: UUID | None = None
                 task_access(task, operation, principal, uow, historical=True)
                 rows.append(task_progress(task, document or issued_document(task, uow, lock=False)[0],
                                           serial_range_of(task, uow), counts))
+            # One label size for the whole source, or none: rows on different sizes (or a row mixing them) leave it empty.
+            size, differ = size_summary(row["label_size"] for row in rows)
+            differ = differ or any(row["sizes_differ"] for row in rows)
             return {"rows": rows, "printed": sum(row["printed"] for row in rows),
                     "remaining": sum(row["remaining"] for row in rows),
-                    "remaining_labels": sum(row["remaining_labels"] for row in rows)}
+                    "remaining_labels": sum(row["remaining_labels"] for row in rows),
+                    "label_size": None if differ else size, "sizes_differ": differ,
+                    "wire_mm": sorted({value for row in rows for value in row["wire_mm"]})}
     return checked(run)
 
 
@@ -766,6 +832,8 @@ class ManualInput(BaseModel):
     numbering: ManualNumbering | None = None
     # «Пробная»: only the first label, one copy.
     trial: bool = False
+    # «Ø провода, мм» (plan 21.11): what the operator marks, kept in the manifest and the journal; nothing is checked by it.
+    wire_mm: float | None = Field(default=None, ge=0.1, le=60, allow_inf_nan=False)
 
 
 class ManualBatchInput(ManualInput):
@@ -801,7 +869,8 @@ def build_manual(payload, principal, uow, now, *, lock=True):
     profile, binding = profile_target(uow.session, payload.profile_id, payload.profile_version, now, online=False, lock=lock)
     own_site_only(uow, principal, profile.equipment_id)
     source = {"tasks": [], "manual": {"equipment_id": str(profile.equipment_id), "order": payload.order,
-                                      "numbering": list(numbering) if numbering else None, "trial": payload.trial}}
+                                      "numbering": list(numbering) if numbering else None, "trial": payload.trial,
+                                      "wire_mm": payload.wire_mm}}
     return rendered_manifest(rows, source, profile, binding), binding
 
 
@@ -843,7 +912,7 @@ def manual_enqueue(payload: ManualBatchInput, principal: PrintUser, factory: Fac
             batch = persist_batch(uow, manifest, binding, request, principal, now, fingerprint)
             # Who printed what: the texts as typed, with copies and numbering (the manifest keeps every label).
             audit(uow, principal.actor, now, batch.id, "manual_queued", equipment_id=manifest["source_snapshot"]["manual"]["equipment_id"],
-                  total=batch.total, order=payload.order, trial=payload.trial,
+                  total=batch.total, order=payload.order, trial=payload.trial, wire_mm=payload.wire_mm,
                   numbering=manifest["source_snapshot"]["manual"]["numbering"],
                   lines=[{"text": line.text.strip(), "quantity": line.quantity} for line in payload.lines[:AUDIT_LINES]],
                   lines_total=len(payload.lines), lines_cut=len(payload.lines) > AUDIT_LINES)
