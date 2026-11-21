@@ -50,9 +50,10 @@ it("renders rows in API order with the setup banner, warnings and the current ro
   ]);
   expect(lines[1]).toHaveAttribute("aria-current", "true");
   expect(lines[2]).not.toHaveAttribute("aria-current");
-  // «Замечания» — одна строка (причина блокировки; пометки), полный текст в подсказке.
-  const notes = within(lines[2]).getByTitle("Группа РЗ-1 начата на карточке группы; нет в ЭТК: зачистка Б");
-  expect(notes).toHaveTextContent("Группа РЗ-1 начата на карточке группы; нет в ЭТК: зачистка Б");
+  // Причина блокировки — целиком отдельной строкой; пометки «нет в ЭТК» — одна строка с подсказкой.
+  expect(within(lines[2]).getByText("Группа РЗ-1 начата на карточке группы")).toHaveClass("cq-blocked");
+  const notes = within(lines[2]).getByTitle("нет в ЭТК: зачистка Б");
+  expect(notes).toHaveTextContent("нет в ЭТК: зачистка Б");
   expect(notes).toHaveClass("cq-clip");
   expect(screen.getByText(/Сейчас/)).toBeInTheDocument();
 });

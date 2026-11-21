@@ -5,7 +5,7 @@
 .cq-head select { min-height: 32px; }
 .cq-refresh { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font-size: 12px; }
 .cq-table { font-size: 13px; }
-.cq-table th, .cq-table td { padding: 4px 8px; vertical-align: top; }
+.cq-table th, .cq-table td { padding: 4px 6px; vertical-align: top; }
 .cq-table thead th { white-space: nowrap; font-size: 12px; font-weight: 500; color: var(--muted-foreground); }
 .cq-table .num { text-align: right; font-variant-numeric: tabular-nums; }
 .cq-table .cq-sub { display: block; font-size: 12px; color: var(--muted-foreground); }
@@ -14,11 +14,12 @@
 .cq-table tr.cq-current > td { background: color-mix(in srgb, var(--primary) 12%, transparent); }
 .cq-table tr.cq-current > td:first-child { box-shadow: inset 3px 0 0 var(--primary); }
 .cq-table tr.cq-setup > td { background: color-mix(in srgb, var(--tone-warn) 14%, transparent); font-weight: 500; color: var(--foreground); }
-/* «Замечания» — одна строка с многоточием, полный текст в подсказке (прод 20.11: две пометки давали строку в 83 px). */
+/* «Замечания»: пометки «нет в ЭТК» — одна строка с многоточием и подсказкой (прод 20.11: две пометки давали 83 px);
+   причина блокировки «Готово» видна целиком. На сенсорных экранах подсказок нет — там пометки не обрезаются. */
 .cq-table .cq-warn { color: var(--tone-warn); }
 .cq-table .cq-warn .cq-clip { max-width: 180px; }
-/* Таблица не шире своего блока на 1920 (прод 20.11: +130 px и прокрутка внутри). */
-.cq-table th, .cq-table td { padding: 4px 6px; }
+.cq-table .cq-blocked { max-width: 220px; white-space: normal; font-weight: 500; }
+@media (pointer: coarse) { .cq-table .cq-warn .cq-clip { white-space: normal; max-width: 220px; } }
 .cq-table .cq-act { white-space: nowrap; }
 .cq-table .cq-act input { width: 64px; min-height: 28px; text-align: right; font-variant-numeric: tabular-nums; }
 .cq-table .cq-act button { margin-left: 4px; }
