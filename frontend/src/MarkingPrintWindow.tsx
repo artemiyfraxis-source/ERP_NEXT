@@ -38,6 +38,8 @@ export function MarkingPrintWindow({ source, storageKey, title, close, remaining
   const [reload, setReload] = useState(0);
   // Размер профиля не как в ЭТК (сервер: profile_matches=false) — партия только с причиной.
   const [reason, setReason] = useState("");
+  // Причина — к выбранному профилю: сменили станок или профиль — причину пишут заново.
+  useEffect(() => { setReason(""); }, [machineId, profileId]);
   const inFlight = useRef(false);
   const retry = useRef({ payload: "", key: "" });
   const canPrint = useCanPrint();

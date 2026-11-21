@@ -183,7 +183,8 @@ export function splitHalves(text: string): [string, string] | null {
 export const formatSize = (size: { width_mm: number; height_mm: number }) => `${formatNumber(size.width_mm)} × ${formatNumber(size.height_mm)}`;
 /** Профиль подходит к размеру из ЭТК: ±0,5 мм, этикетка может лежать любой стороной (как сверяет сервер). */
 export function sizeMatches(geometry: { width_mm: number; height_mm: number }, size: { width_mm: number; height_mm: number }): boolean {
-  const near = (a: number, b: number) => Math.abs(a - b) <= 0.5;
+  // Допуск как у сервера (marking_progress.same_size): 0,5 мм плюс запас на двоичную дробь (9,4 − 8,9 = 0,5000…09).
+  const near = (a: number, b: number) => Math.abs(a - b) <= 0.5 + 1e-9;
   return (near(geometry.width_mm, size.width_mm) && near(geometry.height_mm, size.height_mm))
     || (near(geometry.width_mm, size.height_mm) && near(geometry.height_mm, size.width_mm));
 }

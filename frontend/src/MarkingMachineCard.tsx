@@ -226,6 +226,8 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
   // Сервер сверяет профиль с размером из ЭТК; не совпал — партия (и пробная) только с причиной.
   const needsReason = jobPreview?.profile_matches === false;
   const reasonMissing = needsReason && !reason.trim();
+  // Причина — к выбранному профилю: сменили профиль — причину пишут заново; итог прошлой постановки к новому не относится.
+  useEffect(() => { setReason(""); setNotice(""); }, [profile?.id]);
 
   const running = Boolean(batch?.jobs.some((job) => ["pending", "taken"].includes(job.status)));
   const blocker = !canPrint ? "Печать маркировки вам не открыта"
@@ -234,6 +236,9 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
         : !profile ? "Нет откалиброванного профиля — «Наладка» → «Профили и принтер»"
           : !profile.calibrated ? "Профиль не откалиброван — «Наладка» → «Профили и принтер»"
             : printer?.hold ? "Маркировка на паузе" : "";
+
+  /** Другая вкладка — итог и ошибка прошлой постановки к ней не относятся. */
+  function switchTab(next: Tab) { if (next !== tab) { setTab(next); setNotice(""); setError(""); } }
 
   function chooseProfile(id: string) { setProfileId(id); remember(`${storage}:profile`, id); }
 
@@ -265,13 +270,34 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
     if (keys.current[slot]?.payload !== payload) keys.current[slot] = { payload, key: crypto.randomUUID() };
     setBusy(true); setError(""); setNotice("");
     try {
-      const hash = trial ? (await markingApi.preview(body)).manifest_hash : jobPreview.manifest_hash;
-      const result = await markingApi.enqueue({ ...body, ...extra, manifest_hash: hash, idempotency_key: keys.current[slot].key });
+      let hash = jobPreview.manifest_hash, send = extra;
+      if (trial) {
+        // Хэш пробной — из своего предпросмотра на 1 этикетку: печатаем, только если это та же первая этикетка, что на экране.
+        const fresh = await markingApi.preview(body);
+        const [seen, next] = [jobPreview.labels[0], fresh.labels[0]];
+        if (!seen || !next || seen.key !== next.key || seen.serial !== next.serial || seen.text !== next.text
+          || (fresh.profile_matches !== false) !== (jobPreview.profile_matches !== false)) {
+          setJobTick((tick) => tick + 1);
+          setNotice("Предпросмотр изменился — проверьте и нажмите ещё раз");
+          return;
+        }
+        hash = fresh.manifest_hash;
+        send = fresh.profile_matches === false ? { reason: reason.trim() } : {};
+      }
+      const result = await markingApi.enqueue({ ...body, ...send, manifest_hash: hash, idempotency_key: keys.current[slot].key });
       setBatch(result); remember(`${storage}:batch`, result.id);
       keys.current[slot] = { payload: "", key: "" };
       setNotice(trial ? "Пробная этикетка поставлена в очередь — проверьте её на проводе" : printText(result.total).replace("Печатать", "Поставлено в очередь:"));
       void refreshJob(job);
-    } catch (problem) { setError(markingProblem(problem, "Печать не поставлена в очередь")); }
+    } catch (problem) {
+      if (problem instanceof ApiError && problem.status === 409) {
+        // Кто-то напечатал раньше или задание изменилось: свежие версии заданий, остаток и предпросмотр — иначе каждый
+        // следующий щелчок повторит тот же отказ.
+        setError(`${markingProblem(problem, "Задание изменилось")} — задания и предпросмотр обновлены, проверьте и нажмите ещё раз`);
+        setReload((value) => value + 1);
+        void refreshJob(job);
+      } else setError(markingProblem(problem, "Печать не поставлена в очередь"));
+    }
     finally { setBusy(false); }
   }
 
@@ -344,9 +370,9 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
         <div className="marking-card-what-head">
           <h3>Что печатаем</h3>
           <div className="seg-tabs" role="tablist" aria-label="Что печатаем">
-            <button type="button" role="tab" aria-selected={tab === "jobs"} className={tab === "jobs" ? "on" : ""} onClick={() => setTab("jobs")}>
+            <button type="button" role="tab" aria-selected={tab === "jobs"} className={tab === "jobs" ? "on" : ""} onClick={() => switchTab("jobs")}>
               Из заданий<span className="ship-tab-count">{jobs ? waitingJobs : "…"}</span></button>
-            <button type="button" role="tab" aria-selected={tab === "text"} className={tab === "text" ? "on" : ""} onClick={() => setTab("text")}>Свой текст</button>
+            <button type="button" role="tab" aria-selected={tab === "text"} className={tab === "text" ? "on" : ""} onClick={() => switchTab("text")}>Свой текст</button>
           </div>
           <label className="marking-card-profile">Профиль этикетки
             <select name="marking-card-profile" autoComplete="off" value={profile?.id ?? ""} disabled={!profiles.length || busy}
@@ -391,6 +417,7 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
                 placeholder="Почему печатаем на этикетке не того размера" onChange={(event) => setReason(event.target.value)} /></label>}
             <div className="marking-card-preview" aria-label="Предпросмотр">
               <div className="marking-card-preview-head"><strong>Предпросмотр оставшихся</strong>
+                <button type="button" className="secondary small" disabled={busy} onClick={() => setJobTick((tick) => tick + 1)}>Обновить предпросмотр</button>
                 <span className="machine-muted tnum">{jobPreview ? `${formatNumber(jobPreview.total)} ${labelsWord(jobPreview.total)} · ${formatNumber(jobPreview.width_mm)} × ${formatNumber(jobPreview.height_mm)} мм` : jobPreviewError ? EMPTY : "…"}</span></div>
               {jobPreviewError && <p className="warning-inline">{jobPreviewError}</p>}
               {jobPreview && <LabelStrip preview={jobPreview} />}
@@ -472,7 +499,6 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
         <header className="machine-card-head"><h2>Наладка · {title}</h2>
           <button type="button" className="secondary small machine-manual" onClick={() => setProfilesOpen(true)}>Профили и принтер</button>
           <button type="button" className="secondary small" onClick={() => setSetupOpen(false)}>Закрыть</button></header>
-        <p className="machine-muted">«Профили и принтер» — размер этикетки, калибровка, привязка к принтеру, очистка очереди</p>
         {row.equipment_id && <MachineSetupPart inventory={row.inventory} canWrite={canWrite} saved={() => undefined} />}
       </section>
     </PageWindow>}

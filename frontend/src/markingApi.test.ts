@@ -57,6 +57,9 @@ it("matches a profile to the ETK label size within 0,5 mm either way round, as t
   expect(sizeMatches({ width_mm: 9, height_mm: 25 }, { width_mm: 25, height_mm: 9 })).toBe(true);
   expect(sizeMatches({ width_mm: 30, height_mm: 12 }, { width_mm: 25, height_mm: 9 })).toBe(false);
   expect(sizeMatches({ width_mm: 25, height_mm: 9 }, { width_mm: 25.6, height_mm: 9 })).toBe(false);
+  // Same tolerance as the server: exactly 0,5 мм off still fits despite binary fractions (9,4 − 8,9).
+  expect(sizeMatches({ width_mm: 25, height_mm: 9.4 }, { width_mm: 25, height_mm: 8.9 })).toBe(true);
+  expect(sizeMatches({ width_mm: 9.4, height_mm: 25.5 }, { width_mm: 25, height_mm: 8.9 })).toBe(true);
   expect(formatSize({ width_mm: 92.5, height_mm: 20 })).toBe("92,5 × 20");
 });
 

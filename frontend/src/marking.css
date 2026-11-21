@@ -20,7 +20,12 @@
 .marking-profile-dimensions { display: grid; gap: 12px; min-width: 0; }
 .marking-calibration .form-actions { flex-wrap: wrap; }
 .marking-progress { padding-top: 16px; border-top: 1px solid var(--border); }
-.marking-progress progress { width: 100%; height: 8px; accent-color: var(--primary); }
+.marking-progress h3, .marking-progress p { margin: 0; }
+/* Тонкая полоса хода печати: дорожка цвета рамки, заполнение — основной цвет (без чёрной полосы браузера). */
+.marking-progress progress { width: 100%; height: 6px; border: 0; border-radius: 3px; overflow: hidden; appearance: none; background: var(--border); }
+.marking-progress progress::-webkit-progress-bar { background: var(--border); border-radius: 3px; }
+.marking-progress progress::-webkit-progress-value { background: var(--primary); border-radius: 3px; }
+.marking-progress progress::-moz-progress-bar { background: var(--primary); border-radius: 3px; }
 .marking-geometry { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
 .marking-geometry .marking-name { grid-column: span 2; }
 .marking-window .tnum, .marking-window input[type="number"] { font-variant-numeric: tabular-nums; }
@@ -85,11 +90,12 @@
 .marking-card-preview .empty { margin: 0; }
 .marking-card-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none;
   max-height: 320px; overflow: auto; overscroll-behavior: contain; }
-.marking-card-strip li { display: grid; gap: 4px; justify-items: center; min-width: 0; font-size: 12px; text-align: center; overflow-wrap: anywhere; }
+.marking-card-strip li, .marking-card-strip li span { display: grid; gap: 4px; justify-items: center; min-width: 0; font-size: 13px; text-align: center; overflow-wrap: anywhere; }
 .marking-card-strip img { display: block; max-width: 100%; height: auto; max-height: 72px; border: 1px solid var(--border); background: white; image-rendering: pixelated; }
 .marking-card-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0; }
 .marking-card-actions button { min-height: 44px; }
 .marking-card-actions .primary { min-width: 220px; font-size: 15px; }
+.marking-card-actions > span { font-size: 13px; }
 .marking-card-fold summary { cursor: pointer; font-size: 14px; font-weight: 500; }
 .marking-card-fold dl { margin-top: 8px; grid-template-columns: repeat(auto-fit, minmax(200px, max-content)); column-gap: 32px; }
 .marking-card-fold dl > div { grid-template-columns: max-content max-content; }
@@ -104,7 +110,9 @@
 .marking-card :is(button, input, select, textarea):focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 /* «Наладка» — окно поверх карточки. */
 .marking-card-setup { display: grid; gap: 8px; }
-.marking-card-setup > p { margin: 0; font-size: 13px; }
+/* В окне — только заголовок и таблица наладки: служебная строка «Наладка · Модель наладки не задана» и рамка в рамке не нужны. */
+.marking-card-setup .machine-setup-head { display: none; }
+.marking-card-setup .machine-setup { border: 0; padding: 0; }
 @media (pointer: coarse) {
   .marking-card-pult .check-inline, .marking-card-reason input, .marking-card-options input { min-height: 40px; }
 }
