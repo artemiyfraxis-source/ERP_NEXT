@@ -191,7 +191,10 @@ export function CuttingQueue({ onBehalfOf = "", readOnly = false, hideWhenEmpty 
                 <td><Dash value={row.strip_b ?? ""} /></td>
                 <td><Dash value={row.strip_b_mode ? STRIP_MODE[row.strip_b_mode] : ""} /></td>
                 <td><Dash value={marking(row)} /></td>
-                <td className="cq-warn">{[...(row.blocked ? [row.blocked] : []), ...row.warnings].map((text) => <div key={text}>{text}</div>)}</td>
+                <td className="cq-warn">
+                  {row.blocked && <div className="cq-blocked">{row.blocked}</div>}
+                  {row.warnings.length > 0 && <div className="cq-clip" title={row.warnings.join("; ")}>{row.warnings.join("; ")}</div>}
+                </td>
                 {!readOnly && <td className="cq-act">
                   <input type="number" min={1} step={1} inputMode="numeric" aria-label={`Сколько готово: ${row.project} ${row.item}`} value={value}
                     disabled={Boolean(row.blocked) || busy === row.key} onChange={(event) => setQuantities((all) => ({ ...all, [row.key]: event.target.value }))} />
