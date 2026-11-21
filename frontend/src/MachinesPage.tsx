@@ -14,6 +14,7 @@ import { urlParam } from "./navigation";
 import { Ob019SetupPanel } from "./Ob019SetupPanel";
 import { PageWindow } from "./PageWindow";
 import { vnaBenchApi } from "./vnaBenchApi";
+import { WarehouseDeviceCard } from "./WarehouseDeviceCard";
 import "./machines.css";
 
 /** «Оборудование» (Производство; бывшие «Станки», владелец 19.11.2026): «Запросы на наладку» — список заданий наладки
@@ -55,13 +56,15 @@ function MachineTile({ row, open }: { row: MachineRow; open: (row: MachineRow) =
   const model = [row.article, row.site].filter(Boolean).join(" · ");
   const pending = row.pending_setup ?? 0;
   const setup = row.setup?.code ? row.setup : null;
+  // Принтер или МФУ склада без номера ОБ называется тем, что он есть («МФУ Pantum BM2300»), а не «Без номера».
+  const named = !row.inventory && Boolean(row.station);
   return <button type="button" className={`machine-tile${absent ? " is-absent" : ""}${row.card ? " has-card" : ""}`}
-    onClick={() => open(row)} title={row.card ? "Открыть карточку станка" : row.vna ? "Открыть карточку прибора" : "Сведения и наладка"}>
+    onClick={() => open(row)} title={row.card ? "Открыть карточку станка" : row.vna || row.station ? "Открыть карточку прибора" : "Сведения и наладка"}>
     <span className="machine-tile-head">
-      <strong className={`machine-tile-no${row.inventory ? "" : " is-none"}`}>{row.inventory || "Без номера"}</strong>
+      <strong className={`machine-tile-no${named ? " is-named" : row.inventory ? "" : " is-none"}`}>{row.inventory || (named ? row.name : "Без номера")}</strong>
       <span className={`machine-tile-link ${toneClass(row.link.tone)}`}>{row.link.text}</span>
     </span>
-    <span className="machine-tile-name" title={row.name}>{text(row.name)}</span>
+    {!named && <span className="machine-tile-name" title={row.name}>{text(row.name)}</span>}
     {model && <span className="machine-tile-article machine-mono" title={model}>{model}</span>}
     {row.operations?.length > 0 && <span className="machine-tile-ops" title={row.operations.join(", ")}>{row.operations.join(", ")}</span>}
     {known(row.state.text) && <span className={`machine-tile-state ${toneClass(row.state.tone)}`}>{row.state.text}</span>}
@@ -239,7 +242,7 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
           <div className="machine-tiles">{group.map((row) => <MachineTile key={row.key} row={row} open={setOpen} />)}</div>
         </section>)}
       </>}
-    {/* Карточка по признакам строки, без пересечений: живая ОБ.019 → станок маркировки → анализатор цепей → паспорт. */}
+    {/* Карточка по признакам строки, без пересечений: живая ОБ.019 → станок маркировки → анализатор цепей → принтер или МФУ склада → паспорт. */}
     {opened?.card && opened.equipment_id
       ? <Ob019Card equipmentId={opened.equipment_id} title={[titleOf(opened), opened.article].filter(Boolean).join(" · ")}
         close={() => setOpen(null)}
@@ -252,6 +255,7 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
         ? <MarkingMachineCard row={opened} canWrite={canWrite} close={() => setOpen(null)} />
         : open === "bench" || opened?.vna
           ? <AnalyserCard row={opened} benchNumber={benchNumber} canQuality={canQuality} close={() => setOpen(null)} />
+          : opened?.station ? <WarehouseDeviceCard row={opened} station={opened.station} close={() => setOpen(null)} />
           : opened && hasWorkCard(opened)
             ? <MachineWorkCard row={opened} canWrite={canWrite} close={() => setOpen(null)} openSetup={() => setSetupOf(opened)} />
             : opened && <MachineInfo row={opened} close={() => setOpen(null)} canWrite={canWrite} saved={() => undefined}

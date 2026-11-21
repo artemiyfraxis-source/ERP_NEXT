@@ -207,21 +207,38 @@ def checked_scan(file_name: str, content: bytes) -> tuple[str, str]:
     return str(file_name or "").strip() or f"УПД{SCAN_KINDS[kind]}", kind
 
 
-def as_pdf(name: str, kind: str, content: bytes) -> tuple[str, str, bytes]:
+def as_pdf(name: str, kind: str, content: bytes, *, max_pixels: int | None = None) -> tuple[str, str, bytes]:
     """A scan is kept as PDF (owner 23.10.2026: «хранить надо PDF»): a JPG / PNG becomes a one-page PDF at its own
-    resolution (300 dpi when the picture says none). A picture Pillow cannot open is kept as it came."""
+    resolution (300 dpi when the picture says none). A picture Pillow cannot open is kept as it came.
+
+    `max_pixels` (printing on the МФУ, review of PR #1005): the picture must open and hold at most that many pixels —
+    its size is read from the header before anything is decoded — else WarehouseValidationError."""
     if kind == "application/pdf":
         return name, kind, content
     from PIL import Image  # only a picture scan needs it
 
+    refused = ""
     try:
         with Image.open(BytesIO(content)) as picture:
-            dpi = picture.info.get("dpi") or (300, 300)
-            page = picture if picture.mode in ("L", "RGB") else picture.convert("RGB")
-            buffer = BytesIO()
-            page.save(buffer, "PDF", resolution=float(dpi[0]) or 300.0)
+            width, height = picture.size
+            if max_pixels and width * height > max_pixels:
+                refused = (f"Картинка {width}×{height} точек — больше {max_pixels // 1_000_000} Мп: уменьшите её "
+                           "и загрузите снова")
+            else:
+                dpi = picture.info.get("dpi") or (300, 300)
+                page = picture if picture.mode in ("L", "RGB") else picture.convert("RGB")
+                buffer = BytesIO()
+                page.save(buffer, "PDF", resolution=float(dpi[0]) or 300.0)
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning):
+        if not max_pixels:
+            raise
+        refused = "Картинка слишком большая — уменьшите её и загрузите снова"
     except (OSError, ValueError):
-        return name, kind, content
+        if not max_pixels:
+            return name, kind, content
+        refused = "Картинка не читается — загрузите PDF, JPG или PNG"
+    if refused:
+        raise WarehouseValidationError(refused)
     return str(PurePath(name).with_suffix(".pdf")), "application/pdf", buffer.getvalue()
 
 

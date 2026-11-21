@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, failureText } from "./api";
+import type { WarehouseStation } from "./warehouseDevicesApi";
 
 /* «Станки» (владелец 18.11.2026: «в разделе производство — станки: всё, что мы подключили, и управление ими»), часть 1 —
    только чтение. Сервер: `workflows/machines_api.py`, правила и расшифровка ПЛК — `production/machines.py`. */
@@ -47,6 +48,8 @@ export interface MachineRow {
   vna?: "s2vna" | "arinst" | null;
   /** СИ реестра, которым этот прибор является; null — прибора нет в реестре. */
   instrument_id?: string | null;
+  /** «Принтеры склада»: карточка принтера этикеток или МФУ (WarehouseDeviceCard.tsx). */
+  station?: WarehouseStation;
 }
 
 export type SetupClass = "none" | "simple" | "full";

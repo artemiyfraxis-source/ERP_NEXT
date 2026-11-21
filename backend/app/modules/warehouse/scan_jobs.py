@@ -127,6 +127,11 @@ OPEN_STATUSES = (PENDING, CLAIMED)
 FINISHED_STATUSES = (DONE, FAILED)
 
 
+def _default_purpose(context) -> str:
+    """A row made without a purpose: a VNA capture is 'vna', anything else a УПД scan (as every row before 0214)."""
+    return "vna" if context.get_current_parameters().get("kind") == "vna" else "upd"
+
+
 class ScanJobRow(Base):
     """One press of «Отсканировать УПД» and where it is in the queue (migration 0145)."""
 
@@ -138,9 +143,16 @@ class ScanJobRow(Base):
                         "(kind = 'vna' AND capture_content IS NOT NULL)", name="ck_warehouse_scan_jobs_done_file"),
         CheckConstraint("kind IN ('scan', 'vna')", name="ck_warehouse_scan_jobs_kind"),
         CheckConstraint("source IN ('s2vna', 'arinst')", name="ck_warehouse_scan_jobs_source"),
-        CheckConstraint("(kind = 'scan' AND capture_content IS NULL AND capture_settings IS NULL AND instrument_id IS NULL AND vna_name = '' AND capture_file_name = '' AND source = 's2vna') OR "
-                        "(kind = 'vna' AND file_id IS NULL AND result = '' AND target_machine_id IS NOT NULL "
-                        "AND target_machine_id <> '' AND target_scanner IS NULL)", name="ck_warehouse_scan_jobs_kind_payload"),
+        # 0214: a plain scan (`purpose` 'plain', the МФУ card) carries its options and is never read (result stays '').
+        CheckConstraint("(kind = 'scan' AND capture_content IS NULL AND instrument_id IS NULL AND vna_name = '' "
+                        "AND capture_file_name = '' AND source = 's2vna' AND ((purpose = 'upd' AND capture_settings IS NULL) "
+                        "OR (purpose = 'plain' AND capture_settings IS NOT NULL AND result = '' AND target_machine_id IS NOT NULL "
+                        "AND target_scanner IS NOT NULL))) OR (kind = 'vna' AND file_id IS NULL AND result = '' "
+                        "AND target_machine_id IS NOT NULL AND target_machine_id <> '' AND target_scanner IS NULL)",
+                        name="ck_warehouse_scan_jobs_kind_payload"),
+        CheckConstraint("purpose IN ('upd', 'plain', 'vna')", name="ck_warehouse_scan_jobs_purpose"),
+        CheckConstraint("(purpose = 'vna' AND kind = 'vna') OR (purpose <> 'vna' AND kind = 'scan')",
+                        name="ck_warehouse_scan_jobs_purpose_kind"),
         CheckConstraint("capture_content IS NULL OR (status = 'done' AND length(capture_content) BETWEEN 1 AND 2097152)",
                         name="ck_warehouse_scan_jobs_capture_size"),
         CheckConstraint("claimed_at IS NULL OR status <> 'pending'", name="ck_warehouse_scan_jobs_pending_unclaimed"),
@@ -192,6 +204,8 @@ class ScanJobRow(Base):
     # Production owns instrument identity; the capture workflow validates it before enqueueing.
     instrument_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     capture_settings: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+    # 0214: 'upd' — «Отсканировать УПД» (read by the model), 'plain' — a plain scan of the МФУ card, 'vna' — kind 'vna'.
+    purpose: Mapped[str] = mapped_column(String(8), nullable=False, default=_default_purpose, server_default="upd")
 
 
 @dataclass(frozen=True)
@@ -210,6 +224,7 @@ class ScanJob:
     capture_file_name: str = ""
     instrument_id: UUID | None = None
     capture_settings: dict | None = None
+    purpose: str = "upd"
 
 
 class ScanJobClosed(Exception):
@@ -228,7 +243,7 @@ def _job(row: ScanJobRow) -> ScanJob:
     return ScanJob(id=row.id, status=row.status, error=row.error or "", file_id=row.file_id, result=row.result or "",
                    requested_by=row.requested_by, requester_id=row.requester_id, kind=row.kind, vna_name=row.vna_name,
                    target_machine_id=row.target_machine_id, source=row.source, capture_file_name=row.capture_file_name,
-                   instrument_id=row.instrument_id, capture_settings=row.capture_settings)
+                   instrument_id=row.instrument_id, capture_settings=row.capture_settings, purpose=row.purpose)
 
 
 def _expire(session: Session, now: datetime) -> None:
@@ -253,10 +268,12 @@ def _read(session: Session, job_id: UUID) -> ScanJob:
 def create_job(uow, *, requested_by: str, now: datetime, target: str | None = None,
                scanner: str | None = None, kind: str = "scan", vna_name: str = "", source: str = "s2vna",
                instrument_id: UUID | None = None, requester_id: UUID | None = None,
-               expected_vna_serial: str | None = None) -> ScanJob:
-    """Create a pending job. Only a full `target` / `scanner` pair can be claimed; incomplete legacy rows expire."""
+               expected_vna_serial: str | None = None, settings: dict | None = None) -> ScanJob:
+    """Create a pending job. Only a full `target` / `scanner` pair can be claimed; incomplete legacy rows expire.
+    `settings` — a plain scan of the МФУ card (purpose 'plain', never read): its colour, dpi and the scan it continues."""
     if source not in ("s2vna", "arinst"):
         raise ValueError("Неизвестный источник ВАЦ")
+    purpose = "vna" if kind == "vna" else "plain" if settings is not None else "upd"
     scanner = (scanner or "").strip()[:SCANNER_MAX] or None
     with uow:
         session = _session(uow)
@@ -275,7 +292,8 @@ def create_job(uow, *, requested_by: str, now: datetime, target: str | None = No
             refuse_session_capture(session, instrument_id, expected_vna_serial or "", vna_name)
         row = ScanJobRow(id=uuid4(), status=PENDING, requested_by=requested_by[:255] or "—", created_at=now,
                          target_machine_id=target, target_scanner=scanner if target else None, error="", result="",
-                         kind=kind, vna_name=vna_name, source=source, instrument_id=instrument_id, requester_id=requester_id)
+                         kind=kind, vna_name=vna_name, source=source, instrument_id=instrument_id, requester_id=requester_id,
+                         purpose=purpose, capture_settings=settings)
         session.add(row)
         uow.commit()
     return _job(row)
@@ -323,6 +341,7 @@ class Claimed:
     target_scanner: str | None  # the scanner the person chose; claims now require a nonempty scanner
     kind: str = "scan"
     source: str = "s2vna"
+    settings: dict | None = None  # a plain scan's colour and dpi for the agent (0214); None — a УПД scan, as before
 
 
 def claim(uow, *, now: datetime, machine_id: str | None = None, vna: bool = False, scan: bool = True) -> Claimed | None:
@@ -346,7 +365,8 @@ def claim(uow, *, now: datetime, machine_id: str | None = None, vna: bool = Fals
                     ScanJobRow.target_machine_id == machine_id)
         for _attempt in range(5):  # another agent may take the same row between the read and the write
             candidate = session.execute(
-                select(ScanJobRow.id, ScanJobRow.target_scanner, ScanJobRow.kind, ScanJobRow.source).where(ScanJobRow.status == PENDING, mine)
+                select(ScanJobRow.id, ScanJobRow.target_scanner, ScanJobRow.kind, ScanJobRow.source, ScanJobRow.purpose,
+                       ScanJobRow.capture_settings).where(ScanJobRow.status == PENDING, mine)
                 .order_by(ScanJobRow.created_at, ScanJobRow.id).limit(1)
                 .with_for_update(skip_locked=True)
             ).first()
@@ -358,7 +378,9 @@ def claim(uow, *, now: datetime, machine_id: str | None = None, vna: bool = Fals
                 .execution_options(synchronize_session=False)
             )
             if taken.rowcount == 1:
-                claimed = Claimed(candidate.id, candidate.target_scanner, candidate.kind, candidate.source)
+                settings = candidate.capture_settings if candidate.purpose == "plain" else None
+                claimed = Claimed(candidate.id, candidate.target_scanner, candidate.kind, candidate.source,
+                                  {key: settings[key] for key in ("color", "dpi") if key in settings} if settings else None)
                 break
         uow.commit()
     return claimed
@@ -440,7 +462,8 @@ def save_result(uow, job_id: UUID, result: str) -> None:
     with uow:
         session = _session(uow)
         session.execute(
-            update(ScanJobRow).where(ScanJobRow.id == job_id, ScanJobRow.status == DONE, ScanJobRow.result == "")
+            update(ScanJobRow).where(ScanJobRow.id == job_id, ScanJobRow.status == DONE, ScanJobRow.result == "",
+                                     ScanJobRow.purpose == "upd")
             .values(result=result)
             .execution_options(synchronize_session=False)
         )

@@ -357,7 +357,9 @@ _ROW_CAPS = {"warehouse_label_templates": len(_LABEL_TEMPLATE_KINDS) * len(_LABE
               # lot and write-off. Empty is a valid journal.
               "production_manual_jobs": 0, "production_manual_job_issues": 0,
               # A bench measurement's kind, target, standard, object and record are tied by CHECKs (0205); empty is valid.
-              "production_vna_bench_items": 0}
+              "production_vna_bench_items": 0,
+              # A print job's times, attempt and lease follow its status (0214_warehouse_document_devices); empty is valid.
+              "warehouse_document_print_jobs": 0}
 # One row per installation (CHECK `id = 1`): seeded with a single row (the label print agent's heartbeat, 0141, too).
 _SINGLE_ROW_TABLES = frozenset({"warehouse_label_settings", "warehouse_label_agent", "warehouse_upd_llm_settings"})
 

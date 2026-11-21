@@ -44,7 +44,8 @@ class PrinterRow(Base):
     """Exact Windows queue identity, independent of the singleton warehouse heartbeat."""
     __tablename__ = "warehouse_agent_printers"
     __table_args__ = (
-        CheckConstraint("kind IN ('tspl', 'gdi_png')", name="ck_agent_printer_kind"),
+        # 'document' (0214): an A4 printer for documents — the МФУ of the warehouse.
+        CheckConstraint("kind IN ('tspl', 'gdi_png', 'document')", name="ck_agent_printer_kind"),
         CheckConstraint("trim(name) <> ''", name="ck_agent_printer_name"),
     )
     machine_id: Mapped[str] = mapped_column(String(80), ForeignKey("warehouse_scan_agents.machine_id", ondelete="CASCADE"), primary_key=True)
