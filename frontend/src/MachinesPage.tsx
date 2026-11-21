@@ -209,8 +209,9 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
   const siteCount = (which: Site) => found.filter((row) => (row.kind !== "machine" || !which || row.site === which) && (!onlyConnected || connected(row))).length;
   const shown = view === "setup" ? [] : found.filter((row) => atSite(row) && (!onlyConnected || connected(row))).sort(byNumber);
   const families = data?.families ?? [];
-  const inGroup = (row: MachineRow) => (row.family && families.includes(row.family) ? row.family : OTHER_FAMILY);
-  const order = families.includes(OTHER_FAMILY) ? families : [...families, OTHER_FAMILY];
+  // Группа строки — её `family`; группа, которой нет в `families` ответа, встаёт перед «Прочее», а не прячется в нём.
+  const inGroup = (row: MachineRow) => row.family || OTHER_FAMILY;
+  const order = [...new Set([...families, ...shown.map(inGroup)].filter((family) => family !== OTHER_FAMILY)), OTHER_FAMILY];
   const groups: [string, MachineRow[]][] = order.map((family) => [family, shown.filter((row) => inGroup(row) === family)]);
   const empty = onlyConnected && !query.trim() ? "Нет подключённого оборудования — снимите «Только подключённые» или установите агент ERP на ПК станка или прибора"
     : "Нет оборудования — установите агент ERP или отметьте станок в БД.ОБ галочкой «Показывать в «Оборудовании»»";

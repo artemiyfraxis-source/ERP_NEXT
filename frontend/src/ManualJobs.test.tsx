@@ -141,7 +141,6 @@ it("a machine without control starts work outside a task from its work card", as
     return json({ now: "2026-11-19T10:00:00+03:00", rows: [machine] });
   });
   render(<MachinesPage canWrite />);
-  fireEvent.click(await screen.findByRole("tab", { name: /Без управления/ }));
   fireEvent.click(await screen.findByText("ОБ.037"));
   // A machine without control opens its work card; work outside a task starts on «Вне задания».
   const card = await screen.findByRole("dialog", { name: /ОБ\.037/ });
@@ -167,7 +166,6 @@ it("the work card shows the job already running on the machine", async () => {
     return json({ now: "2026-11-19T10:00:00+03:00", rows: [machine] });
   });
   render(<MachinesPage canWrite />);
-  fireEvent.click(await screen.findByRole("tab", { name: /Без управления/ }));
   fireEvent.click(await screen.findByText("ОБ.019"));
   // The work card shows the job already running on the machine, not a new start.
   const card = await screen.findByRole("dialog", { name: /ОБ\.019/ });
