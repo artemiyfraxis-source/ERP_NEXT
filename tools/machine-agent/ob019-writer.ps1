@@ -52,7 +52,8 @@ $ErrorActionPreference = 'Stop'
 $script:Self = $MyInvocation.InvocationName
 if (-not $BridgeScript) { $BridgeScript = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'ob019-bridge.ps1' }
 . $BridgeScript -Server $Server -TokenPath $TokenPath -MbdHost $MbdHost -MbdPort $MbdPort -MbdScript $MbdScript -LogPath $LogPath -PollMs $PollMs -Once:$Once
-$script:RunnerVersion = '1.4.0'
+# 1.5.0: kind length_correction uses measured D658..659, pulse D600.6 and signed D54..55 read-back.
+$script:RunnerVersion = '1.5.0'
 # Machine commands: the bit held and the machine states (D766) each may run in, empty = any state; "off" = switch bits
 # ('addr.bit') that must read 0 right before the pulse (Start with the feed rollers lifted D604.0 is refused). Mirrors
 # ALLOWED_STATES and BLOCKED_BY_BITS of backend production/machine_control.py (a backend test compares them).
@@ -67,8 +68,8 @@ $script:Controls = @{
 # the other HMI pages (1.2.0): middle strip D197/D199, slitting D67..D74/D1703..D1705, coiling D391..D395/D1750..D1753,
 # marking D401..D432 numbers, D1722 and the texts D440..D484, speeds D100..D104/D120..D123. Switch bits (setbit only,
 # never a whole word): middle strip D132.0, feed-roller lift D604.0 (Jog "Wheel", Y18), marking D400.0, D422.0, D434.0..D436.0. Not: D390/D133/D142 (meaning not
-# established), D421 (order transfer handshake, map open question 8). Mirrors OB019_WRITTEN_WORDS / _BITS of backend
-# production/machines.py and mbd.ps1 allowedWrite / allowedBits (a backend test compares the three). Never: passwords
+# established), D421 (order transfer handshake, map open question 8). Generic writes mirror OB019_WRITTEN_WORDS / _BITS;
+# mbd additionally allows D658..659 for the dedicated correction path, never through these generic lists. Never: passwords
 # D1682..D1687, SHA-256 D1203..D1211, command bits D599/D600, D730, date D1087..D1089.
 $script:MbdMinVersion = '1.2.0'
 # Switch words whose bit only a newer mbd may set (its allowedBits): D604 feed-roller lift since mbd 1.3.0.
@@ -180,6 +181,7 @@ function Read-MachineState {
 }
 
 function Assert-ControlBit([int]$Address, [int]$Bit) {
+    if ($Address -eq 600 -and $Bit -eq 6) { return } # Dedicated length correction only, never a control action.
     foreach ($spec in $script:Controls.Values) { if ($spec['addr'] -eq $Address -and $spec['bit'] -eq $Bit) { return } }
     throw ('runner refused bit D' + $Address + '.' + $Bit)
 }
@@ -188,6 +190,65 @@ function Invoke-Pulse([int]$Address, [int]$Bit) {
     Assert-ControlBit $Address $Bit
     $line = ConvertTo-JsonLite @{ cmd = 'pulse'; addr = $Address; bit = $Bit; hold_ms = $script:HoldMs }
     return $script:Json.DeserializeObject((Invoke-MbdLine $line))
+}
+
+# PXS_HMI FmLineModify: measured length D658..659, pulse D600.6, PLC correction D54..55.
+# A separate kind keeps D658 and D54 out of generic parameter writes. No D32 write is made here.
+function Invoke-LengthCorrection($Command, [Diagnostics.Stopwatch]$Since) {
+    $result = @{ ok = $false; readback = @{}; before = @{}; correction_pulsed = $false; error = ''; outcome = 'failed' }
+    $pulseStarted = $false
+    try {
+        $blocks = @($Command['blocks']); $seen = $Command['seen']; $deadline = [int]$Command['deadline_ms']
+        if ($blocks.Count -ne 1 -or [int]$blocks[0]['addr'] -ne 658 -or @($blocks[0]['values']).Count -ne 2 -or @($Command['bits']).Count -ne 0) { throw 'invalid length correction payload' }
+        $values = @($blocks[0]['values'])
+        foreach ($word in $values) { if ($word -isnot [int] -or $word -lt 0 -or $word -gt 65535) { throw 'invalid measured length' } }
+        $raw = [long]$values[0] + 65536 * [long]$values[1]
+        if ($raw -le 0 -or $raw -gt 99999999) { throw 'invalid measured length' }
+        foreach ($a in @('32', '33', '54', '55')) {
+            if ($seen -eq $null -or -not $seen.ContainsKey($a) -or $seen[$a] -isnot [int] -or $seen[$a] -lt 0 -or $seen[$a] -gt 65535) { throw 'missing seen length or correction' }
+        }
+        if ($Since.ElapsedMilliseconds -ge $deadline) { throw 'length correction expired' }
+        if (Test-HmiOpen) { throw 'PXS_HMI is running' }
+        $version = Get-MbdVersion
+        if (-not (Test-MbdCurrent $version '1.5.0')) { throw ('mbd outdated: ' + $version + ', need 1.5.0') }
+        # Recheck all guards before the measured write, then again immediately before the pulse.
+        foreach ($phase in @(0, 1)) {
+            $state = Read-MachineState
+            if (@(102, 107) -notcontains $state['766']) { throw ('state ' + $state['766']) }
+            foreach ($address in @(32, 54)) {
+                $read = @(Read-Range $address 2)
+                if ($read.Count -ne 2) { throw 'short length correction guard read' }
+                for ($i = 0; $i -lt 2; $i++) {
+                    $key = [string]($address + $i)
+                    if ([int]$read[$i] -ne [int]$seen[$key]) { throw ('seen value changed D' + $key) }
+                    $result['before'][$key] = [int]$read[$i]
+                }
+            }
+            if (Test-HmiOpen) { throw 'PXS_HMI is running' }
+            if ($Since.ElapsedMilliseconds -ge $deadline) { throw 'length correction expired' }
+            if ($phase -eq 0) {
+                $reply = $script:Json.DeserializeObject((Invoke-MbdLine (ConvertTo-JsonLite @{ cmd = 'write'; addr = 658; values = $values })))
+                if (-not $reply['ok']) { throw ([string]$reply['error']) }
+                $read = @($reply['result']['readback'])
+                if ($read.Count -ne 2 -or $read[0] -ne $values[0] -or $read[1] -ne $values[1]) { throw 'D658 readback mismatch' }
+                $result['readback']['658'] = [int]$read[0]; $result['readback']['659'] = [int]$read[1]
+            }
+        }
+        $pulseStarted = $true
+        $reply = Invoke-Pulse 600 6
+        if (-not $reply['ok']) { throw ([string]$reply['error']) }
+        $pulse = $reply['result']
+        if ($pulse['set'] -ne $true -or $pulse['cleared'] -ne $true -or $pulse['addr'] -ne 600 -or $pulse['bit'] -ne 6 -or $pulse['after'] -isnot [int] -or $pulse['after'] -lt 0 -or $pulse['after'] -gt 65535 -or ([int]$pulse['after'] -band 64) -ne 0) { throw 'D600.6 pulse not confirmed cleared' }
+        $result['correction_pulsed'] = $true
+        $read = @(Read-Range 54 2)
+        if ($read.Count -ne 2) { throw 'short D54 readback' }
+        $result['readback']['54'] = [int]$read[0]; $result['readback']['55'] = [int]$read[1]
+        $result['ok'] = $true; $result['outcome'] = 'done'
+    } catch {
+        $result['error'] = $_.Exception.Message
+        if ($pulseStarted) { $result['outcome'] = 'unknown' }
+    }
+    return $result
 }
 
 function New-Outcome([string]$Status, [string]$Reason, [string]$Detail, $Before, $After, [string]$Method = '') {
@@ -350,10 +411,14 @@ function Step-Commands([string]$Token) {
     $command = $script:Json.DeserializeObject($answer['text'])['command']
     if ($null -eq $command) { return $null }
     if ($command['kind'] -eq 'control') { return (Step-Control $command $since $Token) }
-    $result = Invoke-MachineCommand $command
+    if ($command['kind'] -eq 'length_correction') { $result = Invoke-LengthCorrection $command $since }
+    else { $result = Invoke-MachineCommand $command }
     Write-BridgeLog ('command ' + $command['id'] + ' ok=' + $result['ok'] + ' ' + $result['error'])
     $body = Get-Identity
     $body['ok'] = [bool]$result['ok']; $body['readback'] = $result['readback']; $body['error'] = [string]$result['error']
+    if ($command['kind'] -eq 'length_correction') {
+        $body['correction_pulsed'] = [bool]$result['correction_pulsed']; $body['before'] = $result['before']; $body['outcome'] = $result['outcome']
+    }
     [void](Invoke-Erp ('/api/production/machines/agent/writes/' + $command['id'] + '/result') (ConvertTo-JsonLite $body) $Token)
     return $result
 }

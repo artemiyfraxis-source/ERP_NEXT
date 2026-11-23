@@ -607,7 +607,7 @@ OB019_WRITTEN_BITS: frozenset[tuple[int, int]] = frozenset(
 # What the bridge reads and sends (Dn = holding register n): the state words and every setting above. Mirrors
 # `$script:Allowed` in ob019-bridge.ps1; 32-bit values take two words (low word first), strings 15 words.
 OB019_ALLOWED: frozenset[int] = frozenset(
-    {20, 641, 642, 643, 644, 645, 646, 649, 650, 711, 766, 782, 1280}
+    {20, 54, 55, 641, 642, 643, 644, 645, 646, 649, 650, 711, 766, 782, 1280}
     | {address for _title, fields in OB019_SETTINGS for field in fields for address in field_words(field)}
 )
 REGISTERS_MAX = max(len(OB019_ALLOWED), len(ob099.ALLOWED))

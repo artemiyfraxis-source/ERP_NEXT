@@ -24,7 +24,7 @@ param(
 # (it writes the HMI context D730 and the date D1087..D1089 first), "write" and "pulse" move the machine.
 # The file is ASCII on purpose (PowerShell 2 reads BOM-less files in the ANSI code page).
 $ErrorActionPreference = 'Stop'
-$script:BridgeVersion = '1.1.0'
+$script:BridgeVersion = '1.2.0'
 $script:Proto = 1
 # OB.019 in Cyrillic, built from code points to keep this file ASCII.
 $script:Inventory = [string][char]0x041E + [string][char]0x0411 + '.019'
@@ -34,7 +34,7 @@ $script:Inventory = [string][char]0x041E + [string][char]0x0411 + '.019'
 # and sent from the last reading in between. Words outside OB019_ALLOWED of backend/app/modules/production/machines.py
 # are read (FC3 has no side effects) but never sent (ERP refuses them, 422).
 $script:Ranges = @(
-    @(20, 62),    # D20 mode, D22..D28 job, D32..D53 wire and inner layer, D60..D74 clamp gaps and slitting
+    @(20, 62),    # D20 mode, D22..D28 job, D32..D53 wire, D54..55 PLC length correction, D60..D74 clamps/slitting
     @(604, 47),   # D604 Jog outputs (bit0 feed-roller lift), D641 UPH, D643 order done, D645 batch done, D649 total done
     @(711, 72),   # D711.0 order lamp, D766 machine state, D782 alarm
     @(938, 32),   # D938 order row, D940..D969 order number, product name
@@ -50,7 +50,7 @@ $script:SlowRanges = @(
 # OB019_FEED_WHEEL_ADDRESS of backend production/machines.py; read every cycle by the D604..D650 range above.
 $script:FeedWheelAddress = 604
 $script:Allowed = @{}
-foreach ($a in @(20, 74, 142, 197, 604, 711, 766, 782, 1280) + (22..28) + (32..53) + (60..61) + (67..72) + (100..104) + (120..123) + (132..133) + (199..231) + (250..281) + (390..395) + (400..402) + (404..415) + (421..423) + (430..432) + (434..436) + (440..484) + (641..646) + (649..650) + (938..969) + (1703..1705) + (1722..1723) + (1750..1753)) { $script:Allowed[[int]$a] = $true }
+foreach ($a in @(20, 74, 142, 197, 604, 711, 766, 782, 1280) + (22..28) + (32..55) + (60..61) + (67..72) + (100..104) + (120..123) + (132..133) + (199..231) + (250..281) + (390..395) + (400..402) + (404..415) + (421..423) + (430..432) + (434..436) + (440..484) + (641..646) + (649..650) + (938..969) + (1703..1705) + (1722..1723) + (1750..1753)) { $script:Allowed[[int]$a] = $true }
 $script:SlowWords = @{}
 $script:SlowAt = [datetime]::MinValue
 $script:ReadOnlyCommands = @('read')

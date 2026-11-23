@@ -22,9 +22,9 @@ index (it may queue while a write runs, it cancels what is queued), no answer �
 «Закрыть / Открыть пульт на ПК» (`hmi_close` / `hmi_open`, migration 0211) are machine commands too; they need the
 runner 1.4.0 and get `HMI_RESULT_WAIT` for their answer (a graceful close waits up to 15 s for the panel).
 
-Corrections (migration 0195, `production_machine_offsets`): «станок режет не так» — the ETK size is right but this
-machine cuts/strips it off by a constant. One offset per machine and wire parameter, in 0,01 мм; every later
-«Передать на станок» adds it to the ETK nominal (the ETK stays as it is). The ETK side («размер в ЭТК неверный») goes
+Length correction uses the PLC: runner 1.5.0 writes measured D658, pulses D600.6 and reads signed D54. D32 stays
+the job length. The old length offset in `production_machine_offsets` is retained as history but is never applied.
+Other parameter corrections still use the stored ERP offset in 0,01 мм, added to the ETK nominal. The ETK side goes
 through the ETK revision path in app/workflows/machine_writes_api.py."""
 
 from __future__ import annotations
@@ -82,6 +82,8 @@ RUNNER_FEED_WHEEL = "1.3.0"
 RUNNER_FEED_WHEEL_OUTDATED = "Служба записи на ПК станка устарела — обновите (нужна 1.3.0)"
 # The runner 1.4.0 (20.11.2026): «Закрыть / Открыть пульт на ПК» and the inner layer words D44..D53 (mbd 1.4.0 writes them).
 RUNNER_HMI = "1.4.0"
+RUNNER_CORRECTION = "1.5.0"
+LENGTH_CORRECTION = "length_correction"
 RUNNER_HMI_OUTDATED = "Служба записи на ПК станка устарела — обновите (нужна 1.4.0)"
 RUNNER_WORDS: dict[int, str] = {address: RUNNER_HMI for address in range(44, 54)}
 # The words the runner 1.1.0 writes (ob019-writer.ps1 before 19.11.2026): mode, job and quantities, wire and strip,
@@ -122,10 +124,14 @@ def runner_needed_for(bits: list[dict], addresses) -> str | None:
 
 
 def runner_refusal(needed: str) -> str:
+    if needed == RUNNER_CORRECTION:
+        return "Служба записи на ПК станка устарела — обновите (нужна 1.5.0)"
     return {RUNNER_FEED_WHEEL: RUNNER_FEED_WHEEL_OUTDATED, RUNNER_HMI: RUNNER_HMI_OUTDATED}.get(needed, RUNNER_OUTDATED)
 
 
 def runner_needed_for_row(row: "MachineWriteRow") -> str | None:
+    if row.payload.get(LENGTH_CORRECTION):
+        return RUNNER_CORRECTION
     if row.purpose == CONTROL:
         return RUNNER_HMI if row.command in HMI_COMMANDS else None
     return runner_needed_for(list(row.payload.get("bits") or []), expected_words(row))
@@ -295,7 +301,9 @@ def _expire(session: Session, equipment_id: UUID, now: datetime) -> list[Machine
             row.status, row.finished_at, row.error = "expired", now, "Агент станка не забрал команду за 10 с"
             changed.append(row)
         elif row.status == "taken" and row.taken_at is not None and rules.since(row.taken_at, now) > RESULT_WAIT:
-            row.status, row.finished_at, row.error = "failed", now, "Агент станка не сообщил результат записи"
+            row.status, row.finished_at, row.error = (
+                "unknown" if row.payload.get(LENGTH_CORRECTION) else "failed", now,
+                "Агент станка не сообщил результат записи")
             changed.append(row)
     session.flush()
     return changed
@@ -432,8 +440,56 @@ def expected_bits(row: MachineWriteRow) -> list[dict]:
     return list(row.payload.get("bits") or [])
 
 
+def length_correction_value(words: dict) -> Decimal | None:
+    """PLC-held D54, signed little-word-first INT32 in hundredths of a millimetre."""
+    low, high = words.get(54, words.get("54")), words.get(55, words.get("55"))
+    if any(not isinstance(word, int) or isinstance(word, bool) or not 0 <= word <= rules.WORD_MAX
+           for word in (low, high)):
+        return None
+    raw = low | (high << 16)
+    return Decimal(raw - 0x100000000 if raw >= 0x80000000 else raw) * STEP
+
+
+def enqueue_length_correction(session: Session, *, equipment_id: UUID, measured: Decimal, seen: Decimal,
+                              actor_id: UUID, actor_name: str, now: datetime) -> tuple[MachineWriteRow, list]:
+    link = session.get(rules.MachineLinkRow, equipment_id)
+    snapshot = session.get(rules.MachineSnapshotRow, equipment_id)
+    problem = idle_problem(link, snapshot, now)
+    if problem:
+        raise MachineCommandRefused(problem)
+    words = rules.snapshot_words(snapshot)
+    length = rules._u32(words, 32)
+    correction = length_correction_value(words)
+    if length is None or correction is None:
+        raise MachineCommandRefused("Нет свежих данных длины и поправки станка — обновите данные")
+    if Decimal(length) * STEP != seen:
+        raise MachineCommandRefused("Длина на станке изменилась — обновите данные и повторите")
+    if not measured.is_finite() or not 0 < measured <= Decimal("999999.99") or measured != measured.quantize(STEP):
+        raise rules.MachineWriteInvalid("Получилось: число больше нуля, не более 999999,99 мм, с точностью 0,01 мм")
+    if runner_outdated(equipment_id, now, RUNNER_CORRECTION):
+        raise MachineCommandRefused(runner_refusal(RUNNER_CORRECTION))
+    expired = _expire(session, equipment_id, now)
+    if session.scalar(select(MachineWriteRow.id).where(MachineWriteRow.equipment_id == equipment_id,
+                                                      MachineWriteRow.status.in_(OPEN))) is not None:
+        raise MachineCommandRefused("На станок уже идёт запись — дождитесь её результата")
+    raw = int(measured / STEP)
+    row = MachineWriteRow(id=uuid4(), equipment_id=equipment_id, purpose="settings", status="queued",
+        payload={LENGTH_CORRECTION: True, "blocks": [{"addr": 658, "values": [raw & 0xFFFF, raw >> 16]}],
+                 "bits": [], "fields": [], "seen": {str(a): words[a] for a in (32, 33, 54, 55)}},
+        summary=f"Поправка длины станка: получилось {str(measured).replace('.', ',')} мм",
+        created_by=actor_id, created_by_name=actor_name[:200], created_at=now)
+    try:
+        with session.begin_nested():
+            session.add(row)
+            session.flush()
+    except IntegrityError:
+        raise MachineCommandRefused("На станок уже идёт запись — дождитесь её результата") from None
+    return row, expired
+
+
 def finish(session: Session, *, equipment_id: UUID, command_id: UUID, ok: bool, readback: dict, error: str,
-           now: datetime) -> MachineWriteRow:
+           now: datetime, correction_pulsed: bool = False, before: dict | None = None,
+           outcome: str | None = None) -> MachineWriteRow:
     """The runner's report. Done only when every written register reads back as asked."""
     row = session.get(MachineWriteRow, command_id)
     if row is None or row.equipment_id != equipment_id:
@@ -455,12 +511,19 @@ def finish(session: Session, *, equipment_id: UUID, command_id: UUID, ok: bool, 
     differ += [f"D{bit['addr']}.{bit['bit']}" for bit in switches if bit["addr"] not in read
                or (read[bit["addr"]] >> int(bit["bit"])) & 1 != int(bit["value"])]
     kept = set(expected) | {int(bit["addr"]) for bit in switches}
+    correction = bool(row.payload.get(LENGTH_CORRECTION))
+    if correction:
+        kept |= {54, 55}
+        if not correction_pulsed or length_correction_value(read) is None:
+            differ.append("D54 / подтверждение импульса D600.06")
+        if before != row.payload["seen"]:
+            differ.append("длина или поправка до записи изменилась")
     row.readback = {str(address): word for address, word in sorted(read.items()) if address in kept}
     row.finished_at = now
     if ok and not differ:
         row.status, row.error = "done", ""
     else:
-        row.status = "failed"
+        row.status = "unknown" if correction and (correction_pulsed or outcome == "unknown") else "failed"
         reason = " ".join(str(error or "").split())
         if "busy" in reason or "PXS_HMI" in reason:
             reason = rules.HMI_OPEN
@@ -470,6 +533,14 @@ def finish(session: Session, *, equipment_id: UUID, command_id: UUID, ok: bool, 
             reason = "Служба обмена со станком (mbd) устарела — обновите" + (f" до {need}" if need else "")
         elif reason.startswith("state "):
             reason = "Станок не в ожидании: " + reason.removeprefix("state ")
+        elif correction and reason:
+            reason = ("Длина или поправка на станке изменилась — обновите данные и повторите"
+                      if reason.startswith("seen value changed") else
+                      "Команда поправки опоздала — повторите после обновления данных"
+                      if reason == "length correction expired" else
+                      "Результат поправки не подтверждён — проверьте станок и обновите данные"
+                      if row.status == "unknown" else
+                      "Поправка не выполнена: служба станка не подтвердила данные")
         if not reason and differ:
             reason = "Станок не принял: " + ", ".join(differ[:8])
         row.error = (reason or "Запись не удалась")[:500]
@@ -501,7 +572,12 @@ def _state_text(words: object) -> str | None:
 def command_view(row: MachineWriteRow) -> dict:
     text, tone = (CONTROL_TEXTS if row.purpose == CONTROL else STATUS_TEXTS)[row.status]
     states = row.readback if row.purpose == CONTROL and isinstance(row.readback, dict) else {}
+    correction = bool(row.payload.get(LENGTH_CORRECTION))
+    shown = lambda value: None if value is None else f"{value:.2f}".replace(".", ",")
     return {"id": str(row.id), "status": row.status, "status_text": text, "tone": tone, "purpose": row.purpose,
+            "length_correction_before": shown(length_correction_value(row.payload.get("seen", {}))) if correction else None,
+            "length_correction_after": shown(length_correction_value(row.readback or {}))
+                if correction and row.status == "done" else None,
             "command": row.command, "state_before": _state_text(states.get("before")),
             "state_after": _state_text(states.get("after")),
             # «Закрыть пульт на ПК»: how the runner closed it — graceful / forced / none (it was not open) / started —,
