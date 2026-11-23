@@ -220,7 +220,7 @@ def test_a_card_gone_from_the_library_and_an_own_operation_without_steps_are_war
         "Операция 2 (Пайка экрана к лепестку): не заполнен ход операции",
         "Операция 3 (Опрессовка терминалов): не задана норма времени",
     ]
-    assert document["operations"][2]["time"][0]["norm"] == "0"
+    assert document["operations"][2]["time"][0]["norm"] == ""
 
 
 @pytest.mark.parametrize(("change", "message"), [

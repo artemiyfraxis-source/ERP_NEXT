@@ -10,15 +10,15 @@ import "./workload.css";
    «сделано», календарю цеха и монтажникам площадок. Только чтение: расчёт целиком на сервере (production/workload.py). */
 
 const ALL = "";
-const STATUS_TONE: Record<string, Tone> = { "в срок": "success", "риск": "warning", "не успевает": "danger", "без срока": "neutral" };
+const STATUS_TONE: Record<string, Tone> = { "в срок": "success", "риск": "warning", "не успевает": "danger", "без срока": "neutral", "неполные нормы": "warning" };
 const SOURCE_TEXT: Record<string, string> = {
   "сдано цехом": "сдано цехом по заданиям",
   "принято складом": "принято складом готовой продукции",
   "отгружено": "отгружено с завода",
 };
 
-function hours(value: number | undefined): string {
-  return value ? formatNumber(value, { digits: 1 }) : "—";
+function hours(value: number | undefined, unknown = 0): string {
+  return unknown ? `≥ ${formatNumber(value ?? 0, { digits: 1 })}` : value == null ? "—" : formatNumber(value, { digits: 1 });
 }
 
 function kindsText(kinds: Record<string, number>, order: string[], top = 3): string {
@@ -31,6 +31,7 @@ function weekText(start: string, end: string): string {
 }
 
 function statusTitle(row: WorkloadProject, horizon: string): string {
+  if (row.unknown_operations) return `Не задана норма времени: ${row.unknown_operations} оп. Часы посчитаны по известным нормам.`;
   if (row.status === "без срока") return row.ready ? "Срока нет — в прогнозе после проектов со сроком" : `Срока нет, не помещается до ${formatDay(horizon)}`;
   if (!row.ready) return `Не помещается до ${formatDay(horizon)}: не хватает мощности площадки`;
   const slack = row.slack_days ?? 0;
@@ -56,7 +57,8 @@ export function ShopWorkloadView() {
     return () => { live = false; };
   }, []);
 
-  const rows = useMemo(() => (data?.projects ?? []).filter((row) => site === ALL || (row.by_site[site] ?? 0) > 0), [data, site]);
+  const rows = useMemo(() => (data?.projects ?? []).filter((row) => site === ALL || (row.by_site[site] ?? 0) > 0
+    || row.kbs.some((kb) => kb.site === site && kb.unknown_operations && kb.remaining > 0)), [data, site]);
 
   if (error) return <div className="error-banner" role="alert">{error}</div>;
   if (!data) return <div className="empty">Загрузка…</div>;
@@ -66,25 +68,27 @@ export function ShopWorkloadView() {
     { key: "project", title: "Проект", value: (row) => row.project, render: (row) => <b>{row.project}</b> },
     { key: "customer", title: "Заказчик", value: (row) => row.customer, render: (row) => row.customer || <span className="muted">—</span>, filter: true },
     { key: "deadline", title: "Срок", value: (row) => row.deadline ?? "", render: (row) => row.deadline ? <span className="num">{formatDay(row.deadline)}</span> : <span className="muted">—</span> },
-    { key: "hours", title: "Осталось, ч", numeric: true, value: (row) => row.hours, render: (row) => <b className="num">{hours(row.hours)}</b>,
+    { key: "hours", title: "Осталось, ч", numeric: true, value: (row) => row.hours, render: (row) => <b className="num">{hours(row.hours, row.unknown_operations)}</b>,
       hint: "Нормочасы ЭТК × (тираж КБ − сделано)" },
     ...data.sites.map((name): DataColumn<WorkloadProject> => ({
       key: `site:${name}`, title: `${name}, ч`, numeric: true, value: (row) => row.by_site[name] ?? 0,
-      render: (row) => <span className="num">{hours(row.by_site[name])}</span>,
+      render: (row) => <span className="num">{hours(row.by_site[name], row.kbs.filter((kb) => kb.site === name).reduce((sum, kb) => sum + (kb.unknown_operations ?? 0), 0))}</span>,
     })),
     { key: "unassigned", title: "Не распр., ч", numeric: true, value: (row) => row.by_site[unassigned] ?? 0,
-      render: (row) => <span className="num">{hours(row.by_site[unassigned])}</span>,
+      render: (row) => <span className="num">{hours(row.by_site[unassigned], row.kbs.filter((kb) => kb.site === unassigned).reduce((sum, kb) => sum + (kb.unknown_operations ?? 0), 0))}</span>,
       hint: "Нет заданий с исполнителями — площадка не определена; в прогнозе берёт свободную мощность любой площадки" },
     { key: "kinds", title: "Виды операций, ч", value: (row) => kindsText(row.by_kind, data.kinds), wrap: true,
       render: (row) => <span className="wl-kinds">{kindsText(row.by_kind, data.kinds) || "—"}</span> },
     { key: "ready", title: "Расчётная готовность", value: (row) => row.ready ?? "9999",
-      render: (row) => row.ready ? <span className="num">{formatDay(row.ready)}</span> : <span className="danger-text">позже {formatDay(data.horizon_to)}</span> },
+      render: (row) => row.unknown_operations ? <span className="warning-text">не задана норма</span>
+        : row.ready ? <span className="num">{formatDay(row.ready)}</span> : <span className="danger-text">позже {formatDay(data.horizon_to)}</span> },
     { key: "status", title: "Статус", value: (row) => row.status, filter: true,
       render: (row) => <StatusChip tone={STATUS_TONE[row.status] ?? "neutral"} title={statusTitle(row, data.horizon_to)}>{row.status}</StatusChip> },
   ];
   const late = data.projects.filter((row) => row.status === "не успевает").length;
   const risk = data.projects.filter((row) => row.status === "риск").length;
   const total = data.projects.reduce((sum, row) => sum + row.hours, 0);
+  const unknown = data.projects.reduce((sum, row) => sum + (row.unknown_operations ?? 0), 0);
   const people = data.sites.map((name) => `${name} ${data.people[name] ?? 0} чел.`).join(", ");
   const stripSites = site === ALL ? [data.shop, ...data.sites] : site === unassigned ? [data.shop] : [site];
 
@@ -95,13 +99,14 @@ export function ShopWorkloadView() {
           className={site === name ? "on" : undefined} onClick={() => setSite(name)}>{name === ALL ? "Все участки" : name === unassigned ? "Не распределено" : name}</button>)}
       </div>
       <span className="wl-summary">
-        на {formatDay(data.today)} · осталось <b className="num">{formatNumber(total, { digits: 0 })} ч</b> в {data.projects.length} {plural(data.projects.length, ["проекте", "проектах", "проектах"])}
+        на {formatDay(data.today)} · осталось <b className="num">{unknown ? "≥ " : ""}{formatNumber(total, { digits: 0 })} ч</b> в {data.projects.length} {plural(data.projects.length, ["проекте", "проектах", "проектах"])}
         {late > 0 && <> · <span className="danger-text">не успевают: {late}</span></>}
         {risk > 0 && <> · <span className="warning-text">риск: {risk}</span></>}
         {" "}· смена {formatNumber(data.shift_hours, { digits: 1 })} ч чистого времени · {people}
       </span>
     </div>
 
+    {unknown > 0 && <div className="warning-inline wl-note">Норма времени не задана: {unknown} оп. Часы и прогноз рассчитаны только по известным нормам.</div>}
     <WeekStrip data={data} sites={stripSites} />
 
     {data.no_run.length > 0 && <div className="warning-inline wl-note">Без тиража КБ — часы не посчитаны: {data.no_run.join(", ")}. Задайте тираж в наборе проекта.</div>}
@@ -148,8 +153,8 @@ function KbTable({ row, kinds }: { row: WorkloadProject; kinds: string[] }) {
       <td className="num">{kb.run ?? <span className="danger-text">нет тиража</span>}</td>
       <td className="num" title={doneTitle(kb)}>{kb.done ? formatNumber(kb.done) : "—"}{kb.done_source && <small className="wl-source"> {kb.done_source}</small>}</td>
       <td className="num">{formatNumber(kb.remaining)}</td>
-      <td className="num">{formatNumber(kb.unit_hours, { digits: 3 })}</td>
-      <td className="num"><b>{hours(kb.hours)}</b></td>
+      <td className="num">{kb.unknown_operations ? "≥ " : ""}{formatNumber(kb.unit_hours, { digits: 3 })}</td>
+      <td className="num" title={kb.unknown_operations ? `Не задана норма: ${kb.unknown_operations} оп.` : undefined}><b>{hours(kb.hours, kb.unknown_operations)}</b></td>
       <td title={kb.site_note}>{kb.site}</td>
       <td className="wl-kinds">{kindsText(kb.by_kind, kinds, 4) || "—"}</td>
     </tr>)}</tbody>

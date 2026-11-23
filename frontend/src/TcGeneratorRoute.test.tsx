@@ -78,7 +78,7 @@ it("draws the scheme as semi-finished cards and sends the hand-edited quantity a
   expect(screen.getByText("автоматическая")).toBeInTheDocument();
   // Резка — «Нарезанные провода», опрессовка А1 — сторона А, опрессовка В1 — готовый кабель.
   expect(cardTitles()).toEqual(["Нарезанные провода", "Сторона А собрана", "Готовый кабель"]);
-  expect(screen.getByText("3 карточки · 3 операции")).toBeInTheDocument();
+  expect(screen.getByText(/^3 карточки · 3 операции/)).toHaveTextContent("на изделие ≥ 0 мин, не задано у 3 операций");
   // «Монтаж в разъём» (3 и 5 в списке) без шаблона в сборку не идёт — схема о них говорит
   expect(screen.getByText("Без шаблона, в схему не входят: 3, 5")).toBeInTheDocument();
 
@@ -219,7 +219,7 @@ it("USB: cards name the operations in Russian, codes stay in the hint, the repla
   expect(cut).toHaveTextContent("заменена");
   expect(schemeCards()[2].querySelector(".rc-op-name")).toHaveTextContent("Монтаж в разъём В1 — I-DS1071-SCB02X5");
   expect(schemeCards()[2].querySelector(".rc-sub")).toHaveTextContent(USB_NAME);
-  expect(screen.getByText("3 карточки · 3 операции")).toBeInTheDocument();
+  expect(screen.getByText(/^3 карточки · 3 операции/)).toHaveTextContent("на изделие ≥ 0 мин, не задано у 3 операций");
   // Внутренние имена типов операций на экран не попадают.
   expect(document.body.textContent).not.toMatch(/cutWireCrimp|insTerm/);
 });

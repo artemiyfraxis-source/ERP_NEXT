@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Principal, ProjectTechcard } from "./api";
 import { EtkSheet } from "./ProjectEtk";
@@ -25,7 +25,7 @@ function techcard(fields: Record<string, unknown>): ProjectTechcard {
 
 afterEach(() => vi.restoreAllMocks());
 
-it("the marking operation of the ETK lists every mark by КД before the steps, and print carries the same table", async () => {
+it("the marking operation lists every output mark in Result and keeps instructions in Steps, on screen and print", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
     new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
   render(<EtkSheet card={techcard({ marks })} principal={principal} onChange={() => undefined} />);
@@ -37,12 +37,13 @@ it("the marking operation of the ETK lists every mark by КД before the steps, 
     "2Провод W1708К.4КБ1Маркировкана обоих концах220",
   ]);
   const section = screen.getByRole("region", { name: "Ход операции" });
-  expect(section).toContainElement(table);
+  expect(section).not.toContainElement(table);
+  expect(screen.getByRole("region", { name: "Результат" })).toContainElement(table);
   expect(within(section).getByText("Установить маркеры на жгут в позициях по КД.")).toBeInTheDocument();
   await waitFor(() => expect(fetch).toHaveBeenCalled());
 
   const html = buildPrintDocumentHtml("ТК", etkPrintPages(techcard({ marks }), []));
-  expect(html).toMatch(/Что маркируем[\s\S]*Надпись[\s\S]*708К\.4КБ1[\s\S]*на обоих концах[\s\S]*Описание операции/);
+  expect(html).toMatch(/Описание операции[\s\S]*Результат[\s\S]*Что маркируем[\s\S]*Надпись[\s\S]*708К\.4КБ1[\s\S]*на обоих концах/);
 });
 
 it("a tube cutting step without a length shows «длина не задана» in red on screen and with a warning sign in print", async () => {
@@ -74,6 +75,23 @@ it("an old marking operation without a mark list renders and prints as before", 
   expect(buildPrintDocumentHtml("ТК", etkPrintPages(techcard({}), []))).not.toContain("Что маркируем");
 });
 
+it("a label output list without instructions still gets a Result block, never an empty Steps block", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  const card = techcard({ marks });
+  const operation = (card.document as { operations: Array<{ code: string; type: string; card: { steps: unknown[] } }> }).operations[0];
+  operation.code = "PRINT_MARK_LABEL";
+  operation.type = "coaxCutTut";
+  operation.card.steps = [];
+  render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
+  const table = await screen.findByRole("table", { name: "Метки по КД" });
+  expect(screen.getByRole("region", { name: "Результат" })).toContainElement(table);
+  expect(screen.queryByRole("region", { name: "Ход операции" })).toBeNull();
+  const html = buildPrintDocumentHtml("ТК", etkPrintPages(card, []));
+  expect(html).not.toContain("Ход операции");
+  expect(html).toMatch(/Результат[\s\S]*Что маркируем/);
+});
+
 it("the marks table gets «Длина, мм» only when a tube row has it, on screen and in print", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
     new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
@@ -89,7 +107,7 @@ it("the marks table gets «Длина, мм» only when a tube row has it, on sc
   expect(buildPrintDocumentHtml("ТК", etkPrintPages(techcard({ marks }), []))).not.toContain("Длина, мм");
 });
 
-it("marks without the «№ изделия» token render and print byte-identical to the ETK before numbering (snapshot taken on the old code)", async () => {
+it("marks without the «№ изделия» token retain their contents and quantities in screen and print", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
     new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
   const old = [...marks, { target: "Изделие КБ1", text: "КБ1-№ 1 {N}", material: "Хлястик", place: "на изделии", qty: "1", batch: "10" }];
@@ -180,6 +198,7 @@ it("shows 17 label kinds and 45 pieces for a 15-piece 708К task, correcting an 
   const serial = { first: 1, last: 15, task: "ПЗ-1" };
   render(<EtkSheet card={card} principal={principal} onChange={() => undefined} task serial={serial} />);
   const table = await screen.findByRole("table", { name: "Метки по КД" });
+  fireEvent.click(within(screen.getByRole("region", { name: "Результат" })).getByRole("heading", { level: 4 }));
   expect(within(table).getAllByRole("row")).toHaveLength(18);
   expect(within(table).getByText("FRX.708К.120907/AA.000001")).toBeVisible();
   expect(within(table).getByText("FRX.708К.120907/AA.000015")).toBeVisible();

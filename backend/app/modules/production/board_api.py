@@ -270,6 +270,7 @@ def manual_output(
     ), uow_factory(), cards, ready))
     box = done.box
     warnings = [f"Создано задание {done.task.number}. Записано {_number(box.quantity)} шт на этап {box.operation_position}, коробка {box.code or box.number}."]
+    warnings.extend(done.warnings)
     if done.filled:
         warnings.append("Отбиты готовыми: " + ", ".join(
             f"этап {item.operation_position} — {_number(item.quantity)} шт"

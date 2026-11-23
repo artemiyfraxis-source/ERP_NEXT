@@ -12,7 +12,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from dataclasses import replace as _replace
 
-from .domain.pf_split import generator_split, same_split
+from .domain.pf_split import generator_split, same_split, validate_coax_finishing
 from .domain.route import (
     Block, Route, RouteError, RouteOp, chain_route, derive_route, parse_route, route_json, route_levels, route_totals,
 )
@@ -935,8 +935,8 @@ def _mark_rows(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[st
 _MARK_SERIAL_TOKEN = re.compile(r"\{№(?::[1-6])?\}")
 
 
-def _coax_serial_mark_rows(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[str, str]]:
-    """Expose serial labels once, at printing; installation reuses the same physical labels."""
+def _coax_mark_rows(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[str, str]]:
+    """Expose the complete label output once, at printing; installation reuses the same physical labels."""
     material = "Лента Vell VL-S641, 18 мм" if op.get("markMaterial") == "tape" else "Термотрубка"
     return [{
         "target": "Кабель", "text": str(mark.get("text") or ""), "material": material,
@@ -1261,6 +1261,12 @@ def _time(op: Mapping[str, Any], config: Mapping[str, Any], result_name: str) ->
     kind = _kind(op)
     wires = _wires(op, config)
     quantity = _part_quantity(config)
+    printing = (operation_type == "coaxCutTut" and op.get("markMaterial") == "tape") or (
+        operation_type == "cutTut" and _wire_marks(op)) or (
+        operation_type == "insMark" and op.get("markPhase") == "print")
+    if printing and not str(op.get("tOp") if op.get("tOp") is not None else "").strip():
+        # PRINT_MARK_LABEL has no approved norm in the operation library. Empty is unknown, never free work.
+        return [{"name": result_name, "norm": ""}]
     operation_minutes = _decimal(op.get("tOp")) / 60
     if config.get("mode") == "rework":
         linear = linear_seconds(op.get("linearTiming"), _decimal(config["rework"]["cutLength"]) / 1000) if operation_type == "cutWire" else None
@@ -1277,7 +1283,7 @@ def _time(op: Mapping[str, Any], config: Mapping[str, Any], result_name: str) ->
             linear = None if kind else linear_seconds(op.get("linearTiming"), _decimal(wire.get("length")) / 1000)
             if linear is not None:
                 return linear / 60
-            return operation_minutes or Decimal(1)
+            return operation_minutes if op.get("tOp") is not None and str(op["tOp"]).strip() else Decimal(1)
         return [{
             "name": _wire_result_name(wire, terminal, bool(op.get("tin"))),
             "norm": _format(piece_minutes(wire) * units(wire) * quantity, 2),
@@ -1921,10 +1927,10 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
                        "lPlusB": _coax(config).get("lPlusB"), "cutTolerance": "0…+5 мм", "drawingTolerance": "0…+10 мм"})
     if op.get("marks") and operation_type.startswith("coax"):
         fields["coaxMarks"] = deepcopy(op["marks"])
-        if operation_type == "coaxCutTut" and any(
+        if operation_type == "coaxCutTut" and (op.get("markMaterial") == "tape" or any(
             _MARK_SERIAL_TOKEN.search(str(mark.get("text") or "")) for mark in _mark_items(op)
-        ):
-            fields["marks"] = _coax_serial_mark_rows(op, config)
+        )):
+            fields["marks"] = _coax_mark_rows(op, config)
     if operation_type == "coaxInsSleeve" and _coax(config).get("fakraCutStrip"):
         end = _coax_end(op, config)
         if end.get("kind") in {"straight", "angled"}:
@@ -2842,6 +2848,11 @@ def _typed_operation(
         "times": _times(op),
         "fields": fields,
     }
+    if op.get("opKey") and not manual:
+        operation["opKey"] = str(op["opKey"])
+        operation["operation_key"] = f"{code.strip()}::op:{op['opKey']}::{operation['side'].strip()}"
+    if any(not row["norm"] for row in operation["time"]):
+        warnings.append(f"Операция {position} ({code}): норма времени не задана — расчётное время не определено.")
     label = str(op.get("label") or "").strip()
     if config.get("topologyVersion") == 1:
         operation.update({"opKey": op["opKey"], "dependsOn": deepcopy(op.get("dependsOn", []))})
@@ -2901,8 +2912,8 @@ def _typed_operation(
 
 
 def _times(op: Mapping[str, Any]) -> dict[str, str]:
-    return {"operation_seconds": str(op.get("tOp") or ""), "setup_seconds": str(op.get("tPrep") or ""),
-            "machine_seconds": str(op.get("tMachine") or "")}
+    return {name: "" if op.get(key) is None else str(op[key]) for name, key in (
+        ("operation_seconds", "tOp"), ("setup_seconds", "tPrep"), ("machine_seconds", "tMachine"))}
 
 
 def _physical_topology(config: Mapping[str, Any]) -> dict[str, Any]:
@@ -3050,20 +3061,44 @@ def _chain_results(config: Mapping[str, Any]) -> list[str]:
     return names
 
 
+def operation_time_summary(operation: Mapping[str, Any], quantity: Decimal) -> tuple[Decimal, bool]:
+    """Known minutes and whether the total is incomplete; explicit zero remains a known norm."""
+    def number(raw: Any) -> Decimal | None:
+        if raw is None or isinstance(raw, bool) or not str(raw).strip():
+            return None
+        try:
+            value = Decimal(str(raw).strip().replace(",", "."))
+        except (InvalidOperation, ValueError):
+            return None
+        return value if value.is_finite() and value >= 0 else None
+
+    times = operation.get("times") if isinstance(operation.get("times"), Mapping) else {}
+    # Historical generated rows stored zero even when the source norm was blank.
+    # A source zero (including numeric 0) or a row without generated provenance is explicit.
+    missing_source = "times" in operation and not str(
+        times.get("operation_seconds") if times.get("operation_seconds") is not None else ""
+    ).strip()
+    rows = _list(operation.get("time"))
+    if rows:
+        values = [number(row.get("norm")) if isinstance(row, Mapping) else None for row in rows]
+        values = [None if missing_source and value == 0 else value for value in values]
+        return sum((value for value in values if value is not None), Decimal(0)), any(value is None for value in values)
+    seconds = number(times.get("operation_seconds"))
+    return (seconds * quantity / 60, False) if seconds is not None else (Decimal(0), True)
+
+
 def _row_minutes(operation: Mapping[str, Any]) -> Decimal | None:
-    """Σ of the operation's ETK time rows, minutes per batch; None — it has no time rows."""
-    rows = [row for row in _list(operation.get("time")) if isinstance(row, Mapping)]
-    return sum((_decimal(row.get("norm")) for row in rows), Decimal(0)) if rows else None
+    """Complete row norm, or None for absent/incomplete rows (never an invented zero)."""
+    if not _list(operation.get("time")):
+        return None
+    minutes, unknown = operation_time_summary(operation, Decimal(1))
+    return None if unknown else minutes
 
 
 def _operation_minutes(operation: Mapping[str, Any], quantity: Decimal) -> Decimal:
     """The ETK time norm of the operation, minutes per batch; an operation without time rows (moved from SUPPLYMAP)
     counts its seconds per unit × batch (no setup, ETK_VERSION 4)."""
-    minutes = _row_minutes(operation)
-    if minutes is not None:
-        return minutes
-    times = operation.get("times") if isinstance(operation.get("times"), Mapping) else {}
-    return _decimal(times.get("operation_seconds")) * quantity / 60
+    return operation_time_summary(operation, quantity)[0]
 
 
 def _document_batch(document: Mapping[str, Any]) -> Decimal:
@@ -3077,8 +3112,8 @@ def _document_batch(document: Mapping[str, Any]) -> Decimal:
 def operation_norms(document: Mapping[str, Any] | None) -> tuple[Decimal, tuple[Decimal | None, ...]]:
     """The ETK's own time norms — what production plans by: the batch the ETK is counted for and, for every operation
     of the document in order, its norm in minutes per batch — Σ of its time rows, as the ETK shows them and the block
-    scheme sums them. None — the operation has no time rows (moved from SUPPLYMAP, made by hand): its card's seconds
-    per unit and setup are all there is."""
+    scheme sums them. None means absent or incomplete rows; `operation_time_summary` supplies the numeric lower
+    bound and the unknown-time flag, and only absent rows may fall back to the card's seconds per unit."""
     if not isinstance(document, Mapping):
         return Decimal(1), ()
     operations = [item for item in _list(document.get("operations")) if isinstance(item, Mapping)]
@@ -3117,6 +3152,7 @@ def _route_ops(document: Mapping[str, Any], *, strict: bool) -> tuple[list[Route
             position=position, type=str(source.get("type") or operation.get("type") or ""),
             code=str(operation.get("code") or ""), name=name or f"Операция {position}",
             minutes=_operation_minutes(operation, quantity),
+            unknown_time=operation_time_summary(operation, quantity)[1],
             side=str(source.get("side") or operation.get("side") or ""), key=str(source.get("opKey") or ""),
         ))
     return ops, str(config.get("assemblyName") or kit.get("name") or ""), quantity
@@ -3206,7 +3242,10 @@ def _route(
     if route is None and config.get("mode") == "rework":
         route = _replace(chain_route(ops, final_name), manual=False, generated=True)
     route = route or derive_route(ops, final_name)
-    totals = route_totals(route, {op.position: op.minutes for op in ops}, quantity)
+    if strict and config.get("mode") == "coax":
+        validate_coax_finishing(route, ops)
+    totals = route_totals(route, {op.position: op.minutes for op in ops}, quantity,
+                            unknown_positions={op.position for op in ops if op.unknown_time})
     if config.get("topologyVersion") == 1 and route.generated and all(edge.per_unit == 1 for edge in route.edges):
         # These edges encode precedence, not repeated material inputs. Shared ancestors ran only once.
         parents: dict[str, list[str]] = defaultdict(list)
@@ -3254,7 +3293,8 @@ def propose_route(document: Mapping[str, Any] | None) -> dict[str, Any] | None:
     # A scheme still «one ПФ per operation» (`derived`) is not cut into ПФ even when the split comes out the same
     # (cut, crimp A, side A, crimp B, side B — a ПФ per operation): the proposal names the ПФ and launches by them.
     return {
-        "route": route_json(route, route_totals(route, {op.position: op.minutes for op in ops}, quantity)),
+        "route": route_json(route, route_totals(route, {op.position: op.minutes for op in ops}, quantity,
+                            unknown_positions={op.position for op in ops if op.unknown_time})),
         "same": same_split(route, current) and (current_json or {}).get("source") != "derived",
         "rule": rule,
     }
@@ -3482,7 +3522,13 @@ def _distinct_typed_keys(built: list[dict[str, Any]]) -> None:
     shrink on two connectors of a side) would share the ETK key and the build would be refused: the second and later
     ones get their ETK number on the connector. The first keeps its key, so a unique operation never changes."""
     taken: set[tuple[str, str, str]] = set()
+    stable: set[str] = set()
     for operation in built:
+        if operation.get("operation_key"):
+            if operation["operation_key"] in stable:
+                raise ValueError("Операции должны иметь уникальные смысловые ключи и сторону")
+            stable.add(operation["operation_key"])
+            continue
         key = _etk_key(operation)
         if key in taken:
             code, connector, side = key
@@ -3617,7 +3663,8 @@ def _build_manual(
             ))
             continue
         norm = item.operation_seconds * item.quantity * quantity / 60
-        if not norm:
+        missing_norm = item.source.get("tOp") is None or not str(item.source["tOp"]).strip()
+        if missing_norm:
             warnings.append(f"Операция {item.position} ({item.label}): не задана норма времени")
         if item.card is not None:
             replacements = _placeholder_map(item.source, config, "; ".join(row["name"] for row in semis), result, {}, {})
@@ -3643,9 +3690,8 @@ def _build_manual(
             "title": _card_title(item.card, item.source) if item.card else item.label, "card": card,
             "components": _manual_components(item, quantity), "semis": semis, "result": [_row(result, _format(quantity))],
             "result_label": "Изделие" if block.final and item.position == order[-1] else "Полуфабрикат",
-            "time": [{"name": result, "norm": _format(norm, 2)}],
-            "times": {"operation_seconds": str(item.source.get("tOp") or ""), "setup_seconds": str(item.source.get("tPrep") or ""),
-                      "machine_seconds": str(item.source.get("tMachine") or "")},
+            "time": [{"name": result, "norm": "" if missing_norm else _format(norm, 2)}],
+            "times": _times(item.source),
             "fields": fields,
         })
 
@@ -3670,7 +3716,8 @@ def _build_manual(
     }
     # Totals from the ETK time rows, as the read path (`document_route`) counts them.
     minutes = {operation["position"]: _operation_minutes(operation, quantity) for operation in built}
-    document["route"] = route_json(route, route_totals(route, minutes, quantity))
+    document["route"] = route_json(route, route_totals(route, minutes, quantity,
+        unknown_positions={op["position"] for op in built if operation_time_summary(op, quantity)[1]}))
     return document
 
 
@@ -3748,9 +3795,11 @@ def _tube_word(op: Mapping[str, Any]) -> str:
     return "ТТК" if "ТТК" in art else "ТУТ" if "ТУТ" in art else ""
 
 
-def _scheme_step(op: Mapping[str, Any]) -> str:
+def _scheme_step(op: Mapping[str, Any], config: Mapping[str, Any]) -> str:
     """What an inner operation of a ПФ hands on, short: «Контакты установлены в разъём», «Оплётка надета»."""
     operation_type = str(op.get("type") or "")
+    if operation_type.startswith("coax"):
+        return _coax_result_name(op, config, [op])
     kind = _kind(op)
     if kind == "ins":
         return "Контакты установлены в разъём"
@@ -3825,7 +3874,7 @@ def _scheme_chain(
     for block in route.blocks:
         last = operations[block.ops[-1] - 1]
         names[block.key] = block.name or (final_name if block.final else "") or (
-            _result_name(last, config, "") if block.kit else _scheme_step(last))
+            _result_name(last, config, "") if block.kit else _scheme_step(last, config))
     by_key = {block.key: block for block in route.blocks}
 
     def number(key: str) -> tuple[int, ...]:
@@ -3842,7 +3891,7 @@ def _scheme_chain(
             if block.kit:
                 result = _result_name(op, config, previous, [operations[item - 1] for item in block.ops[:index + 1]])
             else:
-                result = names[block.key] if last else _scheme_step(op)
+                result = names[block.key] if last else _scheme_step(op, config)
             if index:
                 semis = [{**_row(previous, count), "source": f"операция {_op_number(block.ops[index - 1])}"}]
             elif codes is not None and codes[position - 1].startswith("CUT_"):
@@ -4134,6 +4183,45 @@ def _ordered_physical_config(config: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _coax_finishing_config(config: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Apply the finishing rule on rebuilds too; issued documents and pinned production tasks stay immutable."""
+    if config.get("mode") != "coax":
+        return config
+    raw = config.get("ops")
+    if not isinstance(raw, list) or any(not isinstance(op, Mapping) for op in raw):
+        return config
+    colors = [index for index, op in enumerate(raw) if op.get("type") == "coaxConnColor"]
+    order = [index for index in range(len(raw)) if index not in colors]
+    label = next((index for index in order if raw[index].get("opKey") == "coaxInsLabel"), None)
+    coax = _coax(config)
+    heat = next((index for index in order if raw[index].get("opKey") == "coaxHeat" and (
+        raw[index].get("protective") or (coax.get("markMaterial") == "tape" and coax.get("markProtect")))), None)
+    if label is not None and heat is not None:
+        checks = [index for index in order if raw[index].get("type") == "coaxVswr"]
+        order = [index for index in order if index not in {label, heat, *checks}] + [label, heat, *checks]
+    order += colors
+    if order == list(range(len(raw))) and not (label is not None and heat is not None):
+        return config
+    result = deepcopy(dict(config))
+    result["ops"] = [deepcopy(raw[index]) for index in order]
+    if label is not None and heat is not None and not result.get("tab"):
+        result["tab"] = "coax"
+    if result.get("opOrder"):
+        result["opOrder"] = [str(op.get("opKey") or "") for op in result["ops"]]
+    route = result.get("route")
+    if isinstance(route, Mapping):
+        if route.get("source") in {"generated", "derived"}:
+            # Positional membership and source edges belonged to the old recipe. Re-derive the automatic PFs.
+            result.pop("route")
+            result["tab"] = "coax"
+        else:
+            positions = {old + 1: new + 1 for new, old in enumerate(order)}
+            for block in route.get("blocks") or []:
+                if isinstance(block, dict) and isinstance(block.get("ops"), list):
+                    block["ops"] = [positions.get(pos, pos) for pos in block["ops"]]
+    return result
+
+
 def build_etk(
     config: Mapping[str, Any], cards: Sequence[OperationCardTemplate], *,
     operation_library_commit: str = "",
@@ -4141,7 +4229,7 @@ def build_etk(
 ) -> dict[str, Any]:
     """Return an immutable document snapshot suitable for ProjectTechcard.rebuild. `operation_library_commit` — only a
     provenance label in `source` (documents built from the SUPPLYMAP library carry its commit); empty — none."""
-    config = _coax_quantity_config(config)
+    config = _coax_finishing_config(_coax_quantity_config(config))
     if _coax(config).get("lengthBasis") == "finished":
         coax = dict(_coax(config))
         values = []

@@ -61,3 +61,19 @@ it("says what went wrong when the server fails", async () => {
   render(<ShopWorkloadView />);
   expect(await screen.findByRole("alert")).toBeInTheDocument();
 });
+
+it("shows an incomplete workload as a lower bound and keeps unknown-only KBs visible", async () => {
+  const unknown = project({ hours: 0, unknown_operations: 1, by_site: {}, ready: null, status: "неполные нормы" });
+  unknown.kbs[0] = { ...unknown.kbs[0], hours: 0, unit_hours: 0, unknown_operations: 1 };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ ...DATA, projects: [unknown] }));
+  render(<ShopWorkloadView />);
+  await screen.findByText("713К.4");
+  expect(screen.getByText(/Норма времени не задана: 1 оп./)).toHaveTextContent("Часы и прогноз рассчитаны только по известным нормам");
+  expect(screen.getByText("не задана норма")).toBeInTheDocument();
+  expect(screen.queryByText(/позже 28.01.2027/)).not.toBeInTheDocument();
+  expect(screen.getAllByText("≥ 0").length).toBeGreaterThan(0);
+  fireEvent.click(screen.getByRole("radio", { name: "ЦАР" }));
+  expect(screen.getByText("713К.4")).toBeInTheDocument();
+  fireEvent.click(screen.getByText("713К.4"));
+  expect(screen.getByRole("table", { name: "КБ проекта 713К.4" })).toHaveTextContent("≥ 0");
+});

@@ -15,9 +15,10 @@ import pytest
 
 from app.modules.techcards.etk_builder import build_etk
 from app.modules.techcards.etk_live import (
-    EDITED, SNAPSHOT, TEMPLATE, live_document, stamp_templates, template_record,
+    EDITED, SNAPSHOT, TEMPLATE, fresh_card, live_document, stamp_templates, template_record,
 )
 from app.modules.techcards.operation_cards import OperationRecordEdit, parse_operation_library, parse_operation_template
+from app.modules.techcards.project_cards import operation_key
 
 from .test_etk_golden import CARDS, ERP_LIBRARY, LIBRARY, _cases
 from .test_etk_manual import CONFIG as MANUAL_CONFIG
@@ -137,6 +138,31 @@ def test_write_back_keeps_the_placeholders_of_what_was_left_as_shown():
     ]
     assert record["name"] == card.name
     assert [tool["name"] for tool in record["tooling"]] == [tool.name for tool in card.tooling]
+
+
+@pytest.mark.parametrize("mode", ["coax", "wire"])
+def test_legacy_operation_write_back_keeps_template_placeholders(mode):
+    template = _parsed(_cut_template())
+    config = _config()
+    config["mode"] = mode
+    config["ops"][0]["opKey"] = "cutCable"
+    document = build_etk(config, [template])
+    operation = document["operations"][0]
+    operation.pop("operation_key", None)
+    operation.pop("opKey", None)
+    operation["edited"] = {"by": "Technologist"}
+    before = deepcopy(document)
+
+    baseline = fresh_card(document, operation_key(operation), [template])
+    assert baseline is not None
+    assert baseline["steps"][0]["text"] == "Отрезать провод ПВ3 черный длиной 100 мм"
+    edited = deepcopy(operation["card"])
+    edited["steps"][1]["text"] = "Проверить длину рулеткой"
+    record = template_record(template, baseline, edited)
+    assert [step["text"] for step in record["steps"]] == [
+        "Отрезать провод {{WIRE_NAME}} длиной {{LENGTH}} мм", "Проверить длину рулеткой",
+    ]
+    assert document == before
 
 
 # ── API: the screens read live cards; «Править операцию» with and without «Сохранить также в шаблон» ──
