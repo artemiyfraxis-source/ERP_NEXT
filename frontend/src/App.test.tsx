@@ -34,7 +34,71 @@ afterEach(() => {
   forgetScanDevice();
   vi.useRealTimers();
   vi.restoreAllMocks();
+  window.localStorage.clear();
   window.history.replaceState({}, "", "/");
+});
+
+function serveCollapsibleSidebar(person = principal) {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+    if (String(input) === "/api/auth/me") return json(person);
+    if (String(input) === "/api/auth/ui-settings") return json({ views: {} });
+    return json({}, 404);
+  });
+}
+
+it("collapses sidebar blocks and restores the viewer's preference after remount", async () => {
+  serveCollapsibleSidebar();
+  const first = render(<App />);
+  const nav = await screen.findByRole("navigation", { name: "Основная навигация" });
+  const supply = within(nav).getByRole("button", { name: "Снабжение" });
+  expect(supply).toHaveAttribute("aria-expanded", "true");
+  fireEvent.click(supply);
+  expect(supply).toHaveAttribute("aria-expanded", "false");
+  expect(within(nav).queryByRole("button", { name: "Первичная документация" })).toBeNull();
+  expect(within(nav).queryByRole("button", { name: "Документация" })).toBeNull();
+  first.unmount();
+  render(<App />);
+  const restored = await screen.findByRole("navigation", { name: "Основная навигация" });
+  const toggle = within(restored).getByRole("button", { name: "Снабжение" });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  fireEvent.click(toggle);
+  expect(within(restored).getByRole("button", { name: "Первичная документация" })).toBeVisible();
+});
+
+it.each(["/?section=primarydocs&tab=upd&upd=u42", "/?block=supply"])
+  ("forces the current sidebar block open for %s without overwriting the saved collapse", async address => {
+    window.localStorage.setItem(`erp-sidebar-collapsed:${principal.user.id}`, '["supply"]');
+    window.history.replaceState({}, "", address);
+    serveCollapsibleSidebar();
+    render(<App />);
+    const nav = await screen.findByRole("navigation", { name: "Основная навигация" });
+    const supply = within(nav).getByRole("button", { name: "Снабжение" });
+    expect(supply).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(supply);
+    expect(supply).toHaveAttribute("aria-expanded", "true");
+    expect(within(nav).getByRole("button", { name: "Первичная документация" })).toBeVisible();
+    if (address.includes("upd=")) expect(new URLSearchParams(window.location.search).get("upd")).toBe("u42");
+    fireEvent.click(within(nav).getByRole("button", { name: "Главная" }));
+    expect(supply).toHaveAttribute("aria-expanded", "false");
+  });
+
+it("keeps commands searchable through Ctrl+K while their sidebar block is collapsed", async () => {
+  serveCollapsibleSidebar();
+  render(<App />);
+  const nav = await screen.findByRole("navigation", { name: "Основная навигация" });
+  fireEvent.click(within(nav).getByRole("button", { name: "Снабжение" }));
+  fireEvent.keyDown(document.body, { key: "k", code: "KeyK", ctrlKey: true });
+  const search = await screen.findByRole("dialog", { name: "Поиск" });
+  fireEvent.change(within(search).getByRole("combobox"), { target: { value: "Первичная документация" } });
+  expect(await within(search).findByRole("option", { name: /Первичная документация/ })).toBeInTheDocument();
+});
+
+it("keeps sidebar preferences separate when another employee signs in", async () => {
+  window.localStorage.setItem(`erp-sidebar-collapsed:${principal.user.id}`, '["supply"]');
+  serveCollapsibleSidebar({ ...principal, user: { ...principal.user, id: "other-viewer" } });
+  render(<App />);
+  const nav = await screen.findByRole("navigation", { name: "Основная навигация" });
+  expect(within(nav).getByRole("button", { name: "Снабжение" })).toHaveAttribute("aria-expanded", "true");
 });
 
 const journalGrants = [undefined, "view", "edit"] as const;
@@ -331,7 +395,7 @@ it("draws the block tiles with line icons, never emoji (audit М-6)", async () =
   await screen.findByText("Добрый день, Сотрудник");
   const tiles = document.querySelectorAll(".block-tile");
   expect(tiles.length).toBeGreaterThan(0);
-  expect(screen.getByRole("button", { name: "Администрирование" }).querySelector("svg path")).not.toBeNull();
+  expect(within(screen.getByRole("main")).getByRole("button", { name: "Администрирование" }).querySelector("svg path")).not.toBeNull();
   tiles.forEach((tile) => {
     expect(tile.querySelector(".tile-icon svg.block-icon")).not.toBeNull();
     expect(tile.querySelector(".tile-icon")?.textContent).toBe("");
@@ -680,7 +744,7 @@ it("NAV-1: home shows the blocks as tiles and a block shows its section cards in
   expect(window.location.search).toBe("?block=supply");
   // Sidebar groups agree with the blocks.
   const nav = screen.getByRole("navigation", { name: "Основная навигация" });
-  expect(within(nav).getAllByRole("heading", { level: 4 }).map((heading) => heading.textContent))
+  expect(within(nav).getAllByRole("heading", { level: 4 }).map((heading) => heading.querySelector("button")?.textContent?.replace(/^[▾▸]/, "")))
     .toEqual(["Производство", "Снабжение", "Склад", "Менеджмент", "Справочники"]);
 });
 

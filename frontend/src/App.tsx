@@ -10,6 +10,7 @@ import {
 } from "./api";
 import { DraftProvider, DraftStore } from "./formDrafts";
 import { setPersonalViewsUser } from "./personalViews";
+import { useCollapsedGroups } from "./useCollapsedGroups";
 import { setScanDeviceUser } from "./ScanAgent";
 import {
   accessLevelOf,
@@ -105,6 +106,8 @@ function bindPersonalState(userId: string | null) {
 
 export function App() {
   const [principal, setPrincipal] = useState<Principal | null>(null);
+  const viewerId = principal?.viewing?.viewer.id ?? principal?.user.id;
+  const sidebarGroups = useCollapsedGroups(viewerId ? `erp-sidebar-collapsed:${viewerId}` : null);
   function acceptPrincipal(next: Principal | null) {
     bindPersonalState(next?.user.id ?? null);
     setPrincipal(next);
@@ -335,6 +338,7 @@ export function App() {
     : place.section === "equipmentsetup" || visibleNav.some(({ id }) => id === place.section) ? place.section : "cabinet";
   const activeWithin = visibleNav.find(({ id }) => id === activeSection)?.within;
   const activeBlock = activeSection === "cabinet" ? blocks.find((block) => block.id === place.block) ?? null : null;
+  const currentBlock = activeBlock?.id ?? visibleNav.find(({ id }) => id === activeSection)?.block;
   // «Снабжение» is menu items per tab: the lit one follows `?tab=`; the «Заявки» register lights the «Заявки» tab.
   const procurementTab = procurementMenuTab(place.tab, !canAct(principal, "procurement"));
   const isActive = (item: NavItem) => item.tab
@@ -376,12 +380,18 @@ export function App() {
         <SearchEntry />
         <nav aria-label="Основная навигация">
           {visibleNav.filter((item) => !item.block).map((item) => <NavButton key={navKey(item)} item={item} active={activeSection === item.id && !activeBlock} open={openItem} />)}
-          {blocks.map((block) => (
-            <div className="nav-group" key={block.id}>
-              <h4>{block.title}</h4>
-              {block.items.map((item) => <NavButton key={navKey(item)} item={item} active={isActive(item)} open={openItem} />)}
-            </div>
-          ))}
+          {blocks.map((block) => {
+            const expanded = currentBlock === block.id || !sidebarGroups.collapsed.has(block.id);
+            return <div className="nav-group" key={block.id}>
+              <h4><button type="button" className="nav-group-toggle" aria-expanded={expanded} aria-disabled={currentBlock === block.id}
+                aria-controls={`nav-block-${block.id}`} onClick={() => { if (currentBlock !== block.id) sidebarGroups.toggle(block.id); }}>
+                <span className="caret" aria-hidden="true">{expanded ? "▾" : "▸"}</span>{block.title}
+              </button></h4>
+              <div id={`nav-block-${block.id}`} hidden={!expanded}>
+                {block.items.map((item) => <NavButton key={navKey(item)} item={item} active={isActive(item)} open={openItem} />)}
+              </div>
+            </div>;
+          })}
         </nav>
         <div className="profile side-foot">
           <strong>{principal.user.name}</strong>
@@ -465,7 +475,7 @@ export function App() {
           openStaff={() => navigate("staff")}
           startViewAs={startViewAs}
         />}
-        {activeSection === "access" && <AccessPage />}
+        {activeSection === "access" && <AccessPage viewerId={viewerId ?? principal.user.id} />}
       </main>
     </div>
     {relogin}

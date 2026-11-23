@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { ACCESS_LEVEL_LABELS, accessLevelLabel, type AccessMode, type Principal } from "./api";
 import {
   BLOCKS, MOVED_TABS, NAV, canAct, canSee, hasFullAccess, isSection, isViewOnly, manualJobsDestination, procurementMenuTab, runsTheSystem, sectionOfTab,
-  visibleBlocks, visibleNav,
+  openUpdCard, visibleBlocks, visibleNav,
 } from "./navigation";
 
 const user = { id: "1", email: "u@example.test", name: "Сотрудник", department: "КБ" };
@@ -58,8 +58,24 @@ const ALL_EDIT = Object.fromEntries(
     "erpref", "operations"].map((key) => [key, "edit" as AccessMode]),
 );
 
-const BUYER_MENU = ["Сегодня", "Заявки", "Запросы КП", "Закупка", "Счета и поставки", "Статистика"];
+const BUYER_MENU = ["Сегодня", "Заявки", "Запросы КП", "Закупка", "Счета и поставки", "Первичная документация", "Статистика"];
 const READER_MENU = BUYER_MENU.filter((label) => label !== "Сегодня");
+
+it("places primary documents after orders in supply, hides the empty docs block and preserves UPD deep links", () => {
+  const blocks = visibleBlocks(as("operator", { procurement: "view" }));
+  const supply = blocks.find(block => block.id === "supply")!;
+  const orders = supply.items.findIndex(item => item.tab === "orders");
+  expect(supply.items[orders + 1]).toMatchObject({ id: "primarydocs", block: "supply", permission: "procurement" });
+  expect(blocks.some(block => block.id === "docs")).toBe(false);
+  const previous = window.location.href;
+  try {
+    openUpdCard("upd-42");
+    const params = new URLSearchParams(window.location.search);
+    expect(Object.fromEntries(params)).toEqual({ section: "primarydocs", tab: "upd", upd: "upd-42" });
+  } finally {
+    window.history.replaceState({}, "", previous);
+  }
+});
 
 const EVERYTHING = {
   "Производство": ["Проекты", "Ресурсное планирование", "Оборудование", "Задания", "ОТК"],
@@ -67,7 +83,6 @@ const EVERYTHING = {
   "Снабжение": ["Оформить заявку", ...BUYER_MENU],
   "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства"],
   "Менеджмент": ["Данные отправок", "Производственный план"],
-  "Документация": ["Первичная документация"],
   "Справочники": ["База данных", "Закупка"],
   "Администрирование": ["Сотрудники", "Доступы", "Системный журнал"],
 };
@@ -116,8 +131,6 @@ it("gives the foreman the shop, the stock and the storekeeper's shipping, of the
     "Снабжение": ["Оформить заявку", ...READER_MENU],
     "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства"],
     "Менеджмент": ["Производственный план"],
-    // «Снабжение» on view reads its moved tabs too.
-    "Документация": ["Первичная документация"],
     "Справочники": ["Закупка"],
   });
 });
@@ -128,7 +141,6 @@ it("gives the technical lead projects, planning, the whole supply block and the 
     "Снабжение": ["Оформить заявку", ...BUYER_MENU],
     "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства"],
     "Менеджмент": ["Производственный план"],
-    "Документация": ["Первичная документация"],
     "Справочники": ["База данных", "Закупка"],
   });
 });
@@ -139,7 +151,6 @@ it("gives the commercial lead projects, the supply sheets and shipping for readi
     "Снабжение": ["Оформить заявку", ...READER_MENU],
     "Склад": ["Склад", "Приёмка с производства"],
     "Менеджмент": ["Производственный план"],
-    "Документация": ["Первичная документация"],
     "Справочники": ["Закупка"],
   });
 });
@@ -250,7 +261,8 @@ it("opens a section by its key and the mode alone: no level name decides, a miss
   // A grant is the whole decision — the level's name adds nothing and takes nothing away.
   for (const level of ["operator", "foreman", "tech_lead", "commercial"]) {
     expect(section(as(level, { procurement: "edit" }), "Снабжение")).toEqual(BUYER_MENU);
-    expect(section(as(level, { procurement: "view" }), "Документация")).toEqual(["Первичная документация"]);
+    expect(section(as(level, { procurement: "view" }), "Снабжение")).toEqual(READER_MENU);
+    expect(section(as(level, { procurement: "view" }), "Документация")).toEqual([]);
     expect(section(as(level, { procurement: "view" }), "Справочники")).toEqual(["Закупка"]);
     expect(section(as(level, { receiving: "view" }), "Склад")).toEqual(["Приёмка"]);
     expect(section(as(level, { warehouse: "view" }), "Склад")).toEqual(["Склад"]);
@@ -379,7 +391,7 @@ it("owner 28.10: the tabs of «Снабжение» are menu items in the order 
   const items = visibleBlocks(as("tech_lead", TECH_LEAD)).find((block) => block.title === "Снабжение")!.items;
   expect(items.map((item) => [item.id, item.tab])).toEqual([
     ["newrequest", undefined], ["procurement", "today"], ["procurement", "requests"], ["procurement", "rfq"],
-    ["procurement", "buy"], ["procurement", "orders"], ["procurement", "stats"],
+    ["procurement", "buy"], ["procurement", "orders"], ["primarydocs", undefined], ["procurement", "stats"],
   ]);
 });
 
