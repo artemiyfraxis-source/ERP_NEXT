@@ -13,7 +13,7 @@ from tests.workflows.test_machine_writes_api import (
 )
 from tests.workflows.test_machines_api import WORDS, _bridge, _report, machines_api  # noqa: F401
 
-RUNNER = {**AGENT, "runner_version": "1.5.0"}
+RUNNER = {**AGENT, "runner_version": "1.5.1"}
 SEEN = {"32": WORDS["32"], "33": 0, "54": 100, "55": 0}
 INPUT = {"parameter": "length_mm", "case": "machine", "measured": "320", "seen": "325"}
 
@@ -92,8 +92,25 @@ def test_length_correction_keeps_safety_refusals(machines_api, scenario):
     elif scenario == "missing_d54":
         _report(bridge, seq=2, registers=WORDS)
     else:
-        TestClient(app).post(NEXT, headers=bridge, json={**AGENT, "runner_version": "1.4.0"})
+        TestClient(app).post(NEXT, headers=bridge, json={**AGENT, "runner_version": "1.5.0"})
     assert _post(admin, CARD + "/correction", INPUT).status_code == 409
+
+
+@pytest.mark.parametrize("state", [102, 107])
+@pytest.mark.parametrize("alarm", [19, None])
+def test_alarm_must_be_readable_and_zero_before_enqueue(machines_api, state, alarm):
+    _, _, admin, _, _ = machines_api
+    bridge = prepare(admin)
+    words = {**WORDS, **SEEN, "766": state}
+    if alarm is None:
+        words.pop("782")
+    else:
+        words["782"] = alarm
+    assert _report(bridge, seq=2, registers=words).status_code == 200
+    response = _post(admin, CARD + "/correction", INPUT)
+    assert response.status_code == 409
+    assert ("На станке авария" if alarm else "Не удалось прочитать аварию") in response.text
+    assert TestClient(app).post(NEXT, headers=bridge, json=RUNNER).json()["command"] is None
 
 
 def test_old_runner_cannot_claim_a_correction_queued_before_its_heartbeat(machines_api):
@@ -107,6 +124,7 @@ def test_old_runner_cannot_claim_a_correction_queued_before_its_heartbeat(machin
 @pytest.mark.parametrize("changes", [
     {"readback": {"658": 32000, "659": 0}}, {"readback": {"658": 31999, "659": 0, "54": 0, "55": 0}},
     {"before": {**SEEN, "54": 200}}, {"correction_pulsed": False},
+    {"readback": {"658": 32000, "659": 0, "54": 100, "55": 0}},
     {"ok": False, "outcome": "unknown", "error": "D600.6 pulse not confirmed cleared"},
 ])
 def test_missing_pulse_or_readback_evidence_never_claims_success(machines_api, changes):

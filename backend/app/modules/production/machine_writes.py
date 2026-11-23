@@ -22,7 +22,7 @@ index (it may queue while a write runs, it cancels what is queued), no answer �
 «Закрыть / Открыть пульт на ПК» (`hmi_close` / `hmi_open`, migration 0211) are machine commands too; they need the
 runner 1.4.0 and get `HMI_RESULT_WAIT` for their answer (a graceful close waits up to 15 s for the panel).
 
-Length correction uses the PLC: runner 1.5.0 writes measured D658, pulses D600.6 and reads signed D54. D32 stays
+Length correction uses the PLC: runner 1.5.1 writes measured D658, pulses D600.6 and reads signed D54. D32 stays
 the job length. The old length offset in `production_machine_offsets` is retained as history but is never applied.
 Other parameter corrections still use the stored ERP offset in 0,01 мм, added to the ETK nominal. The ETK side goes
 through the ETK revision path in app/workflows/machine_writes_api.py."""
@@ -82,7 +82,7 @@ RUNNER_FEED_WHEEL = "1.3.0"
 RUNNER_FEED_WHEEL_OUTDATED = "Служба записи на ПК станка устарела — обновите (нужна 1.3.0)"
 # The runner 1.4.0 (20.11.2026): «Закрыть / Открыть пульт на ПК» and the inner layer words D44..D53 (mbd 1.4.0 writes them).
 RUNNER_HMI = "1.4.0"
-RUNNER_CORRECTION = "1.5.0"
+RUNNER_CORRECTION = "1.5.1"
 LENGTH_CORRECTION = "length_correction"
 RUNNER_HMI_OUTDATED = "Служба записи на ПК станка устарела — обновите (нужна 1.4.0)"
 RUNNER_WORDS: dict[int, str] = {address: RUNNER_HMI for address in range(44, 54)}
@@ -125,7 +125,7 @@ def runner_needed_for(bits: list[dict], addresses) -> str | None:
 
 def runner_refusal(needed: str) -> str:
     if needed == RUNNER_CORRECTION:
-        return "Служба записи на ПК станка устарела — обновите (нужна 1.5.0)"
+        return "Служба записи на ПК станка устарела — обновите (нужна 1.5.1)"
     return {RUNNER_FEED_WHEEL: RUNNER_FEED_WHEEL_OUTDATED, RUNNER_HMI: RUNNER_HMI_OUTDATED}.get(needed, RUNNER_OUTDATED)
 
 
@@ -460,6 +460,11 @@ def enqueue_length_correction(session: Session, *, equipment_id: UUID, measured:
     words = rules.snapshot_words(snapshot)
     length = rules._u32(words, 32)
     correction = length_correction_value(words)
+    alarm = words.get(782)
+    if type(alarm) is not int or not 0 <= alarm <= rules.WORD_MAX:
+        raise MachineCommandRefused("Не удалось прочитать аварию станка D782 — обновите данные")
+    if alarm != 0:
+        raise MachineCommandRefused(f"На станке авария D782={alarm} — сначала сбросьте")
     if length is None or correction is None:
         raise MachineCommandRefused("Нет свежих данных длины и поправки станка — обновите данные")
     if Decimal(length) * STEP != seen:
@@ -516,6 +521,8 @@ def finish(session: Session, *, equipment_id: UUID, command_id: UUID, ok: bool, 
         kept |= {54, 55}
         if not correction_pulsed or length_correction_value(read) is None:
             differ.append("D54 / подтверждение импульса D600.06")
+        elif length_correction_value(read) == length_correction_value(row.payload["seen"]):
+            differ.append("поправка не подтверждена станком")
         if before != row.payload["seen"]:
             differ.append("длина или поправка до записи изменилась")
     row.readback = {str(address): word for address, word in sorted(read.items()) if address in kept}
@@ -533,6 +540,10 @@ def finish(session: Session, *, equipment_id: UUID, command_id: UUID, ok: bool, 
             reason = "Служба обмена со станком (mbd) устарела — обновите" + (f" до {need}" if need else "")
         elif reason.startswith("state "):
             reason = "Станок не в ожидании: " + reason.removeprefix("state ")
+        elif correction and (reason.startswith("На станке авария ") or
+                             reason.startswith("Не удалось прочитать аварию станка ") or
+                             reason == "Поправка не подтверждена станком"):
+            pass
         elif correction and reason:
             reason = ("Длина или поправка на станке изменилась — обновите данные и повторите"
                       if reason.startswith("seen value changed") else

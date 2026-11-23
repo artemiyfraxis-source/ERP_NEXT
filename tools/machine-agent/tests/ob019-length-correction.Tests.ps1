@@ -13,19 +13,23 @@ Describe 'PLC length correction' {
     BeforeEach {
         $script:corrCalls = @(); $script:corrFault = ''; $script:corrPulsed = $false; $script:corrStateReads = 0
         Mock Test-HmiOpen { $script:corrFault -eq 'hmi' }
-        Mock Get-MbdVersion { if ($script:corrFault -eq 'old') { '1.4.0' } else { '1.5.0' } }
+        Mock Get-MbdVersion { if ($script:corrFault -eq 'old') { '1.5.0' } else { '1.5.1' } }
         Mock Read-MachineState {
             $script:corrStateReads++
+            if ($script:corrFault -eq 'alarm' -or ($script:corrFault -eq 'alarm_after_write' -and $script:corrStateReads -eq 2)) { return @{ '766' = 102; '782' = 19 } }
+            if ($script:corrFault -eq 'alarm_unreadable') { return @{ '766' = 102; '782' = $null } }
             if ($script:corrFault -eq 'running' -or ($script:corrFault -eq 'running_after_write' -and $script:corrStateReads -eq 2)) { @{ '766' = 103; '782' = 0 } }
             else { @{ '766' = 102; '782' = 0 } }
         }
         Mock Read-Range {
+            if ($Address -eq 600) { return @(0) }
             if ($Address -eq 32) {
                 if ($script:corrFault -eq 'length_changed') { return @(32600, 0) }
                 return @(32500, 0)
             }
             if ($Address -eq 54) {
                 if ($script:corrPulsed) {
+                    if ($script:corrFault -eq 'unchanged') { return @(100, 0) }
                     if ($script:corrFault -eq 'read_failed') { throw 'read timeout' }
                     return @(65386, 65535)
                 }
@@ -45,7 +49,8 @@ Describe 'PLC length correction' {
             if ($request['cmd'] -eq 'pulse') {
                 $script:corrPulsed = $true
                 if ($script:corrFault -eq 'pulse_timeout') { throw 'pulse timeout' }
-                $pulse = @{ addr = 600; bit = 6; set = $true; cleared = $true; after = 0 }
+                $pulse = @{ addr = 600; bit = 6; set = $true; cleared = $true; before = 0; high = 64; after = 0 }
+                if ($script:corrFault -eq 'preexisting_high') { $pulse['before'] = 64 }
                 if ($script:corrFault -eq 'pulse_malformed') { $pulse.Remove('after') }
                 if ($script:corrFault -eq 'pulse_not_cleared') { $pulse['cleared'] = $false }
                 return ConvertTo-JsonLite @{ ok = $true; result = $pulse }
@@ -71,7 +76,7 @@ Describe 'PLC length correction' {
         $script:corrCalls[1]['hold_ms'] | Should Be $script:HoldMs
     }
 
-    foreach ($fault in @('hmi', 'old', 'running', 'length_changed', 'correction_changed')) {
+    foreach ($fault in @('hmi', 'old', 'running', 'alarm', 'alarm_unreadable', 'length_changed', 'correction_changed')) {
         It ('refuses before any write: ' + $fault) {
             $script:corrFault = $fault
             $result = Invoke-LengthCorrection (New-LengthCorrection) ([Diagnostics.Stopwatch]::StartNew())
@@ -80,7 +85,7 @@ Describe 'PLC length correction' {
             $script:corrCalls.Count | Should Be 0
         }
     }
-    foreach ($fault in @('write_mismatch', 'running_after_write')) {
+    foreach ($fault in @('write_mismatch', 'running_after_write', 'alarm_after_write')) {
         It ('does not pulse when measured write or final guards fail: ' + $fault) {
             $script:corrFault = $fault
             $result = Invoke-LengthCorrection (New-LengthCorrection) ([Diagnostics.Stopwatch]::StartNew())
@@ -88,7 +93,7 @@ Describe 'PLC length correction' {
             $script:corrPulsed | Should Be $false
         }
     }
-    foreach ($fault in @('pulse_timeout', 'pulse_malformed', 'pulse_not_cleared', 'read_failed')) {
+    foreach ($fault in @('pulse_timeout', 'pulse_malformed', 'pulse_not_cleared', 'preexisting_high', 'read_failed', 'unchanged')) {
         It ('reports unknown without retry after ambiguous pulse: ' + $fault) {
             $script:corrFault = $fault
             $result = Invoke-LengthCorrection (New-LengthCorrection) ([Diagnostics.Stopwatch]::StartNew())

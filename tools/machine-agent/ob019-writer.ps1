@@ -53,7 +53,10 @@ $script:Self = $MyInvocation.InvocationName
 if (-not $BridgeScript) { $BridgeScript = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'ob019-bridge.ps1' }
 . $BridgeScript -Server $Server -TokenPath $TokenPath -MbdHost $MbdHost -MbdPort $MbdPort -MbdScript $MbdScript -LogPath $LogPath -PollMs $PollMs -Once:$Once
 # 1.5.0: kind length_correction uses measured D658..659, pulse D600.6 and signed D54..55 read-back.
-$script:RunnerVersion = '1.5.0'
+$script:RunnerVersion = '1.5.1'
+$script:CorrectionAlarm = $script:Json.DeserializeObject('"\u041d\u0430 \u0441\u0442\u0430\u043d\u043a\u0435 \u0430\u0432\u0430\u0440\u0438\u044f D782={0} \u2014 \u0441\u043d\u0430\u0447\u0430\u043b\u0430 \u0441\u0431\u0440\u043e\u0441\u044c\u0442\u0435"')
+$script:CorrectionAlarmUnreadable = $script:Json.DeserializeObject('"\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u0442\u044c \u0430\u0432\u0430\u0440\u0438\u044e \u0441\u0442\u0430\u043d\u043a\u0430 D782 \u2014 \u043e\u0431\u043d\u043e\u0432\u0438\u0442\u0435 \u0434\u0430\u043d\u043d\u044b\u0435"')
+$script:CorrectionUnconfirmed = $script:Json.DeserializeObject('"\u041f\u043e\u043f\u0440\u0430\u0432\u043a\u0430 \u043d\u0435 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0430 \u0441\u0442\u0430\u043d\u043a\u043e\u043c"')
 # Machine commands: the bit held and the machine states (D766) each may run in, empty = any state; "off" = switch bits
 # ('addr.bit') that must read 0 right before the pulse (Start with the feed rollers lifted D604.0 is refused). Mirrors
 # ALLOWED_STATES and BLOCKED_BY_BITS of backend production/machine_control.py (a backend test compares them).
@@ -177,6 +180,7 @@ function Test-HmiOpen {
 # D766 machine state and D782 alarm in one read (D766..D782).
 function Read-MachineState {
     $values = Read-Range 766 17
+    if (@($values).Count -ne 17 -or $values[16] -isnot [int] -or $values[16] -lt 0 -or $values[16] -gt 65535) { throw $script:CorrectionAlarmUnreadable }
     return @{ '766' = [int]$values[0]; '782' = [int]$values[16] }
 }
 
@@ -210,19 +214,30 @@ function Invoke-LengthCorrection($Command, [Diagnostics.Stopwatch]$Since) {
         if ($Since.ElapsedMilliseconds -ge $deadline) { throw 'length correction expired' }
         if (Test-HmiOpen) { throw 'PXS_HMI is running' }
         $version = Get-MbdVersion
-        if (-not (Test-MbdCurrent $version '1.5.0')) { throw ('mbd outdated: ' + $version + ', need 1.5.0') }
+        if (-not (Test-MbdCurrent $version '1.5.1')) { throw ('mbd outdated: ' + $version + ', need 1.5.1') }
         # Recheck all guards before the measured write, then again immediately before the pulse.
         foreach ($phase in @(0, 1)) {
-            $state = Read-MachineState
+            try { $state = Read-MachineState } catch { throw $script:CorrectionAlarmUnreadable }
             if (@(102, 107) -notcontains $state['766']) { throw ('state ' + $state['766']) }
+            if ($state['782'] -isnot [int] -or $state['782'] -lt 0 -or $state['782'] -gt 65535) { throw $script:CorrectionAlarmUnreadable }
+            if ($state['782'] -ne 0) { throw ($script:CorrectionAlarm -f $state['782']) }
             foreach ($address in @(32, 54)) {
-                $read = @(Read-Range $address 2)
-                if ($read.Count -ne 2) { throw 'short length correction guard read' }
+                $read = Read-Range $address 2
+                if (@($read).Count -ne 2) { throw 'short length correction guard read' }
                 for ($i = 0; $i -lt 2; $i++) {
                     $key = [string]($address + $i)
                     if ([int]$read[$i] -ne [int]$seen[$key]) { throw ('seen value changed D' + $key) }
                     $result['before'][$key] = [int]$read[$i]
                 }
+            }
+            $commandWord = Read-Range 600 1
+            if (@($commandWord).Count -ne 1 -or $commandWord[0] -isnot [int] -or $commandWord[0] -lt 0 -or $commandWord[0] -gt 65535) { throw 'invalid D600 readback' }
+            if (($commandWord[0] -band 64) -ne 0) {
+                if ($phase -ne 0) { throw 'D600.6 became high before pulse' }
+                $recovery = $script:Json.DeserializeObject((Invoke-MbdLine (ConvertTo-JsonLite @{ cmd = 'recover_correction' })))
+                if (-not $recovery['ok']) { throw ([string]$recovery['error']) }
+                $low = $recovery['result']['after']
+                if ($low -isnot [int] -or $low -lt 0 -or $low -gt 65535 -or ($low -band 64) -ne 0) { throw 'D600.6 recovery clear not confirmed' }
             }
             if (Test-HmiOpen) { throw 'PXS_HMI is running' }
             if ($Since.ElapsedMilliseconds -ge $deadline) { throw 'length correction expired' }
@@ -238,11 +253,17 @@ function Invoke-LengthCorrection($Command, [Diagnostics.Stopwatch]$Since) {
         $reply = Invoke-Pulse 600 6
         if (-not $reply['ok']) { throw ([string]$reply['error']) }
         $pulse = $reply['result']
+        foreach ($key in @('before', 'high', 'after')) {
+            if ($pulse[$key] -isnot [int] -or $pulse[$key] -lt 0 -or $pulse[$key] -gt 65535) { throw 'D600.6 fresh pulse not confirmed' }
+        }
+        if (($pulse['before'] -band 64) -ne 0 -or ($pulse['high'] -band 64) -eq 0) { throw 'D600.6 fresh pulse not confirmed' }
         if ($pulse['set'] -ne $true -or $pulse['cleared'] -ne $true -or $pulse['addr'] -ne 600 -or $pulse['bit'] -ne 6 -or $pulse['after'] -isnot [int] -or $pulse['after'] -lt 0 -or $pulse['after'] -gt 65535 -or ([int]$pulse['after'] -band 64) -ne 0) { throw 'D600.6 pulse not confirmed cleared' }
         $result['correction_pulsed'] = $true
-        $read = @(Read-Range 54 2)
-        if ($read.Count -ne 2) { throw 'short D54 readback' }
+        try { $read = Read-Range 54 2 } catch { throw $script:CorrectionUnconfirmed }
+        if (@($read).Count -ne 2) { throw $script:CorrectionUnconfirmed }
+        foreach ($word in $read) { if ($word -isnot [int] -or $word -lt 0 -or $word -gt 65535) { throw $script:CorrectionUnconfirmed } }
         $result['readback']['54'] = [int]$read[0]; $result['readback']['55'] = [int]$read[1]
+        if ($read[0] -eq $seen['54'] -and $read[1] -eq $seen['55']) { throw $script:CorrectionUnconfirmed }
         $result['ok'] = $true; $result['outcome'] = 'done'
     } catch {
         $result['error'] = $_.Exception.Message
