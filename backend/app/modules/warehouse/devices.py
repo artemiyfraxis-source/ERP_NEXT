@@ -1,11 +1,12 @@
 """Device inventory from heartbeats. Queue polling never refreshes device liveness."""
 
 from datetime import datetime
+from typing import Callable
 from uuid import UUID, uuid4
 
 from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, or_, select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.shared.persistence import Base
 from app.shared.events import AuditEvent
@@ -205,7 +206,7 @@ def vna_binding(uow, serial: str) -> dict | None:
 
 
 def transfer_vna(uow, *, serial: str, owner: str, target: str, instrument_id: UUID,
-                 actor: Actor, now: datetime) -> None:
+                 actor: Actor, now: datetime, check_sessions: Callable[[Session], None]) -> None:
     with uow:
         session = _session(uow)
         target_device = session.scalar(select(DeviceRow).where(
@@ -217,6 +218,8 @@ def transfer_vna(uow, *, serial: str, owner: str, target: str, instrument_id: UU
             VnaBindingRow.serial == serial, VnaBindingRow.machine_id == owner).values(machine_id=target))
         if moved.rowcount != 1:
             raise ScanJobClosed("Привязка ВАЦ уже изменилась — проверьте прибор ещё раз")
+        # The binding update serializes this cross-module guard against new sessions using control_station.
+        check_sessions(session)
         session.execute(update(DeviceRow).where(DeviceRow.kind == "s2vna", DeviceRow.device_id == serial,
             DeviceRow.machine_id != target).values(present=False))
         # No queued or in-flight capture from the previous owner may survive a transfer.

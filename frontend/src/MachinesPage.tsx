@@ -202,13 +202,15 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
     return words.length ? rows.filter((row) => { const haystack = searchText(row); return words.every((word) => haystack.includes(word)); })
       : rows;
   }, [rows, query]);
-  const atSite = (row: MachineRow) => row.kind !== "machine" || !site || row.site === site;
+  const showSites = new Set(rows.filter((row) => row.kind === "machine" && row.site).map((row) => row.site)).size >= 2;
+  useEffect(() => { if (!showSites) setSite(""); }, [showSites]);
+  const activeSite = showSites ? site : "";
+  const atSite = (row: MachineRow) => !activeSite || (row.kind === "machine" && row.site === activeSite);
   /** «Только подключённые» — на связи сейчас (координатор 21.11.2026), а не «есть агент»: станок — связь «На связи»;
    *  принтер и прибор — ещё и сам виден агенту («Принтер виден», «Подключён»). */
   const connected = (row: MachineRow) => row.link.code === "ok" && (row.kind === "machine" || row.state.tone === "ok");
   const connectedCount = found.filter((row) => atSite(row) && connected(row)).length;
-  // Принтеры и приборы без участка видны на любом участке — и в счётчике тоже.
-  const siteCount = (which: Site) => found.filter((row) => (row.kind !== "machine" || !which || row.site === which) && (!onlyConnected || connected(row))).length;
+  const siteCount = (which: Site) => found.filter((row) => (!which || (row.kind === "machine" && row.site === which)) && (!onlyConnected || connected(row))).length;
   const shown = view === "setup" ? [] : found.filter((row) => atSite(row) && (!onlyConnected || connected(row))).sort(byNumber);
   const families = data?.families ?? [];
   // Группа строки — её `family`; группа, которой нет в `families` ответа, встаёт перед «Прочее», а не прячется в нём.
@@ -228,7 +230,7 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
             {VIEWS.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={view === id} className={view === id ? "on" : ""}
               onClick={() => setView(id)}>{label}</button>)}
           </div>}
-          {view !== "setup" && <div className="seg-tabs sub" role="radiogroup" aria-label="Участок">
+          {view !== "setup" && showSites && <div className="seg-tabs sub" role="radiogroup" aria-label="Участок">
             {SITES.map(([id, label]) => <button key={id || "all"} type="button" role="radio" aria-checked={site === id} className={site === id ? "on" : ""}
               onClick={() => setSite(id)}>{label}<span className={`ship-tab-count${siteCount(id) ? "" : " is-zero"}`}>{siteCount(id)}</span></button>)}
           </div>}

@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.shared.persistence import Base
+from app.shared.clock import as_utc
 
 from .devices import DeviceRow, VnaBindingRow, control_capability, control_ops, idn_serial
 from .scan_agents import LIVE_FOR, ScanAgentRow
@@ -170,6 +171,12 @@ def control_station(session, serial: str, now: datetime, *, machine_id: str | No
         VnaBindingRow.serial == serial, VnaBindingRow.machine_id == owner).values(machine_id=owner))
     if locked.rowcount != 1:
         raise ScanJobClosed("Привязка ВАЦ изменилась")
+    agent = session.get(ScanAgentRow, owner)
+    reported = agent.last_seen if agent else None
+    if reported is not None and reported.tzinfo is None:
+        reported = reported.replace(tzinfo=now.tzinfo)  # SQLite stores the clock's wall time.
+    if not agent or agent.legacy or as_utc(reported) < as_utc(now) - LIVE_FOR:
+        raise ScanJobClosed("Агент на закреплённом ПК не отвечает — проверьте ПК и запуск агента ERP")
     device = session.scalar(select(DeviceRow).where(
         DeviceRow.machine_id == owner, DeviceRow.kind == "s2vna", DeviceRow.device_id == serial,
         DeviceRow.present.is_(True), DeviceRow.last_seen >= now - LIVE_FOR))

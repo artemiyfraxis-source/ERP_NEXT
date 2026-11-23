@@ -5,6 +5,7 @@ import type { MachineRow, Tone } from "./machinesApi";
 import { openSection } from "./navigation";
 import { PageWindow } from "./PageWindow";
 import { VnaBench } from "./VnaBench";
+import type { VnaBenchDevice } from "./vnaBenchApi";
 
 /* Карточка анализатора цепей в «Оборудовании» (владелец 20.11.2026: «зачем ВАЦ в ОТК, если карточка оборудования в
    оборудовании и вся работа должна быть там»; «нужно делать связку и второго векторника»). Работа — по тому, что
@@ -22,7 +23,17 @@ export function drivesBench(row: MachineRow, benchNumber: string | null): boolea
 const toneClass = (tone: Tone | undefined) => (tone && tone !== "neutral" ? `tone-${tone}` : "");
 
 /** «Подключение»: паспорт прибора у агента — свёрнут внизу, строка-сводка видна всегда. Значения переносятся. */
-export function AnalyserConnection({ row }: { row: MachineRow }) {
+export function AnalyserConnection({ row, device }: { row: MachineRow; device?: VnaBenchDevice }) {
+  if (device) {
+    const online = device.vna_online ?? Boolean(device.serial);
+    row = { ...row, pc: device.bound_pc ?? device.pc_name ?? "", ip: device.agent_ip ?? "",
+      version: device.agent_version ?? "", last_seen: device.agent_last_seen ?? null,
+      link: device.agent_online ? { code: "ok", text: "На связи", tone: "ok" } : { code: "stale", text: "Нет связи", tone: "danger" },
+      state: { text: online ? "ВАЦ на связи" : "ВАЦ не подключён", tone: online ? "ok" : "warn" },
+      others: device.last_seen_pc && device.last_seen_pc !== (device.bound_pc ?? device.pc_name)
+        ? `Последний раз ВАЦ виден ${formatMoment(device.last_seen_at)} на ${device.last_seen_pc}` : "",
+    };
+  }
   const facts: [string, string, Tone?][] = [["Связь", row.link.text, row.link.tone], ["Состояние", row.state.text, row.state.tone],
     ["Устройство", row.device], ["Артикул", row.article], ["ПК", row.pc], ["IP", row.ip], ["Агент", row.service],
     ["Версия агента", row.version], ["Последний сигнал", row.last_seen ? formatMoment(row.last_seen) : ""], ["Также на ПК", row.others]];
@@ -182,12 +193,12 @@ export function AnalyserCard({ row, benchNumber, canQuality, close }: {
         <button type="button" className="secondary small" onClick={close}>Закрыть</button>
       </header>
       {planar && (!canQuality ? <p className="machine-muted">Рабочее место ВАЦ открыто сотрудникам с «ОТК» на правку.</p>
-        : bench ? <VnaBench canEdit={canQuality} />
+        : bench ? <VnaBench canEdit={canQuality} connection={row ? (device) => <AnalyserConnection row={row} device={device} /> : undefined} />
           : benchNumber === null ? <p className="empty" role="status">Загрузка…</p>
             : benchNumber === "" ? <p className="warning-inline" role="status">Рабочее место ВАЦ на сервере сейчас не отвечает — обновите страницу позже.</p>
               : <p className="machine-muted">Рабочее место ВАЦ ведёт {benchNumber}; этим прибором оно не управляет.</p>)}
       {row?.vna === "arinst" && <ArinstWork row={row} canQuality={canQuality} />}
-      {row && <AnalyserConnection row={row} />}
+      {row && !(planar && bench && canQuality) && <AnalyserConnection row={row} />}
     </section>
   </PageWindow>;
 }
