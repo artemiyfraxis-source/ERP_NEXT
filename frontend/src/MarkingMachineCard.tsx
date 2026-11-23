@@ -31,7 +31,7 @@ type Job = { key: string; title: string; detail: string; planned: string | null;
 
 const TOKEN = /\{№(?::[1-6])?\}/;
 /** «ПИТАНИЕ +24В × 4» / «… * 4» — четыре копии этой строки. */
-const COPIES = /\s+[×*]\s*(\d{1,3})\s*$/;
+const COPIES = /\s+[×*]\s*(\d+)\s*$/;
 const MARK_OPERATION = /^(INS_MARK_AUTO|PRINT_MARK_LABEL)/i;
 const PREVIEW_SHOWN = 12;
 
@@ -44,6 +44,11 @@ export function parseManualLines(text: string, copies: number): MarkingManualLin
 }
 
 const MAX_COPIES = 500;
+type ManualRow = { id: number; text: string; copies: string; canonical?: boolean };
+// Imported/normalized text is literal: a second trailing «× N» belongs to the label.
+const manualRowLines = (row: ManualRow): MarkingManualLine[] => row.canonical
+  ? row.text.trim() ? [{ text: row.text.trim(), quantity: Number(row.copies) }] : []
+  : parseManualLines(row.text, Number(row.copies));
 /** Что не так с копиями: «× 0» и выход за 1…500 не округляются молча, а отклоняются с текстом. */
 export function copiesProblem(lines: MarkingManualLine[], copies: string): string {
   const common = Number(copies);
@@ -127,7 +132,11 @@ export function MarkingMachineCard({ row, close, canWrite, incoming, openJournal
   const [chosenJob, setChosenJob] = useState("");
   const [printing, setPrinting] = useState<Job | null>(null);
   const [profileId, setProfileId] = useState(() => recall(`${storage}:profile`) ?? "");
-  const [text, setText] = useState(""), [copies, setCopies] = useState("1"), [order, setOrder] = useState<MarkingOrder>("listed");
+  const nextRow = useRef(1);
+  const [manualRows, setManualRows] = useState<ManualRow[]>([{ id: 0, text: "", copies: "1" }]);
+  const [pasteOpen, setPasteOpen] = useState(false), [pasteText, setPasteText] = useState("");
+  const [order, setOrder] = useState<MarkingOrder>("listed");
+  const rowInputs = useRef(new Map<number, HTMLInputElement>());
   const [first, setFirst] = useState("1"), [last, setLast] = useState("10");
   // Предпросмотр помнит запрос, для которого получен: «Печатать» уходит с хэшем показанного, а не свежего.
   const [shown, setShown] = useState<{ key: string; result: MarkingPreview } | null>(null), [previewError, setPreviewError] = useState("");
@@ -177,15 +186,17 @@ export function MarkingMachineCard({ row, close, canWrite, incoming, openJournal
   const printer = catalog ? boundPrinter(catalog, machine) : undefined;
   const online = Boolean(printer?.present && printer.online);
 
-  const lines = useMemo(() => parseManualLines(text, Number(copies)), [text, copies]);
-  const copiesError = lines.length ? copiesProblem(lines, copies) : "";
+  const lines = useMemo(() => manualRows.flatMap(manualRowLines), [manualRows]);
+  const copiesError = lines.some((line) => !Number.isInteger(line.quantity))
+    ? "Копий в строке — целое число от 1 до 500" : copiesProblem(lines, "1");
   const numbered = lines.some((line) => TOKEN.test(line.text));
   const firstNo = Number(first), lastNo = Number(last);
-  const numberingValid = !numbered || (first.trim() !== "" && last.trim() !== "" && Number.isInteger(firstNo) && Number.isInteger(lastNo) && firstNo >= 0 && lastNo >= firstNo);
-  const count = manualCount(lines, firstNo, lastNo);
+  const numberingValid = !numbered || (first.trim() !== "" && last.trim() !== "" && Number.isInteger(firstNo) && Number.isInteger(lastNo) && firstNo >= 0 && lastNo >= firstNo && lastNo <= 999999);
+  const count = copiesError || !numberingValid ? 0 : manualCount(lines, firstNo, lastNo);
+  const totalError = count > MAX_COPIES ? `За один раз — не более ${MAX_COPIES} этикеток. Уменьшите копии или диапазон номеров` : "";
   const wireMm = parseWireMm(wire);
   const wireError = wireMm === undefined ? "Ø провода — число от 0,1 до 60 мм" : "";
-  const request: MarkingManualRequest | null = profile && lines.length && numberingValid && !copiesError && !wireError ? {
+  const request: MarkingManualRequest | null = profile && lines.length && numberingValid && !copiesError && !wireError && !totalError ? {
     profile_id: profile.id, profile_version: profile.version, lines, order,
     numbering: numbered ? { first: firstNo, last: lastNo } : null, ...(wireMm != null ? { wire_mm: wireMm } : {}),
   } : null;
@@ -242,6 +253,35 @@ export function MarkingMachineCard({ row, close, canWrite, incoming, openJournal
         : !profile ? "Нет откалиброванного профиля — «Наладка» → «Профили и принтер»"
           : !profile.calibrated ? "Профиль не откалиброван — «Наладка» → «Профили и принтер»"
             : printer?.hold ? "Маркировка на паузе" : "";
+  const manualHardwareBlocker = blocker === "Принтер не на связи"
+    ? "Принтер не на связи — проверьте питание, кабель и агент печати на ПК принтера" : blocker
+      || (stateError ? "Нет связи с ERP — проверьте сеть; состояние обновится автоматически"
+        : !state ? "Проверяем связь с принтером…"
+          : state.connection.link.code !== "ok" ? "Нет связи с ПК принтера — включите ПК и запустите агент печати"
+            : state.marking?.present === false ? "Принтер не найден — проверьте питание и кабель принтера" : "");
+  const manualBlocker = catalogError || (!catalog ? "Загрузка профилей принтера…" : manualHardwareBlocker)
+    || copiesError || (!numberingValid ? "Номера: «с» не больше «по»; укажите целые числа от 0" : "")
+    || wireError || totalError || (!lines.length ? "Добавьте надпись или вставьте список" : "")
+    || (running ? "Дождитесь конца текущей партии" : "") || previewError
+    || (!preview ? "Обновляем предпросмотр…" : "");
+
+  function updateManualRow(id: number, changes: Partial<ManualRow>) {
+    setManualRows((rows) => rows.map((item) => item.id === id ? { ...item, ...changes } : item));
+  }
+
+  function addManualRow() {
+    const id = nextRow.current++;
+    setManualRows((rows) => [...rows, { id, text: "", copies: "1" }]);
+    requestAnimationFrame(() => rowInputs.current.get(id)?.focus());
+  }
+
+  function importManualList() {
+    const added = parseManualLines(pasteText, 1).map((line) => ({ id: nextRow.current++, text: line.text, copies: String(line.quantity), canonical: true }));
+    if (!added.length) return;
+    setManualRows((rows) => [...rows.filter((item) => item.text.trim()), ...added]);
+    setPasteText(""); setPasteOpen(false);
+    requestAnimationFrame(() => rowInputs.current.get(added[0].id)?.focus());
+  }
 
   /** Другая вкладка — итог и ошибка прошлой постановки к ней не относятся. */
   function switchTab(next: Tab) { if (next !== tab) { setTab(next); setNotice(""); setError(""); } }
@@ -330,7 +370,7 @@ export function MarkingMachineCard({ row, close, canWrite, incoming, openJournal
   }
 
   async function printManual(trial: boolean) {
-    if (!request || busy || blocker) return;
+    if (!request || busy || manualHardwareBlocker || catalogError) return;
     const body = { ...request, ...(trial ? { trial: true } : {}) };
     // «Печатать» — по предпросмотру на экране; если запрос изменился после него, сначала обновить и нажать ещё раз.
     if (!trial && !preview) {
@@ -346,6 +386,7 @@ export function MarkingMachineCard({ row, close, canWrite, incoming, openJournal
     try {
       // Пробная — одна этикетка: её предпросмотр свой и дешёвый; обычная печать берёт хэш показанного.
       const hash = trial ? (await markingApi.manualPreview(body)).manifest_hash : (preview as MarkingPreview).manifest_hash;
+      if (!active.current) return;
       const result = await markingApi.manualEnqueue({ ...body, manifest_hash: hash, idempotency_key: keys.current[slot].key });
       setBatch(result); remember(`${storage}:batch`, result.id);
       keys.current[slot] = { payload: "", key: "" };
@@ -409,7 +450,9 @@ export function MarkingMachineCard({ row, close, canWrite, incoming, openJournal
             <select name="marking-card-profile" autoComplete="off" value={profile?.id ?? ""} disabled={!profiles.length || busy}
               onChange={(event) => chooseProfile(event.target.value)}>
               {!profiles.length && <option value="">{catalog ? "Нет профилей" : "Загрузка…"}</option>}
-              {profiles.map((item) => <option key={item.id} value={item.id}>{item.name}{item.calibrated ? "" : " · не откалиброван"}</option>)}
+              {tab === "text" && profiles.length > 0 && !profile && <option value="">Выберите профиль</option>}
+              {profiles.map((item) => <option key={item.id} value={item.id}>{item.name}{tab === "text"
+                ? ` · ${item.calibrated ? "откалиброван" : "нужна калибровка"}` : item.calibrated ? "" : " · не откалиброван"}</option>)}
             </select></label>
           {profile && <span className={`marking-card-geometry tnum${profileWarn ? " tone-warn" : " machine-muted"}`}>{sizeText(profile.geometry)} · {profileNote}</span>}
         </div>
@@ -469,38 +512,87 @@ export function MarkingMachineCard({ row, close, canWrite, incoming, openJournal
         </div>}
 
         {tab === "text" && <div className="marking-card-text">
-          <label className="marking-card-lines">Надписи — одна строка = одна этикетка
-            <textarea name="marking-card-lines" rows={9} spellCheck={false} autoComplete="off" value={text} disabled={busy}
-              placeholder={"X1-{№}\nПИТАНИЕ +24В × 4\nGND"} onChange={(event) => setText(event.target.value)} /></label>
-          <div className="marking-card-options">
-            <label>Копий каждой<input type="number" name="marking-card-copies" inputMode="numeric" min={1} max={500} step={1} value={copies} disabled={busy}
-              onChange={(event) => setCopies(event.target.value)} /></label>
-            <div role="radiogroup" aria-label="Порядок" className="marking-card-order"><span>Порядок</span>
-              <label className="check-inline"><input type="radio" name="marking-card-order" checked={order === "listed"} onChange={() => setOrder("listed")} />как введено</label>
-              <label className="check-inline"><input type="radio" name="marking-card-order" checked={order === "number"} onChange={() => setOrder("number")} />по № провода</label>
-            </div>
-            {numbered && <div className="marking-card-numbers">
-              <label>{"{№}"} с<input type="number" name="marking-card-first" inputMode="numeric" min={0} step={1} value={first} disabled={busy} onChange={(event) => setFirst(event.target.value)} /></label>
-              <label>по<input type="number" name="marking-card-last" inputMode="numeric" min={0} step={1} value={last} disabled={busy} onChange={(event) => setLast(event.target.value)} /></label>
+          <div className="marking-text-editor">
+            <div className="marking-text-heading"><strong>Надписи</strong>
+              {numbered && <div className="marking-card-numbers">
+                <span>Номера</span>
+                <label>{"{№}"} с<input type="number" name="marking-card-first" autoComplete="off" inputMode="numeric" min={0} max={999999} step={1} value={first} disabled={busy}
+                  aria-invalid={!numberingValid} onChange={(event) => setFirst(event.target.value)} /></label>
+                <label>по<input type="number" name="marking-card-last" autoComplete="off" inputMode="numeric" min={0} max={999999} step={1} value={last} disabled={busy}
+                  aria-invalid={!numberingValid} onChange={(event) => setLast(event.target.value)} /></label>
+              </div>}
+              <button type="button" className="secondary small" aria-expanded={pasteOpen} aria-controls="marking-paste-list"
+                disabled={busy} onClick={() => setPasteOpen(!pasteOpen)}>Вставить список</button></div>
+            {pasteOpen && <div className="marking-text-paste" id="marking-paste-list">
+              <label>Список надписей<textarea name="marking-paste" autoComplete="off" spellCheck={false} rows={3} value={pasteText} disabled={busy}
+                placeholder={"X1-{№}\nПИТАНИЕ +24В × 4\nGND…"} onChange={(event) => setPasteText(event.target.value)} /></label>
+              <div className="marking-text-heading"><span className="machine-muted">Одна строка — одна надпись; «× 4» — четыре копии</span>
+                <button type="button" className="secondary" disabled={busy || !parseManualLines(pasteText, 1).length} onClick={importManualList}>Добавить из списка</button></div>
             </div>}
-            <label>Ø провода, мм<input name="marking-card-wire" inputMode="decimal" autoComplete="off" spellCheck={false} placeholder="—" value={wire} disabled={busy}
-              aria-invalid={Boolean(wireError)} onChange={(event) => setWire(event.target.value)} /></label>
-            <p className="machine-muted">«× 4» в конце строки — 4 копии; {"{№}"} заменяется номером</p>
+            <div className="marking-text-list">
+              <table aria-label="Надписи для печати">
+                <thead><tr><th scope="col">Надпись</th><th scope="col">Копий</th><th scope="col">Итого</th><th scope="col">Удалить</th></tr></thead>
+                <tbody>{manualRows.map((item, index) => {
+                  const parsed = manualRowLines(item);
+                  const quantity = parsed[0]?.quantity ?? 1;
+                  const invalid = parsed.length > 0 && (!Number.isInteger(quantity) || quantity < 1 || quantity > MAX_COPIES);
+                  const rowTotal = invalid || !numberingValid ? 0 : manualCount(parsed, firstNo, lastNo);
+                  const hasNumber = TOKEN.test(item.text);
+                  return <tr key={item.id}>
+                    <td><input aria-label={`Надпись ${index + 1}`} name={`marking-text-${item.id}`} autoComplete="off" spellCheck={false} maxLength={310}
+                      ref={(node) => { if (node) rowInputs.current.set(item.id, node); else rowInputs.current.delete(item.id); }}
+                      value={item.text} disabled={busy} placeholder="Например, X1-{№}…" onChange={(event) => updateManualRow(item.id, { text: event.target.value })}
+                      onBlur={() => { if (!item.canonical && COPIES.test(item.text) && parsed[0]) updateManualRow(item.id, { text: parsed[0].text, copies: String(parsed[0].quantity), canonical: true }); }} />
+                      {hasNumber && <span className="marking-text-chip tnum">{item.text.match(TOKEN)?.[0]} → {numberingValid ? `${formatNumber(firstNo)}…${formatNumber(lastNo)}` : "задайте номера"}</span>}</td>
+                    <td><input aria-label={`Копий в строке ${index + 1}`} name={`marking-copies-${item.id}`} autoComplete="off" type="number" inputMode="numeric"
+                      min={1} max={500} step={1} value={item.copies} disabled={busy} aria-invalid={invalid} aria-describedby={invalid ? "marking-text-validation" : undefined}
+                      onChange={(event) => updateManualRow(item.id, { copies: event.target.value })} /></td>
+                    <td className="tnum"><output aria-label={`Итого в строке ${index + 1}`}>{invalid || (hasNumber && !numberingValid) ? EMPTY : formatNumber(rowTotal)}</output></td>
+                    <td><button type="button" className="secondary marking-text-remove" aria-label={`Удалить строку ${index + 1}`} disabled={busy}
+                      onClick={() => {
+                        setManualRows((rows) => rows.length === 1 ? [{ ...item, text: "", copies: "1", canonical: false }] : rows.filter((entry) => entry.id !== item.id));
+                        requestAnimationFrame(() => rowInputs.current.get(manualRows[index + 1]?.id ?? manualRows[index - 1]?.id ?? item.id)?.focus());
+                      }}>×</button></td>
+                  </tr>;
+                })}</tbody>
+              </table>
+            </div>
+            <div className="marking-text-heading"><button type="button" className="secondary" disabled={busy} onClick={addManualRow}>Добавить строку</button>
+              <span className="machine-muted">{lines.length ? `${formatNumber(lines.length)} надп. · до 500 этикеток за раз` : "Введите надпись и укажите количество копий"}</span></div>
+            <div className="marking-text-settings">
+              <div className="marking-text-order"><span>Порядок печати</span>
+                <div className="seg-tabs" role="group" aria-label="Порядок">
+                  <button type="button" className={order === "listed" ? "on" : ""} aria-pressed={order === "listed"} disabled={busy} onClick={() => setOrder("listed")}>Как введено</button>
+                  <button type="button" className={order === "number" ? "on" : ""} aria-pressed={order === "number"} disabled={busy} onClick={() => setOrder("number")}>По № провода</button>
+                </div></div>
+              <label className="marking-text-wire">Ø провода, мм <span className="machine-muted">необязательно</span>
+                <input aria-label="Ø провода, мм" name="marking-card-wire" inputMode="decimal" autoComplete="off" spellCheck={false} placeholder="1,6…" value={wire} disabled={busy}
+                  aria-invalid={Boolean(wireError)} aria-describedby={wireError ? "marking-text-validation" : undefined} onChange={(event) => setWire(event.target.value)} /></label>
+            </div>
+            {(copiesError || wireError || !numberingValid || totalError) && <p className="warning-inline" role="alert" id="marking-text-validation">
+              {copiesError || wireError || (!numberingValid ? "Номера: «с» не больше «по»; укажите целые числа от 0" : totalError)}</p>}
           </div>
-          <div className="marking-card-preview" aria-label="Предпросмотр">
-            <div className="marking-card-preview-head"><strong>Предпросмотр</strong>
-              <span className="machine-muted tnum">{preview ? `${formatNumber(preview.total)} ${labelsWord(preview.total)} · ${formatNumber(preview.width_mm)} × ${formatNumber(preview.height_mm)} мм` : lines.length ? "…" : EMPTY}</span></div>
-            {previewError && <p className="warning-inline">{previewError}</p>}
-            {!lines.length && <p className="empty">Введите надписи слева</p>}
-            {preview && <LabelStrip preview={preview} />}
+          <div className="marking-card-preview marking-text-preview" aria-label="Предпросмотр" aria-busy={Boolean(request && !preview && !previewError)}>
+            <div className="marking-card-preview-head"><strong>Первые этикетки</strong>
+              <span className="machine-muted tnum">{profile ? sizeText(profile.geometry) : "Выберите профиль"}</span></div>
+            {preview ? <LabelStrip preview={preview} proportional /> : <div className="marking-text-preview-empty">
+              <span className="marking-text-blank" aria-hidden="true" style={{ aspectRatio: profile ? `${profile.geometry.width_mm} / ${profile.geometry.height_mm}` : "25 / 9" }}>Аа</span>
+              <p>{previewError ? "Предпросмотр не получен" : !lines.length ? "Введите надпись — здесь появится этикетка" : !request ? "Проверьте параметры слева" : "Обновляем предпросмотр…"}</p>
+            </div>}
+            {previewError && <button type="button" className="secondary" disabled={busy} onClick={() => setRefreshTick((tick) => tick + 1)}>Повторить предпросмотр</button>}
+            <p className="machine-muted">Проверьте текст и размер. Пробная печать — одна этикетка.</p>
           </div>
-          <div className="form-actions marking-card-actions">
-            <button type="button" className="primary" disabled={busy || !request || Boolean(blocker) || running} onClick={() => void printManual(false)}>
-              {busy ? "Обработка…" : printText(preview?.total ?? count)}</button>
-            <button type="button" className="secondary" disabled={busy || !request || Boolean(blocker)} onClick={() => void printManual(true)}>Пробная (1 этикетка)</button>
-            <span className={blocker || !numberingValid || copiesError || wireError ? "tone-warn" : "machine-muted"} role={copiesError || wireError ? "alert" : undefined}>
-              {blocker || (!numberingValid ? "Номера: «с» не больше «по»" : copiesError || wireError
-                || (running ? "Дождитесь конца текущей партии" : "Номера изделий не выдаются · печать записывается в журнал"))}</span>
+          <div className="marking-text-footer">
+            <p className="marking-text-summary tnum" aria-live="polite"><strong>{formatNumber(preview?.total ?? count)} {labelsWord(preview?.total ?? count).replace("этикетку", "этикетка")}</strong>
+              <span> · профиль {profile ? sizeText(profile.geometry) : "не выбран"} · принтер {printer?.name ?? "не привязан"}</span></p>
+            <div className="form-actions marking-card-actions">
+              <button type="button" className="primary" disabled={busy || !request || Boolean(manualHardwareBlocker) || Boolean(catalogError) || running || !preview} aria-describedby="marking-text-blocker"
+                onClick={() => void printManual(false)}>{busy ? "Обработка…" : printText(preview?.total ?? count)}</button>
+              <button type="button" className="secondary" disabled={busy || !request || Boolean(manualHardwareBlocker) || Boolean(catalogError) || running} aria-describedby="marking-text-blocker"
+                onClick={() => void printManual(true)}>Пробная</button>
+              <span id="marking-text-blocker" role="status" className={manualBlocker && lines.length ? "tone-warn" : "machine-muted"}>
+                {busy ? "Ставим этикетки в очередь…" : manualBlocker || "Готово к печати"}</span>
+            </div>
           </div>
         </div>}
         {error && <div className="error-banner" role="alert">{error}</div>}
@@ -540,10 +632,11 @@ export function MarkingMachineCard({ row, close, canWrite, incoming, openJournal
 }
 
 /** Первые этикетки предпросмотра картинками; остальные — числом. */
-function LabelStrip({ preview }: { preview: MarkingPreview }) {
-  return <ol className="marking-card-strip">
+function LabelStrip({ preview, proportional = false }: { preview: MarkingPreview; proportional?: boolean }) {
+  return <ol className={`marking-card-strip${proportional ? " is-proportional" : ""}`}>
     {preview.labels.slice(0, PREVIEW_SHOWN).map((label, index) => <li key={`${label.key}:${index}`}>
-      <img src={`data:image/png;base64,${label.png_b64}`} alt={`Этикетка: ${label.text}`} />
+      <img src={`data:image/png;base64,${label.png_b64}`} alt={`Этикетка: ${label.text}`}
+        width={Math.round(preview.width_mm * preview.dpi / 25.4)} height={Math.round(preview.height_mm * preview.dpi / 25.4)} />
       <span className="tnum">{label.text}{label.quantity > 1 ? ` × ${formatNumber(label.quantity)}` : ""}</span></li>)}
     {preview.labels.length > PREVIEW_SHOWN && <li className="machine-muted">ещё {formatNumber(preview.labels.length - PREVIEW_SHOWN)} надп.</li>}
   </ol>;
