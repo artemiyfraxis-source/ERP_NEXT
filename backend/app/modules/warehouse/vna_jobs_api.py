@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, access_admin_principal, production_quality_principal
 from app.shared.stored_files import file_response
-from app.workflows.vna_capture_instrument import capture_instrument
+from app.workflows.vna_capture_instrument import assert_vna_transfer_allowed, capture_instrument
 
 from . import devices, vna_jobs
 from .scan_jobs import DONE, cancel_job, create_job, get_job
@@ -49,7 +49,8 @@ def transfer(payload: TransferInput, principal: Annotated[Principal, Depends(acc
     if payload.serial != instrument["serial"]:
         raise HTTPException(409, "Серийный номер СИ изменился — проверьте прибор ещё раз")
     _queue(lambda: devices.transfer_vna(uow_factory(), serial=instrument["serial"], owner=payload.owner_id,
-        target=payload.agent_id, instrument_id=payload.instrument_id, actor=principal.actor, now=now))
+        target=payload.agent_id, instrument_id=payload.instrument_id, actor=principal.actor, now=now,
+        check_sessions=lambda session: assert_vna_transfer_allowed(session, payload.instrument_id, instrument["serial"])))
     return {"status": "transferred"}
 
 

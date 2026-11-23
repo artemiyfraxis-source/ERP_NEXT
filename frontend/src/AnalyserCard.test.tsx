@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { arinstStatus } from "./AnalyserCard";
+import { AnalyserCard, arinstStatus } from "./AnalyserCard";
 import type { MachineRow } from "./machinesApi";
 import { MachinesPage } from "./MachinesPage";
 
@@ -27,11 +27,11 @@ const BENCH = {
 const FILE = { id: "job-1", file_name: "Кабель 001.s1p", source: "arinst", finished_at: "2026-11-20T09:58:00+03:00", pc: "DESKTOP-PTA57QF",
   capture_settings: { points: 1001, start_hz: 1e6, stop_hz: 8.8e9 } };
 
-function serve(calls: string[], { captures = [FILE] as unknown[] } = {}) {
+function serve(calls: string[], { captures = [FILE] as unknown[], bench = BENCH as unknown } = {}) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = decodeURIComponent(String(input));
     calls.push(`${init?.method ?? "GET"} ${url}`);
-    if (url === "/api/production/vna-bench/state") return json(BENCH);
+    if (url === "/api/production/vna-bench/state") return json(bench);
     if (url.startsWith("/api/production/vna-bench/screens")) return json({ screens: [] });
     if (url === "/api/production/instruments") return json({ instruments: [] });
     if (url.startsWith("/api/stock/vna/jobs?")) return json({ captures });
@@ -58,10 +58,27 @@ it("opens the VNA workplace in the Planar card, keeps the passport folded in «�
   const connection = within(card).getByText("Подключение").closest("details")!;
   expect(connection.open).toBe(false);
   expect(within(connection).getByText("Planar, S50180, 26030095, 26.2.2/2")).toBeTruthy();
-  expect(within(connection).getByText("DESKTOP-5O46RH6 — не найден")).toBeTruthy();
+  expect(within(connection).queryByText("DESKTOP-5O46RH6 — не найден")).toBeNull();
   expect(new URLSearchParams(window.location.search).get("tab")).toBe("vna");
   fireEvent.click(within(card).getByRole("button", { name: "Закрыть" }));
   expect(new URLSearchParams(window.location.search).get("tab")).toBeNull();
+});
+
+it.each([true, false])("header and connection use the bound agent when its online state is %s", async (online) => {
+  serve([], { bench: { ...BENCH, device: { ...BENCH.device, pc_name: "DESKTOP-5O46RH6", bound_pc: "DESKTOP-5O46RH6",
+    agent_online: online, agent_version: "2.12.0", agent_ip: "192.168.1.99", vna_online: false, serial: null, s2vna_ready: null,
+    last_seen_pc: "DESKTOP-PTA57QF", last_seen_at: "2026-11-20T16:09:00+03:00",
+    refusal: { code: online ? "vna_not_connected" : "agent_offline", message: "ВАЦ не подключён. Последний раз виден на DESKTOP-PTA57QF. Включите ВАЦ, подключите USB и запустите S2VNA." },
+  } } });
+  render(<AnalyserCard row={PLANAR} benchNumber="СИ.002" canQuality close={() => {}} />);
+  expect(await screen.findByText(online ? "Агент на связи" : "Агент не на связи")).toBeTruthy();
+  const connection = screen.getByText("Подключение").closest("details")!;
+  expect(connection.querySelector("summary")).toHaveTextContent(`связь с агентом: ${online ? "На связи" : "Нет связи"}`);
+  expect(connection.querySelector("summary")).toHaveTextContent("ПК DESKTOP-5O46RH6 · агент 2.12.0");
+  expect(within(connection).getByText("DESKTOP-5O46RH6")).toBeTruthy();
+  expect(within(connection).getByText("192.168.1.99")).toBeTruthy();
+  expect(within(connection).getByText(/Последний раз ВАЦ виден .* на DESKTOP-PTA57QF/)).toBeTruthy();
+  expect(within(connection).queryByText("192.168.1.121")).toBeNull();
 });
 
 it("an old «ОТК → ВАЦ» bookmark opens the analyser card the workplace drives", async () => {
