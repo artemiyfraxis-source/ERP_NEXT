@@ -10,6 +10,8 @@ position (12.3 through the ОТК VSWR record), and checks — bend (10.6), week
 The screen's contract is `frontend/src/vnaBenchApi.ts` (S5): every POST queues agent work and returns the state at once,
 the screen polls `GET state`; refusals are `detail: {code, message}`. Each accepted capture is judged in the agent's
 result request in the same unit of work as its receipt (journal row, matings, VSWR attempt, the session's next step).
+Arinst v3 selects a separate diagnostic state DTO and preserves raw receipt artifacts. Quality save endpoints
+remain blocked until the frequency grid, correction semantics, standards and independent verification are commissioned.
 """
 
 from __future__ import annotations
@@ -39,7 +41,7 @@ from app.modules.production.mating_api import record_batch
 from app.modules.production.matings import end_names
 from app.modules.production.rf_infrastructure import RfRepository
 from app.modules.production.traceability import InstrumentFile, InstrumentFileKind
-from app.modules.production.vna_bench_protocol import Screen, screen_hash
+from app.modules.production.vna_bench_protocol import ArinstProfile, Screen, screen_hash
 from app.modules.production.vna_check_infrastructure import VALUE_FIELDS, VnaCheckRepository, VnaCheckRow
 from app.modules.production.vna_checks import (LOAD_LIMIT, KitTolerance, assert_confidence_points, confidence_from_receipt,
                                                control_standard, expected_verdict, flex, journal_number,
@@ -51,14 +53,14 @@ from app.modules.production.vna_session_infrastructure import VnaCommandRow, Vna
 from app.modules.production.vna_sessions import TERMINAL, Profile, SessionConflict, StrictModel, resolved_profile
 from app.modules.production.vswr import RecordVswrCommand, VswrFileInput, record_vswr
 from app.modules.warehouse import vna_jobs
-from app.modules.warehouse.devices import DeviceRow, VnaBindingRow
+from app.modules.warehouse.devices import DeviceRow, VnaBindingRow, VnaControlRow, instrument_identity
 from app.modules.warehouse.scan_agents import LIVE_FOR, ScanAgentRow
 from app.modules.warehouse.scan_jobs import ScanJobClosed
 from app.shared.clock import MOSCOW, as_utc
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 from .coax_vswr_api import CoaxRefs, _task_etk, task_norm
-from .vna_capture_instrument import capture_instrument
+from .vna_capture_instrument import arinst_station, capture_instrument
 from .vna_measurement_api import Factory, Now, Person, _expire
 from .vna_plan_api import vna_plan
 
@@ -150,6 +152,7 @@ class SessionInput(StrictModel):
     cables: list[Cable] | None = Field(default=None, min_length=2, max_length=2)
     # Calibrate on the ETK band of this КБ (СТО прил. А.2); without it — the «ОТК — переход» grid (СИ and checks).
     assembly: AssemblyProfile | None = None
+    arinst_profile: ArinstProfile | None = None
 
 
 class Version(StrictModel):
@@ -206,11 +209,12 @@ class CheckInput(Version):
 
 def _station(uow, instrument_id=None):
     """The bench ВАЦ: the given card or the S2VNA card with a serial bound to a PC (one bench in the shop)."""
-    query = select(ProductionInstrumentRow).where(ProductionInstrumentRow.vna_app == "S2VNA")
+    query = select(ProductionInstrumentRow).where(ProductionInstrumentRow.vna_app.in_(
+        ("S2VNA", "Arinst VL") if instrument_id else ("S2VNA",)))
     if instrument_id is not None:
         query = query.where(ProductionInstrumentRow.id == instrument_id)
     cards = [c for c in uow.session.scalars(query.order_by(ProductionInstrumentRow.inventory_number))
-             if (c.serial_number or "").strip()]
+             if (c.serial_number or "").strip() or c.vna_app == "Arinst VL"]
     bound = [c for c in cards if uow.session.get(VnaBindingRow, c.serial_number.strip()) is not None]
     return (bound or cards or [None])[0]
 
@@ -241,7 +245,13 @@ def _actor(snapshot) -> Actor:
 
 
 def _profile(row) -> Profile:
+    _planar_only(row)
     return Profile.model_validate(row.snapshot["profile"])
+
+
+def _planar_only(row):
+    if row.snapshot.get("source") == "arinst":
+        raise Refusal("commissioning_required", bench.ARINST_COMMISSIONING)
 
 
 def _screen(uow, purpose: str) -> ScreenDef:
@@ -578,6 +588,8 @@ def _state(uow, principal, now, vna=None, row=None):
         row = _session_row(uow, vna.id if vna else None)
     else:
         vna = uow.session.get(ProductionInstrumentRow, row.instrument_id)
+    if vna is not None and vna.vna_app == "Arinst VL":
+        return _arinst_state(uow, principal, now, vna, row)
     commands = _commands(uow, row) if row else []
     session = None
     if row is not None:
@@ -606,16 +618,16 @@ def _view_screen_id(row) -> str | None:
 
 
 @router.get(PREFIX + "/state")
-def bench_state(principal: Person, now: Now, factory: Factory):
+def bench_state(principal: Person, now: Now, factory: Factory, instrument_id: UUID | None = None):
     with _refusals():
         with factory() as uow:
-            vna = _station(uow)
+            vna = _station(uow, instrument_id)
             row = _session_row(uow, vna.id if vna else None)
             session_id = row.id if row else None
         if session_id:
             _expire(factory, now, session_id=session_id)
         with factory() as uow:
-            return _state(uow, principal, now)
+            return _state(uow, principal, now, vna=_station(uow, instrument_id))
 
 
 def _version(row, version):
@@ -641,6 +653,282 @@ def _act(factory, session_id, principal, now, action):
 
 # ---- session ---------------------------------------------------------------------------------------------------------
 
+
+class ArinstProfileInput(Version):
+    profile: ArinstProfile
+
+
+class ArinstCalibrationInput(Version):
+    kit_id: UUID
+    orientation: Literal["forward", "reverse"] = "forward"
+    transmission: bool = True
+    reference_plane: str = Field(min_length=1, max_length=300)
+    fixture_ids: list[UUID] = Field(default_factory=list, max_length=10)
+
+
+class ArinstCaptureInput(Version):
+    orientation: Literal["forward", "reverse"]
+    target: Target | None = None
+
+
+def _arinst_state(uow, principal, now, vna, row):
+    identity = instrument_identity(uow.session, vna.id)
+    serial = identity.serial if identity else ""
+    binding = uow.session.get(VnaBindingRow, serial) if serial else None
+    control = uow.session.get(VnaControlRow, (binding.machine_id, serial)) if binding else None
+    license_view = bench.arinst_license(control.license_state if control else None,
+        control.trial_remaining_seconds if control else None, control.reported_at if control else now, now)
+    repository = VnaSessionRepository(uow.session)
+    view = repository.view(row) if row else None
+    # Anchor receipts at dispatch, conservatively before the device observation.
+    # HTTP delivery can be delayed; its arrival must never renew the trial or
+    # replace a newer heartbeat observation with an older cached receipt.
+    receipts = [c for c in _commands(uow, row) if c.status == "done" and c.result.get("license")] if row else []
+    if receipts:
+        latest = receipts[-1]
+        observed = latest.claimed_at
+        if control is None or as_utc(bench.aware(observed, now)) >= as_utc(bench.aware(control.reported_at, now)):
+            license_view = bench.arinst_license(latest.result["license"]["license_state"],
+                latest.result["license"]["trial_remaining_seconds"], observed, now)
+    readiness = None
+    ops = set()
+    if identity:
+        try:
+            # Read-only state lookup: capability/presence, never the binding mutation lock.
+            from app.modules.warehouse.devices import control_ops
+            ops = control_ops(uow.session, binding.machine_id if binding else "", now, serial=serial, source="arinst")
+            pc = uow.session.get(ScanAgentRow, binding.machine_id) if binding else None
+            device = uow.session.get(DeviceRow, (binding.machine_id, "arinst", serial)) if binding else None
+            ready = bool(ops and pc and device and device.present and not pc.legacy
+                         and as_utc(bench.aware(pc.last_seen, now)) >= as_utc(now) - LIVE_FOR
+                         and as_utc(bench.aware(device.last_seen, now)) >= as_utc(now) - LIVE_FOR
+                         and license_view["state"] in ("TRIAL", "ACTIVATED"))
+            if not ready:
+                readiness = "Прибор или агент недоступен; проверьте подключение"
+        except ScanJobClosed as error:
+            ready, readiness = False, str(error)
+    else:
+        ready, readiness = False, "Подтвердите аппаратный UID Arinst в карточке СИ"
+    if view:
+        view.update(owned=row.operator_id == principal.actor.id,
+                    operator=row.snapshot["operator"]["name"],
+                    status="closed" if row.state in TERMINAL else "open",
+                    command=next((c for c in view["commands"] if c["status"] in ("pending", "claimed")), None))
+    acquisitions = [c for c in receipts if c.result.get("acquisition")]
+    latest_trace = None
+    if acquisitions:
+        last = acquisitions[-1]
+        artifact = next(a for a in view["artifacts"] if a["command_id"] == str(last.id)
+                        and a["file_name"] == "arinst-receipt.json")
+        latest_trace = dict(command_id=str(last.id), artifact_id=artifact["id"], sha256=artifact["sha256"],
+                            acquisition=last.result["acquisition"], profile=last.result["profile"],
+                            acceptance_eligible=False)
+    return dict(source="arinst", device=dict(instrument_id=str(vna.id), inventory_number=vna.inventory_number,
+        serial=serial, printed_serial=vna.serial_number, hardware_uid=identity.hardware_uid if identity else None,
+        firmware=row.snapshot.get("firmware") if row else identity.firmware if identity else None,
+        machine_id=binding.machine_id if binding else None, control_ready=ready, reason=readiness,
+        license=license_view, supported_ops=sorted(ops or ()), power_dbm=None, temperature_c=None, rf_stopped=None),
+        calibration=row.snapshot.get("calibration") if row else dict(valid=False, status="required"),
+        profile=row.snapshot.get("profile") if row else None, session=view,
+        acceptance=dict(eligible=False, code="commissioning_required", message=bench.ARINST_COMMISSIONING),
+        due=[], supported_channels=["S11", "S21"], latest_trace=latest_trace)
+
+
+def _arinst_audit(uow, row, action, now, data):
+    uow.audit.add(AuditEvent(id=uuid4(), occurred_at=now, actor=_actor(row.snapshot),
+        event_type="production." + action, aggregate_id=row.id, details=data))
+
+
+def _open_arinst(payload, principal, now, factory):
+    if payload.acm_id or payload.cables or payload.assembly:
+        raise ValueError("Для Arinst задайте профиль; оснастку и набор выбирают в шаге SOL/THRU")
+    instrument = capture_instrument(factory(), payload.instrument_id, direct=True)
+    with factory() as uow:
+        stale = _session_row(uow, payload.instrument_id)
+        stale_id = stale.id if stale else None
+    if stale_id:
+        _expire(factory, now, session_id=stale_id)
+    with factory() as uow:
+        owner = arinst_station(uow.session, payload.instrument_id, instrument["serial"], now,
+                               machine_id=payload.agent_id)
+        if payload.arinst_profile is not None:
+            arinst_station(uow.session, payload.instrument_id, instrument["serial"], now,
+                           machine_id=owner, op="apply_profile")
+        vna_jobs.refuse_open_capture(uow.session, payload.instrument_id, instrument["serial"])
+        repository = VnaSessionRepository(uow.session)
+        if repository.active(payload.instrument_id, instrument["serial"]):
+            raise Refusal("device_busy", "Прибор занят активной сессией ВАЦ")
+        snapshot = dict(source="arinst", protocol_version=3, hardware_uid=instrument["hardware_uid"],
+            firmware=instrument["firmware"], printed_serial=instrument["printed_serial"],
+            profile=None, requested_profile=payload.arinst_profile.model_dump(mode="json") if payload.arinst_profile else None,
+            operator=dict(id=str(principal.actor.id), name=principal.actor.name, department=principal.actor.department),
+            kit_definitions={}, connection_id=str(uuid4()), calibration=dict(valid=False, status="required"))
+        try:
+            with uow.session.begin_nested():
+                row = repository.create(now=now, operator_id=principal.actor.id, machine_id=owner, purpose="bench",
+                    instrument_id=payload.instrument_id, instrument_serial=instrument["serial"], task_id=None,
+                    operation_id=None, product_position=None, snapshot=snapshot,
+                    steps=[bench.arinst_step("prepare")])
+        except IntegrityError:
+            if repository.active(payload.instrument_id, instrument["serial"]):
+                raise Refusal("device_busy", "Прибор занят активной сессией ВАЦ") from None
+            raise
+        repository.act(row, "plan", row.version, row.step, now)
+        repository.act(row, "start", row.version, row.step, now)
+        _arinst_audit(uow, row, "vna_arinst_session_opened", now, dict(serial=row.instrument_serial))
+        state = _state(uow, principal, now, row=row)
+        uow.commit()
+        return state
+
+
+def _arinst_ready(uow, row, version, now, op):
+    _version(row, version)
+    if row.snapshot.get("source") != "arinst":
+        raise ValueError("Операция доступна только для Arinst")
+    if row.state != "ready":
+        raise Refusal("device_busy", "Дождитесь завершения текущего шага")
+    arinst_station(uow.session, row.instrument_id, row.instrument_serial, now, machine_id=row.machine_id, op=op)
+
+
+@router.post(PREFIX + "/sessions/{session_id}/arinst/connect")
+def arinst_connect(session_id: UUID, payload: Version, principal: Person, now: Now, factory: Factory):
+    def action(uow, repository, row):
+        _arinst_ready(uow, row, payload.version, now, "connect")
+        snapshot = bench.arinst_invalidated(row.snapshot, "Повторное подключение требует новой калибровки")
+        snapshot["connection_id"] = str(uuid4())
+        repository.append(row, [bench.arinst_step("prepare")], now, snapshot=snapshot)
+    return _act(factory, session_id, principal, now, action)
+
+
+@router.post(PREFIX + "/sessions/{session_id}/arinst/profile")
+def arinst_profile(session_id: UUID, payload: ArinstProfileInput, principal: Person, now: Now, factory: Factory):
+    def action(uow, repository, row):
+        _arinst_ready(uow, row, payload.version, now, "apply_profile")
+        snapshot = bench.arinst_invalidated(row.snapshot, "Профиль изменён; требуется новая калибровка")
+        repository.append(row, [bench.arinst_step("apply_profile", dict(profile=payload.profile.model_dump(mode="json")))],
+                          now, snapshot=snapshot)
+        _arinst_audit(uow, row, "vna_arinst_profile_requested", now, dict(profile=payload.profile.model_dump(mode="json")))
+    return _act(factory, session_id, principal, now, action)
+
+
+@router.post(PREFIX + "/sessions/{session_id}/arinst/calibration")
+def arinst_calibrate(session_id: UUID, payload: ArinstCalibrationInput, principal: Person, now: Now, factory: Factory):
+    def action(uow, repository, row):
+        _arinst_ready(uow, row, payload.version, now, "measure_standard")
+        kit = uow.instruments.get(payload.kit_id)
+        rf = RfRepository(uow.session)
+        if kit is None or rf.get(payload.kit_id).role != "solt_kit":
+            raise ValueError("Выберите зарегистрированный калибровочный набор")
+        # Loads-only SMA-MF06 is not promoted to characterized SOL standards.
+        fixtures = []
+        if len(set(payload.fixture_ids)) != len(payload.fixture_ids):
+            raise ValueError("Оснастка повторяется")
+        for identity in payload.fixture_ids:
+            card = uow.instruments.get(identity)
+            if card is None or rf.get(identity).role not in ("test_cable", "adapter"):
+                raise ValueError("Оснастка не найдена в реестре")
+            fixtures.append(dict(id=str(identity), definition=asdict(rf.get(identity))))
+        snapshot = bench.arinst_invalidated(row.snapshot, "Начата калибровка SOL/THRU")
+        run_id = str(uuid4())
+        snapshot["calibration_setup"] = dict(run_id=run_id, kit_id=str(payload.kit_id),
+            kit_definition=asdict(rf.get(payload.kit_id)), fixture_fingerprint=bench.fingerprint(fixtures),
+            fixtures=fixtures, reference_plane=payload.reference_plane, orientation=payload.orientation,
+            transmission=payload.transmission)
+        snapshot["calibration"] = dict(valid=False, status="acquiring", run_id=run_id)
+        repository.append(row, bench.arinst_calibration_steps(snapshot, orientation=payload.orientation,
+                          transmission=payload.transmission, run_id=run_id), now, snapshot=snapshot)
+        _arinst_audit(uow, row, "vna_arinst_calibration_started", now, snapshot["calibration_setup"])
+    return _act(factory, session_id, principal, now, action)
+
+
+@router.post(PREFIX + "/sessions/{session_id}/arinst/confirm")
+def arinst_confirm(session_id: UUID, payload: Version, principal: Person, now: Now, factory: Factory):
+    def action(uow, repository, row):
+        _version(row, payload.version)
+        if row.snapshot.get("source") != "arinst" or row.state not in ("awaiting_standard", "awaiting_dut"):
+            raise Refusal("conflict", "Нет шага, ожидающего подключения")
+        current = row.steps[row.step]
+        arinst_station(uow.session, row.instrument_id, row.instrument_serial, now, machine_id=row.machine_id,
+                       op=current["op"])
+        repository.act(row, "confirm", row.version, row.step, now)
+    return _act(factory, session_id, principal, now, action)
+
+
+@router.post(PREFIX + "/sessions/{session_id}/arinst/capture")
+def arinst_capture(session_id: UUID, payload: ArinstCaptureInput, principal: Person, now: Now, factory: Factory):
+    def action(uow, repository, row):
+        _arinst_ready(uow, row, payload.version, now, "capture")
+        # A diagnostic acquisition never consumes a successful connection number or writes a quality decision.
+        if payload.target is not None:
+            raise Refusal("commissioning_required", bench.ARINST_COMMISSIONING)
+        args = dict(profile=ArinstProfile.model_validate(row.snapshot["profile"]).model_dump(mode="json"),
+                    orientation=payload.orientation)
+        snapshot = row.snapshot
+        setup = snapshot.get("calibration_setup", {})
+        if setup.get("orientation") != payload.orientation:
+            snapshot = bench.arinst_invalidated(snapshot, "Ориентация изменена; требуется отдельная калибровка")
+        repository.append(row, [bench.arinst_step("capture", args, human=True,
+            label="Подключите изделие" if payload.orientation == "forward" else "Переверните кабель: конец Б к порту 1",
+            item=dict(kind="arinst_diagnostic", orientation=payload.orientation))], now, snapshot=snapshot)
+    return _act(factory, session_id, principal, now, action)
+
+
+def _complete_arinst(uow, repository, row, command_id, payload, now):
+    if payload.backup_saved is not None:
+        raise ValueError("Arinst не сохраняет резервную копию настроек Planar")
+    arinst_station(uow.session, row.instrument_id, row.instrument_serial, now, machine_id=row.machine_id, op="close")
+    previous_version = row.version
+    command = repository.complete(row, command_id, payload.expected_version, payload.expected_step,
+                                  payload.result, payload.error, now, advance=False)
+    if command is None:
+        if row.version != previous_version:
+            _arinst_audit(uow, row, "vna_arinst_command_completed", now,
+                dict(command_id=str(command_id), error=payload.error, state=row.state, acceptance_eligible=False))
+        return
+    result = command.result
+    snapshot, tail, message = dict(row.snapshot), None, ""
+    if result["firmware"] != snapshot["firmware"]:
+        snapshot = bench.arinst_invalidated(snapshot, "Прошивка прибора изменилась")
+        snapshot["firmware"] = result["firmware"]
+    if result["profile"] is not None:
+        if snapshot["profile"] != result["profile"]:
+            snapshot = bench.arinst_invalidated(snapshot, "Фактический профиль изменился")
+        snapshot["profile"] = result["profile"]
+    if command.op == "prepare":
+        snapshot = bench.arinst_invalidated(snapshot, "Подключение требует новой калибровки")
+        license_view = result["license"]
+        if license_view["license_state"] == "LOCKED" or license_view["license_state"] == "TRIAL" and not license_view["trial_remaining_seconds"]:
+            tail, message = [], license_view["message"]
+        elif snapshot.get("requested_profile"):
+            tail = [bench.arinst_step("apply_profile", dict(profile=snapshot.pop("requested_profile")))]
+        else:
+            tail = [bench.arinst_step("device_status")]
+    if command.op == "measure_standard":
+        run_id = row.steps[row.step]["item"]["run_id"]
+        steps = [s for s in row.steps if (s.get("item") or {}).get("run_id") == run_id]
+        if result["standard"] == steps[-1]["args"]["standard"]:
+            standards = []
+            for receipt in repository.receipts(row, "measure_standard"):
+                if (row.steps[receipt.expected_step].get("item") or {}).get("run_id") == run_id:
+                    artifact = repository.artifact(receipt.id, "arinst-receipt.json")
+                    standards.append((receipt.result, str(artifact.id), artifact.sha256))
+            try:
+                coefficients = bench.arinst_solve(snapshot, standards)
+                artifact = repository.store_artifact(row, command, "arinst-calibration.json", coefficients,
+                    dict(source="arinst", kind="coefficients", acceptance_eligible=False), now)
+                snapshot["calibration"] = dict(valid=False, status="verification_required",
+                    coefficient_artifact_id=str(artifact.id), sha256=artifact.sha256)
+            except ValueError as error:
+                message = str(error)
+                snapshot["calibration"] = dict(valid=False, status="blocked", reason=message, run_id=run_id)
+    _arinst_audit(uow, row, "vna_arinst_command_completed", now,
+                  dict(command_id=str(command.id), op=result["op"], acceptance_eligible=False))
+    if command.op == "release":
+        repository._change(row, now, snapshot=bench.arinst_invalidated(snapshot, "Сеанс закрыт"))
+        repository.finish(row, now)
+    else:
+        repository.proceed(row, now, tail=tail, snapshot=snapshot, error=message)
+
 def _vswr_operation(task):
     for operation in task.operations:
         text = f"{operation.code} {operation.description}".upper()
@@ -654,6 +942,13 @@ def open_session(principal: Person, now: Now, factory: Factory, techcards_factor
                  payload: SessionInput | None = None):
     payload = payload or SessionInput()
     with _refusals():
+        with factory() as uow:
+            selected = _station(uow, payload.instrument_id)
+            is_arinst = selected is not None and selected.vna_app == "Arinst VL"
+        if is_arinst:
+            return _open_arinst(payload, principal, now, factory)
+        if payload.arinst_profile is not None:
+            raise ValueError("Профиль Arinst допустим только для Arinst")
         with factory() as uow:
             vna = _station(uow, payload.instrument_id)
             stale = _session_row(uow, vna.id if vna else None)
@@ -769,6 +1064,7 @@ def run_step(session_id: UUID, key: Literal["calibration", "confidence", "load_p
     """The operator's click after connecting what the step says. Calibration and the LOAD steps confirm the waiting
     connection; the confidence test runs by itself right after the calibration (the ACM still on the cables)."""
     def action(uow, repository, row):
+        _planar_only(row)
         _version(row, payload.version)
         current = row.steps[row.step] if row.step < len(row.steps) else {}
         item = current.get("item") or {}
@@ -892,6 +1188,7 @@ TRACE_NAMES = {"SWR": "КСВН", "MLOG": "Модуль", "PHAS": "Фаза", "G
 
 
 def _plan(uow, row, target: Target) -> tuple[dict, dict | None]:
+    _planar_only(row)
     """The plan card and the run metadata; a refusal is reported in the plan, not raised."""
     profile, model = _profile(row), row.snapshot.get("vna_model") or bench.VNA_MODEL
     u_table = uncertainty_for(model)
@@ -979,6 +1276,7 @@ def plan(session_id: UUID, payload: PlanInput, principal: Person, factory: Facto
 
 def _gates(uow, row, now, kind):
     """СТО п. 11.5 and разд. 14 before an item; the device itself is read again by the item's first step."""
+    _planar_only(row)
     if refusal := bench.calibration_refusal(row.calibrated_at, now):
         raise Refusal(bench.refusal_code(refusal), refusal)
     if row.state != "ready":
@@ -1142,6 +1440,7 @@ def record(session_id: UUID, item_id: str, payload: Version, principal: Person, 
     """«Записать в карточку» (15.1): every connection of the deciding series goes to the СИ card as its `.s2p`, so the
     passport and the label decide by the same files. A КБ is recorded in «Замеры КСВН» at its sweep already."""
     def action(uow, repository, row):
+        _planar_only(row)
         _version(row, payload.version)
         run = next((r for r in _runs(row) if r["run_id"] == item_id and r["kind"] in ITEMS), None)
         if run is None:
@@ -1287,6 +1586,8 @@ def check_next(session_id: UUID, check_id: str, payload: Version, principal: Per
 def complete_command(uow, row, command_id, payload, now):
     """The bench branch of POST /api/stock/vna/commands/{id}/result: store the receipt, judge it, continue — one UoW."""
     repository = VnaSessionRepository(uow.session)
+    if row.snapshot.get("source") == "arinst":
+        return _complete_arinst(uow, repository, row, command_id, payload, now)
     command = repository.complete(row, command_id, payload.expected_version, payload.expected_step, payload.result,
                                   payload.error, now, backup_saved=payload.backup_saved, advance=False)
     if command is None:
