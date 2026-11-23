@@ -4,7 +4,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "0220_rf_kit_characterization"
-down_revision = "0216_equipment_screen_group"
+down_revision = "0219_arinst_control"
 branch_labels = None
 depends_on = None
 DESTRUCTIVE = False

@@ -16,7 +16,7 @@ from app.modules.production.rf_kit_characterization_infrastructure import RfKitR
 from tests.production.test_rf_kit_characterization import NOW, piece
 from tests.production.test_rf_kit_characterization_storage import append
 
-PARENT = "0216_equipment_screen_group"
+PARENT = "0219_arinst_control"
 REVISION = "0220_rf_kit_characterization"
 
 
