@@ -9,7 +9,7 @@ from uuid import UUID
 from datetime import date, datetime
 
 from sqlalchemy import (
-    CHAR, JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text,
+    CHAR, JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, LargeBinary, Numeric, String, Text,
     UniqueConstraint, Uuid, delete, func, or_, select, update,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
@@ -24,6 +24,7 @@ from app.shared.identity import Actor
 from app.shared.warehouse_location import RackLayout, forget_rack_layout, rack_layout_from_config, storage_location_has_slot
 
 from .domain import RECEIPT_TEXT_LIMITS, WAREHOUSES, ReceiptConflict, StockLot, WarehouseReceipt, WriteOffEntry
+from .grn_registry import PREFIX_SQL, GrnRegistryRow  # Registers warehouse-owned GRN tables in Base.metadata.
 from .journal import MIRRORED_BY_WRITEOFFS, JournalEvent
 from .labels.settings import DEFAULT_PRINT_SETTINGS, LABEL_SIZES, PrintSettings
 from .word_search import words_matcher
@@ -234,6 +235,28 @@ class StockLotRow(Base):
     __table_args__ = (
         UniqueConstraint("warehouse", "grn", "package", name="uq_warehouse_lot_key"),
         Index("ix_warehouse_location", "warehouse", "storage_location"),
+        Index("ix_warehouse_lots_grn_id", "grn_id"),
+        ForeignKeyConstraint(["grn_id", "grn_category", "grn"],
+                             ["warehouse_grn_registry.id", "warehouse_grn_registry.category", "warehouse_grn_registry.number"],
+                             name="fk_warehouse_lots_grn_identity", ondelete="RESTRICT"),
+        ForeignKeyConstraint(["grn_id", "material_owner_id"],
+                             ["warehouse_grn_registry.id", "warehouse_grn_registry.owner_id"],
+                             name="fk_warehouse_lots_grn_owner", ondelete="RESTRICT"),
+        CheckConstraint(f"grn_category IS NULL OR grn_category IN ({PREFIX_SQL})", name="ck_warehouse_lots_grn_category"),
+        CheckConstraint("grn_contract_version IS NULL OR grn_contract_version = 1", name="ck_warehouse_lots_grn_contract"),
+        CheckConstraint("grn_contract_version IS NULL OR (grn_category IS NOT NULL AND grn_context IS NOT NULL "
+                        "AND quality_state IS NOT NULL AND quality_version IS NOT NULL AND expiry_required IS NOT NULL "
+                        "AND grn_id IS NOT NULL)", name="ck_warehouse_lots_grn_new"),
+        CheckConstraint("grn_contract_version IS NULL OR ((grn_category = 'CSM' AND material_owner_id IS NOT NULL) "
+                        "OR (grn_category <> 'CSM' AND material_owner_id IS NULL))", name="ck_warehouse_lots_grn_owner"),
+        CheckConstraint("quality_state IS NULL OR quality_state IN ('IQH', 'QTN', 'RELEASED', 'REJECTED', 'NOT_REQUIRED')",
+                        name="ck_warehouse_lots_grn_quality"),
+        CheckConstraint("quality_version IS NULL OR quality_version >= 1", name="ck_warehouse_lots_grn_quality_version"),
+        CheckConstraint("quality_state IS NULL OR quality_state IN ('IQH', 'QTN') OR "
+                        "(quality_basis IS NOT NULL AND trim(quality_basis) <> '' AND quality_decided_by IS NOT NULL "
+                        "AND quality_decided_at IS NOT NULL)", name="ck_warehouse_lots_grn_decision"),
+        CheckConstraint("grn_contract_version IS NULL OR grn_category NOT IN ('PPM', 'CSM', 'SUB') "
+                        "OR quality_state <> 'NOT_REQUIRED'", name="ck_warehouse_lots_grn_required_qc"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
@@ -270,6 +293,22 @@ class StockLotRow(Base):
     # Migration 0158: «Артикул производителя» / «Артикул поставщика» ('' — not known); `article` is ours.
     maker_article: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
     supplier_article: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+
+    # 0218: NULL contract version is historical data, never an implicit PPM/QC pass.
+    # Worker B propagates these through StockLot and its command/read adapters at cutover.
+    grn_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey(
+        "warehouse_grn_registry.id", name="fk_warehouse_lots_grn", ondelete="RESTRICT"))
+    grn_category: Mapped[str | None] = mapped_column(String(3))
+    grn_context: Mapped[dict | None] = mapped_column(JSON)
+    grn_contract_version: Mapped[int | None] = mapped_column(Integer)
+    material_owner_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey(
+        "warehouse_material_owners.id", name="fk_warehouse_lots_material_owner", ondelete="RESTRICT"))
+    quality_state: Mapped[str | None] = mapped_column(String(16))
+    quality_basis: Mapped[str | None] = mapped_column(Text)
+    quality_decided_by: Mapped[UUID | None] = mapped_column(Uuid)
+    quality_decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    quality_version: Mapped[int | None] = mapped_column(Integer)
+    expiry_required: Mapped[bool | None] = mapped_column(Boolean)
 
     __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
 
@@ -803,7 +842,9 @@ class SqlAlchemyWarehouseRepository:
         # Compare-and-swap against the version this transaction read (StockVersionConflict on a lost race).
         check_read_version(self.session, stored, lot.version)
         for column in StockLotRow.__table__.columns:
-            if column.name != "id":
+            # _row owns the writable projection. Schema-only metadata (0218 until B wires
+            # the domain DTO) must survive ordinary reservations/moves of backfilled lots.
+            if column.name != "id" and column.name in vars(incoming):
                 setattr(stored, column.name, getattr(incoming, column.name))
         note_written_version(self.session, stored)
 

@@ -316,6 +316,13 @@ _LABEL_FORMATS = ("58x30", "58x40", "100x50")
 _LABEL_SETTINGS = {"width_mm": 58, "height_mm": 30, "dpi": 300, "gap_mm": 2, "density": 12, "speed": 2,
                    "offset_x_mm": 0, "offset_y_mm": 0}
 _SHAPED_VALUES: dict[tuple[str, str], Any] = {
+    ("receiving_lines", "revision_root_id"): lambda i: None,  # No fabricated UUID lineage without a revision.
+    # 0218 rejects the same raw GRN on unrelated receipts. Generic "grn-0" in each
+    # table used to fabricate exactly that conflict; give independent fixtures distinct identities.
+    **{(table, "grn"): (lambda prefix: lambda i: f"{prefix}-{i}")(prefix) for table, prefix in (
+        ("warehouse_lots", "legacy-stock"), ("receiving_lines", "legacy-receiving"),
+        ("finished_goods", "legacy-good"), ("finished_goods_acts", "legacy-act"),
+    )},
     # Exact resource reservations have positive windows; setup transitions follow version 1 (0170).
     ("production_resource_reservations", "finish"): lambda i: datetime(2026, 9, 1, 10, tzinfo=timezone.utc) + timedelta(days=i),
     ("equipment_setup_transitions", "version"): lambda i: i + 2,
