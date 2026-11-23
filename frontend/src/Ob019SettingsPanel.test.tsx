@@ -33,7 +33,10 @@ function machineWindow(): MachineWindow {
 const OFFSETS = ([["length_mm", "Длина провода", "0,00"], ["strip_front_mm", "Зачистка начала", "0,40"], ["strip_back_mm", "Зачистка конца", "0,00"]] as const)
   .map(([key, label, offset]) => ({ key, label, offset, reason: "", updated_by: "", updated_at: null, etk: key !== "length_mm" }));
 const CONTROL: MachineControl = { problem: "", state: 102, commands: [], offsets: OFFSETS, can_edit: true };
+const CONFIRMATION = { expected_source: { group_id: "g1", version: 4, length_mm: "325", plan_hash: "a".repeat(64) },
+  expected_active_run_id: null };
 const PLAN: TransferPlan = {
+  ...CONFIRMATION,
   group_id: "g1", number: "ГР-0007", wire: "ПВАМ 0,35", length_mm: "325,00", quantity: 12,
   rows: [
     { key: "length_mm", label: "Длина провода", unit: "мм", nominal: "325,00", source: "Задание", offset: "0,00", value: "325,00", live: "325,00" },
@@ -72,6 +75,8 @@ function server({ control = CONTROL, plan = PLAN, wirePlan = WIRE_PLAN, refuse =
       if (url.endsWith("/versions")) return json({ recipe_id: "r1", version: 3, title: "ПВАМ 0,35", created_at: "2026-11-19T14:05:00+01:00" });
       if (refuse) return json({ detail: refuse }, 409);
       if (refuseTransfer && url.endsWith("/run")) return json({ detail: refuseTransfer }, 409);
+      if (url.endsWith("/run") && body.kind === "cutting" && (JSON.stringify(body.expected_source) !== JSON.stringify(state.plan.expected_source)
+        || body.expected_active_run_id !== state.plan.expected_active_run_id)) return json({ detail: "План загрузки изменился" }, 409);
       const id = `c${posts.length}`;
       // «Передать на станок» writes the job's plan; a write — its values.
       const values = (body.values ?? Object.fromEntries([...state.plan.rows.filter((row) => row.value !== null).map((row) => [row.key, row.value]),
@@ -84,7 +89,7 @@ function server({ control = CONTROL, plan = PLAN, wirePlan = WIRE_PLAN, refuse =
       return json({ ...commands[0], status: "queued", status_text: "Ждёт агента станка" });
     }
     gets.push(url);
-    if (url.endsWith("/run")) return json({ run, manual: null, link_ok: true, problem: "", can_edit: true, can_control: true });
+    if (url.endsWith("/run")) return json({ run, expected_active_run_id: run?.id ?? null, manual: null, link_ok: true, problem: "", can_edit: true, can_control: true });
     if (url.endsWith("/control")) return json({ ...control, commands });
     if (url.includes("/proposal")) return json({ wire: "ПВАМ 0,35", recipe: { recipe_id: "r1", version: 2, title: "ПВАМ 0,35", created_at: "2026-11-18T12:00:00+01:00", source: "" },
       publish: { recipe_id: "r1", expected_version: 2 }, etk: null, values: [] });
@@ -97,11 +102,19 @@ function server({ control = CONTROL, plan = PLAN, wirePlan = WIRE_PLAN, refuse =
   return { posts, gets, state };
 }
 
-async function pickJob() {
+async function confirmLoad() {
+  const dialog = await screen.findByRole("dialog", { name: "Загрузить в станок" }, { timeout: 4000 });
+  const button = within(dialog).getByRole("button", { name: "Подтвердить загрузку" });
+  await waitFor(() => expect(button).toBeEnabled(), { timeout: 4000 });
+  fireEvent.click(button);
+}
+
+async function pickJob(confirm = true) {
   const pick = await screen.findByLabelText("Задание");
   await waitFor(() => expect(within(pick).getAllByRole("option")).toHaveLength(3));
   fireEvent.change(pick, { target: { value: "g1:325" } });
   await new Promise((resolve) => setTimeout(resolve, SELECT_WAIT_MS + 50));  // a choice goes out after the pause
+  if (confirm && screen.queryByRole("dialog", { name: "Загрузить в станок" })) await confirmLoad();
   return pick;
 }
 
@@ -130,7 +143,7 @@ it("incoming group/length only preview; load=1 requires confirmation with change
   expect(posts).toEqual([]);
   fireEvent.click(within(dialog).getByRole("button", { name: "Подтвердить загрузку" }));
   await waitFor(() => expect(posts).toHaveLength(1));
-  expect(posts[0]).toEqual({ url: "/api/production/machines/card/ОБ.019/run", body: { kind: "cutting", group_id: "g1", length_mm: "325", confirm_state: 102 } });
+  expect(posts[0]).toEqual({ url: "/api/production/machines/card/ОБ.019/run", body: { kind: "cutting", group_id: "g1", length_mm: "325", ...CONFIRMATION, confirm_state: 102 } });
   expect(productionApi.operationMachineActions).toHaveBeenCalledWith("t1", "o1");
 });
 
@@ -148,6 +161,56 @@ it("incoming selection, cancellation and reopening never write; missing group ne
   expect(screen.getByLabelText("Задание")).toHaveValue("");
   expect(screen.queryByRole("dialog", { name: "Загрузить в станок" })).not.toBeInTheDocument();
   expect(posts).toEqual([]);
+});
+
+it.each(["source", "active run"])("409 after a changed %s refreshes the preview and requires a new click without retrying", async (change) => {
+  const { posts, gets, state } = server();
+  render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  await pickJob(false);
+  const fresh = change === "source"
+    ? { ...PLAN, quantity: 9, job: { ...PLAN.job, total_set: 9 }, expected_source: { ...CONFIRMATION.expected_source, version: 5, plan_hash: "b".repeat(64) } }
+    : { ...PLAN, expected_active_run_id: "new-run" };
+  state.plan = fresh;
+  await confirmLoad();
+  const dialog = await screen.findByRole("dialog", { name: "Загрузить в станок" });
+  await within(dialog).findByText(/План загрузки изменился.*подтвердите загрузку ещё раз/);
+  expect(gets.filter((url) => url.includes("/transfer?group_id"))).toHaveLength(2);
+  expect(posts).toHaveLength(1);
+  expect(posts[0].body).toMatchObject(CONFIRMATION);
+  expect(within(dialog).getByText(change === "source" ? /ГР-0007.*9 шт$/ : /Задание на станке: Открытое задание/)).toBeVisible();
+  await act(() => new Promise(resolve => setTimeout(resolve, SELECT_WAIT_MS + 50)));
+  expect(posts).toHaveLength(1);
+  await confirmLoad();
+  await waitFor(() => expect(posts).toHaveLength(2));
+  expect(posts[1].body).toMatchObject({ expected_source: fresh.expected_source, expected_active_run_id: fresh.expected_active_run_id });
+});
+
+it("legacy selection cancelled or missing atomic guards never writes", async () => {
+  const { posts, state } = server();
+  render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  await pickJob(false);
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Загрузить в станок" })).getByRole("button", { name: "Отмена" }));
+  await act(() => new Promise(resolve => setTimeout(resolve, SELECT_WAIT_MS + 50)));
+  expect(posts).toEqual([]);
+  state.plan = { ...PLAN, expected_source: undefined, expected_active_run_id: undefined };
+  await pickJob(false);
+  const dialog = await screen.findByRole("dialog", { name: "Загрузить в станок" });
+  expect(within(dialog).getByRole("button", { name: "Подтвердить загрузку" })).toBeDisabled();
+  expect(posts).toEqual([]);
+});
+
+it("incoming confirmation detects a new hash even when the displayed numeric values are unchanged", async () => {
+  const { posts, state } = server();
+  vi.spyOn(productionApi, "operationMachineActions").mockResolvedValue(incomingActions());
+  render(<Ob019SettingsPanel inventory="ОБ.019" equipmentId="u19" incoming={incoming} />);
+  await screen.findByRole("dialog", { name: "Загрузить в станок" });
+  state.plan = { ...PLAN, expected_source: { ...CONFIRMATION.expected_source, plan_hash: "b".repeat(64) } };
+  await confirmLoad();
+  await within(screen.getByRole("dialog", { name: "Загрузить в станок" })).findByText(/Параметры задания изменились/);
+  expect(posts).toEqual([]);
+  await confirmLoad();
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0].body.expected_source).toEqual(state.plan.expected_source);
 });
 
 it("a stale incoming source is rejected at confirmation without writing", async () => {
@@ -281,14 +344,16 @@ it("the − / + buttons write once after the operator stops pressing", async () 
   expect(posts[0].body).toEqual({ values: { diameter_mm: "0,78" }, confirm_state: 102 });
 });
 
-it("picking an ETK job sends it to the machine at once and tells where each value comes from", async () => {
+it("picking an ETK job writes only after confirmation and tells where each value comes from", async () => {
   const { posts } = server();
   render(<Ob019SettingsPanel inventory="ОБ.019" />);
-  await pickJob();
+  await pickJob(false);
+  expect(posts).toEqual([]);
+  await confirmLoad();
   await waitFor(() => expect(posts).toHaveLength(1));
   // The job goes as a run of the machine (production/machine_runs.py): only such a run opens «Пуск».
   expect(posts[0]).toEqual({ url: "/api/production/machines/card/ОБ.019/run",
-    body: { kind: "cutting", group_id: "g1", length_mm: "325", confirm_state: 102 } });
+    body: { kind: "cutting", group_id: "g1", length_mm: "325", ...CONFIRMATION, confirm_state: 102 } });
   expect(screen.queryByRole("button", { name: /Передать на станок|Записать на станок/ })).toBeNull();
   expect(await screen.findByText("ЭТК 5,00 + поправка +0,40", {}, { timeout: 3000 })).toBeInTheDocument();
 });
@@ -322,9 +387,10 @@ it("a «Тираж» edit with a job picked goes as that job's run, so «Пус�
   const tirazh = screen.getByLabelText("Тираж");
   fireEvent.change(tirazh, { target: { value: "30" } });
   fireEvent.keyDown(tirazh, { key: "Enter" });
+  await confirmLoad();
   await waitFor(() => expect(posts).toHaveLength(2), { timeout: 4000 });
   expect(posts[1]).toEqual({ url: "/api/production/machines/card/ОБ.019/run",
-    body: { kind: "cutting", group_id: "g1", length_mm: "325", values: { total_set: "30" }, confirm_state: 102 } });
+    body: { kind: "cutting", group_id: "g1", length_mm: "325", values: { total_set: "30" }, ...CONFIRMATION, confirm_state: 102 } });
 }, 10000);
 
 it("picking a wire by hand asks the wire plan and writes its differing values", async () => {
@@ -362,7 +428,7 @@ it("an ETK job without a size writes nothing until the size is typed, then goes 
   const { posts } = server({ plan });
   render(<Ob019SettingsPanel inventory="ОБ.019" />);
   await pickJob();
-  expect(await screen.findByText(/В ЭТК не задано: Зачистка конца — введите на чертеже; задание уйдёт на станок/)).toBeInTheDocument();
+  expect(await screen.findByText(/В ЭТК не задано: Зачистка конца — введите на чертеже и подтвердите загрузку/)).toBeInTheDocument();
   expect(screen.getByText("в ЭТК не задано — введите")).toBeInTheDocument();
   // Another edit waits with the job: the old machine value must not stand in for the missing size.
   const length = screen.getByLabelText("Длина провода");
@@ -373,9 +439,11 @@ it("an ETK job without a size writes nothing until the size is typed, then goes 
   const back = screen.getByLabelText("Зачистка конца");
   fireEvent.change(back, { target: { value: "6" } });
   fireEvent.keyDown(back, { key: "Enter" });
+  expect(posts).toEqual([]);
+  await confirmLoad();
   await waitFor(() => expect(posts).toHaveLength(1));
   expect(posts[0]).toEqual({ url: "/api/production/machines/card/ОБ.019/run", body: { kind: "cutting", group_id: "g1", length_mm: "325",
-    values: { strip_front_mm: "5,40", length_mm: "326", strip_back_mm: "6", pull_back_mm: "8,00", total_set: "12" }, confirm_state: 102 } });
+    values: { strip_front_mm: "5,40", length_mm: "326", strip_back_mm: "6", pull_back_mm: "8,00", total_set: "12" }, ...CONFIRMATION, confirm_state: 102 } });
 });
 
 it("fields are read-only with one reason while the machine runs; the busy console is named in operator words", async () => {
@@ -547,7 +615,7 @@ it("a second edit waits until the poll shows the first write finished, then goes
   expect(screen.queryByText(/отказ/)).toBeNull();
 }, 15000);
 
-it("arrowing through the job list writes only the final choice, after the pause", async () => {
+it("arrowing through the job list previews only the final choice, then waits for confirmation", async () => {
   const { posts, gets } = server();
   render(<Ob019SettingsPanel inventory="ОБ.019" />);
   const pick = await screen.findByLabelText("Задание");
@@ -558,6 +626,7 @@ it("arrowing through the job list writes only the final choice, after the pause"
   await new Promise((resolve) => setTimeout(resolve, SELECT_WAIT_MS / 2));
   expect(gets.filter((url) => url.includes("/transfer?group_id"))).toEqual([]);
   expect(posts).toEqual([]);
+  await confirmLoad();
   await waitFor(() => expect(posts).toHaveLength(1), { timeout: 3000 });
   expect(gets.filter((url) => url.includes("/transfer?group_id"))).toHaveLength(1);
   expect(posts[0].url).toBe("/api/production/machines/card/ОБ.019/run");
@@ -584,6 +653,7 @@ it("edits outside the wire parameters never save the wire's setting", async () =
   const total = screen.getByLabelText("Тираж");
   fireEvent.change(total, { target: { value: "20" } });
   fireEvent.keyDown(total, { key: "Enter" });
+  await confirmLoad();
   const length = screen.getByLabelText("Длина провода");
   fireEvent.change(length, { target: { value: "330" } });
   fireEvent.keyDown(length, { key: "Enter" });
@@ -598,6 +668,7 @@ it("after a refused transfer of the job an own edit does not save the wire's set
   await pickJob();
   await waitFor(() => expect(posts).toHaveLength(1));
   expect((await screen.findAllByText("отказ: Станок не в ожидании")).length).toBeGreaterThan(0);
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Загрузить в станок" })).getByRole("button", { name: "Отмена" }));
   const diameter = screen.getByLabelText("Диаметр провода");
   fireEvent.change(diameter, { target: { value: "0,82" } });
   fireEvent.keyDown(diameter, { key: "Enter" });
@@ -643,8 +714,9 @@ it("incoming load refuses a different active run before confirmation can send an
   expect(posts).toEqual([]);
 });
 
-it("with a job open «Тираж» is the job's тираж with «сделано · осталось» under it; an edit writes the pieces left", async () => {
-  const { posts } = server({ run: OPEN_RUN });
+it("with a job open «Тираж» requires confirmation of the pieces left and the active run", async () => {
+  const confirmation = { expected_source: { ...CONFIRMATION.expected_source, group_id: "g9", length_mm: "150" }, expected_active_run_id: "w1" };
+  const { posts } = server({ run: OPEN_RUN, plan: { ...PLAN, group_id: "g9", length_mm: "150", ...confirmation } });
   render(<Ob019SettingsPanel inventory="ОБ.019" live={{ ...LIVE, state: { code: 102, text: "Готов, ждёт пуска", tone: "ok" as const } }} />);
   const tirazh = await screen.findByLabelText("Тираж");
   await waitFor(() => expect(tirazh).toHaveValue("120"));
@@ -654,11 +726,13 @@ it("with a job open «Тираж» is the job's тираж with «сделано
   expect(await screen.findByText("отказ: уже сделано 47 — тираж больше")).toBeInTheDocument();
   fireEvent.change(tirazh, { target: { value: "150" } });
   fireEvent.keyDown(tirazh, { key: "Enter" });
+  expect(posts).toEqual([]);
+  await confirmLoad();
   await waitFor(() => expect(posts).toHaveLength(1));
   // Nothing picked after the card was opened: the edit goes as the open job's run (its target follows, «Пуск» stays
   // allowed). 150 for the job, 47 done: the machine is asked for 103 more (target = counter + 103 = start + 150).
   expect(posts[0]).toEqual({ url: "/api/production/machines/card/ОБ.019/run",
-    body: { kind: "cutting", group_id: "g9", length_mm: "150", values: { total_set: "103" }, confirm_state: 102 } });
+    body: { kind: "cutting", group_id: "g9", length_mm: "150", values: { total_set: "103" }, ...confirmation, confirm_state: 102 } });
 });
 
 it("a «Тираж» of the open job without the machine counter is not written: how many are done is unknown", async () => {
@@ -670,6 +744,53 @@ it("a «Тираж» of the open job without the machine counter is not written:
   fireEvent.keyDown(tirazh, { key: "Enter" });
   expect(await screen.findByText("отказ: счётчик станка не прочитан — повторите, когда станок на связи")).toBeInTheDocument();
   expect(posts).toEqual([]);
+});
+
+it.each([false, true])("same-run confirmation keeps supplied sizes; a conflict refresh revalidates missing sizes (%s)", async (conflict) => {
+  const plan: TransferPlan = { ...PLAN, group_id: "g9", length_mm: "150", expected_active_run_id: OPEN_RUN.id,
+    expected_source: { ...CONFIRMATION.expected_source, group_id: "g9", length_mm: "150" },
+    rows: [...PLAN.rows, { key: "strip_back_mm", label: "Зачистка конца", unit: "мм", nominal: null,
+      value: null, live: "6,00", offset: "0,00", source: "Нет данных" }], blocking: ["Зачистка конца"] };
+  const { posts, state } = server({ run: OPEN_RUN, plan, live: { length_mm: 326 } });
+  render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  const total = await screen.findByLabelText("Тираж");
+  await waitFor(() => expect(total).toHaveValue("120"));
+  fireEvent.change(total, { target: { value: "150" } });
+  fireEvent.keyDown(total, { key: "Enter" });
+  const dialog = await screen.findByRole("dialog", { name: "Загрузить в станок" });
+  expect(within(dialog).queryByRole("rowheader", { name: "Длина провода" })).toBeNull();
+  expect(within(dialog).queryByRole("rowheader", { name: "Зачистка начала" })).toBeNull();
+  expect(posts).toEqual([]);
+  if (conflict) state.plan = { ...plan, expected_source: { ...plan.expected_source!, plan_hash: "b".repeat(64) } };
+  await confirmLoad();
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0].body.values).toEqual({ total_set: "103" });
+  if (conflict) {
+    await within(dialog).findByText(/План загрузки изменился.*подтвердите загрузку ещё раз/);
+    expect(within(dialog).getByText("Не заданы параметры: Зачистка конца")).toBeVisible();
+    expect(within(dialog).getByRole("button", { name: "Подтвердить загрузку" })).toBeDisabled();
+    expect(posts).toHaveLength(1);
+  }
+});
+
+it("a submitted load cannot be dismissed before the POST result settles", async () => {
+  const { posts } = server();
+  const base = vi.mocked(globalThis.fetch).getMockImplementation()!;
+  let release!: () => void;
+  vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+    if (init?.method === "POST" && String(input).endsWith("/run")) await new Promise<void>(resolve => { release = resolve; });
+    return base(input, init);
+  });
+  render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  await pickJob(false);
+  await confirmLoad();
+  const dialog = screen.getByRole("dialog", { name: "Загрузить в станок" });
+  expect(within(dialog).getByRole("button", { name: "Отмена" })).toBeDisabled();
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  expect(dialog).toBeVisible();
+  await act(async () => release());
+  await waitFor(() => expect(posts).toHaveLength(1));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Загрузить в станок" })).toBeNull());
 });
 
 it("the hand-wire picker is closed while a job is open: a wire over it would be counted into the job", async () => {
@@ -693,6 +814,7 @@ it("a «Тираж» typed while the job waits for a missing size goes with the 
   const back = screen.getByLabelText("Зачистка конца");
   fireEvent.change(back, { target: { value: "6" } });
   fireEvent.keyDown(back, { key: "Enter" });
+  await confirmLoad();
   await waitFor(() => expect(posts).toHaveLength(1));
   expect((posts[0].body.values as Record<string, string>).total_set).toBe("20");
 });

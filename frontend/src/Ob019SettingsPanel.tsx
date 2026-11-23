@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { failureText, productionApi } from "./api";
+import { ApiError, failureText, productionApi } from "./api";
 import { equipmentSetupApi } from "./equipmentSetupApi";
 import { EMPTY, formatMoment, formatNumber } from "./format";
 import {
   clock, commandResult, IDLE_STATES, machineControlApi, operatorText, type MachineCommand, type MachineRun, type MachineRunState,
-  type MachineWindow, type RunRequest,
+  type ConfirmedRunRequest, type MachineWindow, type RunRequest,
   type SettingField, type TransferChoice, type TransferPlan, type TransferRow, type WireChoice,
 } from "./machineControlApi";
 import { usePolled, type MachineTaskContext, type Ob019Live } from "./machinesApi";
@@ -20,15 +20,15 @@ import { Ob019WirePicker } from "./Ob019WirePicker";
 /** Настройки карточки ОБ.019 вживую (владелец 19.11.2026: «хочу в лайве менять данные: чертёжик, там данные
  *  актуальные, я их меняю, и они на станке так же меняются»). Поля чертежа и строки задания показывают то, что сейчас
  *  на станке; изменённое поле пишется на станок сразу по Enter, уходу из поля или кнопкам −/+ — без диалога и без
- *  отдельной кнопки; рядом с полем — «записывается…», «✓ на станке» или «отказ: причина». Выбор задания из ЭТК или
- *  провода сразу пишет их значения (выбор в списке — через 0,8 с после последнего изменения: стрелки по закрытому
- *  списку в Chrome на Windows меняют значение на каждом шаге). После своих правок параметров провода значения станка
+ *  отдельной кнопки; рядом с полем — «записывается…», «✓ на станке» или «отказ: причина».
+ *  Выбор задания показывает параметры и требует подтверждения; провод вручную записывает настройку после паузы
+ *  выбора. После своих правок параметров провода значения станка
  *  сохраняются как настройка провода (одна запись на серию правок), только если последняя запись для этого провода
  *  прошла. Записи идут по одной: следующая ждёт, пока станок закончит предыдущую (её итог виден в опросе). Пока станок
  *  режет, поля чертежа закрыты с одной причиной над чертежом.
  *  Задание (резка из ЭТК или ручная работа) — это прогон станка (Ob019RunJob.tsx, сервер production/machine_runs.py):
- *  выбор пишет его через `POST …/run`, и только такой прогон с тиражом на станке открывает «Пуск». Задание ЭТК, где не
- *  задан размер, не пишется, пока размер не введён на чертеже: тогда уходит одной записью прогона со всеми значениями.
+ *  подтверждённая загрузка идёт через `POST …/run`; только проверенный прогон открывает «Пуск». Задание ЭТК, где не
+ *  задан размер, требует ввода размера на чертеже и подтверждения загрузки со всеми значениями.
  *  «Тираж» — штук в задании: при открытом прогоне — тираж задания (под полем «сделано · осталось»; станку пишется цель
  *  D22 = счётчик D649 + (тираж − сделано)), без него — сколько станку осталось до цели; правка тиража при выбранном
  *  задании тоже идёт прогоном. Пока прогон открыт, «Провод вручную» закрыт: провод поверх задания станок посчитал бы в
@@ -82,8 +82,9 @@ type FieldStatus = { kind: "queued" | "held" | "writing" | "done" | "failed"; va
 type Queued = { value: string; recipe: boolean; wire?: string; plan?: boolean };
 type WireWrite = "pending" | "done" | "failed";
 type PlanQuery = { group_id: string; length: string; wire?: undefined } | { wire: string; length: string; group_id?: undefined };
-/** Прогон, ждущий своей очереди: станок ещё пишет предыдущее. */
-type RunDue = { body: RunRequest; values: Record<string, string>; wire?: string };
+/** A proposed run waiting for explicit confirmation of its preview. */
+type RunDue = { body: RunRequest; values: Record<string, string>; wire?: string;
+  preview: TransferPlan | null; activeRunId: string | null; label?: string };
 
 /** Число как на пульте станка, без единицы: мм — два знака, секунды — три. */
 function bare(value: number, unit: string): string {
@@ -212,10 +213,16 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
   const [confirmLoad, setConfirmLoad] = useState(incoming?.loadRequested ?? false);
   const [checkingLoad, setCheckingLoad] = useState(false);
   const loadLock = useRef(false);
+  const postingLoad = useRef(false);
   const loadAttempt = useRef(0);
   const active = useRef(true);
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
-  const dismissLoad = () => { loadAttempt.current += 1; setConfirmLoad(false); };
+  const dismissLoad = () => {
+    if (postingLoad.current) return;
+    loadAttempt.current += 1;
+    setConfirmLoad(false);
+    setDue(null);
+  };
   const [sourceProblem, setSourceProblem] = useState("");
   const [fast, setFast] = useState(false);
   const period = fast ? FAST_MS : IDLE_MS;
@@ -343,7 +350,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
   }, [control]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const busyWriting = Object.values(status).some((item) => item.kind === "queued" || item.kind === "writing")
-    || Object.keys(queue).length > 0 || !!inFlight || !!due;
+    || Object.keys(queue).length > 0 || !!inFlight;
   const free = !open && !inFlight && !sending && Object.keys(queue).length === 0;
   const refusal = () => old ? "нет связи со станком" : !control?.can_edit ? "запись вам не разрешена"
     : runningText ? runningText.toLowerCase() : operatorText(control?.problem ?? "");
@@ -384,11 +391,15 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
         [key, { kind: "failed", value: batch[key].value, text: "счётчик станка не прочитан — повторите, когда станок на связи" }])) }));
       return;
     }
+    if (job) {
+      setStatus((current) => without(current, keys));
+      void runJob({ ...job, values }, values, batch[keys[0]]?.wire);
+      return;
+    }
     setSending(true);
-    (job ? machineControlApi.startRun(inventory, { ...job, values }, control.state) : machineControlApi.write(inventory, values, control.state))
+    machineControlApi.write(inventory, values, control.state)
       .then((command) => {
         setInFlight({ id: command.id, at: Date.now() });
-        if (job) reloadRun();
         setStatus((current) => ({ ...current, ...Object.fromEntries(keys.map((key) =>
           [key, { kind: "writing", value: batch[key].value, id: command.id, recipe: batch[key].recipe, wire: batch[key].wire, plan: batch[key].plan }])) }));
       })
@@ -401,8 +412,11 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
   }, [queue, sending, control, canWrite, open, inFlight, due, old, inventory]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Задание — прогоном станка (`POST …/run`): сервер пишет значения задания, тираж и маркировку и начинает счёт. */
-  async function sendRun(body: RunRequest, values: Record<string, string>, wire?: string) {
+  async function sendRun(body: ConfirmedRunRequest, values: Record<string, string>, wire?: string) {
+    const attempt = loadAttempt.current;
+    postingLoad.current = true;
     const keys = Object.keys(values);
+    markWire(wire, "pending", true);
     setSending(true);
     setStatus((current) => ({ ...current, ...Object.fromEntries(keys.map((key) => [key, { kind: "queued", value: values[key] }])) }));
     try {
@@ -412,47 +426,69 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
       setStatus((current) => ({ ...current, ...Object.fromEntries(keys.map((key) =>
         [key, { kind: "writing", value: values[key], id: command.id, wire, plan: true }])) }));
       reloadRun();
+      setConfirmLoad(false);
+      setDue(null);
     } catch (reason) {
+      if (!active.current || attempt !== loadAttempt.current) return;
       const text = operatorText(failureText(reason, "не записано"));
       markWire(wire, "failed", true);
       if (keys.length) setStatus((current) => ({ ...current, ...Object.fromEntries(keys.map((key) => [key, { kind: "failed", value: values[key], text }])) }));
-      else setMessage({ tone: "danger", text: `Задание не передано: ${text}` });
+      setMessage({ tone: "danger", text: `Задание не передано: ${text}` });
+      if (reason instanceof ApiError && reason.status === 409) {
+        // Refresh only the preview. A second POST always requires another operator click.
+        setDue(null);
+        setPlan(null);
+        try {
+          if (body.kind === "cutting") {
+            const fresh = await machineControlApi.plan(inventory, body.group_id, body.length_mm);
+            if (!active.current || attempt !== loadAttempt.current) return;
+            setPlan(fresh);
+            setDue({ body: { kind: "cutting", group_id: body.group_id, length_mm: body.length_mm },
+              values: planDiff(fresh), wire: fresh.wire, preview: fresh, activeRunId: fresh.expected_active_run_id ?? null });
+          } else {
+            const fresh = await machineControlApi.run(inventory);
+            if (!active.current || attempt !== loadAttempt.current) return;
+            if (fresh.expected_active_run_id === undefined) throw new Error("Обновите карточку и подтвердите загрузку ещё раз");
+            setDue({ body: { kind: "manual", job_id: body.job_id }, values: {}, wire,
+              preview: null, activeRunId: fresh.expected_active_run_id, label: fresh.run?.label });
+          }
+          setConfirmLoad(true);
+          setMessage({ tone: "danger", text: `${text}. Проверьте обновлённые значения и подтвердите загрузку ещё раз` });
+          reloadRun();
+        } catch (refreshError) {
+          setMessage({ tone: "danger", text: `${text}. ${failureText(refreshError, "Не удалось обновить план — выберите задание заново")}` });
+        }
+      }
     } finally {
+      postingLoad.current = false;
       setSending(false);
     }
   }
 
-  /** Прогон сейчас, а если станок ещё пишет предыдущее — следом за ним. */
-  function runJob(body: RunRequest, values: Record<string, string>, wire?: string) {
+  /** Selecting a job or changing its quantity prepares a preview, never a write. */
+  async function runJob(body: RunRequest, values: Record<string, string>, wire?: string, preview?: TransferPlan) {
     if (!canWrite) {
       markWire(wire, "failed", true);
       setMessage({ tone: "warn", text: `Не записано: ${refusal()}` });
       return;
     }
-    markWire(wire, "pending", true);
-    if (!free) {
-      setDue({ body, values, wire });
-      setStatus((current) => ({ ...current, ...Object.fromEntries(Object.keys(values).map((key) => [key, { kind: "queued", value: values[key] }])) }));
-      return;
+    const attempt = ++loadAttempt.current;
+    try {
+      if (body.kind === "cutting") {
+        const shown = preview ?? await machineControlApi.plan(inventory, body.group_id, body.length_mm);
+        if (!active.current || attempt !== loadAttempt.current) return;
+        setDue({ body, values, wire, preview: shown, activeRunId: shown.expected_active_run_id ?? null });
+      } else {
+        const shown = await machineControlApi.run(inventory);
+        if (!active.current || attempt !== loadAttempt.current) return;
+        if (shown.expected_active_run_id === undefined) throw new Error("Обновите карточку и подтвердите загрузку ещё раз");
+        setDue({ body, values, wire, preview: null, activeRunId: shown.expected_active_run_id, label: shown.run?.label });
+      }
+      setConfirmLoad(true);
+    } catch (reason) {
+      if (active.current && attempt === loadAttempt.current) setMessage({ tone: "danger", text: failureText(reason, "Не удалось обновить план загрузки") });
     }
-    return sendRun(body, values, wire);
   }
-
-  useEffect(() => {
-    if (!due || !control) return;
-    if (!canWrite) {
-      const why = refusal();
-      markWire(due.wire, "failed", true);
-      const keys = Object.keys(due.values);
-      setStatus((current) => ({ ...current, ...Object.fromEntries(keys.map((key) => [key, { kind: "failed", value: due.values[key], text: why }])) }));
-      if (!keys.length) setMessage({ tone: "warn", text: `Не записано: ${why}` });
-      setDue(null);
-      return;
-    }
-    if (!free) return;
-    setDue(null);
-    void sendRun(due.body, due.values, due.wire);
-  }, [due, control, canWrite, free]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Значение без набираемого: то, что уже уходит на станок, иначе то, что на станке. */
   const liveOf = (key: string) => key === "total_set" ? (tirazh === null ? "" : String(tirazh)) : liveText(fields.get(key));
@@ -641,10 +677,11 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     const all: Record<string, string> = { ...planDiff(next), ...typed };
     // The job's own quantity, unless the operator typed «Тираж» meanwhile.
     if (fields.has("total_set") && next.quantity !== null && !("total_set" in typed)) all.total_set = String(next.quantity);
-    runJob({ kind: "cutting", group_id: next.group_id!, length_mm: query.current?.length ?? next.length_mm, values: all }, all, next.wire);
+    void runJob({ kind: "cutting", group_id: next.group_id!, length_mm: query.current?.length ?? next.length_mm, values: all }, all, next.wire, next);
   }
 
-  /** Значения задания или провода — сразу на станок: задание ЭТК — прогоном станка (сервер считает значения, тираж и
+  /** A cutting job opens confirmation; a wire writes its settings. The confirmed run carries the source guards.
+   *  Задание ЭТК — прогоном станка (сервер считает значения, тираж и
    *  маркировку сам и начинает счёт), провод — одной записью отличающихся полей. Такие записи настройку провода не
    *  сохраняют, но их итог решает, можно ли её потом сохранить. */
   async function writePlan(next: TransferPlan) {
@@ -658,7 +695,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
         setHeld({});
         return;
       }
-      return runJob({ kind: "cutting", group_id: next.group_id, length_mm: query.current?.length ?? next.length_mm }, values, wire);
+      return runJob({ kind: "cutting", group_id: next.group_id, length_mm: query.current?.length ?? next.length_mm }, values, wire, next);
     }
     const keys = Object.keys(values);
     if (!keys.length) {
@@ -714,9 +751,10 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     setChoice(item.key);
     void pickRef.current({ group_id: item.group_id, length: item.length_mm });
   }, [incoming, choices, source]);
-  /** Выбор задания в списке: значение видно сразу, на станок — через 0,8 с после последнего изменения (стрелки по
+  /** Job selection is previewed after the pause and then confirmed (стрелки по
    *  закрытому списку в Chrome на Windows дают изменение на каждом шаге — пишется только итог). */
   const pickJob = (key: string) => {
+    dismissLoad();
     setChoice(key);
     setWire("");
     query.current = null;  // what an earlier choice still loads is dropped
@@ -733,19 +771,20 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     const item = choices?.find((row) => row.key === key);
     pickTimer.current = setTimeout(() => void pickRef.current(item ? { group_id: item.group_id, length: item.length_mm } : null), SELECT_WAIT_MS);
   };
-  /** Ручная работа — сразу на станок прогоном: длину, остаток тиража и номер для станка сервер берёт из работы. */
+  /** A manual job also requires confirmation; the server derives its length, remaining quantity and order number. */
   const pickManual = (job: ManualJob) => {
     setMessage(null);
     setRecipeNote(null);
     const run = runNow && runNow.kind === "manual" && runNow.job_id === job.id && runNow.stage !== "closed" ? runNow : null;
     const done = run?.done ?? 0;
     if (done && job.quantity_planned) setMessage({ tone: "info", text: `Уже сделано ${done} из ${job.quantity_planned} — на станок уходит остаток` });
-    if (!incoming) runJob({ kind: "manual", job_id: job.id }, {});
+    if (!incoming) void runJob({ kind: "manual", job_id: job.id }, {});
   };
   const pickManualRef = useRef(pickManual);
   pickManualRef.current = pickManual;
   const pickWire = (label: string) => {
     if (runOpen) return;  // the picker is closed while a run is open
+    dismissLoad();
     clearTimeout(pickTimer.current);
     setWire(label);
     setChoice("");
@@ -891,13 +930,26 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
   const problem = control && !old ? (!control.can_edit ? "Изменять значения станка вам не разрешено"
     : runningText || (control.problem ? `Изменения не записываются: ${operatorText(control.problem)}` : "")) : "";
   const picked = choices?.find((item) => item.key === choice) ?? null;
-  const loadProblem = sourceProblem || (!incoming?.action.load_permitted ? "Загрузка задания вам не разрешена" : "")
+  const shownPlan = due ? due.preview : plan;
+  const shownValues = due?.body.values ?? {};
+  const repeatsOpenRun = !!runOpen && shownPlan?.expected_active_run_id === runOpen.id
+    && !!due?.body.values && Object.keys(due.body.values).length > 0 && sameRun(runOpen, due.body);
+  const missingSizes = repeatsOpenRun ? [] : shownPlan?.rows.filter((row) => row.value === null && shownPlan.blocking.includes(row.label)
+    && !(row.key in shownValues)).map((row) => row.label) ?? [];
+  const loadProblem = sourceProblem || (incoming && !incoming.action.load_permitted ? "Загрузка задания вам не разрешена" : "")
     || (!canWrite ? refusal() : "") || (!old && (live?.alarm.tone === "danger" || live?.alarm.tone === "warn") ? "Устраните аварию на станке" : "")
-    || (plan?.blocking.length ? `Не заданы параметры: ${plan.blocking.join(", ")}` : "")
-    || (plan?.marking?.blocking.length ? "Маркировка из ЭТК с ошибкой — исправьте ЭТК" : "")
+    || (missingSizes.length ? `Не заданы параметры: ${missingSizes.join(", ")}` : "")
+    || (shownPlan?.marking?.blocking.length ? "Маркировка из ЭТК с ошибкой — исправьте ЭТК" : "")
+    || (shownPlan?.group_id && (!shownPlan.expected_source || shownPlan.expected_active_run_id === undefined)
+      ? "Обновите план и подтвердите загрузку ещё раз" : "")
     || (runOpen && source && !sameRun(runOpen, { kind: "cutting", group_id: source.group_id, length_mm: source.length_mm })
       ? "На станке другое задание — сначала завершите его" : "");
-  const changes = plan ? planDiff(plan) : {};
+  const planChanges = shownPlan ? planDiff(shownPlan) : {};
+  // Partial resends keep the open run's dimensions and identity; the backend still adds ETK marking.
+  const automaticKeys = new Set([...(repeatsOpenRun ? [] : ["length_mm", "order_number", "product"]),
+    ...Object.keys(shownPlan?.marking ? planValues(shownPlan.marking) : {})]);
+  const changes = due?.body.values ? { ...Object.fromEntries(Object.entries(planChanges).filter(([key]) => automaticKeys.has(key))), ...shownValues }
+    : planChanges;
   const changedRows = Object.entries(changes).map(([key, value]) => {
     const field = fields.get(key)!;
     const after = field.kind === "mode" ? MODES.find(([code]) => code === value)?.[1] ?? value
@@ -906,31 +958,42 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     return { key, label: key === "total_set" ? "Тираж задания" : field.label,
       before: key === "total_set" ? `${tirazh ?? EMPTY} шт` : shown(field), after };
   });
-  async function confirmIncomingLoad() {
-    if (!incoming || !source || !plan || loadProblem || !free || loadLock.current) return;
+  async function confirmJobLoad() {
+    if ((!due && (!incoming || !source || !plan)) || loadProblem || !free || loadLock.current) return;
     loadLock.current = true;
     const attempt = ++loadAttempt.current;
     setCheckingLoad(true);
     try {
-      const result = await productionApi.operationMachineActions(incoming.taskId, incoming.operationId);
-      if (!active.current || attempt !== loadAttempt.current) return;
-      const current = result.actions.find((item) => item.etk_position === incoming.action.etk_position && item.equipment_id === equipmentId);
-      if (!current || JSON.stringify(current.source) !== JSON.stringify(source)) {
-        setSourceProblem(current?.blocker || "Задание изменилось — откройте инструкцию заново");
-        return;
+      if (incoming && source) {
+        const result = await productionApi.operationMachineActions(incoming.taskId, incoming.operationId);
+        if (!active.current || attempt !== loadAttempt.current) return;
+        const current = result.actions.find((item) => item.etk_position === incoming.action.etk_position && item.equipment_id === equipmentId);
+        if (!current || JSON.stringify(current.source) !== JSON.stringify(source)) {
+          setSourceProblem(current?.blocker || "Задание изменилось — откройте инструкцию заново");
+          return;
+        }
+        if (!current.can_load) { setMessage({ tone: "warn", text: current.blocker || "Станок сейчас не готов к загрузке" }); return; }
+        const fresh = await loadPlan({ group_id: source.group_id, length: source.length_mm });
+        if (!active.current || attempt !== loadAttempt.current) return;
+        // Include the source and active-run guards: identical values can still come from a newer source.
+        if (JSON.stringify([fresh.rows, fresh.job, fresh.quantity, fresh.marking, fresh.blocking, fresh.expected_source, fresh.expected_active_run_id])
+          !== JSON.stringify([shownPlan?.rows, shownPlan?.job, shownPlan?.quantity, shownPlan?.marking, shownPlan?.blocking,
+            shownPlan?.expected_source, shownPlan?.expected_active_run_id])) {
+          setPlan(fresh);
+          setDue(null);
+          setMessage({ tone: "warn", text: "Параметры задания изменились — проверьте значения и подтвердите ещё раз" });
+          return;
+        }
       }
-      if (!current.can_load) { setMessage({ tone: "warn", text: current.blocker || "Станок сейчас не готов к загрузке" }); return; }
-      const fresh = await loadPlan({ group_id: source.group_id, length: source.length_mm });
-      if (!active.current || attempt !== loadAttempt.current) return;
-      setPlan(fresh);
-      // A new plan must be reviewed before its values can be written.
-      if (JSON.stringify([fresh.rows, fresh.job, fresh.quantity, fresh.marking, fresh.blocking])
-        !== JSON.stringify([plan.rows, plan.job, plan.quantity, plan.marking, plan.blocking])) {
-        setMessage({ tone: "warn", text: "Параметры задания изменились — проверьте значения и подтвердите ещё раз" });
-        return;
+      const body = due?.body ?? (source ? { kind: "cutting" as const, group_id: source.group_id, length_mm: source.length_mm } : null);
+      if (!body) return;
+      if (body.kind === "cutting") {
+        if (!shownPlan?.expected_source || shownPlan.expected_active_run_id === undefined) return;
+        await sendRun({ ...body, expected_source: shownPlan.expected_source,
+          expected_active_run_id: shownPlan.expected_active_run_id }, due?.values ?? planDiff(shownPlan), shownPlan.wire);
+      } else if (due) {
+        await sendRun({ ...body, expected_active_run_id: due.activeRunId }, due.values, due.wire);
       }
-      setConfirmLoad(false);
-      await writePlanRef.current(fresh);
     } catch (reason) {
       setMessage({ tone: "danger", text: failureText(reason, "Задание не загружено") });
     } finally { loadLock.current = false; setCheckingLoad(false); }
@@ -951,7 +1014,8 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
   const runSent = !!inFlight && inFlight.id in runWrites.current && runNow?.id !== inFlight.id;
   const refusedPick = jobPicked && message?.tone === "danger" ? message : null;
   const pickNote = !jobPicked ? null : refusedPick ? { tone: "danger", text: refusedPick.text }
-    : planLoading || !!due || runSent ? { tone: "info", text: incoming && planLoading ? "Расчёт параметров…" : "записывается на станок…" } : null;
+    : due && confirmLoad ? { tone: "warn", text: "Проверьте значения и подтвердите загрузку" }
+      : planLoading || runSent ? { tone: "info", text: planLoading ? "Расчёт параметров…" : "записывается на станок…" } : null;
   // The machine's last known job, greyed in the empty «Задание» (pult open, nothing picked here).
   const lastJob = runNow?.label || [live?.job?.order_number, live?.job?.product].filter(Boolean).join(" · ");
   return <section className="machine-settings" aria-label="Настройки станка">
@@ -966,10 +1030,13 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
         {loadProblem && !sourceProblem && <p className="warning-inline">{loadProblem}</p>}
       </>}
     </section>}
-    {incoming && confirmLoad && plan && !sourceProblem && <PageWindow label="Загрузить в станок" close={dismissLoad} width={760}>
+    {confirmLoad && (shownPlan || due?.body.kind === "manual") && !sourceProblem && <PageWindow label="Загрузить в станок" close={dismissLoad} width={760}>
       <section className="panel machine-card">
       <h2>Загрузить в станок · {inventory}</h2>
-      <p>{plan.number} · {plan.wire} · {plan.length_mm} мм · {plan.quantity ?? EMPTY} шт</p>
+      {shownPlan ? <p>{shownPlan.number} · {shownPlan.wire} · {shownPlan.length_mm} мм · {shownPlan.quantity ?? EMPTY} шт</p>
+        : <p>{manualJob?.number} · {manualJob?.wire} · {manualJob?.length_mm} мм · {manualJob?.quantity_planned ?? EMPTY} шт</p>}
+      <p>Задание на станке: {due ? due.label || (due.activeRunId ? runNow?.label || "Открытое задание" : "нет")
+        : shownPlan?.expected_active_run_id ? runNow?.label || "Открытое задание" : "нет"}</p>
       {source && <ul>{source.members.map((member) => <li key={`${member.task_id}:${member.operation_id}`}>{member.item} · {member.quantity} шт</li>)}</ul>}
       {changedRows.length ? <table className="machine-table" aria-label="Изменённые значения">
         <thead><tr><th>Параметр</th><th>На станке</th><th>Будет записано</th></tr></thead>
@@ -978,8 +1045,8 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
       {loadProblem && <p className="warning-inline">{loadProblem}</p>}
       {message && <p className={`tone-${message.tone}`} role="status">{message.text}</p>}
       <div className="machine-actions">
-        <button type="button" className="secondary" onClick={dismissLoad}>Отмена</button>
-        <button type="button" className="primary" disabled={Boolean(loadProblem) || !free || checkingLoad} onClick={() => void confirmIncomingLoad()}>
+        <button type="button" className="secondary" disabled={sending} onClick={dismissLoad}>Отмена</button>
+        <button type="button" className="primary" disabled={Boolean(loadProblem) || !free || checkingLoad} onClick={() => void confirmJobLoad()}>
           {checkingLoad ? "Проверка…" : "Подтвердить загрузку"}</button>
       </div>
       </section>
@@ -1017,7 +1084,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
       </div>
       {planLoading && !choice && <p className="machine-muted">Считаю значения…</p>}
       {plan && plan.blocking.length > 0 && held !== null && <p className="warning-inline" role="status">
-        В ЭТК не задано: {plan.blocking.join(", ")} — введите на чертеже; задание уйдёт на станок, когда все размеры заданы
+        В ЭТК не задано: {plan.blocking.join(", ")} — введите на чертеже и подтвердите загрузку
       </p>}
       {message && !refusedPick && <p className={`machine-message tone-${message.tone}`} role="status">{message.text}</p>}
     </section>

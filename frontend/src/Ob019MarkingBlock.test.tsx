@@ -33,6 +33,7 @@ const ENDS: MarkingPlan = { mode: "ends", mode_label: "По краям", source:
   { key: "mark_pos_front_mm", label: "Метка у начала", value: "20" }, { key: "mark_pos_back_mm", label: "Метка у конца", value: "20" },
 ] };
 const plan = (marking: MarkingPlan | null): TransferPlan => ({
+  expected_source: { group_id: "g1", version: 4, length_mm: "325", plan_hash: "a".repeat(64) }, expected_active_run_id: null,
   group_id: "g1", number: "ГР-0007", wire: "ПВАМ 0,35", length_mm: "325,00", quantity: 12,
   rows: [{ key: "length_mm", label: "Длина провода", unit: "мм", nominal: "325,00", source: "Задание", offset: "0,00", value: "325,00", live: "325,00" }],
   job: { total_set: 12, order_quantity: 12, order_number: "GR-0007", product: "PVAM 0,35 L325,00" }, missing: [], blocking: [], marking,
@@ -175,6 +176,8 @@ it("an ETK job with marking says what the ETK marks and sends the job; the marki
   await pickJob();
   expect(await screen.findByText("из ЭТК: По краям «C1.5 to XS17.7» / «XS17.7»")).toBeInTheDocument();
   expect(screen.getByText("Текст переведён в латиницу: «Х1» → «Kh1»")).toBeInTheDocument();
+  expect(posts).toEqual([]);
+  fireEvent.click(within(await screen.findByRole("dialog", { name: "Загрузить в станок" })).getByRole("button", { name: "Подтвердить загрузку" }));
   await waitFor(() => expect(posts).toHaveLength(1));
   // The job goes as a run of the machine; the server writes the ETK marking with it (workflows/machine_runs_api.py).
   expect(posts[0].url).toBe("/api/production/machines/card/ОБ.019/run");
