@@ -555,7 +555,10 @@ def test_start_is_refused_when_the_machine_was_set_to_another_job_outside_erp(ma
 
 
 def test_erp_own_length_edit_or_correction_during_an_open_job_keeps_start_allowed(machines_api):
-    """A length corrected on the drawing, or after «Проба и поправка», is written through ERP: the open run follows it."""
+    """An ERP length edit and a non-length ERP offset after «Проба и поправка» keep the open run startable.
+
+    Length calibration uses the separate measured-value PLC path, never an ERP length offset.
+    """
     sessions, clock, admin, ob019, _ = machines_api
     machine = Machine(admin, clock)
     group_id = _job(sessions)
@@ -563,10 +566,10 @@ def test_erp_own_length_edit_or_correction_during_an_open_job_keeps_start_allowe
     sent = machine.written(_post(admin, RUN, body).json()["id"])
     machine.written(_post(admin, CARD + "/write", {"values": {"length_mm": "326"}}).json()["id"])
     machine.written(_post(admin, CARD + "/write", {"values": {"order_number": "GR-0007-2"}}).json()["id"])
-    stored = _post(admin, CARD + "/correction", {"parameter": "length_mm", "case": "machine", "offset": "1,5",
+    stored = _post(admin, CARD + "/correction", {"parameter": "strip_front_mm", "case": "machine", "offset": "1,5",
                                                  "note": "проба"})
     assert stored.status_code == 200, stored.text
-    machine.written(_post(admin, CARD + "/write", {"values": {"length_mm": "326,5"}}).json()["id"])  # the card's write
+    machine.written(_post(admin, CARD + "/write", {"values": {"strip_front_mm": "6,5"}}).json()["id"])  # the card's write
     started = _start(admin)
     assert started.status_code == 200, started.text
     assert sent["32"] == 32500  # the run itself was written with the job's length
