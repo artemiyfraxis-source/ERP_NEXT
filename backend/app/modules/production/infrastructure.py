@@ -613,6 +613,8 @@ class ProductionInstrumentRow(Base):
         CheckConstraint("kind <> 'Принадлежность' OR (verification_number IS NULL AND verified_at IS NULL AND verification_due IS NULL AND status IN ('Действует', 'Не используется'))", name='ck_production_instruments_accessory'),
         CheckConstraint("vna_app IN ('', 'S2VNA', 'Arinst VL')", name="ck_production_instruments_vna_app"),
         CheckConstraint("vna_app = '' OR kind = 'Средство измерений'", name="ck_production_instruments_vna_measuring"),
+        CheckConstraint("json_type(custom_fields) = 'object'", name="ck_production_instruments_custom_fields_object").ddl_if(dialect="sqlite"),
+        CheckConstraint("json_typeof(custom_fields) = 'object'", name="ck_production_instruments_custom_fields_object").ddl_if(dialect="postgresql"),
         Index("uq_production_instruments_serial_number", "serial_number", unique=True,
               sqlite_where=text("trim(serial_number) <> ''"),
               postgresql_where=text("trim(serial_number) <> ''")),
@@ -632,6 +634,10 @@ class ProductionInstrumentRow(Base):
     warehouse_grn: Mapped[str] = mapped_column(String(32), nullable=False, server_default="")
     warehouse_writeoff_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
     vna_app: Mapped[str] = mapped_column(String(16), nullable=False, default="", server_default="")
+    article: Mapped[str] = mapped_column(String(512), nullable=False, default="", server_default="")
+    notes: Mapped[str] = mapped_column(Text(), nullable=False, default="", server_default="")
+    measurement_category: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+    custom_fields: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict, server_default="{}")
     verification_number: Mapped[str | None] = mapped_column(String(255), nullable=True)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     verification_due: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
@@ -1983,7 +1989,8 @@ class SqlAlchemyInstrumentRepository:
             serial_number=row.serial_number, manufacturer=row.manufacturer, doc_designation=row.doc_designation,
             quantity=row.quantity, storage_location=row.storage_location, warehouse_grn=row.warehouse_grn,
             warehouse_writeoff_id=row.warehouse_writeoff_id,
-            vna_app=row.vna_app,
+            vna_app=row.vna_app, article=row.article, notes=row.notes,
+            measurement_category=row.measurement_category, custom_fields=dict(row.custom_fields),
         )
 
     def lock_tree(self) -> None:
@@ -2036,7 +2043,7 @@ class SqlAlchemyInstrumentRepository:
             "verification_number", "verified_at", "verification_due",
             "parent_id", "serial_number", "manufacturer", "doc_designation", "quantity", "storage_location", "warehouse_grn",
             "warehouse_writeoff_id",
-            "vna_app",
+            "vna_app", "article", "notes", "measurement_category", "custom_fields",
         )}
         values.update(status=instrument.status.value, kind=instrument.kind.value)
         if instrument.version == 1:
