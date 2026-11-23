@@ -31,7 +31,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
-from .domain import EQUIPMENT_TABS, SCREEN_GROUPS, ReferenceValidationError
+from .domain import EQUIPMENT_TABS, SCREEN_GROUPS, ReferenceValidationError, TechOperationTab
 from .equipment import ARTICLE_KEY, BASE_KEY, INV_KEY, SUPPORTING_TYPE, TOOL_KEY, field, inv_key, name_of, parse_inventory, type_of
 from .infrastructure import (
     EQUIPMENT_ROLES, OP_LINK_COLUMNS, EquipmentModelRow, EquipmentOperationLinkRow, EquipmentTemplateToolRow,
@@ -128,6 +128,11 @@ class _State:
     @classmethod
     def load(cls, session: Session) -> _State:
         units = list(session.scalars(select(EquipmentRecordRow)))
+        catalog = session.info.get("reference_instrument_catalog")
+        if catalog is not None:
+            catalog.list()
+            units = [catalog.record(catalog.resolve(unit.id), record_id=unit.id)
+                     if unit.tab == "ob_measuring" else unit for unit in units]
         # A frozen legacy row retains its model FK after the final live unit is deleted.
         # Keep that historical model out of live matching/reports, but retain real orphans
         # and models still referenced by operations or templates for diagnostics.
@@ -168,6 +173,8 @@ class _State:
                 if parsed is not None:
                     families[(parsed.prefix, parsed.base)].add(unit.equipment_model_id)
         for model in self.models.values():
+            if any(unit.tab == TechOperationTab.MEASURING for unit in self.by_model.get(model.id, [])):
+                continue
             if model.name and (key := ref_key(f"{model.article}/{model.name}")):
                 texts[key].add(model.id)
         self.texts, self.inventories, self.families = dict(texts), dict(inventories), dict(families)
@@ -258,6 +265,8 @@ def reconcile(session: Session, *, operation_ids: Iterable[UUID] | None = None, 
 
 def _follow_models(state: _State) -> None:
     for model_id, units in state.by_model.items():
+        if any(unit.tab == TechOperationTab.MEASURING for unit in units):
+            continue
         model = state.models.get(model_id)
         attrs = {unit_attrs(unit.fields or {}) for unit in units}
         if model is not None and len(attrs) == 1:
@@ -267,6 +276,8 @@ def _follow_models(state: _State) -> None:
 
 
 def _rewrite(row: TechOperationRecordRow, fields: dict[str, str], reload: bool) -> None:
+    if row.tab == "ob_measuring":
+        return  # Frozen compatibility provenance; live values belong to the instrument facade.
     row.fields = fields
     row.normalized_search = _search(row.display_text, fields)
     if not reload:
@@ -324,6 +335,8 @@ def _link_tools(session: Session, state: _State, explicit: set[UUID], reload: bo
     links = {link.unit_id: link for link in session.scalars(
         select(EquipmentUnitLinkRow).where(EquipmentUnitLinkRow.kind == TOOL))}
     for unit in state.units:
+        if unit.tab == TechOperationTab.MEASURING:
+            continue
         fields = unit.fields or {}
         text = field(fields, TOOL_KEY)
         link = links.get(unit.id)
@@ -459,8 +472,10 @@ def after_save(session: Session, row: TechOperationRecordRow, before: Mapping[st
 
 def _model_json(state: _State, model: EquipmentModelRow, operations: int) -> dict:
     units = state.by_model.get(model.id, [])
+    name, article, maker = unit_attrs(units[0].fields) if units and all(
+        unit.tab == TechOperationTab.MEASURING for unit in units) else (model.name, model.article, model.maker)
     return {
-        "id": str(model.id), "name": model.name, "article": model.article, "maker": model.maker,
+        "id": str(model.id), "name": name, "article": article, "maker": maker,
         "role": model.role, "role_confirmed": model.role_confirmed, "screen_group": model.screen_group,
         "display": state.display(model.id),
         "unit_ids": [str(unit.id) for unit in units],
@@ -484,8 +499,14 @@ class SqlAlchemyEquipmentRepository:
     def template_tools(self) -> list[dict]:
         """The linked «Оборудование» rows of the card templates: template id, position, the row's text and inventory
         number when linked, the model — what the ETK builder carries as `equipment_model_id` (workflows/techcard_build)."""
-        return [{"template_id": row.template_id, "position": row.position, "tool_name": row.tool_name,
-                 "inventory_number": row.inventory_number, "model_id": str(row.model_id)} for row in self.session.scalars(
+        state = _State.load(self.session)
+        def values(row):
+            units = state.by_model.get(row.model_id, [])
+            if units and all(unit.tab == TechOperationTab.MEASURING for unit in units):
+                return state.display(row.model_id), state.inventory(units[0].id)
+            return row.tool_name, row.inventory_number
+        return [{"template_id": row.template_id, "position": row.position, "tool_name": values(row)[0],
+                 "inventory_number": values(row)[1], "model_id": str(row.model_id)} for row in self.session.scalars(
             select(EquipmentTemplateToolRow).where(EquipmentTemplateToolRow.model_id.is_not(None)).order_by(
                 EquipmentTemplateToolRow.template_id, EquipmentTemplateToolRow.position))]
 

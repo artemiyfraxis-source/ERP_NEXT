@@ -80,6 +80,7 @@ class Item:
     title: str  # what the preview calls the row
     version: str
     values: dict[str, str]
+    catalog_version: int | None = None
 
 
 def fingerprint(*parts: object) -> str:
@@ -118,6 +119,7 @@ class _TechTable:
         self.own_columns: tuple[str, ...] = ()  # a cable base: its columns, read in `items`
         self.foreign: frozenset[str] = frozenset()  # a cable base: the columns of the other cable bases only
         self.removed: set[str] = set()
+        self.catalog_quality = False
 
     def _extra_values(self, uow: UnitOfWork, records: Sequence[TechOperationRecord]) -> dict[str, dict[str, str]]:
         """The extra columns of every БД.ПРОВ row, read in the open `uow` (the cable catalogue's own join)."""
@@ -171,9 +173,11 @@ class _TechTable:
         extra = self._extra_values(uow, records) if self.extras else {}
         return [
             Item(str(record.id), record.display_text.strip(" /") or str(record.id),
-                 fingerprint(record.display_text, record.fields, *([extra.get(str(record.id), {})] if self.extras else [])),
+                 fingerprint(record.display_text, record.fields, *([extra.get(str(record.id), {})] if self.extras else []),
+                             *([uow.instrument_catalog.version(record.id)] if self.tab == TechOperationTab.MEASURING else [])),
                  {**record.fields, **extra.get(str(record.id), {}),
-                  **({"Наименование": name_of(record.fields)} if self.tab in EQUIPMENT_TABS else {})})
+                  **({"Наименование": name_of(record.fields)} if self.tab in EQUIPMENT_TABS else {})},
+                 catalog_version=uow.instrument_catalog.version(record.id) if self.tab == TechOperationTab.MEASURING else None)
             for record in records
         ]
 
@@ -213,6 +217,12 @@ class _TechTable:
         return list(ordered)
 
     def update(self, uow, item, changes, actor, now):
+        if self.tab == TechOperationTab.MEASURING:
+            current = uow.tech_operations.get(UUID(item.id))
+            edits = tuple(FieldEdit(name, item.values.get(name, ""), value) for name, value in changes.items())
+            uow.instrument_catalog.edit_excel(current.id, edits, actor, now, custom_columns(self.tab, uow),
+                                             quality=self.catalog_quality, version=item.catalog_version)
+            return
         own = {name: value for name, value in changes.items() if name not in self.extras}
         extra = {name: value for name, value in changes.items() if name in self.extras}
         if extra and COAX_TITLES.keys() == self.extras.keys():
@@ -670,7 +680,7 @@ _ROW_ERRORS = (ReferenceValidationError, StaleRecordError, LookupError, ValueErr
 
 
 def import_file(tab: str, uow_factory: Callable[[], UnitOfWork], content: bytes, actor: Actor, now: datetime, *,
-                dry_run: bool, kind: str = "") -> Report:
+                dry_run: bool, kind: str = "", catalog_quality: bool = False) -> Report:
     _table(tab, kind)  # an unknown table is refused before the file is read
     main, service = _sheets(content)
     service_titles, meta = _service_map(service)
@@ -682,6 +692,8 @@ def import_file(tab: str, uow_factory: Callable[[], UnitOfWork], content: bytes,
         asked = given
     tab, kind = asked if kind else (asked[0], given[1] if given[0] == asked[0] else asked[1])
     table = _table(tab, kind)
+    if isinstance(table, _TechTable):
+        table.catalog_quality = catalog_quality
     if meta.get("Таблица") and given[0] != tab:
         raise RoundtripError(f"Файл скачан из другой таблицы («{meta.get('Название') or meta['Таблица']}») — "
                              f"загрузите его в ней")

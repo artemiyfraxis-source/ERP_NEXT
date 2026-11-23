@@ -97,10 +97,11 @@ def test_measuring_instruments_have_a_separate_sequence(references_api):
     assert next_model_inventory("Средства измерений", existing) == "СИ.003"
     assert next_model_inventory("Оборудование", existing) == "ОБ.198"  # do not reuse occupied legacy numbers
     assert next_model_inventory("Аппликаторы", existing) == ""
-    first = _create(references_api, **{"Тип": "Средства измерений", "Наменование": "Штангенциркуль"}).json()
-    assert first["fields"]["Инв. номер"] == "СИ.001"
-    assert references_api.post(f"{BASE}/{first['id']}/duplicate").json()["fields"]["Инв. номер"] == "СИ.001.2"
-    assert _create(references_api, **{"Тип": "Средства измерений", "Наменование": "Микрометр"}).json()["fields"]["Инв. номер"] == "СИ.002"
+    # 0217: a new СИ is registered only in the single registry (its own СИ.### sequence,
+    # tests/production/test_instruments_api.py); the БД.ОБ form refuses it instead of growing a second copy.
+    refused = _create(references_api, **{"Тип": "Средства измерений", "Наменование": "Штангенциркуль"})
+    assert refused.status_code == 422
+    assert refused.json()["detail"] == "СИ хранится в едином реестре; используйте карточку СИ"
 
 
 def test_supporting_equipment_keeps_ob_prefix_and_is_not_a_machine(references_api):
@@ -138,9 +139,23 @@ def test_number_generation_counts_inventory_aliases():
     assert next_instance_inventory("ОБ.94.1", existing) == "ОБ.94.4"
 
 
-@pytest.mark.parametrize("kind, number", [
-    ("Оборудование", "ОБ.94.1"), ("Средства измерений", "ОБ.94.1"), ("Средства измерений", "СИ.094.1"),
-])
+@pytest.mark.parametrize("number", ["ОБ.94.1", "СИ.094.1"])
+@pytest.mark.parametrize("canonical", [{}, {"Инв. номер": " "}])
+def test_repository_refuses_a_measuring_instrument_named_only_by_aliases(references_api, number, canonical):
+    # 0217: a СИ is stored only in the single registry. The `obType` alias behind a blank «Тип» must still be recognised
+    # as a СИ, so the legacy repository refuses the row instead of filing it as ordinary equipment.
+    factory = references_api.app.state.references_uow_factory
+    record = TechOperationRecord.create(
+        tab=TechOperationTab.EQUIPMENT, display_text="Прибор", search_text="", source_sheet="БД.ОБ", sort_key="1",
+        fields={"Тип": " ", "obType": "Средства измерений", "inventoryNumber": number, **canonical},
+    )
+    with factory() as uow, pytest.raises(ReferenceValidationError, match="едином реестре"):
+        uow.tech_operations.save(record)
+    with factory() as uow:
+        assert uow.tech_operations.get(record.id) is None
+
+
+@pytest.mark.parametrize("kind, number", [("Оборудование", "ОБ.94.1")])
 @pytest.mark.parametrize("canonical", [{}, {"Инв. номер": " "}])
 def test_repository_save_keeps_inventory_and_type_aliases(references_api, kind, number, canonical):
     factory = references_api.app.state.references_uow_factory
@@ -161,7 +176,33 @@ def test_repository_save_keeps_inventory_and_type_aliases(references_api, kind, 
         assert uow.tech_operations.get(record.id).fields["Инв. номер"] == number
 
 
-@pytest.mark.parametrize("kind, number", [("Оборудование", "ОБ.94.1"), ("Средства измерений", "ОБ.94.1")])
+def test_bulk_import_refuses_a_measuring_instrument(references_api):
+    # 0217: neither a new row nor a retyped one may become a СИ through the БД.ОБ import; each is refused with the
+    # pointer to the registry card and nothing is written.
+    factory = references_api.app.state.references_uow_factory
+    now = datetime(2026, 11, 12, 12)
+    record = TechOperationRecord.create(
+        tab=TechOperationTab.EQUIPMENT, display_text="Прибор", search_text="", source_sheet="БД.ОБ", sort_key="1",
+        fields={"Тип": " ", "obType": "Инструмент", "Инв. номер": " ", "inventoryNumber": "ОБ.94.1", "Расположение": "ЦАР"},
+    )
+    with factory() as uow:
+        uow.tech_operations.replace((record,), schema_version=14, source_updated_at=None, imported_at=now)
+        uow.commit()
+    rows = [
+        ImportRowIn(fields={"unitId": str(record.id), "obType": "Средства измерений", "Расположение": "ЖУК"}),
+        ImportRowIn(fields={"baseValue": "Другой прибор", "obType": "Средства измерений", "inventoryNumber": "ОБ.95.1"}),
+    ]
+    actor = Actor(name="Тест", department="ОГТ")
+    for dry_run in (True, False):
+        report = import_rows("ob", factory(), rows, actor, now, dry_run=dry_run)
+        assert report.created == report.updated == []
+        assert [item.reason for item in report.refused] == ["СИ хранится в едином реестре; используйте карточку СИ"] * 2
+    with factory() as uow:
+        assert uow.tech_operations.get(record.id).fields == record.fields
+        assert [row.id for row in uow.tech_operations.list(tab=None, query="", limit=10)] == [record.id]
+
+
+@pytest.mark.parametrize("kind, number", [("Оборудование", "ОБ.94.1")])
 def test_bulk_import_keeps_aliased_inventory_on_create_and_update(references_api, kind, number):
     factory = references_api.app.state.references_uow_factory
     now = datetime(2026, 11, 12, 12)

@@ -17,7 +17,7 @@ import {
 } from "./api";
 import { InstrumentRegistry } from "./InstrumentRegistry";
 import { formatDay, formatMoment, formatNumber } from "./format";
-import { canAct } from "./navigation";
+import { canAct, canSee } from "./navigation";
 import { isFinal } from "./productionGraph";
 import { BoxName, boxCodeKey } from "./BoxLabel";
 import { VswrSection, progressText, type VswrRejectRequest } from "./VswrSection";
@@ -171,7 +171,7 @@ export function QualityPage({ principal }: { principal: Principal }) {
       <DefectReview defects={defects} operators={operators} busy={Boolean(busy)} mutate={mutate} />
     </div></div>}
     {loaded && canQuality && <div role="tabpanel" id="quality-panel-instruments" aria-labelledby="quality-tab-instruments" hidden={tab !== "instruments"}>
-      <InstrumentRegistry instruments={instruments} onChanged={reload} />
+      <InstrumentRegistry instruments={instruments} onChanged={reload} canSeeReferences={canSee(principal, "erpref")} />
     </div>}
     {loaded && !canQuality && !canEdit && <div className="empty">ОТК открыт вам только на просмотр.</div>}
   </section>;

@@ -275,6 +275,7 @@ class EditRecordCommand:
     edits: tuple[FieldEdit, ...]
     actor: Actor
     now: datetime
+    version: int | None = None
 
 
 @dataclass(frozen=True)
@@ -488,6 +489,17 @@ def _same_article(updated: TechOperationRecord, edits: tuple[FieldEdit, ...], no
 def edit_record(command: EditRecordCommand, uow: UnitOfWork) -> TechOperationRecord:
     _check_edit_count(command.edits)
     with uow:
+        record = uow.tech_operations.get(command.record_id)
+        if record is not None and record.tab == TechOperationTab.MEASURING:
+            catalog = getattr(uow, "instrument_catalog", None)
+            if catalog is None:
+                raise ReferenceValidationError("Используйте единый реестр СИ")
+            if command.version is None:
+                raise StaleRecordError("Для изменения СИ нужна версия записи — откройте её заново")
+            updated = catalog.edit_values(command.record_id, command.edits, command.actor, command.now,
+                                          custom_columns(TechOperationTab.MEASURING, uow), version=command.version)
+            uow.commit()
+            return updated
         record, updated = _edit_in(command.record_id, command.edits, command.now, uow)
         _same_article(updated, command.edits, command.now, uow)
         updated = uow.tech_operations.get(updated.id) or updated
@@ -559,6 +571,8 @@ def _taken_names(tab: TechOperationTab, records: Sequence[TechOperationRecord], 
     names = set(base) | set(schema_keys(tab.value)) | set(stored_schema_keys(tab.value))
     if tab in EQUIPMENT_TABS:
         names |= set(CATALOG_COLUMNS[tab.value])
+    if tab == TechOperationTab.MEASURING and getattr(uow, "instrument_catalog", None) is not None:
+        names |= uow.instrument_catalog.reserved_columns
     if tab in MATERIAL_CATALOG_TABS:
         names |= DERIVED_COLUMN_TITLES
     names |= {name for record in records for name in record.fields} | set(custom_columns(tab, uow))
@@ -626,7 +640,11 @@ def add_column(command: ColumnCommand, uow: UnitOfWork) -> int:
             raise ReferenceValidationError("В таблице нет записей — столбцу негде жить")
         for record in records:
             if not derived and name not in record.fields:
-                uow.tech_operations.save(replace(record, fields={**record.fields, name: ""}, edited_in_erp=True))
+                if tab == TechOperationTab.MEASURING:
+                    item = uow.instrument_catalog.resolve(record.id)
+                    uow.instrument_catalog.update_custom(record.id, {**item.custom_fields, name: ""}, command.actor, command.now)
+                else:
+                    uow.tech_operations.save(replace(record, fields={**record.fields, name: ""}, edited_in_erp=True))
         entries = [entry for entry in uow.references.list() if not (
             entry.kind == ReferenceKind.REMOVED_COLUMN and entry.key.startswith(custom_column_prefix(tab))
             and column_identity(tab, entry.value) == name)]
@@ -673,7 +691,12 @@ def remove_column(command: ColumnCommand, uow: UnitOfWork) -> int:
         written = 0
         for record in records:
             if name in record.fields:
-                uow.tech_operations.save(replace(record, fields={k: v for k, v in record.fields.items() if k != name}, edited_in_erp=True))
+                if tab == TechOperationTab.MEASURING:
+                    item = uow.instrument_catalog.resolve(record.id)
+                    uow.instrument_catalog.update_custom(record.id, {k: v for k, v in item.custom_fields.items() if k != name},
+                                                         command.actor, command.now)
+                else:
+                    uow.tech_operations.save(replace(record, fields={k: v for k, v in record.fields.items() if k != name}, edited_in_erp=True))
                 written += 1
         key = custom_column_prefix(tab) + name
         uow.references.replace(tuple(entry for entry in uow.references.list()

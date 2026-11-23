@@ -15,7 +15,7 @@ from app.workflows.equipment_reclassify import AUDIT_EVENT, format_report, main,
 from tests.workflows.test_applicator_inventory_fix import engine, seed, snapshot, unit  # noqa: F401
 
 
-def mapping(before="ОБ.106", after="СИ.106", kind=MEASURING_TYPE, **extra):
+def mapping(before="ОБ.106", after="СИ.106", kind=SUPPORTING_TYPE, **extra):
     return {"from": before, "to": after, "type": kind, **extra}
 
 
@@ -41,6 +41,15 @@ def instrument(number, serial_number="SERIAL-123"):
 def test_invalid_mapping_is_rejected(value):
     with pytest.raises(ValueError):
         validate_mapping(value)
+
+
+def test_legacy_reclassification_cannot_create_another_measuring_catalog(engine):
+    seed(engine)
+    before = snapshot(engine)
+    for apply in (False, True):
+        with pytest.raises(ValueError, match="едином реестре"):
+            run(engine, [mapping(kind=MEASURING_TYPE)], apply=apply)
+        assert snapshot(engine) == before
 
 
 @pytest.mark.parametrize("numbers, entries, message", [
@@ -77,7 +86,7 @@ def test_dry_run_has_no_writes_and_reports_types_registry_and_issued_etks(engine
     assert report.tables["td_issues"].changed == 1
     assert report.issued_documents_to_refresh == 1
     text = format_report(report)
-    assert "ОБ.106 → СИ.106" in text and "Тип: Аппликаторы → Средства измерений" in text
+    assert "ОБ.106 → СИ.106" in text and "Тип: Аппликаторы → Обеспечивающее оборудование" in text
     assert "Реестр СИ: ОБ.106 → СИ.106" in text and "Таблица | Просмотрено строк" in text
 
 
@@ -103,7 +112,7 @@ def test_shared_rewrite_and_registry_keep_uuids_and_frozen_documents_and_repeat_
     for table in ("equipment_unit_links", "equipment_operation_links", "techcard_revisions",
                   "production_resource_reservations", "production_active_resources"):
         assert after[table] == before[table]
-    assert [event for event in after["audit_events"] if event["event_type"] != AUDIT_EVENT] == before["audit_events"]
+    assert [event for event in after["audit_events"] if event["event_type"] not in {AUDIT_EVENT, "production.instrument_updated"}] == before["audit_events"]
     assert len([event for event in after["audit_events"] if event["event_type"] == AUDIT_EVENT]) == 1
     for old in before["techcard_projects"]:
         new = next(item for item in after["techcard_projects"] if item["id"] == old["id"])
@@ -114,10 +123,10 @@ def test_shared_rewrite_and_registry_keep_uuids_and_frozen_documents_and_repeat_
         assert (old == new) == (old["status"] != "draft")
     with Session(engine) as session:
         row = session.get(EquipmentRecordRow, ids["unit"])
-        assert row.fields["Тип"] == MEASURING_TYPE and row.fields["Инв. номер"] == "СИ.106"
+        assert row.fields["Тип"] == SUPPORTING_TYPE and row.fields["Инв. номер"] == "СИ.106"
         assert row.fields["Код в базе терминалов"] == " m 10 "  # only applicator repair changes its code
         assert row.mirror_key == ids["mirror"] and row.equipment_model_id == ids["model"]
-        assert row.edited_in_erp and "си.106" in row.normalized_search and "средства измерений" in row.normalized_search
+        assert row.edited_in_erp and "си.106" in row.normalized_search and "обеспечивающее оборудование" in row.normalized_search
         registered = session.get(ProductionInstrumentRow, registry_id)
         assert registered.inventory_number == "СИ.106" and registered.version == 4
         assert registered.serial_number == "SERIAL-123"
@@ -151,7 +160,7 @@ def test_parent_number_does_not_generate_unmapped_child_numbers(engine):
 
 def test_edited_unrelated_target_is_never_mistaken_for_a_completed_mapping(engine):
     with Session(engine) as session, session.begin():
-        unrelated = unit(session, "СИ.106", kind=MEASURING_TYPE)
+        unrelated = unit(session, "СИ.106", kind="Инструмент")
         unrelated.edited_in_erp = True
         session.add_all([unrelated, instrument("ОБ.040")])
     before = snapshot(engine)
@@ -168,7 +177,7 @@ def test_audit_does_not_authorize_a_different_target_uuid(engine):
     with Session(engine) as session, session.begin():
         original = session.scalar(select(EquipmentRecordRow))
         original.fields = {**original.fields, "Инв. номер": "СИ.999"}
-        other = unit(session, "СИ.106", kind=MEASURING_TYPE)
+        other = unit(session, "СИ.106", kind="Инструмент")
         other.edited_in_erp = True
         session.add(other)
     before = snapshot(engine)
@@ -229,7 +238,7 @@ def test_type_only_entry_and_explicit_mapping_take_precedence_over_role_rule(eng
         session.get(EquipmentModelRow, row.equipment_model_id).role = "supporting"
     rules = [mapping("ОБ.040", None), {"role": "supporting", "type": SUPPORTING_TYPE}]
     report = run(engine, rules, apply=True)
-    assert len(report.type_changes) == 1 and report.type_changes[0].after == MEASURING_TYPE
+    assert len(report.type_changes) == 1 and report.type_changes[0].after == SUPPORTING_TYPE
     assert not report.changes
     after = snapshot(engine)
     assert not run(engine, rules, apply=True).type_changes
@@ -245,7 +254,7 @@ def test_inventory_and_type_aliases_stay_consistent(engine):
     with Session(engine) as session:
         fields = session.scalar(select(EquipmentRecordRow)).fields
     assert fields["Инв. номер"] == fields["inventoryNumber"] == "СИ.106"
-    assert fields["Тип"] == fields["obType"] == MEASURING_TYPE
+    assert fields["Тип"] == fields["obType"] == SUPPORTING_TYPE
 
 
 @pytest.mark.parametrize("allow", [False, True])
