@@ -23,6 +23,64 @@ MARGIN = 1.0
 CAP_TO_PITCH = 1.676  # a line of text takes 1.17 em, and capitals are 0.698 em (render.py)
 SLACK_PER_LINE = 0.25  # whole-dot rounding of a line at 203 dpi
 
+# Software design revisions are independent of an approved form's number/revision/date.
+GRN_DESIGN_REVISIONS = {category: f"grn-{category.lower()}-1" for category in
+                        ("PPM", "PAM", "GOS", "SUB", "CSM", "FRX", "R&D")}
+
+
+def grn_template(category: str, kind: str, label_format: str) -> LabelTemplate:
+    """Seven category designs with a shared monochrome identity/passport grid and two mandatory codes."""
+    if category not in GRN_DESIGN_REVISIONS or kind not in ("lot", "intake"):
+        raise ValueError("Неизвестная категория или вид этикетки ГРН")
+    width, height = FORMATS[label_format]
+    elements = []
+
+    def row(key, field, x, y, w, h, size, *, text=None, bold=False):
+        elements.append({"id": key, "kind": "text" if text else "field", "field": None if text else field,
+                         "text": text, "x_mm": x, "y_mm": y, "w_mm": w, "h_mm": h,
+                         "font_mm": size, "bold": bold, "fit": "ellipsis"})
+
+    if width == 100:
+        row("heading", None, 1, 1, 98, 3, 1.6, text=f"ГРН · {category}", bold=True)
+        elements[-1]["align"] = "center"
+        elements.append(_code("qr", "qr", 1, 5, 22, 19.7))
+        row("grn", "grn", 24, 10, 47, 6, 3, bold=True)
+        row("expiry", "expiry", 72, 5, 27, 4, 1.4)
+        row("quality", "quality", 72, 10, 27, 4, 1.5, bold=True)
+        row("quantity", "quantity", 72, 15, 27, 3.5, 1.4)
+        row("owner", "owner" if category == "CSM" else "place_warehouse", 24, 19, 75, 4, 1.6, bold=True)
+        row("article", "article" if kind == "lot" else "project_item", 24, 5, 47, 4, 1.8, bold=True)
+        row("name", "name", 1, 25, 98, 3.5, 1.6, bold=True)
+        row("passport", "passport", 1, 28.5, 98, 3.5, 1.4)
+        row("received", "receipt_quality", 1, 32, 98, 3.5, 1.4)
+        row("context", "context", 1, 35.5, 98, 4, 1.4)
+        elements.append(_code("code128", "code128", 1, 40, 98, 5))
+        row("footer", "form_footer", 1, 46, 98, 3, 1.2)
+        for index, y in enumerate((4.4, 24.7, 28.4, 31.9, 35.4, 39.9, 45.5)):
+            elements.append({"id": f"rule-{index}", "kind": "line", "x_mm": 1, "y_mm": y, "w_mm": 98, "h_mm": 0.08})
+        for x in (23.2, 71.2):
+            elements.append({"id": f"divider-{x}", "kind": "line", "x_mm": x, "y_mm": 5,
+                             "w_mm": 0.08, "h_mm": 19.5})
+    else:
+        # Compact variants retain passport/context and both codes; actual long values fail explicitly.
+        extra = height - 30
+        elements.append(_code("qr", "qr", 1, 1, 12, 12))
+        row("grn", "grn", 14, 1, 43, 4, 2, bold=True)
+        row("expiry", "expiry", 14, 5, 43, 2.8, 1.2)
+        row("quality", "quality", 14, 7.8, 43, 2.8, 1.3, bold=True)
+        row("article", "article_quantity" if kind == "lot" else "project_item", 14, 10.6, 43, 2.8, 1.2, bold=True)
+        if kind == "intake":
+            elements[-1].update(kind="text", field=None, text="{project_item} · {quantity}")
+        row("name", "name", 1, 13.5, 56, 2.8, 1.2, bold=True)
+        row("passport", "passport", 1, 16.3, 56, 2.8, 1.2)
+        row("received", "receipt_quality", 1, 19.1, 56, 2.8, 1.2)
+        row("context", "context", 1, 21.9, 56, 2.8 + extra, 1.2)
+        if extra:
+            elements[-1]["max_lines"] = 3
+        elements.append(_code("code128", "code128", 1, 24.8 + extra, 56, 3))
+        row("footer", "form_footer", 1, 28 + extra, 56, 1.8, 1)
+    return LabelTemplate.model_validate({"elements": elements})
+
 
 def _round_up(value: float) -> float:
     return round(math.ceil(value * 10 - 1e-6) / 10, 1)

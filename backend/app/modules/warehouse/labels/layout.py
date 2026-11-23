@@ -8,11 +8,12 @@ longer code: a template (`template.py`, the built-in ones in `defaults.py`) is d
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
+from uuid import UUID
 
 import segno
 from PIL import Image, ImageFont
@@ -51,6 +52,15 @@ class GrnLabelData:
     warehouse: str = ""  # «ЦАР» / «ЖУК»
     manufacturer: str = ""  # ПРОИЗВОДИТЕЛЬ of the lot passport
     purpose: str = ""  # НАЗНАЧЕНИЕ: the project the lot is for
+    category: str = ""
+    grn_id: UUID | None = None
+    grn_number: str = ""  # Canonical number, without the physical package suffix.
+    expiry_date: date | None = None
+    quality_state: str | None = None
+    quality_basis: str = ""
+    context: dict = field(default_factory=dict)
+    owner: str = ""
+    package: str = ""
 
 
 @dataclass(frozen=True)
