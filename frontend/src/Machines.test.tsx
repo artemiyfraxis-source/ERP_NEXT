@@ -93,6 +93,61 @@ function machines(calls: string[] = [], rows = [OB019, NOT_INSTALLED, TWISTER, S
   });
 }
 
+it("keeps the same seven tile slots for machines, printers and analysers with missing data", async () => {
+  const emptyAnalyser: MachineRow = { ...PLANAR, key: "device:empty", inventory: "СИ.003", name: "", article: "",
+    site: "", operations: [], device: "", state: { text: "—", tone: "neutral" }, pc: "", ip: "", last_seen: null };
+  machines([], [OB019, NOT_INSTALLED, TWISTER, TSC, PLANAR, emptyAnalyser]);
+  const { container } = render(<MachinesPage />);
+  await screen.findByText("СИ.003");
+  const tiles = Array.from(container.querySelectorAll<HTMLButtonElement>(".machine-tile"));
+  expect(tiles).toHaveLength(6);
+  for (const tile of tiles) {
+    expect(Array.from(tile.children, (slot) => slot.classList[0])).toEqual([
+      "machine-tile-head", "machine-tile-name", "machine-tile-article", "machine-tile-ops",
+      "machine-tile-device", "machine-tile-badges", "machine-tile-foot",
+    ]);
+    expect(tile.type).toBe("button");
+    expect(tile).not.toBeDisabled();
+  }
+  const emptyTile = screen.getByText("СИ.003").closest("button")!;
+  expect(emptyTile.querySelector(".machine-tile-name")).toHaveTextContent("—");
+  expect(emptyTile.querySelector(".machine-tile-article")).toBeEmptyDOMElement();
+  expect(emptyTile.querySelector(".machine-tile-ops")).toBeEmptyDOMElement();
+  expect(emptyTile.querySelector(".machine-tile-device")).toBeEmptyDOMElement();
+  expect(emptyTile.querySelector(".machine-tile-badges")).toBeEmptyDOMElement();
+  expect(emptyTile.querySelector(".machine-tile-foot")).toHaveTextContent("ПК не известен");
+  expect(emptyTile.querySelector(".machine-tile-foot")?.children).toHaveLength(1);
+  const machineTile = screen.getByText("ОБ.019").closest("button")!;
+  expect(machineTile.querySelector(".machine-tile-foot")?.firstElementChild).toHaveTextContent("PC-108 · 192.168.1.108");
+  expect(machineTile.querySelector(".machine-tile-seen")).toBeTruthy();
+  expect(screen.getByText("Нет агента")).toBeTruthy();
+  const printer = container.querySelector<HTMLButtonElement>(".machine-group[aria-label='Принтеры и МФУ'] .machine-tile")!;
+  expect(printer.querySelector(".machine-tile-article")).toHaveTextContent("TSC MB341");
+  expect(within(printer).getByText("Принтер не найден")).toHaveClass("tone-warn");
+  expect(within(screen.getByText("СИ.002").closest("button")!).getByText("Подключён")).toHaveClass("tone-ok");
+  expect(within(screen.getByText("ОБ.019").closest("button")!).getByText("Аварийный стоп")).toHaveClass("tone-danger");
+});
+
+it("uses a short device kind in the header and always keeps its full name below", async () => {
+  const labels: MachineRow = { ...TSC, key: "printer:labels", name: "Принтер этикеток TSC MB341", station: { kind: "labels" } };
+  const mfp: MachineRow = { ...TSC, key: "device:mfp", kind: "device", name: "МФУ Pantum BM2300",
+    station: { kind: "mfp", machine_id: "mfp", scanners: ["scan"], printers: ["print"] } };
+  const scanner: MachineRow = { ...mfp, key: "device:scanner", name: "Сканер Pantum BM2300",
+    station: { kind: "mfp", machine_id: "scan", scanners: ["scan"], printers: [] } };
+  const documentPrinter: MachineRow = { ...mfp, key: "printer:document", kind: "printer", name: "Принтер документов Pantum BM2300",
+    station: { kind: "mfp", machine_id: "print", scanners: [], printers: ["print"] } };
+  machines([], [labels, mfp, scanner, documentPrinter]);
+  render(<MachinesPage />);
+  await screen.findByText(mfp.name);
+  for (const [row, kind] of [[labels, "Принтер этикеток"], [mfp, "МФУ"], [scanner, "Сканер"],
+    [documentPrinter, "Принтер документов"]] as const) {
+    const tile = screen.getByText(row.name).closest("button")!;
+    expect(tile.querySelector(".machine-tile-no")).toHaveTextContent(kind);
+    expect(tile.querySelector(".machine-tile-name")).toHaveTextContent(row.name);
+  }
+  expect(screen.queryByText("Без номера")).toBeNull();
+});
+
 it("shows one list grouped by purpose; the link is a badge; «Только подключённые» filters", async () => {
   const calls: string[] = [];
   machines(calls);
@@ -117,7 +172,7 @@ it("shows one list grouped by purpose; the link is a badge; «Только по�
   const twister = screen.getByText("ОБ.005").closest("button")!;
   expect(within(twister).getByText("Нет подключения")).toBeTruthy();
   expect(within(twister).getByText("SR-W01 · ЖУК")).toBeTruthy();
-  expect(within(screen.getByText("ОБ.070.1").closest("button")!).getByText("Без наладки")).toBeTruthy();
+  expect(within(screen.getByText("ОБ.070.1").closest("button")!).getByText("Наладка: нет")).toBeTruthy();
   const printers = screen.getByRole("region", { name: "Принтеры и МФУ" });
   const devices = screen.getByRole("region", { name: "Анализаторы цепей" });
   expect(within(printers).getByText("Нет связи с ПК").className).toContain("tone-danger");
