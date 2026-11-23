@@ -21,14 +21,15 @@ export function VnaTargetList({ sessionId, query, visible, onPick }: {
   const [rows, setRows] = useState<VnaBenchInstrumentTarget[] | null>(null);
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
-  // Stay mounted after picking: returning to search uses the same registry snapshot.
+  // Refresh on return: the selected instrument may have been measured while the list was hidden.
   useEffect(() => {
+    if (!visible) return;
     let live = true;
     setRows(null); setError("");
     vnaBenchApi.targets().then((result) => { if (live) setRows(result.targets); })
       .catch((reason) => { if (live) setError(failureText(reason, "Не удалось загрузить СИ для замера")); });
     return () => { live = false; };
-  }, [sessionId, attempt]);
+  }, [sessionId, attempt, visible]);
 
   const filtered = useMemo(() => searchRows(rows ?? [],
     (row) => [row.number, row.name, row.interfaces_text, row.serial_number], query).sort((a, b) => {

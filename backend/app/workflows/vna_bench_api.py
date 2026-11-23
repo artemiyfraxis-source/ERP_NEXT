@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import asdict
+from heapq import nlargest
 import hashlib
 import json
 import re
@@ -34,6 +35,7 @@ from app.modules.production.domain import ProductionValidationError
 from app.modules.production.infrastructure import (ProductionInstrumentFileRow, ProductionInstrumentRow,
                                                    ProductionSerialRow, ProductionTaskRow)
 from app.modules.production.instrument_characterization import application, characterization, connector_line, series_cap_ghz
+from app.modules.production.instrument_characterization import _date as _measurement_date_hint
 from app.modules.production.instrument_norms import loss_uncertainty_for, norm_for, uncertainty_for, vna_model
 from app.modules.production.mating_api import record_batch
 from app.modules.production.matings import end_names
@@ -848,17 +850,26 @@ def targets(_principal: Reader, factory: Factory):
         last = {instrument_id: measured.isoformat() for instrument_id, measured in uow.session.execute(
             select(item.instrument_id, func.max(item.created_at)).where(
                 item.instrument_id.in_(ids), item.kind == "instrument", item.target == "dut").group_by(item.instrument_id))}
-        # History is ordered by measurement date, not upload order (older curves may be backfilled).
-        # Stream metadata first; only named measurement bodies within the planner's 2 MiB bound are parsed.
+        # Rank metadata by filename date to retain backfilled curves; undated names use upload order.
+        # Header-only dates may differ: cap validation at three candidates, never scan all historical bodies.
         file_row = ProductionInstrumentFileRow
-        files = select(file_row).where(file_row.instrument_id.in_(ids), func.lower(file_row.file_name).like("%.s2p"),
+        files = select(file_row.instrument_id, file_row.id, file_row.file_name, file_row.uploaded_at).where(
+                                       file_row.instrument_id.in_(ids), func.lower(file_row.file_name).like("%.s2p"),
                                        func.length(file_row.content) <= 2 * 1024 * 1024).execution_options(yield_per=1)
-        for row in uow.session.scalars(files):
+        candidates = {}
+        for row in uow.session.execute(files):
             if not is_characterization_file(row.file_name):
                 continue
-            measured = characterization(uow.instrument_files.get(row.instrument_id, row.id))
-            if measured and measured.measured_on.isoformat() > last.get(row.instrument_id, "")[:10]:
-                last[row.instrument_id] = measured.measured_on.isoformat()
+            ranked = candidates.setdefault(row.instrument_id, [])
+            ranked.append(((_measurement_date_hint(row.file_name) or row.uploaded_at.date(), row.uploaded_at, row.id), row.id))
+            candidates[row.instrument_id] = nlargest(3, ranked)
+        for instrument_id, ranked in candidates.items():
+            for _, file_id in ranked:
+                measured = characterization(uow.instrument_files.get(instrument_id, file_id))
+                if measured:
+                    if measured.measured_on.isoformat() > last.get(instrument_id, "")[:10]:
+                        last[instrument_id] = measured.measured_on.isoformat()
+                    break
         for entry in result:
             entry["last_measured_at"] = last.get(UUID(entry["instrument_id"]))
         return {"targets": result}

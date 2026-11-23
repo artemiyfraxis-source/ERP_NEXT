@@ -21,18 +21,32 @@ it("sorts never measured first, then actual measurement time, then natural inven
   expect(screen.getAllByText("01.10.2026")).toHaveLength(2);
 });
 
-it("filters loaded rows without another request, even after selection", async () => {
+it("filters loaded rows without another request", async () => {
   const load = vi.spyOn(vnaBenchApi, "targets").mockResolvedValue({ targets: [row("СИ.035"), row("СИ.036")] });
   const { rerender } = render(<VnaTargetList {...props} />);
   await screen.findByText("СИ.035");
   rerender(<VnaTargetList {...props} query="036 SMA" />);
   expect(screen.queryByText("СИ.035")).not.toBeInTheDocument();
   expect(screen.getByText("СИ.036")).toBeInTheDocument();
-  rerender(<VnaTargetList {...props} visible={false} />);
   rerender(<VnaTargetList {...props} query="нет такого" />);
   expect(screen.getByText("Нет СИ по запросу — измените поиск")).toBeInTheDocument();
   expect(screen.queryByText(/заведите СИ/)).not.toBeInTheDocument();
   expect(load).toHaveBeenCalledTimes(1);
+});
+
+it("refreshes measurement dates and ordering when shown after a measurement", async () => {
+  const load = vi.spyOn(vnaBenchApi, "targets").mockResolvedValueOnce({ targets: [row("СИ.035"), row("СИ.036")] })
+    .mockResolvedValue({ targets: [row("СИ.035", "2026-11-23T12:00:00+03:00"), row("СИ.036")] });
+  const { rerender } = render(<VnaTargetList {...props} />);
+  await screen.findByText("СИ.035");
+  rerender(<VnaTargetList {...props} visible={false} />);
+  expect(load).toHaveBeenCalledTimes(1);
+  rerender(<VnaTargetList {...props} />);
+  await screen.findByText("23.11.2026");
+  expect(screen.getAllByText("не мерили")).toHaveLength(1);
+  expect(screen.getAllByRole("row").slice(1).map((entry) => within(entry).getAllByRole("cell")[0].textContent))
+    .toEqual(["СИ.036", "СИ.035"]);
+  expect(load).toHaveBeenCalledTimes(2);
 });
 
 it("picks the lookup target on a whole-row click and keyboard Enter", async () => {

@@ -86,9 +86,32 @@ it("opens the existing connection plan when an instrument is picked from the reg
   expect(screen.queryByRole("region", { name: "СИ для замера" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Выбрать другой объект" }));
   expect(await screen.findByRole("region", { name: "СИ для замера" })).toBeInTheDocument();
-  fireEvent.click(screen.getByText("СИ.035"));
+  fireEvent.click(await screen.findByText("СИ.035"));
   await waitFor(() => expect(planned).toHaveBeenCalledTimes(2));
-  expect(vnaBenchApi.targets).toHaveBeenCalledTimes(1);
+  expect(vnaBenchApi.targets).toHaveBeenCalledTimes(2);
+});
+
+it("refreshes the measured instrument date after an accepted measurement and returning to the list", async () => {
+  vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state({ session: session({ steps: allPassed }) }));
+  const target = { ...si035 as Extract<VnaBenchTarget, { kind: "instrument" }>,
+    interfaces_text: "3.5mm вилка – 3.5mm розетка", last_measured_at: null };
+  vi.mocked(vnaBenchApi.targets).mockResolvedValueOnce({ targets: [target] })
+    .mockResolvedValue({ targets: [{ ...target, last_measured_at: "2026-11-23T12:00:00+03:00" }] });
+  vi.spyOn(productionApi, "instruments").mockResolvedValue({ instruments: [] });
+  vi.spyOn(vnaBenchApi, "plan").mockResolvedValue(plan);
+  vi.spyOn(vnaBenchApi, "measure").mockResolvedValue(state({ session: session({ steps: allPassed, version: 4,
+    items: [item({ connections: [{ no: 1, status: "passed", max_vswr: 1.04, max_mhz: 18000,
+      measured_at: "2026-11-23T12:00:00+03:00" }], verdict: { code: "pass", worst_vswr: 1.04, worst_mhz: 18000,
+      norm_vswr: 1.06, uncertainty: 0.012, reason: "Соответствует норме", final: true } })] }) }));
+  render(<VnaBench canEdit />);
+  expect(await screen.findByText("не мерили")).toBeInTheDocument();
+  fireEvent.click(screen.getByText("СИ.035"));
+  fireEvent.click(await screen.findByRole("button", { name: "Измерить" }));
+  await screen.findByText("Соответствует");
+  fireEvent.click(screen.getByRole("button", { name: "Выбрать другой объект" }));
+  expect(await screen.findByText("23.11.2026")).toBeInTheDocument();
+  expect(screen.queryByText("не мерили")).not.toBeInTheDocument();
+  expect(vnaBenchApi.targets).toHaveBeenCalledTimes(2);
 });
 
 it("keeps list selection unavailable while a typed lookup is pending", async () => {
