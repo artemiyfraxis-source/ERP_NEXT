@@ -570,7 +570,7 @@ it("writes an old address as is from the lot operations and shows a lot without 
   await waitFor(() => expect(payload).toEqual({ version: 4, storage_location: "A-01" }));
 });
 
-it("edits the whole stock row and sends only what changed, an emptied number untouched", async () => {
+it("edits row details and sends only changed text fields without stock quantities", async () => {
   let payload: Record<string, unknown> | undefined;
   const stocked = { ...lot, inbound: "10", written_off: "2", balance: "8", available: "8", manufacturer: "Molex" };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -588,14 +588,14 @@ it("edits the whole stock row and sends only what changed, an emptied number unt
   fireEvent.click(await screen.findByRole("button", { name: "✎ Правка" }));
   fireEvent.click(screen.getByRole("button", { name: "Править строку" }));
   const form = within(screen.getByRole("form", { name: "Правка строки" }));
-  expect(form.getByText(/ГРН FRX\.26\.0000001 .* ключ строки, не правится/)).toBeInTheDocument();
+  expect(form.queryByText(/ключ строки/)).toBeNull();
   expect(form.queryByLabelText("ГРН")).toBeNull();
   fireEvent.change(form.getByLabelText("Тип"), { target: { value: " Разъёмы " } });
   fireEvent.change(form.getByLabelText("Место хранения"), { target: { value: "A-01" } });
   fireEvent.change(form.getByLabelText("Производитель"), { target: { value: "" } });
-  fireEvent.change(form.getByLabelText("Приход"), { target: { value: "12" } });
-  fireEvent.change(form.getByLabelText("Списано"), { target: { value: "" } });
-  expect(form.getByRole("status")).toHaveTextContent("Баланс станет: 10 шт");
+  for (const label of ["Приход", "Списано", "Резерв"]) expect(form.queryByLabelText(label)).not.toBeInTheDocument();
+  expect(form.queryByRole("spinbutton")).not.toBeInTheDocument();
+  expect(form.queryByText(/Баланс станет|Пустое число/)).not.toBeInTheDocument();
   fireEvent.click(form.getByRole("button", { name: "Сохранить строку" }));
 
   await waitFor(() => expect(payload).toEqual({
@@ -603,7 +603,6 @@ it("edits the whole stock row and sends only what changed, an emptied number unt
     item_type: "Разъёмы",
     storage_location: "A-01",
     manufacturer: "",
-    inbound: "12",
   }));
 });
 
@@ -619,6 +618,32 @@ it("does not send a row edit when nothing changed", async () => {
 
   expect(form.getByRole("status")).toHaveTextContent("Изменений нет.");
   expect(fetch.mock.calls.every(([, init]) => !init?.method)).toBe(true);
+});
+
+it.each([[1, "1 партия"], [2, "2 партии"], [5, "5 партий"], [11, "11 партий"], [21, "21 партия"], [22, "22 партии"], [867, "867 партий"]])("labels the server's lot count %s with its Russian noun", async (total, label) => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ lots: [lot], total, truncated: 0, next_cursor: null }));
+  render(<WarehousePage />);
+  await waitFor(() => expect(document.querySelector(".page-count")).toHaveTextContent(String(label)));
+});
+
+it("keeps manual refresh for remote changes and updates column availability from new lot versions", async () => {
+  let current = { ...lot, manufacturer: "" };
+  let reads = 0;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    if (String(input).split("?")[0] === "/api/stock") reads += 1;
+    return json({ lots: [current], total: 1, truncated: 0, next_cursor: null });
+  });
+  render(<WarehousePage />);
+  await screen.findByText(lot.article);
+  expect(openChooser().queryByLabelText("Производитель")).not.toBeInTheDocument();
+  current = { ...current, version: 5, manufacturer: "Molex" };
+  fireEvent.click(screen.getByRole("button", { name: "Обновить" }));
+  await waitFor(() => expect(openChooser().getByLabelText("Производитель")).toBeInTheDocument());
+  expect(reads).toBe(2);
+  current = { ...current, version: 6, manufacturer: "" };
+  fireEvent.click(screen.getByRole("button", { name: "Обновить" }));
+  await waitFor(() => expect(openChooser().queryByLabelText("Производитель")).not.toBeInTheDocument());
+  expect(reads).toBe(3);
 });
 
 it("offers «Журнал склада» to the administrator only", async () => {
@@ -812,15 +837,18 @@ it("«Колонки» switches the optional columns off and remembers the choic
   const chooser = openChooser();
   expect(chooser.getByLabelText("Наименование")).toBeDisabled();
   expect(chooser.queryByLabelText("Серия")).not.toBeInTheDocument();
-  fireEvent.click(chooser.getByLabelText("Места"));
+  expect(chooser.getByLabelText("Места")).toBeChecked();
+  expect(chooser.getByLabelText("Места")).toBeDisabled();
+  expect(chooser.getByLabelText("Свободно")).toBeChecked();
+  expect(chooser.getByLabelText("Свободно")).toBeDisabled();
   fireEvent.click(chooser.getByLabelText("Тип"));
-  expect(headerNames()).toEqual(["ГРН", "Свободно", "Резерв", "Партий", "Артикул номенклатуры", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["ГРН", "Свободно", "Резерв", "Партий", "Места", "Артикул номенклатуры", "Наименование", "Склад"]);
   expect(screen.getByText("GHR-04V-S")).toBeInTheDocument();
   unmount();
 
   render(<WarehousePage />);
   await screen.findByText("GHR-04V-S");
-  expect(headerNames()).toEqual(["ГРН", "Свободно", "Резерв", "Партий", "Артикул номенклатуры", "Наименование", "Склад"]);
+  expect(headerNames()).toEqual(["ГРН", "Свободно", "Резерв", "Партий", "Места", "Артикул номенклатуры", "Наименование", "Склад"]);
 });
 
 it("↑/↓ in «Колонки» move a column one step; the order is remembered in this browser", async () => {
@@ -831,21 +859,19 @@ it("↑/↓ in «Колонки» move a column one step; the order is remembere
   const chooser = openChooser();
   // The first one cannot go up, the last one cannot go down.
   expect(chooser.getByRole("button", { name: "Выше: Тип" })).toBeDisabled();
-  // The maker and the documents (off until asked for, owner 26.10) close the list.
-  expect(chooser.getByRole("button", { name: "Ниже: Файл УПД" })).toBeDisabled();
+  // Empty maker and document columns are absent; the warehouse closes this chooser.
+  expect(chooser.getByRole("button", { name: "Ниже: Склад" })).toBeDisabled();
 
   fireEvent.click(chooser.getByRole("button", { name: "Ниже: Тип" }));
   expect(headerNames()).toEqual(["ГРН", "Тип", "Свободно", "Резерв", "Партий", "Места", "Артикул номенклатуры", "Наименование", "Склад"]);
-  // Five steps: past purpose, the name and the two hidden articles of the maker and the supplier.
-  fireEvent.click(chooser.getByRole("button", { name: "Выше: Склад" }));
-  fireEvent.click(chooser.getByRole("button", { name: "Выше: Склад" }));
+  // Three steps: past purpose, the name and our article; empty articles are absent.
   fireEvent.click(chooser.getByRole("button", { name: "Выше: Склад" }));
   fireEvent.click(chooser.getByRole("button", { name: "Выше: Склад" }));
   fireEvent.click(chooser.getByRole("button", { name: "Выше: Склад" }));
   expect(headerNames()).toEqual(["ГРН", "Тип", "Свободно", "Резерв", "Партий", "Места", "Склад", "Артикул номенклатуры", "Наименование"]);
   // The list of the chooser follows the table, with the name in its place.
   expect(chooser.getAllByRole("listitem").map((item) => item.textContent?.replace(/[↑↓]/g, ""))).toEqual(["ГРН", "Тип", "Свободно", "Резерв", "Остаток", "Партий", "Места", "Склад", "Артикул номенклатуры",
-    "Артикул производителя", "Артикул поставщика", "Наименование", "Назначение", "Производитель", "Наим. по УПД", "Наим. по счёту", "№ счёта", "Дата счёта", "№ УПД", "Дата УПД", "№ ПРД", "Дата ПРД", "Файл УПД"]);
+    "Наименование", "Назначение"]);
   unmount();
 
   render(<WarehousePage />);
@@ -948,7 +974,9 @@ it("the first column stays in view when the table is scrolled sideways: Тип, 
   const chooser = openChooser();
   fireEvent.click(chooser.getByRole("button", { name: "Выше: Свободно" }));
   expect(pinned()).toEqual(["Свободно", "10 шт", "40 шт"]);
-  fireEvent.click(chooser.getByLabelText("Свободно"));
+  expect(chooser.getByLabelText("Свободно")).toBeChecked();
+  expect(chooser.getByLabelText("Свободно")).toBeDisabled();
+  fireEvent.click(chooser.getByRole("button", { name: "Ниже: Свободно" }));
   expect(pinned()).toEqual(["ГРН", "FRX.26.0000001", "FRX.26.0000002"]);
 });
 
@@ -991,9 +1019,7 @@ it("the lot table has its own order and set of columns; «Назначение»
   fireEvent.click(chooser.getByLabelText("Назначение"));
   expect(headerNames(within(table))).toEqual(["Тип", "ГРН", "Свободно", "Резерв", "Место", "Серия", "Артикул номенклатуры", "Наименование", "Назначение", "Склад"]);
   expect(within(table).getByText("FRX.001")).toBeInTheDocument();
-  // Four steps: past the name and the two hidden articles of the maker and the supplier.
-  fireEvent.click(chooser.getByRole("button", { name: "Выше: Назначение" }));
-  fireEvent.click(chooser.getByRole("button", { name: "Выше: Назначение" }));
+  // Two steps: past the name and our article; empty maker/supplier articles are absent.
   fireEvent.click(chooser.getByRole("button", { name: "Выше: Назначение" }));
   fireEvent.click(chooser.getByRole("button", { name: "Выше: Назначение" }));
   expect(headerNames(within(table))).toEqual(["Тип", "ГРН", "Свободно", "Резерв", "Место", "Серия", "Назначение", "Артикул номенклатуры", "Наименование", "Склад"]);
@@ -1163,7 +1189,7 @@ function lotFetch() {
   });
 }
 
-it("lets the quantities be edited by hand again (owner 23.10) and shows the new search hint", async () => {
+it("keeps the search hint and removes direct quantity editing (owner 23.11)", async () => {
   lotFetch();
 
   render(<WarehousePage />);
@@ -1172,9 +1198,9 @@ it("lets the quantities be edited by hand again (owner 23.10) and shows the new 
   fireEvent.click(await screen.findByRole("button", { name: "✎ Правка" }));
   fireEvent.click(screen.getByRole("button", { name: "Править строку" }));
   const form = within(screen.getByRole("form", { name: "Правка строки" }));
-  await waitFor(() => expect(form.getByLabelText("Приход")).not.toHaveAttribute("readonly"));
-  expect(form.getByLabelText("Списано")).not.toHaveAttribute("readonly");
-  expect(form.getByLabelText("Резерв")).not.toHaveAttribute("readonly");
+  for (const label of ["Приход", "Списано", "Резерв"]) expect(form.queryByLabelText(label)).not.toBeInTheDocument();
+  expect(form.queryByRole("spinbutton")).not.toBeInTheDocument();
+  expect(form.queryByText(/Баланс станет|Пустое число/)).not.toBeInTheDocument();
   expect(form.queryByText(/меняются только движениями/)).not.toBeInTheDocument();
 });
 
@@ -1232,6 +1258,7 @@ const documented: WarehouseLot = {
 it("the lot table hides the document columns until switched on in «Колонки»; they read the lot's delivery", async () => {
   mockStock([documented]);
   render(<WarehousePage />);
+  await screen.findByText(documented.article);
   fireEvent.click(await screen.findByRole("button", { name: "Таблица склада" }));
   await screen.findByRole("table", { name: "Таблица склада" });
   expect(screen.queryByRole("columnheader", { name: "Наим. по УПД" })).not.toBeInTheDocument();
@@ -1275,6 +1302,7 @@ const nshv: WarehouseLot = {
 it("the lot table shows the maker's and the supplier's article beside ours once switched on in «Колонки»", async () => {
   mockStock([nshv]);
   render(<WarehousePage />);
+  await screen.findByText(nshv.article);
   fireEvent.click(await screen.findByRole("button", { name: "Таблица склада" }));
   const table = within(await screen.findByRole("table", { name: "Таблица склада" }));
   expect(table.getByRole("columnheader", { name: /^Артикул номенклатуры/ })).toBeInTheDocument();

@@ -64,6 +64,9 @@ export interface MachineCommand {
   created_by: string;
   created_at: string;
   finished_at: string | null;
+  /** PLC-held length correction read around the measured-length pulse, in mm. */
+  length_correction_before?: string | null;
+  length_correction_after?: string | null;
 }
 
 export interface MachineOffset {
@@ -75,6 +78,7 @@ export interface MachineOffset {
   updated_at: string | null;
   /** Размер есть в ЭТК: наладчик может поправить и ЭТК. */
   etk: boolean;
+  legacy?: boolean;
 }
 
 export interface MachineControl {
@@ -84,6 +88,7 @@ export interface MachineControl {
   commands: MachineCommand[];
   offsets: MachineOffset[];
   can_edit: boolean;
+  length_correction?: { value: string | null; register: "D54"; legacy_offset: string };
   /** Право «Управление станками»: Сброс, Пуск, Сброс аварии. */
   can_control?: boolean;
   /** «Стоп» и любые команды станку: Производство или Задания; ОТК карточку только читает. */
@@ -167,12 +172,14 @@ export interface CorrectionBody {
   note?: string;
 }
 
-/** Ответ на правку: поправка станка (сервер считает «на станке − получилось»), ревизии ЭТК, что было на станке. */
+/** Length correction queues a PLC command; strip corrections return the ERP offset and optional ETK revisions. */
 export interface CorrectionResult {
   offset: string | null;
   etk: { card_id: string; project: string; revision: number }[];
   written?: string | null;
   measured?: string | null;
+  /** Length correction is queued on the machine; success is established by the command result. */
+  command?: MachineCommand;
 }
 
 /** «Выполнение задания» (владелец 19.11.2026): одна передача задания на станок и её счёт по T.Finish (D649).
