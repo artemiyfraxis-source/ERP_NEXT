@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -106,6 +107,17 @@ FIELDS: dict[str, dict[str, str]] = {
 }
 
 PLACEHOLDER = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+GRN_FIELDS = {
+    "category": "Категория", "expiry": "Годен до", "quality": "Статус ВК", "quality_basis": "Основание ВК",
+    "owner": "Владелец", "context": "Контекст категории", "form_footer": "Форма и редакция",
+    "passport": "Производитель и партия", "receipt_quality": "Поступление и ВК",
+    "article": "Артикул", "manufacturer": "Производитель", "series": "Партия изготовителя",
+    "purpose": "Назначение",
+    "article_quantity": "Артикул и количество",
+}
+for _kind in ("lot", "intake"):
+    FIELDS[_kind].update(GRN_FIELDS)
 
 
 def format_key(width_mm: float, height_mm: float) -> str:
@@ -287,6 +299,10 @@ class LabelContent:
     kind: str
     code: str
     values: Mapping[str, str]
+    category: str = ""
+    grn_id: UUID | None = None
+    grn_number: str = ""
+    source: Mapping[str, Any] = field(default_factory=dict)
 
     def value(self, key: str) -> str:
         return self.values.get(key, "")
@@ -308,6 +324,37 @@ def _common(data: GrnLabelData) -> dict[str, str]:
         "warehouse": data.warehouse,
         "place_warehouse": " · ".join(part for part in (data.place, data.warehouse) if part),
         "received": _received(data),
+        **(_grn_values(data) if data.category else {}),
+    }
+
+
+def _grn_values(data: GrnLabelData) -> dict[str, str]:
+    quality = {
+        "RELEASED": "ГОДЕН ✓", "IQH": "КАРАНТИН", "QTN": "КАРАНТИН", "PNC": "НЕ ГОДЕН", "REJECTED": "НЕ ГОДЕН",
+        "NOT_REQUIRED": "ВК не требуется",
+    }.get(data.quality_state, "ВК: неизвестно")
+    labels = {
+        "PAM": (("purpose", "Назначение"), ("equipment", "Оборудование")),
+        "GOS": (("purpose", "Назначение"),),
+        "SUB": (("subcontractor", "Подрядчик"), ("production_order", "Заказ"), ("acceptance_document", "Акт")),
+        "CSM": (("customer_order", "Заказ"), ("transfer_document", "Передача")),
+        "FRX": (("production_order", "Заказ"), ("project", "Проект"), ("acceptance_document", "Акт")),
+        "R&D": (("project", "Проект"), ("purpose", "Назначение")),
+        "PPM": (("customer_order", "Заказ"),),
+    }
+    context = " · ".join(f"{title}: {data.context[key]}" for key, title in labels.get(data.category, ())
+                         if data.context.get(key))
+    return {
+        "category": data.category,
+        "expiry": "Годен до: " + (data.expiry_date.strftime("%d.%m.%Y") if data.expiry_date else "неизвестно"),
+        "quality": quality, "quality_basis": data.quality_basis, "owner": data.owner,
+        "context": context, "form_footer": "",
+        "passport": " · ".join(part for part in (data.manufacturer, f"Партия: {data.manufacturer_batch}"
+                                                   if data.manufacturer_batch else "") if part),
+        "receipt_quality": " · ".join(part for part in (_received(data), quality) if part),
+        "article": data.sku, "manufacturer": data.manufacturer, "series": data.manufacturer_batch,
+        "purpose": data.purpose,
+        "article_quantity": " · ".join(part for part in (data.sku, f"{data.quantity} {data.unit}".strip()) if part),
     }
 
 
@@ -326,7 +373,8 @@ def lot_content(data: GrnLabelData) -> LabelContent:
         "manufacturer_place": " · ".join(part for part in (data.manufacturer, _place(data)) if part),
         "purpose": data.purpose,
     }
-    return LabelContent("lot", data.grn, values)
+    return LabelContent("lot", data.grn, values, data.category, data.grn_id, data.grn_number,
+                        _source(data))
 
 
 def intake_content(data: GrnLabelData, project: str, item_index: str) -> LabelContent:
@@ -336,7 +384,13 @@ def intake_content(data: GrnLabelData, project: str, item_index: str) -> LabelCo
         "item_index": item_index,
         "project_item": " ".join(part for part in (project, item_index) if part),
     }
-    return LabelContent("intake", data.grn, values)
+    return LabelContent("intake", data.grn, values, data.category, data.grn_id, data.grn_number,
+                        _source(data))
+
+
+def _source(data: GrnLabelData) -> dict:
+    return {"context": data.context, "package": data.package, "quality_state": data.quality_state,
+            "quality_basis": data.quality_basis, "expiry_date": data.expiry_date.isoformat() if data.expiry_date else None}
 
 
 GRID_COLUMNS = 5  # the band grid of the 58 mm instrument label: 1 / 3 / 6 / 12 / 18 GHz

@@ -8,7 +8,7 @@ built-in one (`labels/defaults.py`)."""
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
@@ -18,11 +18,11 @@ from app.shared.clock import MOSCOW
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 
-from .label_jobs import COPIES_MAX, QUEUED, enqueue
+from .label_jobs import COPIES_MAX, QUEUED
 from .label_templates import (
-    StoredTemplate, reset_template, save_template, stored_template, stored_template_in, stored_templates,
+    FormMetadata, StoredTemplate, reset_template, save_template, stored_template, stored_template_in, stored_templates,
 )
-from .labels.defaults import default_template
+from .labels.defaults import GRN_DESIGN_REVISIONS, default_template, grn_template
 from .labels.layout import GrnLabelData, LabelLayout, label_png
 from .labels.render import render
 from .labels.settings import CODE_TYPE_LABELS, DEFAULT_PRINT_SETTINGS, PrintSettings
@@ -63,10 +63,19 @@ SAMPLE_INTAKE = intake_content(GrnLabelData(
 ), "533К.12", "КБ1")
 
 
-def sample_content(kind: str) -> LabelContent:
+def sample_content(kind: str, category: str = "") -> LabelContent:
+    if category:
+        if category not in GRN_DESIGN_REVISIONS or kind not in ("lot", "intake"):
+            raise ValueError("Неизвестная категория или вид этикетки ГРН")
+        context = {"purpose": "Цех", "equipment": "Стенд", "subcontractor": "Цех", "production_order": "42",
+                   "acceptance_document": "17", "customer_order": "42", "transfer_document": "17", "project": "42"}
+        data = replace(SAMPLE, grn=f"{category}.26.000002", grn_number=f"{category}.26.000002", category=category,
+                       sku="SMA-C174P", item_name="SMA-male RG-174", manufacturer="RUICHI",
+                       manufacturer_batch="05364575", expiry_date=date(2027, 11, 22), quality_state="IQH",
+                       context=context, owner="Заказчик")
+        return intake_content(data, "42", "КБ1") if kind == "intake" else lot_content(data)
     if kind == "instrument":
         # The designer's sample: a measured adapter with every field of the identification card filled.
-        from datetime import date
         from .labels.template import instrument_content
         return instrument_content(
             "СИ.034", "Переход коаксиальный SMA female–SMA female S-322", "S-322.1", date(2027, 11, 17), model="S-322",
@@ -161,7 +170,16 @@ def lot_label_data(uow, lot_id: UUID) -> GrnLabelData:
         if lot is None:
             raise KeyError("Партия не найдена")
         received = uow.warehouse.received_at(lot_id)
-    return label_of(lot, received)
+        return _data_in(uow.session, lot, received)
+
+
+def _data_in(session, lot, received):
+    data = label_of(lot, received)
+    if getattr(lot, "material_owner_id", None):
+        from .grn_registry import MaterialOwnerRow
+        owner = session.get(MaterialOwnerRow, lot.material_owner_id)
+        data = replace(data, owner=owner.display_name if owner else str(lot.material_owner_id))
+    return data
 
 
 def label_of(lot, received: datetime | None) -> GrnLabelData:
@@ -179,6 +197,12 @@ def label_of(lot, received: datetime | None) -> GrnLabelData:
         warehouse=lot.warehouse,
         manufacturer=lot.manufacturer,
         purpose=lot.purpose,
+        category=getattr(lot, "grn_category", None) or "",
+        grn_id=getattr(lot, "grn_id", None), grn_number=lot.grn,
+        expiry_date=getattr(lot, "expiry_date", None), quality_state=getattr(lot, "quality_state", None),
+        quality_basis=getattr(lot, "quality_basis", None) or "", context=getattr(lot, "grn_context", None) or {},
+        owner=str(getattr(lot, "material_owner_id", None) or ""),
+        package=lot.package,
     )
 
 
@@ -200,37 +224,94 @@ def _sized(settings: PrintSettings, label_format: str) -> PrintSettings:
 def render_builtin(content: LabelContent, settings: PrintSettings) -> LabelLayout:
     """The built-in template of the settings' code type. As the hard-coded layout did, a ГРН Code128 cannot carry
     (Cyrillic) or that does not fit the bars falls back to the QR-only label."""
+    return _builtin_render(content, settings)[0]
+
+
+def _builtin_render(content: LabelContent, settings: PrintSettings) -> tuple[LabelLayout, LabelTemplate]:
     label_format = format_key(settings.width_mm, settings.height_mm)
+    if content.category:
+        template = grn_template(content.category, content.kind, label_format)
+        return render(template, content, settings), template
     if settings.code_type != "qr":
         try:
-            layout = render(default_template(content.kind, label_format, settings.code_type), content, settings)
+            template = default_template(content.kind, label_format, settings.code_type)
+            layout = render(template, content, settings)
             if not layout.skipped:
-                return layout
+                return layout, template
         except ValueError:
             pass
-    return render(default_template(content.kind, label_format, "qr"), content, settings)
+    template = default_template(content.kind, label_format, "qr")
+    return render(template, content, settings), template
 
 
 def render_label(uow, content: LabelContent, settings: PrintSettings) -> LabelLayout:
     """The label as it prints: the saved template of its kind in the settings' format, else the built-in one.
     ValueError — a code does not fit its element."""
-    stored = stored_template(uow, content.kind, format_key(settings.width_mm, settings.height_mm))
-    if stored is not None and stored.template is not None:
-        return render(stored.template, content, settings)
-    return render_builtin(content, settings)
+    with uow:
+        return layout_in(uow.session, content, settings)
 
 
 def lot_layout_in(session, lot, received: datetime | None, settings: PrintSettings) -> LabelLayout:
     """The lot's label as `render_label` draws it, read inside a transaction already open."""
-    return layout_in(session, lot_content(label_of(lot, received)), settings)
+    return layout_in(session, lot_content(_data_in(session, lot, received)), settings)
 
 
 def layout_in(session, content: LabelContent, settings: PrintSettings) -> LabelLayout:
     """Render a saved or built-in template using the caller's open transaction."""
-    stored = stored_template_in(session, content.kind, format_key(settings.width_mm, settings.height_mm))
+    stored = selected_template_in(session, content, settings)
+    content = with_form(content, stored.form if stored else None)
     if stored is not None and stored.template is not None:
         return render(stored.template, content, settings)
     return render_builtin(content, settings)
+
+
+def selected_template_in(session, content, settings):
+    return stored_template_in(session, content.kind, format_key(settings.width_mm, settings.height_mm),
+                              content.category, settings.printer_name if content.category else "")
+
+
+def with_form(content: LabelContent, form: FormMetadata | None) -> LabelContent:
+    if not content.category:
+        return content
+    values = dict(content.values, form_footer=form.footer() if form else "")
+    if content.category == "CSM":
+        values["context"] = " · ".join(part for part in (content.value("owner"), content.value("context")) if part)
+    return replace(content, values=values)
+
+
+def prepare_label_in(session, content: LabelContent, settings: PrintSettings):
+    """Read the design once: raster and provenance always describe the same revision and payload."""
+    stored = selected_template_in(session, content, settings)
+    content = with_form(content, stored.form if stored else None)
+    template = stored.template if stored and stored.template else None
+    revision = f"db:{stored.version}" if template else f"builtin:{GRN_DESIGN_REVISIONS.get(content.category, 'legacy-1')}"
+    if template:
+        layout = render(template, content, settings)
+    else:
+        layout, template = _builtin_render(content, settings)
+    source = dict(content.source)
+    if content.grn_id:
+        from .grn_registry import GrnRegistryRow
+        identity = session.get(GrnRegistryRow, content.grn_id)
+        if identity is None:
+            raise ValueError("Не найдена идентичность ГРН")
+        if ((content.grn_number and identity.number != content.grn_number) or (identity.category or "") != content.category
+                or lot_code(identity.number, source.get("package") or "") != content.code):
+            raise ValueError("Данные этикетки не соответствуют сохранённой идентичности ГРН")
+        content = replace(content, grn_number=identity.number)
+        source.update(source_kind=identity.source_kind, source_op_id=identity.source_op_id)
+    snapshot = dict(grn_id=content.grn_id, grn_category=content.category or None,
+                    grn_number=(content.grn_number or content.code) if content.kind != "instrument" else None,
+                    template_kind=content.kind,
+                    template_format=format_key(settings.width_mm, settings.height_mm), template_version=revision,
+                    grn_provenance={**source, "code": content.code, "values": dict(content.values), "source": source,
+                                    "template": template.model_dump(mode="json"),
+                                    "settings": settings.model_dump(mode="json")})
+    if stored and stored.form:
+        snapshot.update(stored.form.model_dump())
+    if content.category and settings.printer_name:
+        snapshot["target_printer"] = settings.printer_name
+    return layout, snapshot
 
 
 def preview_png(uow, content: LabelContent, settings: PrintSettings) -> bytes:
@@ -241,7 +322,7 @@ def preview_png(uow, content: LabelContent, settings: PrintSettings) -> bytes:
 # --- The designer's templates ------------------------------------------------------------------------------------
 
 
-def _template_view(template: LabelTemplate, stored: StoredTemplate | None, label_format: str) -> dict:
+def _template_view(template: LabelTemplate, stored: StoredTemplate | None, label_format: str, category: str = "") -> dict:
     width, height = FORMATS[label_format]
     saved = stored is not None and stored.template is not None
     return {
@@ -253,19 +334,22 @@ def _template_view(template: LabelTemplate, stored: StoredTemplate | None, label
         "height_mm": height,
         "updated_at": stored.updated_at.isoformat() if saved else None,
         "updated_by": stored.updated_by if saved else None,
+        "category": category,
+        "design_revision": f"db:{stored.version}" if saved else f"builtin:{GRN_DESIGN_REVISIONS.get(category, 'legacy-1')}",
+        "form": stored.form.model_dump(mode="json") if stored and stored.form else None,
     }
 
 
-def templates_view(uow, kind: str, settings: PrintSettings) -> dict:
+def templates_view(uow, kind: str, settings: PrintSettings, category: str = "") -> dict:
     """The designer's start: the fields of the kind and the template of every format (saved or built-in — the built-in
     one follows the settings' code type)."""
-    stored = stored_templates(uow, kind)
+    stored = stored_templates(uow, kind, category, settings.printer_name if category else "")
     formats = {}
     for label_format in FORMATS:
         saved = stored.get(label_format)
         template = saved.template if saved is not None and saved.template is not None else \
-            default_template(kind, label_format, settings.code_type)
-        formats[label_format] = _template_view(template, saved, label_format)
+            (grn_template(category, kind, label_format) if category else default_template(kind, label_format, settings.code_type))
+        formats[label_format] = _template_view(template, saved, label_format, category)
     return {
         "kind": kind,
         "kind_label": KIND_LABELS[kind],
@@ -273,34 +357,43 @@ def templates_view(uow, kind: str, settings: PrintSettings) -> dict:
         "formats": formats,
         "current_format": format_key(settings.width_mm, settings.height_mm),
         "code_type": settings.code_type,
+        "category": category, "printer_name": settings.printer_name,
     }
 
 
 def check_renders(template: LabelTemplate, kind: str, label_format: str, settings: PrintSettings,
-                  content: LabelContent | None = None) -> LabelLayout:
+                  content: LabelContent | None = None, category: str = "", form: FormMetadata | None = None) -> LabelLayout:
     """Draw the template on the sample (or the given content) at the format's size. ValueError — a code does not fit."""
-    return render(template, content or sample_content(kind), _sized(settings, label_format))
+    return render(template, with_form(content or sample_content(kind, category), form), _sized(settings, label_format))
 
 
 def save_label_template(uow, kind: str, label_format: str, raw, expected_version: int | None, settings: PrintSettings,
-                        actor: Actor, now: datetime) -> dict:
+                        actor: Actor, now: datetime, *, category: str = "", form: FormMetadata | None = None) -> dict:
     """TemplateError / ValueError — not a valid template (Russian); StaleTemplate — saved by someone in between."""
     template = parse_template(raw, kind, label_format)
-    check_renders(template, kind, label_format, settings)
-    stored = save_template(uow, kind, label_format, template, expected_version, actor, now)
-    return _template_view(template, stored, label_format)
+    check_renders(template, kind, label_format, settings, category=category, form=form)
+    stored = save_template(uow, kind, label_format, template, expected_version, actor, now, category=category,
+                           printer_name=settings.printer_name if category else "", form=form)
+    return _template_view(template, stored, label_format, category)
 
 
-def reset_label_template(uow, kind: str, label_format: str, settings: PrintSettings, actor: Actor, now: datetime) -> dict:
-    reset_template(uow, kind, label_format, actor, now)
-    return _template_view(default_template(kind, label_format, settings.code_type), None, label_format)
+def reset_label_template(uow, kind: str, label_format: str, settings: PrintSettings, actor: Actor, now: datetime,
+                         *, category: str = "", expected_version: int | None = None) -> dict:
+    reset_template(uow, kind, label_format, actor, now, category=category, printer_name=settings.printer_name if category else "",
+                   expected_version=expected_version)
+    stored = stored_template(uow, kind, label_format, category, settings.printer_name if category else "")
+    template = stored.template if stored and stored.template else (
+        grn_template(category, kind, label_format) if category else default_template(kind, label_format, settings.code_type))
+    return _template_view(template, stored, label_format, category)
 
 
 def preview_template_png(raw, kind: str, label_format: str, settings: PrintSettings,
-                         content: LabelContent | None = None) -> bytes:
+                         content: LabelContent | None = None, *, category: str = "", form: FormMetadata | None = None) -> bytes:
     """The designer's unsaved template drawn exactly as it would print (sample data unless a lot is given)."""
     template = parse_template(raw, kind, label_format)
-    return label_png(check_renders(template, kind, label_format, settings, content))
+    if content and content.category != category:
+        raise ValueError("Категория образца не совпадает с категорией шаблона")
+    return label_png(check_renders(template, kind, label_format, settings, content, category, form))
 
 
 def tspl_job(layout: LabelLayout, settings: PrintSettings, copies: int) -> bytes:
@@ -323,7 +416,16 @@ def print_label(uow, content: LabelContent, settings: PrintSettings, copies: int
     drawn from the template of `content.kind`; `kind` is the job's kind in the queue."""
     if not 1 <= copies <= COPIES_MAX:
         raise ValueError(f"Копий — от 1 до {COPIES_MAX}")
-    layout = render_label(uow, content, settings)
-    job_id = enqueue(uow, tspl=tspl_job(layout, settings, copies), copies=copies, kind=kind, lot_id=lot_id,
-                     created_by=created_by, now=now)
+    from .label_jobs import add_job
+    with uow:
+        # A reprint reads current stock and quality in the same transaction as its immutable job.
+        if lot_id is not None and content.kind == "lot":
+            lot = uow.warehouse.get(lot_id)
+            if lot is None:
+                raise KeyError("Партия не найдена")
+            content = lot_content(_data_in(uow.session, lot, uow.warehouse.received_at(lot_id)))
+        layout, snapshot = prepare_label_in(uow.session, content, settings)
+        job_id = add_job(uow.session, tspl=tspl_job(layout, settings, copies), copies=copies, kind=kind, lot_id=lot_id,
+                         created_by=created_by, now=now, snapshot=snapshot)
+        uow.commit()
     return PrintResult(status="queued", reason=QUEUED, file=str(job_id), copies=copies, job_id=str(job_id))

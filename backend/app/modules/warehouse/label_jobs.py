@@ -22,11 +22,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import base64
 import hashlib
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
-    CheckConstraint, DateTime, Float, ForeignKey, ForeignKeyConstraint, Index, Integer, JSON, LargeBinary, String, Text, UniqueConstraint, Uuid, and_, delete, func, or_, select, update,
+    CheckConstraint, Date, DateTime, Float, ForeignKey, ForeignKeyConstraint, Index, Integer, JSON, LargeBinary, String, Text, UniqueConstraint, Uuid, and_, delete, func, or_, select, update,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
@@ -86,6 +86,14 @@ class LabelJobRow(Base):
                              name="fk_label_job_printer", ondelete="RESTRICT"),
         Index("ix_warehouse_label_jobs_status_created", "status", "created_at"),
         Index("ix_label_jobs_target", "target_machine_id", "target_printer", "status"),
+        ForeignKeyConstraint(["grn_id", "grn_category", "grn_number"],
+                             ["warehouse_grn_registry.id", "warehouse_grn_registry.category", "warehouse_grn_registry.number"],
+                             name="fk_label_jobs_grn_identity", ondelete="RESTRICT"),
+        CheckConstraint("grn_category IS NULL OR grn_category IN ('PPM', 'PAM', 'GOS', 'SUB', 'CSM', 'FRX', 'R&D')",
+                        name="ck_label_jobs_grn_category"),
+        CheckConstraint("grn_id IS NULL OR (grn_number IS NOT NULL AND grn_provenance IS NOT NULL "
+                        "AND template_kind IS NOT NULL AND template_format IS NOT NULL "
+                        "AND template_version IS NOT NULL AND trim(template_version) <> '')", name="ck_label_jobs_grn_snapshot"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
@@ -112,6 +120,16 @@ class LabelJobRow(Base):
     attempt: Mapped[str | None] = mapped_column(String(36))
     claim_token_id: Mapped[UUID | None] = mapped_column(Uuid)
     receipt: Mapped[dict | None] = mapped_column(JSON)
+    grn_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("warehouse_grn_registry.id", ondelete="RESTRICT"))
+    grn_category: Mapped[str | None] = mapped_column(String(3))
+    grn_number: Mapped[str | None] = mapped_column(String(32))
+    grn_provenance: Mapped[dict | None] = mapped_column(JSON)
+    template_kind: Mapped[str | None] = mapped_column(String(16))
+    template_format: Mapped[str | None] = mapped_column(String(8))
+    template_version: Mapped[str | None] = mapped_column(String(64))
+    form_id: Mapped[str | None] = mapped_column(String(128))
+    form_revision: Mapped[str | None] = mapped_column(String(64))
+    form_effective_date: Mapped[date | None] = mapped_column(Date)
 
 
 class LabelAgentRow(Base):
@@ -147,17 +165,29 @@ def _session(uow) -> Session:
 
 
 def add_job(session: Session, *, tspl: bytes, copies: int, kind: str, lot_id: UUID | None, created_by: str,
-            now: datetime) -> UUID:
+            now: datetime, snapshot: dict | None = None) -> UUID:
     """One job into the caller's open transaction (the «Принять» of a delivery line queues its labels together with
     the lot). ValueError — copies out of 1..50 or an empty job."""
     if not 1 <= copies <= COPIES_MAX:
         raise ValueError(f"Копий — от 1 до {COPIES_MAX}")
     if not tspl:
         raise ValueError("Пустое задание печати")
+    if snapshot is None and lot_id is not None and kind == "lot":
+        # Compatibility with receipt auto-print callers: prepare bytes and snapshot together in their transaction.
+        from .infrastructure import SqlAlchemyLabelSettings, SqlAlchemyWarehouseRepository
+        from .labels_application import _data_in, effective_label_settings, prepare_label_in, tspl_job
+        from .labels.template import lot_content
+        repository = SqlAlchemyWarehouseRepository(session)
+        lot = repository.get(lot_id)
+        if lot is not None and (lot.grn_id or lot.grn_category):
+            settings = effective_label_settings(SqlAlchemyLabelSettings(session).load())
+            content = lot_content(_data_in(session, lot, repository.received_at(lot_id)))
+            layout, snapshot = prepare_label_in(session, content, settings)
+            tspl = tspl_job(layout, settings, copies)
     job_id = uuid4()
     session.add(LabelJobRow(
         id=job_id, created_at=now, created_by=created_by[:255], lot_id=lot_id if kind == "lot" else None,
-        kind=kind, copies=copies, tspl=tspl, status=PENDING,
+        kind=kind, copies=copies, tspl=tspl, status=PENDING, **(snapshot or {}),
     ))
     return job_id
 
@@ -234,7 +264,8 @@ def claim(uow, *, printer: str, host: str, now: datetime, token_id: UUID | None 
         claimed = None
         for _attempt in range(5):  # another agent may take the same row between the read and the write
             candidate = session.scalar(
-                select(LabelJobRow.id).where(_claimable(now), LabelJobRow.format == "tspl")
+                select(LabelJobRow.id).where(_claimable(now), LabelJobRow.format == "tspl",
+                    or_(LabelJobRow.target_printer.is_(None), LabelJobRow.target_printer == printer.strip()))
                 .order_by(LabelJobRow.created_at, LabelJobRow.id).limit(1)
                 .with_for_update(skip_locked=True)
             )
