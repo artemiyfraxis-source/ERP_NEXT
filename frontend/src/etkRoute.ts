@@ -3,6 +3,7 @@
 // блоки, номера и подписи.
 import type { EtkRoute, EtkRouteBlock } from "./api";
 import { formatQty } from "./format";
+import { etkTimeRows } from "./etkOperation";
 
 export interface EtkRouteFeed {
   /** Номер блока-источника в полосе (по топологическому порядку). */
@@ -390,7 +391,7 @@ export function operationTimeSummary(operation: EtkPfOperation | null | undefine
     const parsed = Number(String(value).trim().replace(",", "."));
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
   };
-  const time = (Array.isArray(operation?.time) ? operation.time : []).map(record);
+  const time = etkTimeRows(operation ?? {});
   if (time.length) {
     const values = time.map((row) => norm(row.norm));
     return { minutes: values.reduce<number>((sum, value) => sum + (value ?? 0), 0), unknown: values.some((value) => value == null) };

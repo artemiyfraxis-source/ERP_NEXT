@@ -50,7 +50,7 @@ class RouteStep:
     block_place: int = 0
     # Шаг-ПФ (semifinished_steps): операции ЭТК этого полуфабриката по порядку; у шага-операции ЭТК пусто.
     etk_ops: tuple[EtkOperation, ...] = ()
-    # Numeric seconds remain a lower bound for previews; incomplete norms cannot become production tasks.
+    # Numeric seconds are a lower bound; incomplete norms warn without blocking launch.
     unknown_operations: int = 0
 
 
@@ -403,8 +403,8 @@ def launch_route(document: Mapping[str, Any] | None) -> LaunchRoute:
         ))
     unknown_count = sum(step.unknown_operations for step in steps)
     if unknown_count:
-        warnings += (f"Норма времени не задана: {unknown_count} оп. Итог времени неполный; "
-                     "перед запуском заполните нормы в техкарте.",)
+        warnings += (f"Норма времени не задана: {unknown_count} оп. Указана нижняя граница времени; "
+                     "запуск разрешён, уточните нормы в техкарте.",)
     return LaunchRoute(tuple(steps), warnings)
 
 
@@ -513,16 +513,11 @@ def launch_operations(route: Sequence[RouteStep], quantity: int) -> tuple[Produc
 
     Нарисованная технологом схема — операция задания на каждый ПФ (semifinished_steps): одна коробка на ПФ, входы —
     коробки предыдущих ПФ. Без схемы — как прежде, операция задания на каждую операцию ЭТК."""
-    unknown = sum(step.unknown_operations for step in route)
-    if unknown:
-        raise ProductionValidationError(
-            f"Норма времени не задана: {unknown} оп. Заполните нормы в техкарте перед запуском."
-        )
     return preview_operations(route, quantity)
 
 
 def preview_operations(route: Sequence[RouteStep], quantity: int) -> tuple[ProductionOperation, ...]:
-    """Read-only numeric lower bounds with their actual PF factors; call launch_operations before persisting."""
+    """Numeric lower bounds with their actual PF factors, shared by previews and launch."""
     semis = semifinished_steps(route)
     if semis:
         numbers = {step.block: step.position for step in semis}

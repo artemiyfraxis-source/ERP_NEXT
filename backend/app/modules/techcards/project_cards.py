@@ -55,20 +55,34 @@ def operation_aliases(previous: Mapping[str, Any] | None, document: Mapping[str,
     candidates: dict[str, set[str]] = {}
     for index, old in enumerate(old_ops):
         key = operation_key(old)
-        target = key if key in targets else None
-        if target is None and config.get("mode") == "coax" and len(old_ops) == len(raw_ops):
-            raw = raw_ops[index]
-            if (isinstance(raw, Mapping) and raw.get("opKey")
-                    and old.get("position") == index + 1
-                    and old.get("type") == raw.get("type")
+        raw = raw_ops[index] if len(old_ops) == len(raw_ops) else None
+        # A legacy positional key can now name another operation of the same material.
+        # When the saved recipe carries semantic identity, it takes precedence even
+        # if the old positional key happens to exist in the rebuilt document.
+        semantic = (not old.get("operation_key") and config.get("mode") != "manual"
+                    and isinstance(raw, Mapping) and raw.get("opKey"))
+        if semantic:
+            target = None
+            if (old.get("position") == index + 1 and old.get("type") == raw.get("type")
                     and str(old.get("side") or "") == str(raw.get("side") or "")
                     and (not raw.get("templateId") or str(old.get("template_id") or "") == str(raw["templateId"]))):
                 stable = f"{str(old.get('code') or '').strip()}::op:{raw['opKey']}::{str(old.get('side') or '').strip()}"
                 if stable in targets:
                     target = stable
+            if target is None and key in targets:
+                raise TechcardValidationError("Смысловая операция не сопоставлена: позиционный ключ занят другой операцией")
+        else:
+            target = key if key in targets else None
         if target is not None:
             candidates.setdefault(key, set()).add(target)
-    mapped = {key: next(iter(values)) for key, values in candidates.items() if len(values) == 1}
+    sources: dict[str, set[str]] = {}
+    for key, values in candidates.items():
+        for target in values:
+            sources.setdefault(target, set()).add(key)
+    if any(len(values) > 1 for values in candidates.values()) or any(len(keys) > 1 for keys in sources.values()):
+        raise TechcardValidationError("Несколько операций имеют одну смысловую идентичность — требуется проверка технолога")
+    mapped = {key: next(iter(values)) for key, values in candidates.items()
+              if len(values) == 1}
     for alias, old_target in (previous.get("operation_key_aliases") or {}).items():
         target = mapped.get(old_target, old_target if old_target in targets else None)
         if target is not None and (alias not in mapped or mapped[alias] == target):

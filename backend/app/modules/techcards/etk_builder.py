@@ -1283,7 +1283,7 @@ def _time(op: Mapping[str, Any], config: Mapping[str, Any], result_name: str) ->
             linear = None if kind else linear_seconds(op.get("linearTiming"), _decimal(wire.get("length")) / 1000)
             if linear is not None:
                 return linear / 60
-            return operation_minutes or Decimal(1)
+            return operation_minutes if op.get("tOp") is not None and str(op["tOp"]).strip() else Decimal(1)
         return [{
             "name": _wire_result_name(wire, terminal, bool(op.get("tin"))),
             "norm": _format(piece_minutes(wire) * units(wire) * quantity, 2),
@@ -2848,7 +2848,7 @@ def _typed_operation(
         "times": _times(op),
         "fields": fields,
     }
-    if config.get("mode") == "coax" and op.get("opKey"):
+    if op.get("opKey") and not manual:
         operation["opKey"] = str(op["opKey"])
         operation["operation_key"] = f"{code.strip()}::op:{op['opKey']}::{operation['side'].strip()}"
     if any(not row["norm"] for row in operation["time"]):
@@ -3072,11 +3072,17 @@ def operation_time_summary(operation: Mapping[str, Any], quantity: Decimal) -> t
             return None
         return value if value.is_finite() and value >= 0 else None
 
+    times = operation.get("times") if isinstance(operation.get("times"), Mapping) else {}
+    # Historical generated rows stored zero even when the source norm was blank.
+    # A source zero (including numeric 0) or a row without generated provenance is explicit.
+    missing_source = "times" in operation and not str(
+        times.get("operation_seconds") if times.get("operation_seconds") is not None else ""
+    ).strip()
     rows = _list(operation.get("time"))
     if rows:
         values = [number(row.get("norm")) if isinstance(row, Mapping) else None for row in rows]
+        values = [None if missing_source and value == 0 else value for value in values]
         return sum((value for value in values if value is not None), Decimal(0)), any(value is None for value in values)
-    times = operation.get("times") if isinstance(operation.get("times"), Mapping) else {}
     seconds = number(times.get("operation_seconds"))
     return (seconds * quantity / 60, False) if seconds is not None else (Decimal(0), True)
 
@@ -3520,7 +3526,7 @@ def _distinct_typed_keys(built: list[dict[str, Any]]) -> None:
     for operation in built:
         if operation.get("operation_key"):
             if operation["operation_key"] in stable:
-                raise ValueError("Операции коаксиала должны иметь уникальные смысловые ключи и сторону")
+                raise ValueError("Операции должны иметь уникальные смысловые ключи и сторону")
             stable.add(operation["operation_key"])
             continue
         key = _etk_key(operation)
@@ -3657,7 +3663,8 @@ def _build_manual(
             ))
             continue
         norm = item.operation_seconds * item.quantity * quantity / 60
-        if not norm:
+        missing_norm = item.source.get("tOp") is None or not str(item.source["tOp"]).strip()
+        if missing_norm:
             warnings.append(f"Операция {item.position} ({item.label}): не задана норма времени")
         if item.card is not None:
             replacements = _placeholder_map(item.source, config, "; ".join(row["name"] for row in semis), result, {}, {})
@@ -3683,9 +3690,8 @@ def _build_manual(
             "title": _card_title(item.card, item.source) if item.card else item.label, "card": card,
             "components": _manual_components(item, quantity), "semis": semis, "result": [_row(result, _format(quantity))],
             "result_label": "Изделие" if block.final and item.position == order[-1] else "Полуфабрикат",
-            "time": [{"name": result, "norm": _format(norm, 2)}],
-            "times": {"operation_seconds": str(item.source.get("tOp") or ""), "setup_seconds": str(item.source.get("tPrep") or ""),
-                      "machine_seconds": str(item.source.get("tMachine") or "")},
+            "time": [{"name": result, "norm": "" if missing_norm else _format(norm, 2)}],
+            "times": _times(item.source),
             "fields": fields,
         })
 

@@ -10,7 +10,7 @@ Overrides (what a rebuild must keep), stored by the card:
     {"operations": {operation_key: {"base_template_version": str, "operation": {the operation as edited}}},
      "route": {"blocks": [{"key", "name", "final", "kit"?, "ops": [operation_key, …]}],
                "edges": [{"from", "to", "per_unit", "item"?}]}}
-`operation_key` is `code::op:<opKey>::side` for coax recipes, otherwise `code::connector::side` (project_cards).
+`operation_key` is `code::op:<opKey>::side` for generator recipes with opKey, otherwise `code::connector::side` (project_cards).
 Legacy keys migrate using the previous document's aligned recipe. The route is the ПФ scheme cut by hand, its blocks naming
 operations by key instead of by place, so it survives a rebuild that moves the operations."""
 
@@ -104,11 +104,11 @@ def derive(
             enrich(deepcopy(dict(inputs))), templates, operation_library_commit=operation_library_commit,
             technology_source=technology_source,
         ), templates)
+        aliases = operation_aliases(previous_document, document)
     except (ValueError, KeyError, TypeError, AttributeError, IndexError, TechcardValidationError) as error:
         return None, [_conflict(BUILD_FAILED, f"сборка не удалась: {error}")]
     overrides = overrides if isinstance(overrides, Mapping) else {}
     conflicts: list[dict[str, str]] = []
-    aliases = operation_aliases(previous_document, document)
     if aliases:
         document["operation_key_aliases"] = aliases
     document = _apply_operations(document, overrides.get("operations"), conflicts)

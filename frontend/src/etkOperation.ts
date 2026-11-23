@@ -20,11 +20,12 @@ function str(value: unknown): string {
   return value == null ? "" : String(value);
 }
 
-/** Preserve the stored norm: blank is unknown, while an explicit zero is a known value. */
+/** Legacy generated zero with a blank source norm is unknown; an explicit source zero stays known. */
 export function etkTimeRows(operation: Row): Array<{ name: string; norm: string }> {
-  return list(operation.time).map((row) => ({
+  const missingSource = "times" in operation && !str(obj(operation.times).operation_seconds).trim();
+  return (Array.isArray(operation.time) ? operation.time : []).map(obj).map((row) => ({
     name: str(row.name),
-    norm: str(row.norm),
+    norm: missingSource && str(row.norm).trim() && Number(str(row.norm).replace(",", ".")) === 0 ? "" : str(row.norm),
   }));
 }
 

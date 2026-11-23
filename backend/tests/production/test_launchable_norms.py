@@ -11,7 +11,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.modules.production.domain import ProductionValidationError
 from app.modules.production.launchable import launch_operations, launch_route, norms_outdated, route_from_document, semifinished_steps
 from app.modules.production.launch_ready import planned_operations
 from app.modules.techcards.assembly_schema import generator_to_assembly
@@ -153,7 +152,7 @@ def test_a_drawn_scheme_that_no_longer_fits_launches_as_a_chain_with_a_warning()
     assert [len(item.inputs) for item in operations] == [0] + [1] * 10
 
 
-def test_unknown_norm_is_a_lower_bound_and_cannot_be_persisted_as_a_zero_second_task():
+def test_unknown_norm_launches_with_warning_and_lower_bound_time():
     document = {
         "schema_version": 4, "kit": {"part_quantity": "10"},
         "operations": [
@@ -171,10 +170,8 @@ def test_unknown_norm_is_a_lower_bound_and_cannot_be_persisted_as_a_zero_second_
     assert semifinished_steps(planned.steps)[0].unknown_operations == 1
     preview = planned_operations(SimpleNamespace(route=planned), 10)
     assert len(preview) == 1 and preview[0][0].seconds_per_unit == Decimal(18)
-    with pytest.raises(ProductionValidationError, match="Заполните нормы в техкарте перед запуском"):
-        launch_operations(planned.steps, 10)
-    with pytest.raises(ProductionValidationError, match="Заполните нормы в техкарте перед запуском"):
-        launch_operations(semifinished_steps(planned.steps), 10)
+    assert launch_operations(planned.steps, 10)[0].seconds_per_unit == Decimal(18)
+    assert launch_operations(semifinished_steps(planned.steps), 10)[0].seconds_per_unit == Decimal(18)
 
     document["operations"][1]["time"][1]["norm"] = "0"
     known = launch_route(document)
@@ -195,8 +192,7 @@ def test_absent_rows_without_a_valid_legacy_fallback_are_unknown_instead_of_zero
     planned = launch_route({"operations": [{"code": "UNKNOWN"}]})
     assert planned.steps[0].unknown_operations == 1
     assert planned.warnings
-    with pytest.raises(ProductionValidationError, match="Заполните нормы"):
-        launch_operations(planned.steps, 10)
+    assert launch_operations(planned.steps, 10)[0].seconds_per_unit == 0
 
 
 def test_known_zero_becoming_unknown_is_an_outdated_norm_even_when_numeric_seconds_stay_zero():

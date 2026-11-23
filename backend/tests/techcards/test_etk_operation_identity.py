@@ -201,3 +201,76 @@ def test_manual_edit_cannot_change_identity_fields_behind_an_explicit_key(field,
     edited[field] = value
     with pytest.raises(TechcardValidationError, match="ключ операции"):
         card.edit_operation(key, edited, NOW)
+
+
+def legacy_wire():
+    config = {
+        "mode": "wire", "partQty": 10, "assemblyName": "Harness",
+        "ops": [{"type": "cutTut", "opKey": f"cutShr{index}", "opNum": "CUT_TUT",
+                 "tutArt": "TUBE", "tutName": "Tube", "tutLen": length, "tOp": "6"}
+                for index, length in ((1, 20), (2, 40))],
+    }
+    old = etk_builder.build_etk(config, [])
+    for op in old["operations"]:
+        op.pop("operation_key", None)
+        op.pop("opKey", None)
+    etk_builder._distinct_typed_keys(old["operations"])
+    old["route"]["source"] = "manual"
+    first = old["operations"][0]
+    first["card"] = {"steps": [{"text": "MANUAL_FOR_cutShr1"}]}
+    key = operation_key(first)
+    card = ProjectTechcard.create(project="WIRE", item_index="KB1", product_name="Harness",
+                                  source_calculation="", deadline=None, now=NOW).rebuild(old, NOW).issue(NOW)
+    inputs = deepcopy(config)
+    inputs["ops"].reverse()
+    card = replace(card, inputs=inputs, manual_operation_keys=(key,), overrides={
+        "operations": {key: {"operation": deepcopy(first)}}, "route": route_override(old),
+    })
+    ctx = Context(Refs(None), (), "", None, "wire-identity-test", REASON_BUILDER, NOW)
+    return card, ctx
+
+
+def test_wire_reorder_keeps_manual_instruction_route_and_sketch_on_its_semantic_operation():
+    card, ctx = legacy_wire()
+    old_key = card.manual_operation_keys[0]
+    updated, revision, result = evaluate(card, ctx, saved_sketch_keys=(old_key,))
+    assert result.status == "revised" and revision is not None and not result.conflicts
+    key = "CUT_TUT::op:cutShr1::"
+    assert updated.manual_operation_keys == (key,)
+    assert list(updated.overrides["operations"]) == [key]
+    ops = updated.document["operations"]
+    assert [op["opKey"] for op in ops] == ["cutShr2", "cutShr1"]
+    assert ops[1]["card"]["steps"][0]["text"] == "MANUAL_FOR_cutShr1"
+    assert ops[0]["card"] is None
+    assert {block["key"]: block["ops"] for block in updated.document["route"]["blocks"]} == {"b1": [2], "b2": [1]}
+    assert updated.document["route"]["edges"] == card.document["route"]["edges"]
+    sketch = OperationSketch(old_key, "tube.png", "image/png", 5, "Technologist", NOW)
+    assert document_sketches([sketch], updated.document)[0].operation_key == key
+    assert document_sketches([replace(sketch, operation_key=key)], updated.document, card.document)[0].operation_key == old_key
+    _, repeated, result = evaluate(updated, ctx, saved_sketch_keys=(old_key,))
+    assert repeated is None and result.status == "unchanged"
+
+
+@pytest.mark.parametrize("problem", ["missing_recipe", "duplicate_source_identity", "duplicate_target_identity"])
+def test_ambiguous_wire_identity_preserves_issued_revision(problem):
+    card, ctx = legacy_wire()
+    if problem == "missing_recipe":
+        card.document.pop("build_config")
+    elif problem == "duplicate_source_identity":
+        card.document["build_config"]["ops"][1]["opKey"] = "cutShr1"
+    else:
+        card.inputs["ops"][0]["opKey"] = "cutShr1"
+    before = deepcopy(card.document)
+    updated, revision, result = evaluate(card, ctx, saved_sketch_keys=card.manual_operation_keys)
+    assert revision is None and result.status == "conflict"
+    assert updated.document == before and updated.revision == card.revision
+    assert updated.overrides == card.overrides and updated.manual_operation_keys == card.manual_operation_keys
+
+
+def test_unresolved_wire_semantics_cannot_fall_back_to_a_reused_positional_key():
+    card, _ = legacy_wire()
+    # A replacement operation occupies the same legacy key, but no longer has the saved role.
+    replacement = deepcopy(card.document)
+    replacement["build_config"]["ops"][0]["opKey"] = "replacementCut"
+    with pytest.raises(TechcardValidationError, match="позиционный ключ"):
+        card.rebuild(replacement, NOW)

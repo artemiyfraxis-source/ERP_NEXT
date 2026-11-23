@@ -428,6 +428,7 @@ def assign_board(
 
         # Задания будущих КБ — тем же запуском, что «Создать задание»; операции сопоставляются по номеру этапа.
         created: dict[UUID, ProductionTask] = {}
+        warnings: list[str] = []
         for entry in accepted:
             if entry.new is None or entry.new.card.techcard_id in created:
                 continue
@@ -435,6 +436,7 @@ def assign_board(
             created[card.techcard_id] = _launch_new(
                 card, entry.new.task.quantity, seen.get(card.techcard_id, 0), command.actor, now, uow,
             )
+            warnings.extend(card.route.warnings)
 
         tasks = _live_tasks(uow, now)
         for task in (*loaded.values(), *created.values()):
@@ -445,7 +447,6 @@ def assign_board(
         skills = _skills(uow)
         progress = _progress(uow, list(tasks))
         placed: list[Placed] = []
-        warnings: list[str] = []
         for entry in accepted:
             if entry.new is not None:
                 real = created[entry.new.card.techcard_id]
@@ -542,6 +543,7 @@ class BoardOutput:
     output: Any
     filled: tuple[Any, ...]
     closed: tuple[str, ...]
+    warnings: tuple[str, ...] = ()
 
 
 def record_board_output(
@@ -570,7 +572,7 @@ def record_board_output(
             actor=command.actor, now=command.now, fill_inputs=command.fill_inputs,
         ), uow)
         uow.commit()
-        return BoardOutput(task, box, output, filled, closed)
+        return BoardOutput(task, box, output, filled, closed, card.route.warnings)
 
 
 def _free_start(

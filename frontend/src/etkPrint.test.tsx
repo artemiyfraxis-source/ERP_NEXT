@@ -59,12 +59,12 @@ it.each([0, 2])("prints incomplete PF totals including a %s minute lower bound a
   expect(html).toContain("0 мин на партию");
 });
 
-it("shows blank label-print time as unknown on screen and print", async () => {
+it.each(["", "0"])("shows legacy label-print time %s with blank source as unknown on screen and print", async (norm) => {
   stubFetch();
   const card = techcard({
     code: "PRINT_MARK_LABEL", type: "coaxCutTut", title: "Печать этикеток",
     times: { operation_seconds: "", machine_seconds: "0" },
-    time: [{ name: "Этикетки", norm: "" }],
+    time: [{ name: "Этикетки", norm }],
   });
   const before = structuredClone(card);
   render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
@@ -84,7 +84,7 @@ it("does not report a partial sum as the total when one time norm is missing", a
 
 it("preserves an explicitly supplied zero time norm", async () => {
   stubFetch();
-  const card = techcard({ times: { operation_seconds: "" }, time: [{ name: "Этикетки", norm: "0" }] });
+  const card = techcard({ times: { operation_seconds: "0" }, time: [{ name: "Этикетки", norm: "0" }] });
   render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
   expect(await screen.findByLabelText("Расчётное время")).toHaveTextContent("0 мин");
 });

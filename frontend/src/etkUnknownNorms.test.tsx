@@ -5,6 +5,7 @@ import { EtkPfList } from "./EtkPfList";
 import { previewSummary } from "./GenPfScheme";
 import { etkPfGroups, etkRouteChips, etkRouteOf, etkRouteSummary, formatTimeTotal, operationMinutes, operationTimeSummary } from "./etkRoute";
 import { routeTotals } from "./routeLogic";
+import { etkTimeRows } from "./etkOperation";
 
 afterEach(cleanup);
 
@@ -23,6 +24,19 @@ const document = {
 const card = { id: "card", version: 1, status: "Черновик", document } as unknown as ProjectTechcard;
 
 describe("unknown time norms", () => {
+  it.each([undefined, null, "", "  "])("treats a legacy zero with source %s as unknown", (seconds) => {
+    const operation = { time: [{ norm: "2" }, { norm: "0,00" }], times: { operation_seconds: seconds } };
+    expect(etkTimeRows(operation).map((row) => row.norm)).toEqual(["2", ""]);
+    expect(operationTimeSummary(operation, 10)).toEqual({ minutes: 2, unknown: true });
+    expect(etkTimeRows({ ...operation, edited: { by: "Technologist" } })[1].norm).toBe("");
+  });
+
+  it.each(["0", 0])("retains an explicit source zero %s", (seconds) => {
+    const operation = { time: [{ norm: "0" }], times: { operation_seconds: seconds } };
+    expect(etkTimeRows(operation)[0].norm).toBe("0");
+    expect(operationTimeSummary(operation, 10)).toEqual({ minutes: 0, unknown: false });
+  });
+
   it.each([undefined, null, "", "  ", "не задано", "NaN", "Infinity", "-1"])("keeps %s unknown while retaining a numeric subtotal", (missing) => {
     const operation = { time: [{ norm: "2,5" }, { norm: missing }], times: { operation_seconds: 999 } };
     expect(operationTimeSummary(operation, 10)).toEqual({ minutes: 2.5, unknown: true });

@@ -6,7 +6,7 @@ from decimal import Decimal
 import pytest
 
 from app.modules.techcards.domain.route import pf_documents
-from app.modules.techcards.etk_builder import attach_route, operation_norms, operation_time_summary
+from app.modules.techcards.etk_builder import attach_route, build_etk, operation_norms, operation_time_summary
 
 
 def document() -> dict:
@@ -56,3 +56,38 @@ def test_legacy_time_without_rows_still_uses_its_explicit_seconds():
     old = {"times": {"operation_seconds": "12"}}
     assert operation_time_summary(old, Decimal(10)) == (Decimal(2), False)
     assert operation_time_summary({"times": {"operation_seconds": "0"}}, Decimal(10)) == (Decimal(0), False)
+
+
+@pytest.mark.parametrize("seconds,unknown", [(None, True), ("", True), ("  ", True), ("0", False), (0, False)])
+def test_stored_zero_uses_source_norm_provenance(seconds, unknown):
+    operation = {"time": [{"norm": "2"}, {"norm": "0,00"}], "times": {"operation_seconds": seconds}}
+    original = deepcopy(operation)
+    assert operation_time_summary(operation, Decimal(10)) == (Decimal(2), unknown)
+    # Editing instructions does not establish that the time norm was entered explicitly.
+    operation["edited"] = {"by": "Technologist"}
+    assert operation_time_summary(operation, Decimal(10)) == (Decimal(2), unknown)
+    assert {key: value for key, value in operation.items() if key != "edited"} == original
+
+
+@pytest.mark.parametrize("seconds,unknown", [(None, True), ("", True), ("0", False), (0, False)])
+def test_manual_builder_preserves_explicit_zero_source(seconds, unknown):
+    built = build_etk({
+        "mode": "manual", "assemblyName": "Sample", "partQty": 10,
+        "ops": [{"type": "customOp", "seq": 1, "label": "Check", "tOp": seconds,
+                 "steps": [{"kind": "Контроль", "text": "Check result"}]}],
+    }, [])
+    [operation] = built["operations"]
+    assert operation_time_summary(operation, Decimal(10)) == (Decimal(0), unknown)
+    assert operation["times"]["operation_seconds"] == ("" if unknown else "0")
+    assert bool(built["warnings"]) == unknown
+
+
+@pytest.mark.parametrize("seconds", ["0", 0])
+def test_wire_builder_does_not_replace_explicit_zero_with_default_minutes(seconds):
+    built = build_etk({
+        "partQty": 10, "assemblyName": "Sample", "wires": [{"name": "Wire", "qty": 1, "length": 100}],
+        "ops": [{"type": "cutWire", "opNum": "CUT_WIRE", "opKey": "cut", "tOp": seconds}],
+    }, [])
+    [operation] = built["operations"]
+    assert operation["time"][0]["norm"] == "0"
+    assert operation_time_summary(operation, Decimal(10)) == (Decimal(0), False)

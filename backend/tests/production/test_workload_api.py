@@ -6,6 +6,7 @@ from dataclasses import replace
 from decimal import Decimal
 from uuid import uuid4
 
+import pytest
 from sqlalchemy import func, select
 
 from app.main import app
@@ -103,6 +104,46 @@ def test_workload_without_issued_techcards_is_empty(production_api):  # noqa: F8
     body = client.get("/api/production/workload").json()
 
     assert body["projects"] == [] and body["bottlenecks"] == [] and len(body["weeks"]) == 8
+
+
+@pytest.mark.parametrize("source,unknown", [("", 1), ("0", 0)])
+@pytest.mark.parametrize("launch_path", ["tasks", "board/assign", "board/manual-output"])
+def test_issued_legacy_zero_is_visible_in_planning_and_launches_with_norm_warning(production_api, source, unknown, launch_path):
+    client, operator = production_api
+    card = issue_card("805К.1", "КБ1", [("CUT_WIRE", "Резка", 900, 0), ("INS_x", "Монтаж", source, 0)])
+    card.document["operations"][1].update(time=[{"norm": "0"}], times={"operation_seconds": source})
+    with app.state.techcards_uow_factory() as uow:
+        uow.techcards.save(card)
+        uow.commit()
+
+    planned = client.get("/api/production/board").json()
+    assert planned["skipped"] == []
+    [future] = planned["future"]
+    assert bool(future["warnings"]) == bool(unknown)
+    if unknown:
+        assert "Норма времени не задана: 1 оп." in future["warnings"][0]
+    assert [float(op["seconds_per_unit"]) for op in future["operations"]] == [900, 0]
+
+    [project] = client.get("/api/production/workload").json()["projects"]
+    assert project["hours"] == 2.5
+    assert project.get("unknown_operations", 0) == unknown
+    if unknown:
+        assert project["ready"] is None and project["status"] == "неполные нормы"
+
+    if launch_path == "tasks":
+        payload = {"techcard_id": str(card.id), "quantity": 10}
+    elif launch_path == "board/assign":
+        payload = {"operator_id": str(operator), "items": [{
+            "techcard_id": str(card.id), "techcard_version": card.version,
+            "operation_id": future["operations"][0]["id"],
+        }]}
+    else:
+        payload = {"techcard_id": str(card.id), "techcard_version": card.version, "position": 1, "good_quantity": 1}
+    launched = client.post(f"/api/production/{launch_path}", headers={"Idempotency-Key": "legacy-unknown"}, json=payload)
+    assert launched.status_code == 200, launched.text
+    assert any("Норма времени не задана:" in warning for warning in launched.json()["warnings"]) == bool(unknown)
+    task = launched.json()["tasks"][0] if launch_path == "board/assign" else launched.json()["task"]
+    assert [float(op["seconds_per_unit"]) for op in task["operations"]] == [900, 0]
 
 
 def test_workload_keeps_unknown_only_kbs_and_preserves_piece_factors_in_partial_totals(production_api):  # noqa: F811
