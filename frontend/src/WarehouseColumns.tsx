@@ -98,9 +98,11 @@ export function defaultLayout(kind: TableKind): ColumnLayout {
   return { order: [...DEFAULT_ORDER[kind]], hidden: [...DEFAULT_HIDDEN[kind]] };
 }
 
-/** The columns on screen, left to right: the name cannot be switched off; the column the rows are grouped by is the group header. */
+export const REQUIRED_STOCK_COLUMNS: readonly ColumnKey[] = ["name", "available", "place"];
+
+/** Required stock columns stay visible even in an older personal view; grouping replaces its own column. */
 export function shownColumns(layout: ColumnLayout, groupColumn: ColumnKey | null): ColumnKey[] {
-  return layout.order.filter((key) => key === "name" || (key !== groupColumn && !layout.hidden.includes(key)));
+  return layout.order.filter((key) => REQUIRED_STOCK_COLUMNS.includes(key) || (key !== groupColumn && !layout.hidden.includes(key)));
 }
 
 /** The columns of the chooser, in the order of the table. */
@@ -178,16 +180,17 @@ export function ColumnChooser({ keys, hidden, flat, onToggle, onMove, onReset }:
   onMove: (key: ColumnKey, step: -1 | 1) => void;
   onReset: () => void;
 }) {
-  return <ColumnChooserMenu keys={keys} hidden={hidden} titleOf={(key) => columnTitle(key, flat)} requiredKey="name"
+  return <ColumnChooserMenu keys={keys} hidden={hidden} titleOf={(key) => columnTitle(key, flat)} requiredKey="name" requiredKeys={REQUIRED_STOCK_COLUMNS}
     onToggle={onToggle} onMove={onMove} onReset={onReset} />;
 }
 
 /** The stock chooser, also used by the project load sheet. Fixed keys cannot be moved past. */
-export function ColumnChooserMenu<K extends string>({ keys, hidden, titleOf, requiredKey, fixedKey, onToggle, onMove, onDrop, onReset, resetLabel = "По умолчанию" }: {
+export function ColumnChooserMenu<K extends string>({ keys, hidden, titleOf, requiredKey, requiredKeys, fixedKey, onToggle, onMove, onDrop, onReset, resetLabel = "По умолчанию" }: {
   keys: K[];
   hidden: K[];
   titleOf: (key: K) => string;
   requiredKey: K;
+  requiredKeys?: readonly K[];
   fixedKey?: K;
   onToggle: (key: K, shown: boolean) => void;
   onMove: (key: K, step: -1 | 1) => void;
@@ -240,7 +243,7 @@ export function ColumnChooserMenu<K extends string>({ keys, hidden, titleOf, req
               onDragStart={(event) => { setDragging(key); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", key); }}
               onDragEnd={() => setDragging(null)}>⠿</span>}
           <label className="check-inline">
-            <input type="checkbox" checked={key === requiredKey || !hidden.includes(key)} disabled={key === requiredKey} onChange={(event) => onToggle(key, event.target.checked)} />
+            <input type="checkbox" checked={key === requiredKey || requiredKeys?.includes(key) || !hidden.includes(key)} disabled={key === requiredKey || requiredKeys?.includes(key)} onChange={(event) => onToggle(key, event.target.checked)} />
             {titleOf(key)}
           </label>
           </span>
