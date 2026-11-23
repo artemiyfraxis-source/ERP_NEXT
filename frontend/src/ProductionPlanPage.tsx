@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  kitsetsApi,
   productionApi,
   productionPlanApi,
   type Principal,
@@ -23,11 +22,9 @@ const WEEKDAYS = ["вс", "пн", "вт", "ср", "чт", "пт", "сб"];
 
 const shortDate = (value: string | null) => formatDate(value) || EMPTY;
 
-const projectKey = (project: string) => project.trim().toUpperCase();
-
 export function ProductionPlanPage({ principal, openProjectCard }: {
   principal: Principal;
-  /** Opens the project's techcard card (SUPPLYMAP planAct_ 'card' → openKitsetCard); absent without access. */
+  /** Opens the project card; absent without access. */
   openProjectCard?: (project: string) => void;
 }) {
   const [data, setData] = useState(emptyPlan);
@@ -41,10 +38,7 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
     const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  // Проекты с карточкой в «Проектах»: № открывает карточку только у них (ПП-5); список не пришёл — по наличию КБ.
-  const [cards, setCards] = useState<Set<string> | null>(null);
   const canEdit = canAct(principal, "production");
-  const hasCard = (row: ProductionPlanRow) => cards ? cards.has(projectKey(row.project)) : row.kits.length > 0;
 
   async function reload() {
     setError("");
@@ -66,11 +60,6 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
     Promise.all([productionApi.list(), productionApi.operators()])
       .then(([taskResult, operatorResult]) => { setTasks(taskResult.tasks ?? []); setOperators(operatorResult.operators ?? []); })
       .catch((reason) => setLoadError(reason instanceof Error ? reason.message : "Задания не загружены"));
-    if (openProjectCard) {
-      kitsetsApi.list()
-        .then((result) => setCards(Array.isArray(result.items) ? new Set(result.items.map((item) => projectKey(item.project))) : null))
-        .catch(() => setCards(null));
-    }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sheetSpan = useMemo(() => {
@@ -110,11 +99,7 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
   }
 
   function openRow(row: ProductionPlanRow) {
-    // Проект открывается окном в «Ресурсном планировании» (владелец 22.10: «из плана — в проект в производстве»,
-    // боковой панели нет): адрес `?section=production&project=…`, кнопка «Назад» возвращает в план.
-    // Без доступа к ресурсному планированию — карточка проекта в «Проектах», если она есть.
     if (canSee(principal, "production")) openPlace("production", { project: row.project });
-    else if (openProjectCard && hasCard(row)) openProjectCard(row.project);
   }
 
   return <section className="page production-plan-page">
@@ -134,7 +119,7 @@ export function ProductionPlanPage({ principal, openProjectCard }: {
           arrivalValues={data.arrival_values ?? ["Склад", "Ждем", "???"]} canEdit={canEdit} busy={busy}
           onStatusChanged={() => void reload()} onMark={addMark}
           onDeadline={(project, deadline) => addEvent({ project, kind: "deadline", blocker: "", text: "", deadline })}
-          onOpenProject={openRow} onOpenJournal={openRow} hasCard={hasCard} />}
+          onOpenProject={openProjectCard ? (row) => openProjectCard(row.project) : undefined} onOpenJournal={openRow} />}
     </section>
 
     <PlanBaseline canEdit={canEdit} />
