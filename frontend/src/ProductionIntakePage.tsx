@@ -415,7 +415,9 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   ];
   const actionless = (tab === "production" && !canWarehouse) || (["accepted", "to_ship"].includes(tab) && !canDispatch);
   const leading = [...TAB_COLUMNS[tab], ...(tab === "shipped" && canDispatch ? ["action"] : [])].filter((key) => key !== "action" || !actionless);
-  const shipping = ["project", "customer", "shipment", "sequence", "status", "created", "deadline", "shippedAt", ...DELIVERY_COLUMNS, "track", "trackGaps", "upd", "updNumber", "updDate", "updFile", "pl", "dn", "deliveryEdit"];
+  // Что держит отправку — сразу за «Статусом» (владелец 23.11: «почему зависло» — пустой № УПД был за прокруткой):
+  // «Ждём для трека», УПД, трек, PL/DN, потом адресные данные.
+  const shipping = ["project", "customer", "shipment", "sequence", "status", "created", "deadline", "shippedAt", "trackGaps", "upd", "updNumber", "updDate", "updFile", "track", "pl", "dn", ...DELIVERY_COLUMNS, "deliveryEdit"];
   const hidden = new Set(["project", "customer", "shipment", "sequence", "created", "deadline", "stage", ...(tab === "shipped" ? [] : ["shippedAt"])]);
   const shipmentFields = new Set(["shipment", "sequence", "status", "created", "deadline", "shippedAt", ...DELIVERY_COLUMNS, "track", "trackGaps", "upd", "updNumber", "updDate", "updFile", "pl", "dn"]);
   const visibleColumns = [...new Set([...leading, ...shipping, "stage"])].flatMap((key) => columns.filter((column) => column.key === key))
