@@ -5,11 +5,18 @@ from uuid import UUID
 from app.modules.production.infrastructure import SqlAlchemyInstrumentRepository
 from app.modules.production.domain import ProductionValidationError
 from app.modules.production.traceability import InstrumentKind, InstrumentStatus
-from app.modules.warehouse.scan_jobs import DONE, ScanJobRow
+from app.modules.production.vna_session_infrastructure import VnaSessionRepository
+from app.modules.warehouse.scan_jobs import DONE, ScanJobClosed, ScanJobRow
 
 
 def capture_source(uow, instrument_id: UUID) -> str:
     return capture_instrument(uow, instrument_id)["source"]
+
+
+def assert_vna_transfer_allowed(session, instrument_id: UUID, serial: str) -> None:
+    """Called under the binding lock: no calibration or queued control may survive a move to another PC."""
+    if VnaSessionRepository(session).active(instrument_id, serial):
+        raise ScanJobClosed("Сначала завершите сеанс ВАЦ на закреплённом ПК, затем перенесите прибор")
 
 
 def capture_instrument(uow, instrument_id: UUID) -> dict[str, str]:
