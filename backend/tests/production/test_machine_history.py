@@ -93,13 +93,20 @@ def test_a_setup_change_gives_the_new_canonical_key(machines_api):
     assert _rows(sessions)[-1].setup_key == "|L150.5|S5/6.5|P1/0|M?"
 
 
+def _open_run(admin, group_id):
+    # Loading a job needs the confirmed plan (expected_source / expected_active_run_id) from the transfer preview.
+    plan = admin.get(RUN.replace("/run", "/transfer"), params={"group_id": str(group_id), "length_mm": "325"}).json()
+    return admin.post(RUN, json={"kind": "cutting", "group_id": str(group_id), "length_mm": "325", "confirm_state": 102,
+                                 "expected_source": plan["expected_source"],
+                                 "expected_active_run_id": plan["expected_active_run_id"]}, headers=_csrf(admin))
+
+
 def test_an_open_run_writes_a_run_row_with_its_kind_and_wire(machines_api):
     sessions, clock, admin, _, _ = machines_api
     bridge = Bridge(admin)
     bridge.report()
     group_id = _job(sessions)
-    sent = admin.post(RUN, json={"kind": "cutting", "group_id": str(group_id), "length_mm": "325", "confirm_state": 102},
-                      headers=_csrf(admin))
+    sent = _open_run(admin, group_id)
     assert sent.status_code == 200, sent.text
     clock.now += timedelta(seconds=1)
     bridge.report()  # the same words, but the machine now has an open run
@@ -115,8 +122,7 @@ def test_releasing_the_machine_link_keeps_the_history_and_only_drops_the_run_ref
     bridge = Bridge(admin)
     bridge.report()
     group_id = _job(sessions)
-    sent = admin.post(RUN, json={"kind": "cutting", "group_id": str(group_id), "length_mm": "325", "confirm_state": 102},
-                      headers=_csrf(admin))
+    sent = _open_run(admin, group_id)
     assert sent.status_code == 200, sent.text
     clock.now += timedelta(seconds=1)
     bridge.report()
@@ -219,7 +225,7 @@ def test_a_duplicate_is_told_by_postgres_sqlstate_and_constraint_name():
 
 def test_run_kinds_match_the_frozen_check_of_0212():
     # Migration 0212 froze CHECK run_kind IN ('cutting', 'manual'): a new run kind needs a new migration.
-    assert runs.KINDS == ("cutting", "manual")
+    assert history.KINDS == ("cutting", "manual")  # the run kind «wire» (new) is stored as 'manual'
 
 
 def test_a_clock_stepped_back_is_clamped_to_the_previous_row(machines_api):
