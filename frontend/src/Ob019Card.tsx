@@ -10,7 +10,7 @@ import { Ob019SettingsPanel } from "./Ob019SettingsPanel";
 /** Живая карточка ОБ.019 (линия резки и зачистки с лазерной маркировкой) как пульт у станка (навык erp-machine-hmi,
  *  владелец 19.11.2026): сверху один раз — состояние словами, связь и что делать дальше; под ним команды
  *  (Ob019Controls.tsx), затем «Выполнение задания», «Что режем», чертёж провода, запись, проба и поправка
- *  (Ob019SettingsPanel.tsx); journal and full parameters open from the header, connection stays in the status line. Открытый на ПК пульт станка — одной строкой, без имени
+ *  (Ob019SettingsPanel.tsx); the journal opens from the header; auxiliary settings stay inline and the connection stays in the status line. Открытый на ПК пульт станка — одной строкой, без имени
  *  программы, с кнопкой «Закрыть пульт на ПК»; на связи — тихая «Открыть пульт на ПК» (Ob019Pult). Опрос раз в 3 с,
  *  пока окно открыто. */
 
@@ -106,7 +106,7 @@ export function Ob019CardView({ card, controls = false, header, incoming }: {
   const [startWhy, setStartWhy] = useState<string | undefined>(undefined);
   // The command poll of the command row: the operator panel button in the status strip shows its progress too.
   const [control, setControl] = useState<MachineControl | null>(null);
-  const [toolsWindow, setToolsWindow] = useState<"journal" | "parameters" | null>(null);
+  const [toolsWindow, setToolsWindow] = useState<"journal" | null>(null);
   const run = runState?.run;
   const running = !!run && !["closed", "failed", "moved"].includes(run.stage);
   const status = machineStatus(card, startWhy);
@@ -116,9 +116,7 @@ export function Ob019CardView({ card, controls = false, header, incoming }: {
   return <>
     <header className="machine-card-head">
       {header && <h2>{header.title}</h2>}
-      {header?.actions}
       <button type="button" className="secondary small" onClick={() => setToolsWindow("journal")}>Журнал</button>
-      <button type="button" className="secondary small" onClick={() => setToolsWindow("parameters")}>Все параметры</button>
       {header && <button type="button" className="secondary small" onClick={header.close}>Закрыть</button>}
     </header>
     <div className={`machine-status${status.tone !== "neutral" ? ` is-${status.tone}` : ""}`} role="status" aria-label="Состояние станка">
@@ -147,7 +145,7 @@ export function Ob019Card({ equipmentId, title, close, actions, incoming, openJo
     <section className="panel machine-card">
       {(!data || data.kind === "ob099_fins") && <header className="machine-card-head">
         <h2>{title}</h2>
-        {actions}
+        {data?.kind === "ob099_fins" && actions}
         {data?.kind === "ob099_fins" && openJournal && <button type="button" className="secondary small" onClick={openJournal}>Журнал</button>}
         <button className="secondary small" onClick={close}>Закрыть</button>
       </header>}

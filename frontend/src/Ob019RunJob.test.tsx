@@ -104,7 +104,6 @@ it("transfers a manual job only after confirming its values and expected active 
   await waitFor(() => expect(within(pick).getByRole("option", { name: /Р-000003/ })).toBeInTheDocument());
   await waitFor(() => expect(screen.getByLabelText("Длина провода")).toHaveValue("325,00"));
   fireEvent.change(pick, { target: { value: "manual:m1" } });
-  expect(screen.getByText("На станок: заказ R-000003")).toBeInTheDocument();
   const dialog = await screen.findByRole("dialog", { name: "Загрузить в станок" }, { timeout: 3000 });
   expect(within(dialog).getByText(/Р-000003 · ПВАМ 0,35 · 100 мм · 5 шт/)).toBeVisible();
   expect(posts).toEqual([]);
@@ -115,11 +114,12 @@ it("transfers a manual job only after confirming its values and expected active 
   expect(screen.queryByRole("alertdialog")).toBeNull();
 });
 
-it("offers a new manual job inline only while none runs on the machine", async () => {
+it("does not offer new manual jobs; existing work can still be completed", async () => {
   server({ manual: MANUAL });
   render(<Ob019SettingsPanel inventory="ОБ.019" />);
   const pick = await screen.findByLabelText("Задание");
-  await waitFor(() => expect(within(pick).getByRole("option", { name: /Новая ручная работа — сначала завершите/ })).toBeDisabled());
+  await waitFor(() => expect(within(pick).getByRole("option", { name: /Р-000003/ })).toBeInTheDocument());
+  expect(within(pick).queryByRole("option", { name: /Новая ручная работа/ })).toBeNull();
 });
 
 it("a verified job says ✓ on the machine; the run block keeps only «Завершить» (Стоп and Пуск are the command row's)", async () => {

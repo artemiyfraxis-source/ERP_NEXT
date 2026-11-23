@@ -3,7 +3,7 @@ import { productionApi } from "./api";
 import type { MachineTaskContext } from "./machinesApi";
 import { afterEach, expect, it, vi } from "vitest";
 import type { MachineCommand, MachineControl, MachineRun, MachineWindow, TransferPlan } from "./machineControlApi";
-import { NO_DATA, Ob019SettingsPanel, PULT_NO_DATA, pullFor, pullMode, SELECT_WAIT_MS, sourceText } from "./Ob019SettingsPanel";
+import { Ob019SettingsPanel, pullFor, pullMode, SELECT_WAIT_MS, sourceText } from "./Ob019SettingsPanel";
 import { wireZones } from "./Ob019WireDrawing";
 
 function json(body: unknown, status = 200) {
@@ -117,7 +117,7 @@ async function confirmLoad() {
 
 async function pickJob(confirm = true) {
   const pick = await screen.findByLabelText("Задание");
-  await waitFor(() => expect(within(pick).getAllByRole("option")).toHaveLength(3));
+  await waitFor(() => expect(within(pick).getAllByRole("option")).toHaveLength(2));
   fireEvent.change(pick, { target: { value: "g1:325" } });
   await new Promise((resolve) => setTimeout(resolve, SELECT_WAIT_MS + 50));  // a choice goes out after the pause
   if (confirm && screen.queryByRole("dialog", { name: "Загрузить в станок" })) await confirmLoad();
@@ -318,7 +318,7 @@ it("says where each planned value comes from", () => {
 
 it("keeps the drawing on the card and opens all parameter groups in a separate window", async () => {
   server();
-  const { rerender } = render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  render(<Ob019SettingsPanel inventory="ОБ.019" />);
   const drawing = screen.getByRole("region", { name: "Провод: длина и зачистка" });
   await waitFor(() => expect(within(drawing).getByLabelText("Длина провода")).toHaveValue("325,00"));
   expect(within(drawing).getByLabelText("Диаметр провода")).toHaveValue("0,80");
@@ -328,14 +328,10 @@ it("keeps the drawing on the card and opens all parameter groups in a separate w
   expect(screen.queryByText(/на станке —/)).toBeNull();
   expect(screen.queryByRole("button", { name: /Записать на станок/ })).toBeNull();
   expect(screen.queryByText(/Остальные параметры/)).toBeNull();
-  rerender(<Ob019SettingsPanel inventory="ОБ.019" toolsWindow="parameters" />);
-  expect(screen.getByRole("dialog", { name: "Все параметры" })).toBeInTheDocument();
-  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Задание", "Провод и зачистка", "Скорости"]);
-  fireEvent.click(screen.getByRole("tab", { name: "Провод и зачистка" }));
-  expect(screen.getAllByRole("table")[0]).toHaveTextContent("Стягивание начала");
-  fireEvent.click(screen.getByRole("tab", { name: "Скорости" }));
-  expect(screen.getByLabelText("Подъём подающих роликов")).toBeInTheDocument();
-  expect(screen.getByText("только просмотр")).toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: "Все параметры" })).toBeNull();
+  expect(screen.queryByRole("option", { name: /Новая ручная работа/ })).toBeNull();
+  expect(within(screen.getByRole("region", { name: "Что режем" })).getByRole("combobox", { name: "Провод" })).toBeVisible();
+  expect(within(screen.getByRole("region", { name: "Задание резки" })).getByLabelText("Задание")).toBeVisible();
 });
 
 it("writes an edited field on Enter at once, without a dialog, and shows it read back from the machine", async () => {
@@ -412,7 +408,7 @@ const LIVE = { state: { code: 107, text: "Тираж готов", tone: "ok" as 
 it("takes «Тираж» without an open job as pieces left to the target (target − counter), no raw counter under it", async () => {
   const { posts } = server();
   render(<Ob019SettingsPanel inventory="ОБ.019" live={LIVE} />);
-  expect(await screen.findByText("Тираж (штук в этом задании)")).toBeInTheDocument();
+  expect(await screen.findByText("Тираж", { selector: "label" })).toBeInTheDocument();
   expect(screen.queryByText(/счётчик станка|цель/)).toBeNull();
   const tirazh = screen.getByLabelText("Тираж");
   await waitFor(() => expect(tirazh).toHaveValue("12"));
@@ -439,7 +435,7 @@ it("a «Тираж» edit with a job picked goes as that job's run, so «Пус�
     body: { kind: "cutting", group_id: "g1", length_mm: "325", values: { total_set: "30" }, ...CONFIRMATION, confirm_state: 102 } });
 }, 10000);
 
-it("picking a wire by hand asks the wire plan and writes its differing values", async () => {
+it("picking a wire stages a fresh quantity and confirms a standalone run", async () => {
   const { posts, gets } = server();
   render(<Ob019SettingsPanel inventory="ОБ.019" />);
   await waitFor(() => expect(screen.getByLabelText("Длина провода")).toHaveValue("325,00"));
@@ -450,10 +446,16 @@ it("picking a wire by hand asks the wire plan and writes its differing values", 
   expect(options).toHaveLength(1);
   fireEvent.click(options[0]);
   await waitFor(() => expect(gets.some((url) => url.endsWith("/transfer?wire=ПВАМ 0,50&length_mm=325"))).toBe(true));
+  await waitFor(() => expect(screen.getByLabelText("Диаметр провода")).toHaveValue("0,79"));
+  expect(posts).toEqual([]);
+  expect(screen.getByLabelText("Тираж")).toHaveValue("0");
+  fireEvent.change(screen.getByLabelText("Тираж"), { target: { value: "8" } });
+  fireEvent.keyDown(screen.getByLabelText("Тираж"), { key: "Enter" });
+  fireEvent.click(screen.getByRole("button", { name: "Загрузить в станок" }));
+  await confirmLoad();
   await waitFor(() => expect(posts).toHaveLength(1));
-  // Length is already 325,00 on the machine: only the diameter and the product go out.
-  expect(posts[0].body).toEqual({ values: { diameter_mm: "0,79" }, confirm_state: 102 });
-  expect(await screen.findByText("0,79 = Ø жилы 0,64 + 0,15", {}, { timeout: 3000 })).toBeInTheDocument();
+  expect(posts[0]).toMatchObject({ url: "/api/production/machines/card/ОБ.019/run", body: {
+    kind: "wire", wire: "ПВАМ 0,50", expected_active_run_id: null, values: { diameter_mm: "0,79", total_set: "8", length_mm: "325,00" }, confirm_state: 102 } });
 });
 
 it("lists the wires with a saved setting first and marks them", async () => {
@@ -666,7 +668,7 @@ it("arrowing through the job list previews only the final choice, then waits for
   const { posts, gets } = server();
   render(<Ob019SettingsPanel inventory="ОБ.019" />);
   const pick = await screen.findByLabelText("Задание");
-  await waitFor(() => expect(within(pick).getAllByRole("option")).toHaveLength(3));
+  await waitFor(() => expect(within(pick).getAllByRole("option")).toHaveLength(2));
   fireEvent.change(pick, { target: { value: "g1:325" } });
   fireEvent.change(pick, { target: { value: "" } });
   fireEvent.change(pick, { target: { value: "g1:325" } });
@@ -679,14 +681,14 @@ it("arrowing through the job list previews only the final choice, then waits for
   expect(posts[0].url).toBe("/api/production/machines/card/ОБ.019/run");
 });
 
-it("the mode list writes the final choice once, after the pause", async () => {
+it("segmented PLC modes write the final choice once after the pause", async () => {
   const { posts } = server();
   render(<Ob019SettingsPanel inventory="ОБ.019" />);
-  await waitFor(() => expect(screen.getByLabelText("Режим")).toHaveValue("2"));  // a select once the window is read
-  const mode = screen.getByLabelText("Режим");
-  fireEvent.change(mode, { target: { value: "1" } });
-  fireEvent.change(mode, { target: { value: "0" } });
-  expect(mode).toHaveValue("0");
+  const mode = await screen.findByRole("radiogroup", { name: "Режим" });
+  expect(within(mode).getAllByRole("radio").map((button) => button.textContent)).toEqual(["Пошаговый", "Один цикл", "Автомат"]);
+  fireEvent.click(within(mode).getByRole("radio", { name: "Один цикл" }));
+  fireEvent.click(within(mode).getByRole("radio", { name: "Пошаговый" }));
+  expect(within(mode).getByRole("radio", { name: "Пошаговый" })).toHaveAttribute("aria-checked", "true");
   expect(posts).toEqual([]);
   await waitFor(() => expect(posts).toHaveLength(1), { timeout: 3000 });
   expect(posts[0].body).toEqual({ values: { mode: "0" }, confirm_state: 102 });
@@ -701,6 +703,7 @@ it("edits outside the wire parameters never save the wire's setting", async () =
   fireEvent.change(total, { target: { value: "20" } });
   fireEvent.keyDown(total, { key: "Enter" });
   await confirmLoad();
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Загрузить в станок" })).toBeNull());
   const length = screen.getByLabelText("Длина провода");
   fireEvent.change(length, { target: { value: "330" } });
   fireEvent.keyDown(length, { key: "Enter" });
@@ -720,7 +723,8 @@ it("after a refused transfer of the job an own edit does not save the wire's set
   fireEvent.change(diameter, { target: { value: "0,82" } });
   fireEvent.keyDown(diameter, { key: "Enter" });
   await waitFor(() => expect(screen.getByLabelText("Диаметр провода")).toHaveValue("0,82"), { timeout: 4000 });
-  expect(await screen.findByText(/Настройка провода не сохранена: значения задания или провода не записаны/, {}, { timeout: 8000 })).toBeInTheDocument();
+  expect(await screen.findByRole("dialog", { name: "Загрузить в станок" })).toBeInTheDocument();
+  expect(posts).toHaveLength(1);
   expect(posts.map((post) => post.url)).not.toContain("/api/production/equipment-setup/ob019/u19/versions");
 }, 15000);
 
@@ -910,7 +914,7 @@ it("a submitted load cannot be dismissed before the POST result settles", async 
 it("the hand-wire picker is closed while a job is open: a wire over it would be counted into the job", async () => {
   const { posts } = server({ run: OPEN_RUN });
   render(<Ob019SettingsPanel inventory="ОБ.019" />);
-  expect(await screen.findByText("Открыто задание «ГР-0007 · ПВАМ 0,35 · 325,00 мм» — провод вручную после «Завершить»")).toBeInTheDocument();
+  expect(await screen.findByText("Сменить провод — «Новый тираж»")).toBeInTheDocument();
   expect(screen.getByRole("combobox", { name: "Провод" })).toBeDisabled();
   expect(posts).toEqual([]);
 });
@@ -933,35 +937,58 @@ it("a «Тираж» typed while the job waits for a missing size goes with the 
   expect((posts[0].body.values as Record<string, string>).total_set).toBe("20");
 });
 
-it("the parameters window without fresh data shows one line", async () => {
+it("old data keeps controls disabled without a full-parameters window", async () => {
   server();
-  render(<Ob019SettingsPanel inventory="ОБ.019" old toolsWindow="parameters" />);
-  expect(await screen.findByText(NO_DATA)).toBeInTheDocument();
-  expect(screen.queryByRole("table")).toBeNull();
-  expect(screen.queryByRole("tab")).toBeNull();
+  render(<Ob019SettingsPanel inventory="ОБ.019" old pult />);
+  await waitFor(() => expect(screen.getByLabelText("Длина провода")).toHaveValue("325,00"));
+  expect(screen.getByLabelText("Длина провода")).toBeDisabled();
+  expect(screen.queryByRole("dialog", { name: "Все параметры" })).toBeNull();
 });
 
-it("every writable parameter there has «Задать» next to «На станке»; an edit is written like the drawing", async () => {
+it("known speed fields remain on the main card and unknown registers stay hidden", async () => {
+  const { window, posts } = server();
+  window.settings.find((group) => group.title === "Скорости")!.fields.push(field("Подача провода", "speed_feed", 25, "", "u16"));
+  render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  const speed = await screen.findByLabelText("Подача провода");
+  expect(speed.closest("details")).not.toBeNull();
+  fireEvent.click(screen.getByText("Скорости", { selector: "summary" }));
+  fireEvent.change(speed, { target: { value: "30" } });
+  fireEvent.keyDown(speed, { key: "Enter" });
+  await waitFor(() => expect(posts[0].body.values).toEqual({ speed_feed: "30" }));
+  expect(screen.queryByText("только просмотр")).toBeNull();
+});
+
+it("clamps an overrun to zero and requires confirmation before a new batch", async () => {
   const { posts } = server();
-  render(<Ob019SettingsPanel inventory="ОБ.019" toolsWindow="parameters" />);
-  fireEvent.click(await screen.findByRole("tab", { name: "Провод и зачистка" }));
-  const table = await screen.findByRole("table", { name: "Провод и зачистка" });
-  expect(within(table).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Параметр", "Задать", "На станке", ""]);
-  const row = within(table).getByText("Стягивание начала").closest("tr")!;
-  const box = within(row).getByLabelText("Стягивание начала");
-  await waitFor(() => expect(box).toHaveValue("5,00"));
-  expect(row).toHaveTextContent("5,00 мм");
-  fireEvent.change(box, { target: { value: "6" } });
-  expect(row.className).toContain("is-diff");
-  fireEvent.keyDown(box, { key: "Enter" });
-  await waitFor(() => expect(posts.map((post) => post.body.values)).toContainEqual({ pull_front_mm: "6" }));
-  fireEvent.click(screen.getByRole("tab", { name: "Скорости" }));
-  expect(within(screen.getByRole("table", { name: "Скорости" })).getByText("только просмотр")).toBeInTheDocument();
+  render(<Ob019SettingsPanel inventory="ОБ.019" live={{ ...LIVE, job: { ...LIVE.job, total_set: 2050, total_finished: 2056 } }} />);
+  await waitFor(() => expect(screen.getByLabelText("Тираж")).toHaveValue("0"));
+  expect(screen.queryByText(/−6|-6/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Новый тираж" }));
+  const dialog = await screen.findByRole("dialog", { name: "Новый тираж" });
+  expect(within(dialog).getByText(/Общий счётчик станка сохранится/)).toBeVisible();
+  expect(posts).toEqual([]);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Отмена" }));
+  expect(posts).toEqual([]);
+  fireEvent.click(screen.getByRole("button", { name: "Новый тираж" }));
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Новый тираж" })).getByRole("button", { name: "Подтвердить новый тираж" }));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0]).toEqual({ url: "/api/production/machines/card/ОБ.019/run/reset", body: { expected_active_run_id: null, confirm_state: 102 } });
 });
 
-it("the parameters window names the open operator panel", async () => {
-  server();
-  render(<Ob019SettingsPanel inventory="ОБ.019" old pult toolsWindow="parameters" />);
-  expect(await screen.findByText(PULT_NO_DATA)).toBeInTheDocument();
-  expect(screen.queryByText(NO_DATA)).toBeNull();
+it("new-batch confirmation stays bound to the run shown when opened", async () => {
+  const current = { ...OPEN_RUN };
+  const originalId = current.id;
+  const { posts } = server({ run: current });
+  render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Провод" })).toBeDisabled());
+  fireEvent.click(screen.getByRole("button", { name: "Новый тираж" }));
+  const dialog = await screen.findByRole("dialog", { name: "Новый тираж" });
+  const originalText = within(dialog).getByText(/Результат сохранится в журнале/).textContent;
+  current.id = "another-run";
+  current.label = "Другое задание";
+  await waitFor(() => expect(screen.getByRole("status", { name: "Задание на станке" })).toHaveTextContent("Другое задание"), { timeout: 4000 });
+  expect(within(dialog).getByText(/Результат сохранится в журнале/).textContent).toBe(originalText);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Подтвердить новый тираж" }));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0].body.expected_active_run_id).toBe(originalId);
 });

@@ -75,7 +75,7 @@ function server({ control = CONTROL, transferPlan = plan(null), refuseTransfer =
 
 async function pickJob() {
   const pick = await screen.findByLabelText("Задание");
-  await waitFor(() => expect(within(pick).getAllByRole("option")).toHaveLength(3));
+  await waitFor(() => expect(within(pick).getByRole("option", { name: /ГР-0007/ })).toBeInTheDocument());
   fireEvent.change(pick, { target: { value: "g1:325" } });
   await new Promise((resolve) => setTimeout(resolve, SELECT_WAIT_MS + 50));
 }
@@ -102,7 +102,8 @@ it("transliterates like the server and measures the length before the cut", () =
 
 it("a mode writes all its registers and clears the other mode's texts; empty values take the server defaults", () => {
   const now = (values: Record<string, string>) => (key: string) => values[key] ?? "";
-  expect(modeValues("none", now({ marking: "1" }))).toEqual({ marking: "0" });
+  expect(modeValues("none", now({ marking: "1", mark_middle: "OLD JOB" }))).toEqual({ marking: "0", mark_by_step: "0",
+    mark_count: "0", mark_front: "", mark_middle: "", mark_back: "" });
   expect(modeValues("ends", now({ mark_middle: "Ж1", mark_pos_front_mm: "15,00", mark_pos_back_mm: "0,00" }))).toEqual({
     marking: "1", mark_by_step: "0", mark_count: "0", mark_front: "ZH1", mark_back: "ZH1", mark_middle: "",
     mark_pos_front_mm: "15,00", mark_pos_back_mm: "20" });
@@ -115,23 +116,20 @@ it("a mode writes all its registers and clears the other mode's texts; empty val
     { key: "mark_step_mm", label: "", value: "150" }] })).toBe("из ЭТК: По всей длине «W1» · шаг 150 мм");
 });
 
-it("shows the machine's mode with its fields on the drawing and all marking registers in the parameters window", async () => {
+it("shows marking below the drawing, with tuning on the card and no unverified transfer control", async () => {
   server();
-  const { rerender } = render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  render(<Ob019SettingsPanel inventory="ОБ.019" />);
   await waitFor(() => expect(within(modes()).getByRole("radio", { name: "По краям" })).toHaveAttribute("aria-checked", "true"));
   expect(screen.getByLabelText("Текст у начала")).toHaveValue("X1");
   expect(screen.getByLabelText("Текст у конца")).toHaveValue("X2");
   expect(screen.getByLabelText("Метка у начала")).toHaveValue("15,00");
   expect(screen.queryByLabelText("Текст в середине")).toBeNull();
-  // The card header opens the panel's controlled parameters window.
-  rerender(<Ob019SettingsPanel inventory="ОБ.019" toolsWindow="parameters" />);
-  const parameters = within(screen.getByRole("dialog", { name: "Все параметры" }));
-  fireEvent.click(parameters.getByRole("tab", { name: "Маркировка" }));
-  const table = parameters.getByRole("table", { name: "Маркировка" });
-  expect(table).toHaveTextContent("Размер шрифта");
-  expect(table).toHaveTextContent("Передача текста в маркиратор");
-  expect(within(table).getByLabelText("Текст у начала")).toHaveValue("X1");
-  expect(within(table).getByLabelText("Шаг средних меток")).toHaveValue("0,00");
+  expect(screen.getByLabelText("Размер шрифта")).toHaveValue("3");
+  expect(screen.queryByText("Передача текста в маркиратор")).toBeNull();
+  expect(screen.queryByRole("dialog", { name: "Все параметры" })).toBeNull();
+  const drawing = screen.getByRole("region", { name: "Провод: длина и зачистка" });
+  const marking = screen.getByRole("region", { name: "Маркировка" });
+  expect(drawing.compareDocumentPosition(marking) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
 });
 
 it("a mode click writes one batch with every register of the mode, the clears included", async () => {
@@ -149,7 +147,8 @@ it("a mode click writes one batch with every register of the mode, the clears in
   expect(screen.queryByLabelText("Текст у начала")).toBeNull();
   fireEvent.click(within(modes()).getByRole("radio", { name: "Без" }));
   await waitFor(() => expect(posts).toHaveLength(2), { timeout: 4000 });
-  expect(posts[1].body.values).toEqual({ marking: "0" });
+  expect(posts[1].body.values).toEqual({ marking: "0", mark_by_step: "0", mark_count: "0",
+    mark_front: "", mark_middle: "", mark_back: "" });
 });
 
 it("a text goes to the machine in Latin on Enter, with the preview while typing; too long is not written", async () => {
@@ -183,6 +182,40 @@ it("an ETK job with marking says what the ETK marks and sends the job; the marki
   await waitFor(() => expect(posts).toHaveLength(1));
   // The job goes as a run of the machine; the server writes the ETK marking with it (workflows/machine_runs_api.py).
   expect(posts[0].url).toBe("/api/production/machines/card/ОБ.019/run");
+});
+
+it("stages full-length mode and edited text until confirmation, overriding the ETK in the run payload", async () => {
+  const { posts } = server({ transferPlan: plan(ENDS) });
+  render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  await pickJob();
+  fireEvent.click(within(await screen.findByRole("dialog", { name: "Загрузить в станок" })).getByRole("button", { name: "Отмена" }));
+  fireEvent.click(within(modes()).getByRole("radio", { name: "По всей длине" }));
+  fireEvent.click(within(await screen.findByRole("dialog", { name: "Загрузить в станок" })).getByRole("button", { name: "Отмена" }));
+  const text = await screen.findByLabelText("Текст в середине");
+  fireEvent.change(text, { target: { value: "NEW WIRE" } });
+  fireEvent.keyDown(text, { key: "Enter" });
+  const confirmation = within(await screen.findByRole("dialog", { name: "Загрузить в станок" }));
+  expect(posts).toEqual([]);
+  expect(confirmation.getByRole("table", { name: "Изменённые значения" })).toHaveTextContent("NEW WIRE");
+  fireEvent.click(confirmation.getByRole("button", { name: "Подтвердить загрузку" }));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0].url).toBe("/api/production/machines/card/ОБ.019/run");
+  expect(posts[0].body.values).toMatchObject({ marking: "1", mark_by_step: "1", mark_step_mm: "100",
+    mark_middle: "NEW WIRE", mark_front: "", mark_back: "", mark_count: "0" });
+});
+
+it("keeps explicit off and cleared texts in the confirmed task instead of restoring ETK marking", async () => {
+  const { posts } = server({ transferPlan: plan(ENDS) });
+  render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  await pickJob();
+  fireEvent.click(within(await screen.findByRole("dialog", { name: "Загрузить в станок" })).getByRole("button", { name: "Отмена" }));
+  fireEvent.click(within(modes()).getByRole("radio", { name: "Без" }));
+  const confirmation = within(await screen.findByRole("dialog", { name: "Загрузить в станок" }));
+  expect(posts).toEqual([]);
+  fireEvent.click(confirmation.getByRole("button", { name: "Подтвердить загрузку" }));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0].body.values).toMatchObject({ marking: "0", mark_by_step: "0", mark_count: "0",
+    mark_middle: "", mark_front: "", mark_back: "" });
 });
 
 it("blocking marking in the ETK is shown and the job is not sent at all (not without its marking)", async () => {

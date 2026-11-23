@@ -61,6 +61,13 @@ def test_changed_etk_strip_keeps_the_machine_offset_of_the_recipe():
     assert values["strip_back_mm"] == (Decimal("5.00"), "Рецепт, версия 1")
 
 
+def test_changed_etk_strip_preserves_no_pull_and_half_pull_modes():
+    saved = recipe(values={**OWNER, "pull_front_mm": "0", "pull_back_mm": "2.5"})
+    values = by_key(ob019_proposal(saved, EtkNominal("ПВАМ 0,35", None, Decimal(7), Decimal("4.05"))))
+    assert values["pull_front_mm"] == (Decimal(0), "Рецепт, версия 1")
+    assert values["pull_back_mm"] == (Decimal("2.03"), "Рецепт, версия 1")
+
+
 def test_etk_nominal_without_recipe_full_partial_and_no_strip():
     values = by_key(ob019_proposal(None, EtkNominal("МГТФ 0,12", Decimal(160), Decimal(4), Decimal(0),
                                                     partial_front=False, conductor_mm=Decimal("0.39"))))
@@ -94,3 +101,25 @@ def test_newest_version_of_the_same_wire_is_picked_first():
     other = recipe(wire="ПВАМ 0,5", at=NOW + timedelta(hours=2))
     assert latest_for_wire((old, new, other), "пвам  0.35") == new
     assert latest_for_wire((old, other), "МГТФ 0,12") is None
+
+
+def test_speed_preset_is_optional_and_only_recorded_values_are_proposed():
+    from app.modules.equipment_setup.recipes import recipe_holds
+
+    saved = recipe(values={**OWNER, "speed_feed": "35", "speed_cutter": "0", "speed_strip": "99"})
+    values = by_key(ob019_proposal(saved, EtkNominal("ПВАМ 0,35", Decimal(120))))
+    assert values["speed_feed"] == (Decimal(35), "Рецепт, версия 1")
+    assert values["speed_cutter"] == (Decimal(0), "Рецепт, версия 1")
+    assert values["speed_strip"] == (Decimal(99), "Рецепт, версия 1")
+    assert values["speed_pipe"] == (None, "Нет данных")
+    assert recipe_holds(saved, "speed_feed") and not recipe_holds(saved, "speed_pipe")
+    speed_fields = [field for field in saved.panel_settings if field.label == "Подача провода"]
+    assert speed_fields == [RecipeField("Подача провода", "35", "")]
+    assert by_key(ob019_proposal(recipe(), None))["speed_feed"] == (None, "Нет данных")
+    assert by_key(ob019_proposal(None, None))["speed_feed"] == (None, "Нет данных")
+
+
+@pytest.mark.parametrize("value", ["-1", "100", "12.5", "abc", "NaN"])
+def test_speed_preset_rejects_values_the_plc_cannot_hold(value):
+    with pytest.raises(SetupValidationError):
+        ob019_recipe_fields("ПВАМ 0,35", {**OWNER, "speed_feed": value}, {})

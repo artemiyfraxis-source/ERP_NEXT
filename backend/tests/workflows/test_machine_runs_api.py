@@ -18,7 +18,7 @@ from app.modules.production.machine_writes import MachineWriteRow
 from app.shared.clock import MOSCOW
 from app.shared.persistence import AuditEventRow
 from tests.identity.test_api_tokens import _csrf, tokens_api  # noqa: F401
-from tests.workflows.test_machine_writes_api import (AGENT, CARD, NEXT, _claimed_writes, _confirmed_body, _job, _result,
+from tests.workflows.test_machine_writes_api import (AGENT_NEW as AGENT, CARD, NEXT, _claimed_writes, _confirmed_body, _job, _result,
                                                      _text_at)
 from tests.workflows.test_machines_api import WORDS, _bridge, _report, machines_api  # noqa: F401
 
@@ -64,10 +64,14 @@ class Machine:
         assert claimed["id"] == command_id
         readback = {str(block["addr"] + index): word for block in claimed["blocks"]
                     for index, word in enumerate(block["values"])}
+        for bit in claimed.get("bits", []):
+            address, mask = str(bit["addr"]), 1 << bit["bit"]
+            previous = self.held.get(address, self.last.get(address, 0))
+            readback[address] = previous | mask if bit["value"] else previous & ~mask
         self.held.update(readback)
         if fresh:
             self.report()
-        assert _result(self.bridge, command_id, readback).json()["status"] == "done"
+        assert _result(self.bridge, command_id, readback, agent=AGENT).json()["status"] == "done"
         self.clock.now += timedelta(seconds=1)
         return readback
 

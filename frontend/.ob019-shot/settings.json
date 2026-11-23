@@ -1,0 +1,641 @@
+{
+  "inventory": "ОБ.019",
+  "settings": [
+    {
+      "title": "Задание",
+      "fields": [
+        {
+          "key": "mode",
+          "label": "Режим",
+          "kind": "mode",
+          "unit": "",
+          "value": 1,
+          "read": true,
+          "text": "Один цикл"
+        },
+        {
+          "key": "total_set",
+          "label": "Тираж",
+          "kind": "u32",
+          "unit": "шт",
+          "value": 100,
+          "read": true
+        },
+        {
+          "key": "batch_set",
+          "label": "Пучок",
+          "kind": "u32",
+          "unit": "шт",
+          "value": 20,
+          "read": true
+        },
+        {
+          "key": "batch_delay_s",
+          "label": "Пауза между пучками",
+          "kind": "u16",
+          "unit": "с",
+          "value": 0.5,
+          "read": true
+        },
+        {
+          "key": "order_quantity",
+          "label": "Количество по заказу",
+          "kind": "u32",
+          "unit": "шт",
+          "value": 100,
+          "read": true
+        },
+        {
+          "key": "order_number",
+          "label": "Заказ",
+          "kind": "text15",
+          "unit": "",
+          "value": "ГР-0007",
+          "read": true
+        },
+        {
+          "key": "product",
+          "label": "Изделие",
+          "kind": "text15",
+          "unit": "",
+          "value": "ПВАМ 0,35 · 325 мм",
+          "read": true
+        },
+        {
+          "key": null,
+          "label": "Строка заказа",
+          "kind": "u32",
+          "unit": "",
+          "value": 0,
+          "read": true
+        },
+        {
+          "key": null,
+          "label": "Программа",
+          "kind": "u16",
+          "unit": "",
+          "value": 0,
+          "read": true
+        }
+      ]
+    },
+    {
+      "title": "Провод и зачистка",
+      "fields": [
+        {
+          "key": "length_mm",
+          "label": "Длина провода",
+          "kind": "u32",
+          "unit": "мм",
+          "value": 325,
+          "read": true
+        },
+        {
+          "key": "strip_front_mm",
+          "label": "Зачистка начала",
+          "kind": "u32",
+          "unit": "мм",
+          "value": 5,
+          "read": true
+        },
+        {
+          "key": "pull_front_mm",
+          "label": "Стягивание начала",
+          "kind": "u32",
+          "unit": "мм",
+          "value": 7,
+          "read": true
+        },
+        {
+          "key": "strip_back_mm",
+          "label": "Зачистка конца",
+          "kind": "u32",
+          "unit": "мм",
+          "value": 5,
+          "read": true
+        },
+        {
+          "key": "pull_back_mm",
+          "label": "Стягивание конца",
+          "kind": "u32",
+          "unit": "мм",
+          "value": 7,
+          "read": true
+        },
+        {
+          "key": "diameter_mm",
+          "label": "Диаметр реза",
+          "kind": "u16",
+          "unit": "мм",
+          "value": 0.79,
+          "read": true
+        },
+        {
+          "key": "knife_back_mm",
+          "label": "Отвод ножа",
+          "kind": "u16",
+          "unit": "мм",
+          "value": 0.1,
+          "read": true
+        },
+        {
+          "key": "inner_strip_front_mm",
+          "label": "Внутренний слой: зачистка начала",
+          "kind": "u32",
+          "unit": "мм",
+          "value": 0,
+          "read": true
+        },
+        {
+          "key": "inner_pull_front_mm",
+          "label": "Внутренний слой: стягивание начала",
+          "kind": "u32",
+          "unit": "мм",
+          "value": 0,
+          "read": true
+        },
+        {
+          "key": "inner_strip_back_mm",
+          "label": "Внутренний слой: зачистка конца",
+          "kind": "u32",
+          "unit": "мм",
+          "value": 0,
+          "read": true
+        },
+        {
+          "key": "inner_pull_back_mm",
+          "label": "Внутренний слой: стягивание конца",
+          "kind": "u32",
+          "unit": "мм",
+          "value": 0,
+          "read": true
+        },
+        {
+          "key": "inner_diameter_mm",
+          "label": "Внутренний слой: диаметр реза",
+          "kind": "u16",
+          "unit": "мм",
+          "value": 0,
+          "read": true
+        },
+        {
+          "key": "inner_knife_back_mm",
+          "label": "Внутренний слой: отвод ножа",
+          "kind": "u16",
+          "unit": "мм",
+          "value": 0,
+          "read": true
+        },
+        {
+          "key": null,
+          "label": "Зазор переднего прижима",
+          "kind": "u16",
+          "unit": "",
+          "value": 0,
+          "read": true
+        },
+        {
+          "key": null,
+          "label": "Зазор заднего прижима",
+          "kind": "u16",
+          "unit": "",
+          "value": 0,
+          "read": true
+        }
+      ]
+    },
+    {
+      "title": "Средняя зачистка",
+      "fields": [
+        {
+          "key": "middle_strip",
+          "label": "Средняя зачистка",
+          "kind": "bit0",
+          "unit": "",
+          "value": false,
+          "read": true
+        },
+        {
+          "key": "middle_end_fix_mm",
+          "label": "Поправка конца",
+          "kind": "i16",
+          "unit": "мм",
+          "value": 0,
+          "read": true
+        },
+        {
+          "key": "middle_dia_fix_mm",
+          "label": "Поправка диаметра",
+          "kind": "i16",
+          "unit": "мм",
+          "value": 0,
+          "read": true
+        }
+      ]
+    },
+    {
+      "title": "Разделение жил",
+      "fields": [
+        {
+          "key": "split_front_mm",
+          "label": "Разделение в начале",
+          "kind": "u32",
+          "unit": "мм",
+          "value": 0,
+          "read": true
+        },
+        {
+          "key": "split_back_mm",
+          "label": "Разделение в конце",
+          "kind": "u32",
+          "unit": "мм",
+          "value": 0,
+          "read": true
+        },
+        {
+          "key": "split_gap_front_mm",
+          "label": "Интервал разделения в начале",
+          "kind": "u16",
+          "unit": "мм",
+          "value": 0,
+          "read": true
+        },
+        {
+          "key": "split_gap_back_mm",
+          "label": "Интервал разделения в конце",
+          "kind": "u16",
+          "unit": "мм",
+          "value": 0,
+          "read": true
+        },
+        {
+          "key": "split_delay_s",
+          "label": "Задержка цилиндра",
+          "kind": "u16",
+          "unit": "с",
+          "value": 0,
+          "read": true
+        },
+        {
+          "key": "split_die_pitch_mm",
+          "label": "Шаг матрицы",
+          "kind": "u32",
+          "unit": "мм",
+          "value": 0,
+          "read": true
+        },
+        {
+          "key": "split_punch_width_mm",
+          "label": "Ширина пуансона",
+          "kind": "u16",
+          "unit": "мм",
+          "value": 0,
+          "read": true
+        }
+      ]
+    },
+    {
+      "title": "Намотка",
+      "fields": [
+        {
+          "key": "coil_speed",
+          "label": "Скорость намотки",
+          "kind": "u16",
+          "unit": "",
+          "value": 0,
+          "read": true
+        },
+        {
+          "key": "coil_speed_fix",
+          "label": "Поправка скорости",
+          "kind": "i16",
+          "unit": "",
+          "value": 0,
+          "read": true
+        },
+        {
+          "key": "coil_back_mm",
+          "label": "Отвод при намотке",
+          "kind": "u16",
+          "unit": "мм",
+          "value": 0,
+          "read": true
+        },
+        {
+          "key": "coil_end_mm",
+          "label": "Хвост намотки",
+          "kind": "u32",
+          "unit": "мм",
+          "value": 0,
+          "read": true
+        },
+        {
+          "key": "coil_dia_mm",
+          "label": "Диаметр намотки",
+          "kind": "u16",
+          "unit": "мм",
+          "value": 0,
+          "read": true
+        },
+        {
+          "key": "coil_dia_min_mm",
+          "label": "Диаметр намотки, наименьший",
+          "kind": "u16",
+          "unit": "мм",
+          "value": 0,
+          "read": true
+        },
+        {
+          "key": "coil_dia_max_mm",
+          "label": "Диаметр намотки, наибольший",
+          "kind": "u16",
+          "unit": "мм",
+          "value": 0,
+          "read": true
+        },
+        {
+          "key": "coil_ratio_min",
+          "label": "Коэффициент намотки, наименьший",
+          "kind": "u16",
+          "unit": "",
+          "value": 1,
+          "read": true
+        },
+        {
+          "key": "coil_ratio_max",
+          "label": "Коэффициент намотки, наибольший",
+          "kind": "u16",
+          "unit": "",
+          "value": 1,
+          "read": true
+        }
+      ]
+    },
+    {
+      "title": "Маркировка",
+      "fields": [
+        {
+          "key": "marking",
+          "label": "Маркировка",
+          "kind": "bit0",
+          "unit": "",
+          "value": true,
+          "read": true
+        },
+        {
+          "key": "mark_front",
+          "label": "Текст у начала",
+          "kind": "text15",
+          "unit": "",
+          "value": "",
+          "read": true
+        },
+        {
+          "key": "mark_middle",
+          "label": "Текст в середине",
+          "kind": "text15",
+          "unit": "",
+          "value": "PVAM 0.35",
+          "read": true
+        },
+        {
+          "key": "mark_back",
+          "label": "Текст у конца",
+          "kind": "text15",
+          "unit": "",
+          "value": "",
+          "read": true
+        },
+        {
+          "key": "mark_pos_front_mm",
+          "label": "Метка у начала",
+          "kind": "u32",
+          "unit": "мм",
+          "value": 20,
+          "read": true
+        },
+        {
+          "key": "mark_pos_back_mm",
+          "label": "Метка у конца",
+          "kind": "u32",
+          "unit": "мм",
+          "value": 20,
+          "read": true
+        },
+        {
+          "key": "mark_by_step",
+          "label": "Средние метки по шагу",
+          "kind": "bit0",
+          "unit": "",
+          "value": true,
+          "read": true
+        },
+        {
+          "key": "mark_step_mm",
+          "label": "Шаг средних меток",
+          "kind": "u32",
+          "unit": "мм",
+          "value": 100,
+          "read": true
+        },
+        {
+          "key": "mark_count",
+          "label": "Число средних меток",
+          "kind": "u32",
+          "unit": "шт",
+          "value": 0,
+          "read": true
+        },
+        {
+          "key": "mark_tail_mm",
+          "label": "Длина текста у конца",
+          "kind": "u32",
+          "unit": "мм",
+          "value": 0,
+          "read": true
+        },
+        {
+          "key": "mark_head_mm",
+          "label": "Расстояние до головки",
+          "kind": "u32",
+          "unit": "мм",
+          "value": 200,
+          "read": true
+        },
+        {
+          "key": "mark_hold_s",
+          "label": "Удержание сигнала печати",
+          "kind": "u16",
+          "unit": "с",
+          "value": 0.1,
+          "read": true
+        },
+        {
+          "key": "mark_roll_speed",
+          "label": "Скорость роликов при печати",
+          "kind": "u16",
+          "unit": "",
+          "value": 30,
+          "read": true
+        },
+        {
+          "key": null,
+          "label": "Передача текста в маркиратор",
+          "kind": "bit0",
+          "unit": "",
+          "value": false,
+          "read": true
+        },
+        {
+          "key": "mark_char_mm",
+          "label": "Ширина символа",
+          "kind": "u16",
+          "unit": "мм",
+          "value": 1.5,
+          "read": true
+        },
+        {
+          "key": "mark_font",
+          "label": "Размер шрифта",
+          "kind": "i16",
+          "unit": "",
+          "value": 2,
+          "read": true
+        },
+        {
+          "key": "mark_bold",
+          "label": "Жирность",
+          "kind": "i16",
+          "unit": "",
+          "value": 1,
+          "read": true
+        },
+        {
+          "key": "mark_divider",
+          "label": "Делитель частоты",
+          "kind": "i16",
+          "unit": "",
+          "value": 4,
+          "read": true
+        },
+        {
+          "key": "mark_turn_front",
+          "label": "Поворот текста у начала",
+          "kind": "bit0",
+          "unit": "",
+          "value": false,
+          "read": true
+        },
+        {
+          "key": "mark_turn_middle",
+          "label": "Поворот текста в середине",
+          "kind": "bit0",
+          "unit": "",
+          "value": false,
+          "read": true
+        },
+        {
+          "key": "mark_turn_back",
+          "label": "Поворот текста у конца",
+          "kind": "bit0",
+          "unit": "",
+          "value": false,
+          "read": true
+        },
+        {
+          "key": "mark_drop_mm",
+          "label": "Отход провода при маркировке",
+          "kind": "u32",
+          "unit": "мм",
+          "value": 0,
+          "read": true
+        }
+      ]
+    },
+    {
+      "title": "Скорости",
+      "fields": [
+        {
+          "key": "speed_feed",
+          "label": "Подача провода",
+          "kind": "u16",
+          "unit": "",
+          "value": 30,
+          "read": true
+        },
+        {
+          "key": "speed_cutter",
+          "label": "Нож",
+          "kind": "u16",
+          "unit": "",
+          "value": 30,
+          "read": true
+        },
+        {
+          "key": "speed_pipe",
+          "label": "Трубка",
+          "kind": "u16",
+          "unit": "",
+          "value": 30,
+          "read": true
+        },
+        {
+          "key": "speed_clamp_front",
+          "label": "Передний прижим",
+          "kind": "u16",
+          "unit": "",
+          "value": 30,
+          "read": true
+        },
+        {
+          "key": "speed_clamp_back",
+          "label": "Задний прижим",
+          "kind": "u16",
+          "unit": "",
+          "value": 30,
+          "read": true
+        },
+        {
+          "key": "speed_cut_slow",
+          "label": "Замедление при резке",
+          "kind": "u16",
+          "unit": "",
+          "value": 30,
+          "read": true
+        },
+        {
+          "key": "speed_strip",
+          "label": "Зачистка",
+          "kind": "u16",
+          "unit": "",
+          "value": 30,
+          "read": true
+        },
+        {
+          "key": "speed_out",
+          "label": "Вывод провода",
+          "kind": "u16",
+          "unit": "",
+          "value": 30,
+          "read": true
+        },
+        {
+          "key": "speed_film",
+          "label": "Прокатка плёнки",
+          "kind": "u16",
+          "unit": "",
+          "value": 30,
+          "read": true
+        },
+        {
+          "key": "feed_wheel",
+          "label": "Подъём подающих роликов",
+          "kind": "bit0",
+          "unit": "",
+          "value": false,
+          "read": true
+        }
+      ]
+    }
+  ]
+}

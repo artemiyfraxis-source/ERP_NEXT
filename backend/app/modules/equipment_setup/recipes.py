@@ -112,6 +112,17 @@ class PanelParameter:
     unit: str = "мм"
 
 
+OB019_SPEED_PARAMETERS = (
+    PanelParameter("speed_feed", "Подача провода", "D100", unit=""),
+    PanelParameter("speed_cutter", "Нож", "D101", unit=""),
+    PanelParameter("speed_pipe", "Трубка", "D102", unit=""),
+    PanelParameter("speed_clamp_front", "Передний прижим", "D103", unit=""),
+    PanelParameter("speed_clamp_back", "Задний прижим", "D104", unit=""),
+    PanelParameter("speed_cut_slow", "Замедление при резке", "D120", unit=""),
+    PanelParameter("speed_strip", "Зачистка", "D121", unit=""),
+    PanelParameter("speed_out", "Вывод провода", "D122", unit=""),
+    PanelParameter("speed_film", "Прокатка плёнки", "D123", unit=""),
+)
 OB019_PARAMETERS = (
     PanelParameter("length_mm", "Длина провода", "D32", in_recipe=False),
     PanelParameter("strip_front_mm", "Зачистка начала", "D34"),
@@ -120,7 +131,7 @@ OB019_PARAMETERS = (
     PanelParameter("pull_back_mm", "Стягивание конца", "D40"),
     PanelParameter("diameter_mm", "Диаметр реза", "D42"),
     PanelParameter("knife_back_mm", "Отвод ножа", "D43"),
-)
+) + OB019_SPEED_PARAMETERS
 OB019_BY_KEY = {item.key: item for item in OB019_PARAMETERS}
 RECIPE_PARAMETERS = tuple(item for item in OB019_PARAMETERS if item.in_recipe)
 # The ETK strip a recipe was recorded against: a later job with another ETK strip keeps the machine's offset.
@@ -147,13 +158,17 @@ def decimal_value(value) -> Decimal | None:
 
 
 def plc_value(key: str, value) -> Decimal:
-    """A value the panel can hold: ≥ 0, step 0,01 мм, within the register."""
+    """A value the panel can hold: geometry in 0.01 mm, speed as an integer from 0 to 99."""
     parameter = OB019_BY_KEY.get(key)
     if parameter is None:
         raise SetupValidationError("Неизвестный параметр ОБ.019")
     number = decimal_value(value)
     if number is None:
         raise SetupValidationError(f"{parameter.label}: нужно число")
+    if parameter in OB019_SPEED_PARAMETERS:
+        if number < 0 or number > 99 or number != number.to_integral_value():
+            raise SetupValidationError(f"{parameter.label}: нужно целое число от 0 до 99")
+        return number.quantize(Decimal(1))
     if number < 0 or number > (LENGTH_MAX if key == "length_mm" else PLC_MAX):
         raise SetupValidationError(f"{parameter.label}: значение вне диапазона станка")
     if number != number.quantize(PLC_STEP):
@@ -241,8 +256,16 @@ def ob019_proposal(recipe: ManualRecipeVersion | None, etk: EtkNominal | None,
     for key, (strip, partial) in PULL_SIDES.items():
         base, proposed_strip = saved.get(key), result[strip].value
         if base is not None:
-            shift = proposed_strip - saved[strip] if proposed_strip is not None and saved.get(strip) is not None else Decimal(0)
-            result[key] = ProposedValue(key, max(base + shift, Decimal(0)), tag)
+            previous_strip = saved.get(strip)
+            if base == 0:
+                value = Decimal(0)
+            elif proposed_strip is not None and previous_strip is not None and base == (
+                    previous_strip * HALF_PULL).quantize(PLC_STEP, rounding=ROUND_HALF_UP):
+                value = (proposed_strip * HALF_PULL).quantize(PLC_STEP, rounding=ROUND_HALF_UP)
+            else:
+                shift = proposed_strip - previous_strip if proposed_strip is not None and previous_strip is not None else Decimal(0)
+                value = max(base + shift, Decimal(0))
+            result[key] = ProposedValue(key, value, tag)
         elif proposed_strip is None:
             result[key] = ProposedValue(key, None, NO_DATA)
         elif proposed_strip == 0:
@@ -264,6 +287,10 @@ def ob019_proposal(recipe: ManualRecipeVersion | None, etk: EtkNominal | None,
         result["diameter_mm"] = ProposedValue("diameter_mm", None, NO_DATA)
     back = saved.get("knife_back_mm")
     result["knife_back_mm"] = ProposedValue("knife_back_mm", back, tag if back is not None else NO_DATA)
+    for parameter in OB019_SPEED_PARAMETERS:
+        value = saved.get(parameter.key)
+        # Old recipes have geometry only. Never invent a speed or reuse another wire's settings.
+        result[parameter.key] = ProposedValue(parameter.key, value, tag if value is not None else NO_DATA)
     return tuple(result[item.key] for item in OB019_PARAMETERS)
 
 
@@ -281,7 +308,8 @@ def ob019_recipe_fields(wire: str, values: dict[str, object],
     name = " ".join(str(wire or "").split())
     if not name:
         raise SetupValidationError("Укажите провод")
-    missing = [item.label for item in RECIPE_PARAMETERS if values.get(item.key) in (None, "")]
+    missing = [item.label for item in RECIPE_PARAMETERS
+               if item not in OB019_SPEED_PARAMETERS and values.get(item.key) in (None, "")]
     if missing:
         raise SetupValidationError("Не заданы: " + ", ".join(missing))
     geometry = [RecipeField(WIRE_LABEL, name)]
@@ -289,6 +317,8 @@ def ob019_recipe_fields(wire: str, values: dict[str, object],
         nominal = etk_strip.get(key)
         if nominal is not None:
             geometry.append(RecipeField(label, plain(plc_value(key, nominal)), "мм"))
-    panel = tuple(RecipeField(item.label, plain(plc_value(item.key, values[item.key])), item.unit)
-                  for item in RECIPE_PARAMETERS)
+    panel = tuple(RecipeField(item.label,
+                              str(plc_value(item.key, values[item.key])) if item in OB019_SPEED_PARAMETERS
+                              else plain(plc_value(item.key, values[item.key])), item.unit)
+                  for item in RECIPE_PARAMETERS if values.get(item.key) not in (None, ""))
     return tuple(geometry), panel

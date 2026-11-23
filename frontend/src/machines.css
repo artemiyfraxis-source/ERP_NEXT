@@ -158,6 +158,12 @@
 .machine-settings h3 { margin: 0; font-size: 16px; }
 .machine-settings h4 { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
 .machine-settings p { margin: 0; }
+.machine-extra { border-top: 1px solid var(--border); padding: 4px 0; }
+.machine-extra > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-weight: 500; }
+.machine-extra > summary::before { content: "▸"; margin-right: 8px; }
+.machine-extra[open] > summary::before { content: "▾"; }
+.machine-extra > summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.machine-extra-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: 12px 16px; padding: 8px 0; }
 .machine-block { border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; display: grid; gap: 8px; }
 .machine-block .seg-tabs { margin: 0; }
 .machine-table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }

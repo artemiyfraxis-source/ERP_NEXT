@@ -179,13 +179,13 @@ it("Start says in advance what the server would refuse: no open job, its write n
   const why: (string | undefined)[] = [];
   const run = { id: "w1", kind: "cutting", label: "ГР-0007", stage: "writing" } as MachineRun;
   const { rerender } = render(<Ob019Controls card={card(102, "Готов, ждёт пуска")} run={null} onStartWhy={(text) => why.push(text)} />);
-  await waitFor(() => expect(noteOf("Пуск")).toBe("выберите задание"));
+  await waitFor(() => expect(noteOf("Пуск")).toBe("выберите провод или задание"));
   expect(button("Пуск")).toBeDisabled();
   rerender(<Ob019Controls card={card(102, "Готов, ждёт пуска")} run={run} onStartWhy={(text) => why.push(text)} />);
   await waitFor(() => expect(noteOf("Пуск")).toBe("ждём записи задания"));
   rerender(<Ob019Controls card={card(102, "Готов, ждёт пуска")} run={{ ...run, stage: "ready" }} onStartWhy={(text) => why.push(text)} />);
   await waitFor(() => expect(button("Пуск")).toBeEnabled());
-  expect(why).toEqual(expect.arrayContaining(["выберите задание", "ждём записи задания", ""]));
+  expect(why).toEqual(expect.arrayContaining(["выберите провод или задание", "ждём записи задания", ""]));
   expect(posts).toEqual([]);
 });
 

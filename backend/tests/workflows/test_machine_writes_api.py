@@ -360,7 +360,7 @@ def test_transfer_writes_etk_nominal_plus_machine_corrections(machines_api):
                            "product": "PVAM 0,35 L325,00"}
     sent = _post(admin, CARD + "/transfer", {"group_id": str(group_id), "length_mm": "325", "confirm_state": 102})
     assert sent.status_code == 200, sent.text
-    claimed = TestClient(app).post(NEXT, headers=bridge, json=AGENT).json()["command"]
+    claimed = TestClient(app).post(NEXT, headers=bridge, json=AGENT_NEW).json()["command"]
     words = {block["addr"] + index: word for block in claimed["blocks"] for index, word in enumerate(block["values"])}
     assert (words[32], words[34], words[38], words[24]) == (32500, 540, 650, 12)
     # «Тираж» 12 pieces is the target over the cumulative T.Finish: D22 = D649 (65537 in WORDS) + 12.
@@ -593,7 +593,7 @@ def _transfer(admin, group_id):
     return _post(admin, CARD + "/transfer", {"group_id": str(group_id), "length_mm": "325", "confirm_state": 102})
 
 
-def test_transfer_without_etk_marking_has_no_marking_in_plan_and_the_same_write(machines_api):
+def test_new_transfer_without_etk_marking_clears_the_previous_job_marks(machines_api):
     sessions, clock, admin, ob019, _ = machines_api
     bridge = _bridge(admin)
     _report(bridge)
@@ -603,9 +603,9 @@ def test_transfer_without_etk_marking_has_no_marking_in_plan_and_the_same_write(
     assert admin.get(CARD + "/transfer", params={"wire": "ПВАМ 0,35", "length_mm": "120"}).json()["marking"] is None
     assert _transfer(admin, group_id).status_code == 200
     claimed, words, bits = _claimed_writes(bridge)
-    # Golden: the job and the ETK lengths only; the machine's marking registers stay untouched.
-    assert claimed["bits"] == []
-    assert not any(address in words for address in (405, 407, 409, 411, 440, 455, 470))
+    assert bits == {400: 0, 422: 0}
+    assert words[411] == words[412] == 0
+    assert all(words[address] == 0 for address in range(440, 485))
 
 
 def test_marking_plan_json_and_ends_write_clears_the_middle_text(machines_api):
@@ -674,14 +674,16 @@ def test_a_job_run_from_the_card_writes_the_etk_marking_too_and_a_blocked_one_is
     assert _text_at(words, 440) == "C1.5 to XS17.7" and _text_at(words, 470) == "XS17.7"
 
 
-def test_none_mode_writes_only_the_marking_switch(machines_api):
+def test_none_mode_clears_all_texts_and_middle_mark_mode(machines_api):
     sessions, clock, admin, ob019, _ = machines_api
     bridge = _bridge(admin)
     _report(bridge)
     group_id = _job(sessions, laser={"mode": "none"})
     assert _transfer(admin, group_id).status_code == 200
     claimed, words, bits = _claimed_writes(bridge)
-    assert bits == {400: 0} and not any(address in words for address in (405, 407, 409, 411, 440, 455, 470))
+    assert bits == {400: 0, 422: 0} and words[411] == words[412] == 0
+    assert all(words[address] == 0 for address in range(440, 485))
+    assert not any(address in words for address in (405, 407, 409))
 
 
 def test_the_inner_layer_is_written_from_runner_and_mbd_1_4_0_and_the_unknown_stay_read_only():
