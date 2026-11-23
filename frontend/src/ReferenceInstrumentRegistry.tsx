@@ -40,7 +40,10 @@ export function ReferenceInstrumentRegistry({ onCount }: { onCount?: (count: num
   const countCallback = useRef(onCount);
   countCallback.current = onCount;
   const request = useRef(0);
-  const [requested] = useState(() => new URLSearchParams(window.location.search).get("equipment") ?? "");
+  const [requested] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("instrument") || params.get("equipment") || "";
+  });
   const [requestedNumber] = useState(() => new URLSearchParams(window.location.search).get("si") ?? "");
 
   const reload = useCallback(async () => {
@@ -67,6 +70,7 @@ export function ReferenceInstrumentRegistry({ onCount }: { onCount?: (count: num
       url.searchParams.set("tab", "ob_measuring");
       url.searchParams.set("equipment", item.id);
     } else url.searchParams.delete("equipment");
+    url.searchParams.delete("instrument");
     url.searchParams.delete("si");
     window.history.replaceState(window.history.state, "", url);
   }, []);

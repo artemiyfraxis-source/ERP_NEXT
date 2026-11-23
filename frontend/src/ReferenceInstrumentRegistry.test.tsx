@@ -70,16 +70,22 @@ it("lists all 118 canonical records without collapsing repeated models and count
   expect(requests.every((request) => !request.path.startsWith("/api/production"))).toBe(true);
 });
 
-it("resolves a legacy equipment deep link to the canonical card and clears it on close", async () => {
-  window.history.replaceState({}, "", "/?section=references&tab=ob_measuring&equipment=legacy-unit");
+it.each([
+  ["equipment", "legacy-unit"], ["instrument", "canonical"], ["si", "СИ.001"],
+])("opens the canonical card from a %s deep link and clears it on close", async (parameter, value) => {
+  window.history.replaceState({}, "", `/?section=references&tab=ob_measuring&${parameter}=${encodeURIComponent(value)}`);
   const { requests } = setup();
   const dialog = await screen.findByRole("dialog", { name: "Средство измерений: Линейка" });
   expect(within(dialog).getByLabelText("Инв. №")).toHaveValue("СИ.001");
   expect(new URLSearchParams(window.location.search).get("equipment")).toBe("canonical");
-  expect(requests.some((request) => request.path === `${base}/legacy-unit`)).toBe(true);
+  if (parameter !== "si") expect(requests.some((request) => request.path === `${base}/${value}`)).toBe(true);
+  expect(new URLSearchParams(window.location.search).has("instrument")).toBe(false);
+  expect(new URLSearchParams(window.location.search).has("si")).toBe(false);
   fireEvent.click(within(dialog).getByRole("button", { name: "Закрыть" }));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(new URLSearchParams(window.location.search).has("equipment")).toBe(false);
+  expect(new URLSearchParams(window.location.search).has("instrument")).toBe(false);
+  expect(new URLSearchParams(window.location.search).has("si")).toBe(false);
 });
 
 it("disables passport editing for a reference editor while retaining editable custom values", async () => {
