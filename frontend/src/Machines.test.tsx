@@ -353,10 +353,33 @@ it("names the open operator panel in operator words instead of the agent's raw e
   expect(screen.queryByText(/PXS_HMI|busy/)).toBeNull();
 });
 
-it("keeps an agent answer the state line does not say in the folded «Подключение»", () => {
+it("keeps PC, agent, link and an extra agent answer in the status line without a connection fold", () => {
   render(<Ob019CardView card={card({ link: { code: "no_plc", text: "ПЛК не отвечает", tone: "danger" }, error: "COM8 занят", live: null })} />);
   expect(within(screen.getByRole("status", { name: "Состояние станка" })).getByText("ПЛК не отвечает")).toBeTruthy();
-  expect(screen.getByText("COM8 занят").closest("details")).not.toBeNull();
+  const status = screen.getByRole("status", { name: "Состояние станка" });
+  expect(status).toHaveTextContent("ПК: PC-108 · агент: 1.0.0");
+  expect(status).toHaveTextContent("COM8 занят");
+  expect(screen.queryByText("Подключение")).toBeNull();
+});
+
+it("opens journal and full parameters from header buttons in PageWindows without bottom folds", async () => {
+  machines();
+  const { container } = render(<Ob019CardView card={card()} />);
+  expect(container.querySelector(".machine-connection, .machine-journal, .machine-more")).toBeNull();
+  expect(screen.queryByText(/Остальные параметры/)).toBeNull();
+  const journal = screen.getByRole("button", { name: "Журнал" });
+  expect(journal.closest("header")).not.toBeNull();
+  fireEvent.click(journal);
+  const window = await screen.findByRole("dialog", { name: "Журнал станка" });
+  expect(await within(window).findByText("Записей пока нет")).toBeInTheDocument();
+  fireEvent.keyDown(window, { key: "Escape" });
+  expect(screen.queryByRole("dialog", { name: "Журнал станка" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Все параметры" }));
+  const parameters = await screen.findByRole("dialog", { name: "Все параметры" });
+  expect(await within(parameters).findByRole("table", { name: "Провод и зачистка" })).toBeInTheDocument();
+  expect(within(parameters).getByLabelText("Длина провода")).toHaveValue("325,00");
+  fireEvent.click(within(parameters).getByRole("button", { name: "Закрыть" }));
+  expect(screen.queryByRole("dialog", { name: "Все параметры" })).toBeNull();
 });
 
 it("says the state, the link and the next step once at the top; an alarm leads", () => {

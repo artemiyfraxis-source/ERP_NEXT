@@ -220,7 +220,8 @@ def test_the_runner_holds_the_same_preconditions_and_only_the_four_bits():
     for command, states in table.items():
         assert ({int(code) for code in states.split(",") if code.strip()} or None) == control.ALLOWED_STATES[command]
     pulses = set(re.findall(r"addr = (\d+); bit = (\d)", source))
-    assert pulses == {("599", "2"), ("599", "0"), ("600", "1"), ("600", "4")}  # never D599.3 (E-stop)
+    assert pulses == {("599", "2"), ("599", "0"), ("600", "1"), ("600", "4")}  # never E-stop
+    assert "Invoke-Pulse 600 6" in source  # dedicated length correction; not a generic control action
     assert set(control.REASONS) >= set(re.findall(r"New-Outcome '\w+' '(\w+)'", source))
     blocked = dict(re.findall(r"^\s+(\w+) = @\{ addr = \d+; bit = \d; states = @\([\d, ]*\); off = @\(([^)]*)\)",
                               source, re.MULTILINE))
