@@ -358,3 +358,8 @@ button.machine-stop { min-width: 160px; min-height: 48px; font-size: 18px; font-
   border-radius: 12px; background: var(--seg-bg); color: var(--foreground); font-size: 13px; font-weight: 600; white-space: nowrap; cursor: pointer; }
 .machine-toolbar label.machine-only-connected input { width: 16px; height: 16px; margin: 0; accent-color: var(--primary); }
 @media (pointer: coarse) { .machine-toolbar label.machine-only-connected { height: 44px; } }
+.machine-table th.num,
+.machine-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

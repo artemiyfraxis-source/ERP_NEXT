@@ -1,4 +1,6 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { productionApi } from "./api";
+import type { MachineTaskContext } from "./machinesApi";
 import { afterEach, expect, it, vi } from "vitest";
 import type { MachineCommand, MachineControl, MachineRun, MachineWindow, TransferPlan } from "./machineControlApi";
 import { NO_DATA, Ob019SettingsPanel, PULT_NO_DATA, pullFor, pullMode, SELECT_WAIT_MS, sourceText } from "./Ob019SettingsPanel";
@@ -104,6 +106,85 @@ async function pickJob() {
 }
 
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+
+const incoming: MachineTaskContext = {
+  taskId: "t1", operationId: "o1", loadRequested: true,
+  action: { etk_position: 2, equipment_id: "u19", inventory_number: "ОБ.019", display_name: "Резка", model: null, card_kind: "ob019",
+    connectivity: { state: "ok", fresh: true, last_seen: null }, open_permitted: true, load_permitted: true, can_open: true, can_load: true, blocker: null,
+    source: { kind: "ob019", group_id: "g1", version: 4, length_mm: "325", members: [
+      { task_id: "t1", operation_id: "o1", item: "КБ1", quantity: "7" }, { task_id: "t2", operation_id: "o2", item: "КБ2", quantity: "5" }] } },
+};
+const incomingActions = () => ({ task_id: "t1", operation_id: "o1", task_version: 3, actions: [structuredClone(incoming.action)] });
+
+it("incoming group/length only preview; load=1 requires confirmation with changed values and group quantities", async () => {
+  const { posts } = server();
+  vi.spyOn(productionApi, "operationMachineActions").mockResolvedValue(incomingActions());
+  render(<Ob019SettingsPanel inventory="ОБ.019" equipmentId="u19" incoming={incoming} />);
+  const dialog = await screen.findByRole("dialog", { name: "Загрузить в станок" });
+  expect(screen.getByLabelText("Задание")).toHaveValue("g1:325");
+  expect(within(dialog).getByText("КБ1 · 7 шт")).toBeVisible();
+  expect(within(dialog).getByText("КБ2 · 5 шт")).toBeVisible();
+  expect(within(dialog).getByRole("table", { name: "Изменённые значения" })).toHaveTextContent("5,40 мм");
+  expect(within(dialog).queryByRole("rowheader", { name: "Длина провода" })).not.toBeInTheDocument();
+  await act(() => new Promise(resolve => setTimeout(resolve, SELECT_WAIT_MS + 50)));
+  expect(posts).toEqual([]);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Подтвердить загрузку" }));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0]).toEqual({ url: "/api/production/machines/card/ОБ.019/run", body: { kind: "cutting", group_id: "g1", length_mm: "325", confirm_state: 102 } });
+  expect(productionApi.operationMachineActions).toHaveBeenCalledWith("t1", "o1");
+});
+
+it("incoming selection, cancellation and reopening never write; missing group never selects a different job", async () => {
+  const { posts } = server();
+  const first = render(<Ob019SettingsPanel inventory="ОБ.019" equipmentId="u19" incoming={incoming} />);
+  const dialog = await screen.findByRole("dialog", { name: "Загрузить в станок" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Отмена" }));
+  fireEvent.change(screen.getByLabelText("Задание"), { target: { value: "g1:325" } });
+  await act(() => new Promise(resolve => setTimeout(resolve, SELECT_WAIT_MS + 50)));
+  first.unmount();
+  render(<Ob019SettingsPanel inventory="ОБ.019" equipmentId="u19" incoming={{ ...incoming, loadRequested: false,
+    action: { ...incoming.action, source: { ...incoming.action.source!, kind: "ob019", group_id: "missing", version: 4, length_mm: "325", members: [] } } }} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("больше недоступно");
+  expect(screen.getByLabelText("Задание")).toHaveValue("");
+  expect(screen.queryByRole("dialog", { name: "Загрузить в станок" })).not.toBeInTheDocument();
+  expect(posts).toEqual([]);
+});
+
+it("a stale incoming source is rejected at confirmation without writing", async () => {
+  const { posts } = server();
+  vi.spyOn(productionApi, "operationMachineActions").mockResolvedValue({ ...incomingActions(), actions: [{ ...incoming.action, source: null, can_load: false, blocker: "Группа изменилась" }] });
+  render(<Ob019SettingsPanel inventory="ОБ.019" equipmentId="u19" incoming={incoming} />);
+  fireEvent.click(within(await screen.findByRole("dialog", { name: "Загрузить в станок" })).getByRole("button", { name: "Подтвердить загрузку" }));
+  expect(await screen.findByText("Группа изменилась")).toBeVisible();
+  expect(posts).toEqual([]);
+});
+
+it.each(["Back", "cancel"])("%s while confirmation validation is pending cancels loading before any write", async (way) => {
+  const { posts } = server();
+  let finish!: (value: ReturnType<typeof incomingActions>) => void;
+  vi.spyOn(productionApi, "operationMachineActions").mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const view = render(<Ob019SettingsPanel inventory="ОБ.019" equipmentId="u19" incoming={incoming} />);
+  fireEvent.click(within(await screen.findByRole("dialog", { name: "Загрузить в станок" })).getByRole("button", { name: "Подтвердить загрузку" }));
+  if (way === "Back") view.unmount();
+  else fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+  await act(async () => { finish(incomingActions()); });
+  expect(posts).toEqual([]);
+});
+
+it("readiness recovers after opening offline, and a changed preview requires a second confirmation", async () => {
+  const { posts, state } = server();
+  vi.spyOn(productionApi, "operationMachineActions").mockResolvedValue(incomingActions());
+  render(<Ob019SettingsPanel inventory="ОБ.019" equipmentId="u19" incoming={{ ...incoming, action: { ...incoming.action, can_load: false, blocker: "Нет связи" } }} />);
+  const dialog = await screen.findByRole("dialog", { name: "Загрузить в станок" });
+  const button = within(dialog).getByRole("button", { name: "Подтвердить загрузку" });
+  expect(button).toBeEnabled();
+  state.plan = { ...PLAN, quantity: 11, job: { ...PLAN.job, total_set: 11 } };
+  fireEvent.click(button);
+  await within(dialog).findByText(/Параметры задания изменились/);
+  expect(posts).toEqual([]);
+  fireEvent.click(button);
+  await waitFor(() => expect(posts).toHaveLength(1));
+});
 
 it("scales the stripped ends with their size but keeps room for the fields", () => {
   const zones = (strip: number | null, pull: number | null) => wireZones({ strip_front: strip, pull_front: pull, strip_back: 0, pull_back: 0 });
@@ -552,6 +633,15 @@ const OPEN_RUN: MachineRun = { id: "w1", kind: "cutting", label: "ГР-0007 · �
   verified_at: "2026-11-20T01:30:00+01:00", closed_at: null, closed_why: "", machine_count: null, closed_reset: false,
   created_by: "Слава", created_at: "2026-11-20T01:30:00+01:00", stage: "ready", counter_start: 523, counter: 570, done: 47,
   reset: false, state: 102, alarm: 0, total_set: 643 };
+
+it("incoming load refuses a different active run before confirmation can send anything", async () => {
+  const { posts } = server({ run: OPEN_RUN });
+  render(<Ob019SettingsPanel inventory="ОБ.019" equipmentId="u19" incoming={incoming} />);
+  const dialog = await screen.findByRole("dialog", { name: "Загрузить в станок" });
+  expect(within(dialog).getByText("На станке другое задание — сначала завершите его")).toBeVisible();
+  expect(within(dialog).getByRole("button", { name: "Подтвердить загрузку" })).toBeDisabled();
+  expect(posts).toEqual([]);
+});
 
 it("with a job open «Тираж» is the job's тираж with «сделано · осталось» under it; an edit writes the pieces left", async () => {
   const { posts } = server({ run: OPEN_RUN });

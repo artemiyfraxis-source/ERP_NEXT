@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { failureText } from "./api";
+import { failureText, productionApi } from "./api";
 import { equipmentSetupApi } from "./equipmentSetupApi";
 import { EMPTY, formatMoment, formatNumber } from "./format";
 import {
@@ -7,7 +7,8 @@ import {
   type MachineWindow, type RunRequest,
   type SettingField, type TransferChoice, type TransferPlan, type TransferRow, type WireChoice,
 } from "./machineControlApi";
-import { usePolled, type Ob019Live } from "./machinesApi";
+import { usePolled, type MachineTaskContext, type Ob019Live } from "./machinesApi";
+import { PageWindow } from "./PageWindow";
 import type { ManualJob } from "./manualJobsApi";
 import { Ob019Correction } from "./Ob019Correction";
 import { JobSelect, NEW_MANUAL, Ob019RunJob, manualKey } from "./Ob019RunJob";
@@ -202,10 +203,20 @@ function sameRun(run: MachineRun, job: RunRequest): boolean {
 
 /** `onRun` — прогон станка, как его видит эта панель (карточка показывает по нему строку состояния и «Пуск»); `pult` —
  *  порт держит открытый на ПК пульт станка. */
-export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = false, pult = false, onRun }: {
+export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = false, pult = false, onRun, incoming }: {
   inventory: string; equipmentId?: string; live?: Ob019Live | null; old?: boolean; pult?: boolean;
   onRun?: (state: MachineRunState | null) => void;
+  incoming?: MachineTaskContext;
 }) {
+  const source = incoming?.action.source?.kind === "ob019" ? incoming.action.source : null;
+  const [confirmLoad, setConfirmLoad] = useState(incoming?.loadRequested ?? false);
+  const [checkingLoad, setCheckingLoad] = useState(false);
+  const loadLock = useRef(false);
+  const loadAttempt = useRef(0);
+  const active = useRef(true);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
+  const dismissLoad = () => { loadAttempt.current += 1; setConfirmLoad(false); };
+  const [sourceProblem, setSourceProblem] = useState("");
   const [fast, setFast] = useState(false);
   const period = fast ? FAST_MS : IDLE_MS;
   const loadWindow = useCallback((signal: AbortSignal) => machineControlApi.window(inventory, signal), [inventory]);
@@ -424,7 +435,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
       setStatus((current) => ({ ...current, ...Object.fromEntries(Object.keys(values).map((key) => [key, { kind: "queued", value: values[key] }])) }));
       return;
     }
-    void sendRun(body, values, wire);
+    return sendRun(body, values, wire);
   }
 
   useEffect(() => {
@@ -647,8 +658,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
         setHeld({});
         return;
       }
-      runJob({ kind: "cutting", group_id: next.group_id, length_mm: query.current?.length ?? next.length_mm }, values, wire);
-      return;
+      return runJob({ kind: "cutting", group_id: next.group_id, length_mm: query.current?.length ?? next.length_mm }, values, wire);
     }
     const keys = Object.keys(values);
     if (!keys.length) {
@@ -683,7 +693,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
       if (query.current !== next) return;
       setPlan(answer);
       // The latest render's writePlan: open/inFlight/queue as they are now, not as they were when the pick started.
-      await writePlanRef.current(answer);
+      if (!incoming) await writePlanRef.current(answer);
     } catch (reason) {
       if (query.current === next) setMessage({ tone: "danger", text: failureText(reason, "Не удалось посчитать значения") });
     } finally {
@@ -692,6 +702,18 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
   }
   const pickRef = useRef(pick);
   pickRef.current = pick;
+  useEffect(() => {
+    if (!incoming || !choices) return;
+    const matches = source ? choices.filter((item) => item.group_id === source.group_id
+      && decimal(item.length_mm) === decimal(source.length_mm)) : [];
+    if (matches.length !== 1) {
+      setSourceProblem("Задание резки из инструкции больше недоступно — откройте инструкцию заново");
+      return;
+    }
+    const item = matches[0];
+    setChoice(item.key);
+    void pickRef.current({ group_id: item.group_id, length: item.length_mm });
+  }, [incoming, choices, source]);
   /** Выбор задания в списке: значение видно сразу, на станок — через 0,8 с после последнего изменения (стрелки по
    *  закрытому списку в Chrome на Windows дают изменение на каждом шаге — пишется только итог). */
   const pickJob = (key: string) => {
@@ -718,7 +740,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     const run = runNow && runNow.kind === "manual" && runNow.job_id === job.id && runNow.stage !== "closed" ? runNow : null;
     const done = run?.done ?? 0;
     if (done && job.quantity_planned) setMessage({ tone: "info", text: `Уже сделано ${done} из ${job.quantity_planned} — на станок уходит остаток` });
-    runJob({ kind: "manual", job_id: job.id }, {});
+    if (!incoming) runJob({ kind: "manual", job_id: job.id }, {});
   };
   const pickManualRef = useRef(pickManual);
   pickManualRef.current = pickManual;
@@ -869,6 +891,50 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
   const problem = control && !old ? (!control.can_edit ? "Изменять значения станка вам не разрешено"
     : runningText || (control.problem ? `Изменения не записываются: ${operatorText(control.problem)}` : "")) : "";
   const picked = choices?.find((item) => item.key === choice) ?? null;
+  const loadProblem = sourceProblem || (!incoming?.action.load_permitted ? "Загрузка задания вам не разрешена" : "")
+    || (!canWrite ? refusal() : "") || (!old && (live?.alarm.tone === "danger" || live?.alarm.tone === "warn") ? "Устраните аварию на станке" : "")
+    || (plan?.blocking.length ? `Не заданы параметры: ${plan.blocking.join(", ")}` : "")
+    || (plan?.marking?.blocking.length ? "Маркировка из ЭТК с ошибкой — исправьте ЭТК" : "")
+    || (runOpen && source && !sameRun(runOpen, { kind: "cutting", group_id: source.group_id, length_mm: source.length_mm })
+      ? "На станке другое задание — сначала завершите его" : "");
+  const changes = plan ? planDiff(plan) : {};
+  const changedRows = Object.entries(changes).map(([key, value]) => {
+    const field = fields.get(key)!;
+    const after = field.kind === "mode" ? MODES.find(([code]) => code === value)?.[1] ?? value
+      : field.kind === "bit0" ? SWITCH.find(([code]) => code === value)?.[1] ?? value
+      : `${value}${field.unit ? ` ${field.unit}` : ""}`;
+    return { key, label: key === "total_set" ? "Тираж задания" : field.label,
+      before: key === "total_set" ? `${tirazh ?? EMPTY} шт` : shown(field), after };
+  });
+  async function confirmIncomingLoad() {
+    if (!incoming || !source || !plan || loadProblem || !free || loadLock.current) return;
+    loadLock.current = true;
+    const attempt = ++loadAttempt.current;
+    setCheckingLoad(true);
+    try {
+      const result = await productionApi.operationMachineActions(incoming.taskId, incoming.operationId);
+      if (!active.current || attempt !== loadAttempt.current) return;
+      const current = result.actions.find((item) => item.etk_position === incoming.action.etk_position && item.equipment_id === equipmentId);
+      if (!current || JSON.stringify(current.source) !== JSON.stringify(source)) {
+        setSourceProblem(current?.blocker || "Задание изменилось — откройте инструкцию заново");
+        return;
+      }
+      if (!current.can_load) { setMessage({ tone: "warn", text: current.blocker || "Станок сейчас не готов к загрузке" }); return; }
+      const fresh = await loadPlan({ group_id: source.group_id, length: source.length_mm });
+      if (!active.current || attempt !== loadAttempt.current) return;
+      setPlan(fresh);
+      // A new plan must be reviewed before its values can be written.
+      if (JSON.stringify([fresh.rows, fresh.job, fresh.quantity, fresh.marking, fresh.blocking])
+        !== JSON.stringify([plan.rows, plan.job, plan.quantity, plan.marking, plan.blocking])) {
+        setMessage({ tone: "warn", text: "Параметры задания изменились — проверьте значения и подтвердите ещё раз" });
+        return;
+      }
+      setConfirmLoad(false);
+      await writePlanRef.current(fresh);
+    } catch (reason) {
+      setMessage({ tone: "danger", text: failureText(reason, "Задание не загружено") });
+    } finally { loadLock.current = false; setCheckingLoad(false); }
+  }
   const wireInfo = wires?.find((item) => item.label === wire);
   // Маркировка: режим — с регистров станка (то, что уже уходит на станок, видно сразу); поля — под проводом на чертеже.
   const hasMarking = fields.has("marking");
@@ -885,10 +951,39 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
   const runSent = !!inFlight && inFlight.id in runWrites.current && runNow?.id !== inFlight.id;
   const refusedPick = jobPicked && message?.tone === "danger" ? message : null;
   const pickNote = !jobPicked ? null : refusedPick ? { tone: "danger", text: refusedPick.text }
-    : planLoading || !!due || runSent ? { tone: "info", text: "записывается на станок…" } : null;
+    : planLoading || !!due || runSent ? { tone: "info", text: incoming && planLoading ? "Расчёт параметров…" : "записывается на станок…" } : null;
   // The machine's last known job, greyed in the empty «Задание» (pult open, nothing picked here).
   const lastJob = runNow?.label || [live?.job?.order_number, live?.job?.product].filter(Boolean).join(" · ");
   return <section className="machine-settings" aria-label="Настройки станка">
+    {incoming && <section className="machine-block" aria-label="Задание из инструкции">
+      <h3>Операция ЭТК {incoming.action.etk_position} · из задания</h3>
+      {sourceProblem && <p className="error-banner" role="alert">{sourceProblem}</p>}
+      {planLoading && <p className="empty">Расчёт параметров…</p>}
+      {plan && <>
+        <p>{plan.number} · {plan.wire} · длина {plan.length_mm} мм · тираж {plan.quantity ?? EMPTY} шт</p>
+        {source && <ul>{source.members.map((member) => <li key={`${member.task_id}:${member.operation_id}`}>{member.item} · {member.quantity} шт</li>)}</ul>}
+        <button type="button" className="primary" disabled={Boolean(loadProblem) || !free || checkingLoad} onClick={() => setConfirmLoad(true)}>Загрузить в станок</button>
+        {loadProblem && !sourceProblem && <p className="warning-inline">{loadProblem}</p>}
+      </>}
+    </section>}
+    {incoming && confirmLoad && plan && !sourceProblem && <PageWindow label="Загрузить в станок" close={dismissLoad} width={760}>
+      <section className="panel machine-card">
+      <h2>Загрузить в станок · {inventory}</h2>
+      <p>{plan.number} · {plan.wire} · {plan.length_mm} мм · {plan.quantity ?? EMPTY} шт</p>
+      {source && <ul>{source.members.map((member) => <li key={`${member.task_id}:${member.operation_id}`}>{member.item} · {member.quantity} шт</li>)}</ul>}
+      {changedRows.length ? <table className="machine-table" aria-label="Изменённые значения">
+        <thead><tr><th>Параметр</th><th>На станке</th><th>Будет записано</th></tr></thead>
+        <tbody>{changedRows.map((row) => <tr key={row.key}><th scope="row">{row.label}</th><td className="num">{row.before}</td><td className="num">{row.after}</td></tr>)}</tbody>
+      </table> : <p>Параметры совпадают. Будет загружено выбранное задание.</p>}
+      {loadProblem && <p className="warning-inline">{loadProblem}</p>}
+      {message && <p className={`tone-${message.tone}`} role="status">{message.text}</p>}
+      <div className="machine-actions">
+        <button type="button" className="secondary" onClick={dismissLoad}>Отмена</button>
+        <button type="button" className="primary" disabled={Boolean(loadProblem) || !free || checkingLoad} onClick={() => void confirmIncomingLoad()}>
+          {checkingLoad ? "Проверка…" : "Подтвердить загрузку"}</button>
+      </div>
+      </section>
+    </PageWindow>}
     {error && <div className="error-banner" role="alert">{error}</div>}
     <Ob019RunJob inventory={inventory} equipmentId={equipmentId} picker={false} live={live} state={runState} choices={choices}
       choice={choice} onPick={pickJob} reload={reloadRun} pickNote={pickNote}
@@ -900,13 +995,13 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
         <div className={`machine-way${choice ? " is-on" : ""}`}>
           <label className="machine-way-title" htmlFor="ob019-job">Задание</label>
           <JobSelect id="ob019-job" choices={choices} manual={runManual} open={!!runNow && runNow.stage !== "closed"} choice={choice} last={lastJob}
-            onPick={pickJob} />
+            onPick={pickJob} disabled={Boolean(incoming)} />
           {picked && plan && <span className="machine-muted">Заказ {plan.job.order_number || EMPTY} · провод {plan.wire}</span>}
           {manualJob && <span className="machine-muted">На станок: заказ {manualJob.plc_number}</span>}
         </div>
         <div className={`machine-way${wire ? " is-on" : ""}`}>
           <span className="machine-way-title">Провод вручную</span>
-          <Ob019WirePicker wires={wires} value={wire} onPick={pickWire} disabled={!!runOpen} />
+          <Ob019WirePicker wires={wires} value={wire} onPick={pickWire} disabled={!!runOpen || Boolean(incoming)} />
           {runOpen && <span className="machine-muted">Открыто задание «{runOpen.label}» — провод вручную после «Завершить»</span>}
           {wireInfo && <span className="machine-muted">
             {[wireInfo.conductor_mm ? `Ø жилы ${wireInfo.conductor_mm} мм` : "", wireInfo.has_recipe ? "есть настройка" : "настройки ещё нет"].filter(Boolean).join(" · ")}

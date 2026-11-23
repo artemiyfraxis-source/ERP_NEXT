@@ -105,7 +105,13 @@ async function loadJobs(signal: AbortSignal): Promise<Job[]> {
     || (a.planned ?? "9").localeCompare(b.planned ?? "9") || a.title.localeCompare(b.title, "ru", { numeric: true }));
 }
 
-export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; close: () => void; canWrite: boolean }) {
+export function MarkingMachineCard({ row, close, canWrite, incoming, openJournal }: { row: MachineRow; close: () => void; canWrite: boolean;
+  incoming?: import("./machinesApi").MachineTaskContext; openJournal?: () => void }) {
+  const incomingSource = incoming?.action.source?.kind === "marking" ? incoming.action.source : null;
+  const [incomingError, setIncomingError] = useState("");
+  const appliedIncoming = useRef(false);
+  const active = useRef(true);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   const equipmentId = row.equipment_id ?? "";
   const userId = useCurrentUserId();
   const storage = `marking-card:${userId ?? "local"}:${equipmentId}`;
@@ -210,7 +216,7 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
     : [...new Set((job.progress.rows ?? []).flatMap((item) => item.wire_mm ?? []))].sort((a, b) => a - b)) : [];
   const jobLeft = job?.progress ? job.progress.remaining_labels : null;
   const jobRequest: MarkingRequest | null = job && profile && jobLeft !== 0 ? { profile_id: profile.id, profile_version: profile.version,
-    source: job.source, selected: [], remaining: true, ...(interleave ? { interleave: true } : {}) } : null;
+    source: job.source, selected: incomingSource?.selected ?? [], remaining: true, ...(interleave ? { interleave: true } : {}) } : null;
   const jobRequestText = jobRequest ? JSON.stringify(jobRequest) : "";
   // Выбрал задание (профиль, порядок) — предпросмотр оставшихся сам; «Печатать» уходит с хэшем показанного.
   useEffect(() => {
@@ -244,12 +250,33 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
 
   /** Выбор задания: профиль — тот, что по размеру как в ЭТК (если такой откалиброван). */
   function chooseJob(item: Job) {
+    if (incoming && !matchesIncoming(item)) return;
     if (item.key === chosenJob) return;
     setChosenJob(item.key); setReason(""); setError(""); setNotice("");
     const size = item.progress?.label_size;
     const fit = size ? calibrated.find((candidate) => sizeMatches(candidate.geometry, size)) : undefined;
     if (fit) setProfileId(fit.id);
   }
+
+  function matchesIncoming(item: Job): boolean {
+    const wanted = incomingSource?.source;
+    return Boolean(wanted && item.source.version === wanted.version
+      && ("group_id" in wanted ? "group_id" in item.source && item.source.group_id === wanted.group_id
+        : "task_id" in item.source && item.source.task_id === wanted.task_id && item.source.operation_id === wanted.operation_id));
+  }
+  useEffect(() => {
+    if (!incoming || !jobs || !catalog) return;
+    const matches = jobs.filter(matchesIncoming);
+    if (matches.length !== 1) {
+      setChosenJob("");
+      setIncomingError("Задание маркировки из инструкции изменилось или больше недоступно — откройте инструкцию заново");
+      return;
+    }
+    if (appliedIncoming.current) return;
+    appliedIncoming.current = true;
+    setTab("jobs");
+    chooseJob(matches[0]);
+  }, [incoming, jobs, catalog]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** После постановки: остаток задания с сервера и свежий предпросмотр (поставленные в очередь уже не «осталось»). */
   async function refreshJob(target: Job) {
@@ -274,6 +301,7 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
       if (trial) {
         // Хэш пробной — из своего предпросмотра на 1 этикетку: печатаем, только если это та же первая этикетка, что на экране.
         const fresh = await markingApi.preview(body);
+        if (!active.current) return;
         const [seen, next] = [jobPreview.labels[0], fresh.labels[0]];
         if (!seen || !next || seen.key !== next.key || seen.serial !== next.serial || seen.text !== next.text
           || (fresh.profile_matches !== false) !== (jobPreview.profile_matches !== false)) {
@@ -350,6 +378,7 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
     <section className="panel machine-card marking-card">
       <header className="machine-card-head">
         <h2>{title}{row.article && <span className="machine-muted"> · {row.article}</span>}</h2>
+        {openJournal && <button type="button" className="secondary small" onClick={openJournal}>Журнал</button>}
         <button type="button" className="secondary small machine-manual" aria-haspopup="dialog" onClick={() => setSetupOpen(true)}>
           Наладка{row.pending_setup ? " · ждёт" : ""}</button>
         <button type="button" className="secondary small" onClick={close}>Закрыть</button>
@@ -365,6 +394,8 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
       </div>
       {printer?.hold && <p className="warning-inline" role="alert">Маркировка на паузе: {printer.hold}</p>}
       {catalogError && <div className="error-banner" role="alert">{catalogError} <button type="button" className="secondary small" onClick={() => setReload(reload + 1)}>Повторить</button></div>}
+      {incoming && <p className={incomingError ? "error-banner" : "machine-muted"} role={incomingError ? "alert" : "status"}>
+        {incomingError || `Операция ЭТК ${incoming.action.etk_position} · из задания`}</p>}
 
       <section className="marking-card-what" aria-label="Что печатаем">
         <div className="marking-card-what-head">
@@ -391,7 +422,7 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
             pageSize={50} phoneCards={false} hideSearch onRowClick={chooseJob}
             rowClassName={(item) => item.key === chosenJob ? "is-selected" : ""} columns={[
               { key: "pick", title: "", value: () => "", render: (item) => <input type="radio" name="marking-card-job" aria-label={item.title}
-                checked={item.key === chosenJob} onChange={() => chooseJob(item)} /> },
+                checked={item.key === chosenJob} disabled={Boolean(incoming) && !matchesIncoming(item)} onChange={() => chooseJob(item)} /> },
               { key: "title", title: "Задание", value: (item) => item.title, render: (item) => <strong>{item.title}</strong> },
               { key: "detail", title: "Что", value: (item) => item.detail, grow: true, wrap: true },
               { key: "planned", title: "План", value: (item) => item.planned ? formatMoment(item.planned) : EMPTY },
@@ -429,7 +460,7 @@ export function MarkingMachineCard({ row, close, canWrite }: { row: MachineRow; 
               {busy ? "Обработка…" : !job ? "Печатать…" : jobLeft === 0 ? "Всё напечатано" : printText(jobPreview?.total ?? jobLeft ?? 0)}</button>
             <button type="button" className="secondary" disabled={!job || !jobPreview || busy || Boolean(blocker) || jobLeft === 0 || reasonMissing}
               onClick={() => void printJob(true)}>Пробная (1 этикетка)</button>
-            <button type="button" className="secondary" disabled={!job || busy || Boolean(blocker)} onClick={() => job && setPrinting(job)}>Выбрать надписи…</button>
+            {!incoming && <button type="button" className="secondary" disabled={!job || busy || Boolean(blocker)} onClick={() => job && setPrinting(job)}>Выбрать надписи…</button>}
             {job?.group && <button type="button" className="secondary" disabled={busy} onClick={() => setOutside(job.group ?? null)}>Отметить напечатанные вне ERP</button>}
             <span className={blocker || reasonMissing ? "tone-warn" : "machine-muted"}>{blocker || (!job ? "Выберите задание в списке"
               : jobLeft === 0 ? "Все этикетки задания напечатаны" : reasonMissing ? "Укажите причину — размер этикетки не как в ЭТК"

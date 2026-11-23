@@ -1,8 +1,8 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ApiError, productionApi } from "./api";
 import type { CuttingGroup } from "./cuttingGroups";
-import { machinesApi, type MachineRow, type UnitSetup } from "./machinesApi";
+import { machinesApi, type MachineRow, type MachineTaskContext, type UnitSetup } from "./machinesApi";
 import { MarkingMachineCard, copiesProblem, manualCount, parseManualLines } from "./MarkingMachineCard";
 import { markingApi, markingProblem, type MarkingBatch, type MarkingCatalog, type MarkingMachineState, type MarkingPreview, type MarkingSourceProgress } from "./markingApi";
 import { markingOutsideApi } from "./markingOutsideApi";
@@ -52,6 +52,52 @@ beforeEach(() => {
   sessionStorage.clear();
 });
 afterEach(() => { vi.restoreAllMocks(); });
+
+const incoming: MachineTaskContext = { taskId: "t1", operationId: "o1", loadRequested: true, action: {
+  etk_position: 2, equipment_id: "unit", inventory_number: "ОБ.101", display_name: "Маркировка", model: null, card_kind: "marking",
+  connectivity: { state: "ok", fresh: true, last_seen: null }, open_permitted: true, load_permitted: true, can_open: true, can_load: true, blocker: null,
+  source: { kind: "marking", source: { group_id: "g1", version: 4 }, selected: ["t1:1:0"] } } };
+
+it("incoming job selects its exact group/version and ETK label subset, printing stays explicit", async () => {
+  const enqueue = vi.spyOn(markingApi, "enqueue").mockResolvedValue({ id: "b1", total: 40, jobs: [] } as unknown as MarkingBatch);
+  render(<MarkingMachineCard row={ROW} canWrite close={() => undefined} incoming={incoming} />);
+  await waitFor(() => expect(screen.getByRole("radio", { name: "708К. · гр.3" })).toBeChecked());
+  expect(screen.getByRole("tab", { name: /Из заданий/ })).toHaveAttribute("aria-selected", "true");
+  await waitFor(() => expect(markingApi.preview).toHaveBeenCalledWith(expect.objectContaining({
+    source: { group_id: "g1", version: 4 }, selected: ["t1:1:0"], remaining: true }), expect.anything()));
+  expect(enqueue).not.toHaveBeenCalled();
+  expect(screen.queryByRole("button", { name: "Выбрать надписи…" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("radio", { name: "708К. · гр.3" }));
+  expect(enqueue).not.toHaveBeenCalled();
+  await waitFor(() => expect(screen.getByRole("button", { name: "Печатать 40 этикеток" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Печатать 40 этикеток" }));
+  await waitFor(() => expect(enqueue).toHaveBeenCalledTimes(1));
+  expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ selected: ["t1:1:0"], source: { group_id: "g1", version: 4 }, manifest_hash: jobPreview("p", 40).manifest_hash }));
+});
+
+it("stale incoming marking source never falls back to an available group", async () => {
+  const enqueue = vi.spyOn(markingApi, "enqueue");
+  render(<MarkingMachineCard row={ROW} canWrite close={() => undefined} incoming={{ ...incoming,
+    action: { ...incoming.action, source: { kind: "marking", source: { group_id: "g1", version: 3 }, selected: [] } } }} />);
+  expect(await screen.findByText(/Задание маркировки из инструкции изменилось/)).toBeVisible();
+  expect(screen.getByRole("radio", { name: "708К. · гр.3" })).not.toBeChecked();
+  expect(screen.getByRole("radio", { name: "708К. · гр.3" })).toBeDisabled();
+  expect(markingApi.preview).not.toHaveBeenCalled();
+  expect(enqueue).not.toHaveBeenCalled();
+});
+
+it("Back during trial-label validation never queues a print after the card is closed", async () => {
+  const enqueue = vi.spyOn(markingApi, "enqueue");
+  const view = render(<MarkingMachineCard row={ROW} canWrite close={() => undefined} incoming={incoming} />);
+  const trial = await screen.findByRole("button", { name: "Пробная (1 этикетка)" });
+  await waitFor(() => expect(trial).toBeEnabled());
+  let finish!: (result: MarkingPreview) => void;
+  vi.mocked(markingApi.preview).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  fireEvent.click(trial);
+  view.unmount();
+  await act(async () => { finish(jobPreview("t", 1)); });
+  expect(enqueue).not.toHaveBeenCalled();
+});
 
 it("parses own text: one line — one label, «× N» copies, blank lines dropped; {№} counts each number", () => {
   const lines = parseManualLines("X1-{№}\n\n  ПИТАНИЕ +24В × 4 \nGND", 2);
