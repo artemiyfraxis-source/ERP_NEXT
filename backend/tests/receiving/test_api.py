@@ -56,7 +56,7 @@ def receiving_api():
         actor=Actor(name="Приёмщик", department="ОТК"),
         email="receiver@example.test",
         roles=frozenset({"receiver"}),
-        permissions={"receiving": "edit"},
+        permissions={"receiving": "edit", "quality": "edit"},
     )
     app.dependency_overrides[moscow_now] = lambda: datetime(2026, 9, 21, 11, 0)
     line = consume_receiving_expected(expected_message(), factory())
@@ -102,7 +102,7 @@ def test_receiving_queue_has_stable_cursor_pages(receiving_api):
 def test_documents_are_derived_from_urls_and_accepted_line_is_placed(receiving_api):
     client, line = receiving_api
     base = {
-        "fact_quantity": "10",
+        "grn_category": "PPM", "fact_quantity": "10",
         "document_quantity": "10",
         "expiry_date": "2027-01-01",
     }
@@ -174,7 +174,7 @@ def test_receiving_rejects_non_http_document_urls(receiving_api, document_url):
         f"/api/receiving/{line.id}/inspect",
         json={
             "version": line.version,
-            "fact_quantity": "10",
+            "grn_category": "PPM", "fact_quantity": "10",
             "document_quantity": "10",
             "shipping_document_url": document_url,
         },
@@ -185,7 +185,7 @@ def test_receiving_rejects_non_http_document_urls(receiving_api, document_url):
 
 def test_new_vk_archives_line_and_queue_shows_both_rows(receiving_api):
     client, line = receiving_api
-    base = {"fact_quantity": "10", "document_quantity": "10", "expiry_date": "2027-01-01"}
+    base = {"grn_category": "PPM", "fact_quantity": "10", "document_quantity": "10", "expiry_date": "2027-01-01"}
     early = client.post(f"/api/receiving/{line.id}/vk-revision", json={"version": line.version})
     assert early.status_code == 422
     assert "ещё не проведён ВК" in early.json()["detail"]
@@ -201,7 +201,7 @@ def test_new_vk_archives_line_and_queue_shows_both_rows(receiving_api):
     assert body["line"]["status"] == "В пути"
     assert body["line"]["legacy_id"] == "SM-20260921-01-В2"
     assert body["line"]["revision_of_id"] == str(line.id)
-    assert body["line"]["grn"] is None
+    assert body["line"]["grn"] == body["archived"]["grn"]
 
     again = client.post(
         f"/api/receiving/{line.id}/vk-revision", json={"version": body["archived"]["version"]}
@@ -226,7 +226,7 @@ def test_historical_receipt_uses_document_date_for_verdict_but_today_for_grn(rec
     client, line = receiving_api
     base = {
         "version": line.version,
-        "fact_quantity": "10",
+        "grn_category": "PPM", "fact_quantity": "10",
         "document_quantity": "10",
         "expiry_date": "2026-03-01",
         "shipping_document_url": "https://files.test/upd.pdf",
@@ -239,7 +239,8 @@ def test_historical_receipt_uses_document_date_for_verdict_but_today_for_grn(rec
 
     assert historical.status_code == 200, historical.text
     body = historical.json()["line"]
-    assert body["status"] == "Принято"
+    assert body["status"] == "Ожидание"
+    assert body["quality_state"] == "IQH"
     assert body["verdict"] == "Годен"
     assert body["grn"].split(".")[1] == "26"
 
@@ -250,7 +251,7 @@ def test_document_date_without_historical_flag_keeps_today(receiving_api):
         f"/api/receiving/{line.id}/inspect",
         json={
             "version": line.version,
-            "fact_quantity": "10",
+            "grn_category": "PPM", "fact_quantity": "10",
             "document_quantity": "10",
             "expiry_date": "2026-03-01",
             "shipping_document_url": "https://files.test/upd.pdf",
@@ -266,7 +267,7 @@ def test_putaway_sheet_shows_accepted_unplaced_lines_only(receiving_api):
     """WH-6: печатный лист перемещения — только «Принято» без места; поставленное на место пропадает.
     Тот же печатный механизм, что и FF-8 (app.shared.print_sheet + frontend/src/print.ts)."""
     client, line = receiving_api
-    base = {"fact_quantity": "10", "document_quantity": "10", "expiry_date": "2027-01-01"}
+    base = {"grn_category": "PPM", "fact_quantity": "10", "document_quantity": "10", "expiry_date": "2027-01-01"}
 
     empty = client.get("/api/receiving/putaway-sheet")
     assert empty.status_code == 422, empty.text
@@ -334,12 +335,12 @@ def test_upd_file_is_stored_in_erp_and_its_link_passes_the_inspection(receiving_
 
     accepted = client.post(
         f"/api/receiving/{line.id}/inspect",
-        json={"version": line.version, "fact_quantity": "10", "document_quantity": "10", "shipping_document_url": url},
+        json={"version": line.version, "grn_category": "PPM", "fact_quantity": "10", "document_quantity": "10", "shipping_document_url": url},
     )
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["line"]["status"] == "Принято"
     assert accepted.json()["line"]["shipping_document_url"] == url
-    assert accepted.json()["line"]["grn_prefix"] == "FRX"
+    assert accepted.json()["line"]["grn_prefix"] == "PPM"
 
 
 @pytest.mark.parametrize(
@@ -429,7 +430,7 @@ def test_bulk_upd_blank_fields_keep_existing_values(receiving_api):
 
 def test_bulk_upd_is_attached_to_accepted_line_on_stock_and_clears_the_note(receiving_api):
     client, first = receiving_api
-    base = {"fact_quantity": "10", "document_quantity": "10", "expiry_date": "2027-01-01"}
+    base = {"grn_category": "PPM", "fact_quantity": "10", "document_quantity": "10", "expiry_date": "2027-01-01"}
     accepted = client.post(
         f"/api/receiving/{first.id}/inspect", json={**base, "version": first.version}
     ).json()["line"]
@@ -456,7 +457,7 @@ def test_bulk_upd_is_attached_to_accepted_line_on_stock_and_clears_the_note(rece
 def test_bulk_upd_rejects_archived_vk_line_and_applies_nothing(receiving_api):
     client, first = receiving_api
     second = _second_line()
-    base = {"fact_quantity": "10", "document_quantity": "10", "expiry_date": "2027-01-01"}
+    base = {"grn_category": "PPM", "fact_quantity": "10", "document_quantity": "10", "expiry_date": "2027-01-01"}
     accepted = client.post(
         f"/api/receiving/{second.id}/inspect",
         json={**base, "version": second.version, "shipping_document_url": "https://files.test/x.pdf"},

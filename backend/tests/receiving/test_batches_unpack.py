@@ -135,7 +135,7 @@ def test_api_stores_document_details_and_takes_one_quantity_for_both(api):
         f"/api/receiving/{line.id}/inspect",
         json={
             "version": line.version,
-            "fact_quantity": "10",
+            "grn_category": "PPM", "fact_quantity": "10",
             "shipping_document_url": "https://files.test/upd.pdf",
             "expiry_date": "2027-01-01",
             "document_number": "УПД-512",
@@ -176,8 +176,8 @@ def test_api_batches_and_unpack(api):
             "version": line.version,
             "shipping_document_url": "https://files.test/upd.pdf",
             "batches": [
-                {"document_quantity": "6", "series": "A1", "expiry_date": "2027-01-01"},
-                {"document_quantity": "4", "series": "B2", "expiry_date": "2027-01-01"},
+                {"grn_category": "PPM", "document_quantity": "6", "series": "A1", "expiry_date": "2027-01-01"},
+                {"grn_category": "PPM", "document_quantity": "4", "series": "B2", "expiry_date": "2027-01-01"},
             ],
         },
     )

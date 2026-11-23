@@ -166,7 +166,7 @@ def test_api_takes_quality_details_from_the_inspection_form(api):
         f"/api/receiving/{line.id}/inspect",
         json={
             "version": line.version,
-            "fact_quantity": "10",
+            "grn_category": "PPM", "fact_quantity": "10",
             "document_quantity": "10",
             "shipping_document_url": "https://files.test/upd.pdf",
             "expiry_date": "2027-01-01",

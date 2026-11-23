@@ -117,11 +117,11 @@ def test_packing_list_is_one_sheet_per_box_as_form_04_2(shipping_api):
     assert [_form_04_2(form) for form in forms] == [
         {**common, "place": "1", "dims": "32x25x21", "net": "11", "gross": "11,6", "seal": "П-17", "rows": [
             # «Чертежный номер/Артикул» — № КБ с артикулом, «Номер этикетки» — GRN партии ГП.
-            _row("КБ1 A-КБ1", "Жгут КБ1", "6", batch="ГП.26.0000001"), _row("КБ2 A-КБ2", "Жгут КБ2", "5", batch="ГП.26.0000002"),
+            _row("КБ1 A-КБ1", "Жгут КБ1", "6", batch="FRX.26.000001"), _row("КБ2 A-КБ2", "Жгут КБ2", "5", batch="FRX.26.000002"),
         ]},
         # Короб без габаритов и веса: клетки остаются пустыми — дописать от руки.
         {**common, "place": "2", "dims": "", "net": "", "gross": "", "seal": "", "rows": [
-            _row("КБ1 A-КБ1", "Жгут КБ1", "4", batch="ГП.26.0000001"),
+            _row("КБ1 A-КБ1", "Жгут КБ1", "4", batch="FRX.26.000001"),
         ]},
     ]
     # Шапка — данные отправки, как в DN; итоги места; сводка всех мест (коробов больше одного).
@@ -166,8 +166,8 @@ def test_delivery_note_sums_each_kb_over_boxes_with_project_card_requisites(ship
         "carrier": "СДЭК", "track": "", "tk_note": "",
         "rows": [
             # ГРН партий строки (0173) идут и в данные DN; форма 04.1 их не печатает.
-            _row("КБ1 A-КБ1", "Жгут КБ1", "10", batch="ГП.26.0000001", pl="PL591К.3-1", boxes="BXN 1, 2"),
-            _row("КБ2 A-КБ2", "Жгут КБ2", "5", batch="ГП.26.0000002", pl="PL591К.3-1", boxes="BXN 1"),
+            _row("КБ1 A-КБ1", "Жгут КБ1", "10", batch="FRX.26.000001", pl="PL591К.3-1", boxes="BXN 1, 2"),
+            _row("КБ2 A-КБ2", "Жгут КБ2", "5", batch="FRX.26.000002", pl="PL591К.3-1", boxes="BXN 1"),
         ],
         "upd_edo": True, "upd_paper": False, "paper_box": "BXN 1", "note": "",
         # Брутто второго короба не взвешено — общий вес пустой, дописать от руки.
@@ -432,7 +432,7 @@ def test_delivery_terms_are_printed_as_words_and_default_to_the_carrier_when_one
     assert terms == ["Самовывоз", "Доставка ТК"]
 
     # Уехавшая до правила 28.10.2026 без условий печатается как есть: с ТК — «Доставка ТК», без — пусто.
-    item = good_domain().accept(Decimal("10"), date(2026, 9, 22), "ГП.26.0000001")
+    item = good_domain().accept(Decimal("10"), date(2026, 9, 22), "FRX.26.000001")
     for carrier_name, word in (("СДЭК", "Доставка ТК"), ("", "")):
         made = domain_shipment(item, terms=None, carrier=carrier_name)
         picked, _ = made.pick({item.id: item.remaining}, {item.id: item.grn or ""})

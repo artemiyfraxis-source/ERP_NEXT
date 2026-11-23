@@ -89,7 +89,7 @@ def test_incoming_control_api_takes_the_mass_and_offers_the_field_to_prefill(rec
     client, line = receiving_api
 
     response = client.post(f"/api/receiving/{line.id}/inspect", json={
-        "version": line.version, "fact_quantity": "10", "document_quantity": "10",
+        "version": line.version, "grn_category": "PPM", "fact_quantity": "10", "document_quantity": "10",
         "shipping_document_url": "https://files.test/upd.pdf", "mass_100": "0,123",
     })
 

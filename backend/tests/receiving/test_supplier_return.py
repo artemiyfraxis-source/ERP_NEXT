@@ -73,6 +73,7 @@ def expected_message(suffix: int = 1) -> OutboxMessage:
 
 def inspection(fact: str = "10") -> InspectionInput:
     return InspectionInput(
+            grn_category="PPM", quality_authorized=True,
         fact_quantity=Decimal(fact),
         document_quantity=Decimal("10"),
         ordered_quantity=Decimal("10"),
@@ -195,7 +196,7 @@ def test_wait_reopens_the_line_and_the_replacement_reaches_stock_again(erp):
     waiting = result.lines[0]
     assert waiting.status is ReceivingStatus.IN_TRANSIT
     assert waiting.warehouse_event_emitted is False
-    assert waiting.grn == placed.grn
+    assert waiting.grn is None
     assert dispatch_next_supplier_return(NOW, warehouse()).balance == Decimal("0")
 
     replacement = inspect_receiving(
@@ -206,9 +207,12 @@ def test_wait_reopens_the_line_and_the_replacement_reaches_stock_again(erp):
         receiving(),
     )
     assert replacement.status is ReceivingStatus.ACCEPTED
-    assert replacement.warehouse_event_emitted is True  # the place was kept, so it goes at once
+    assert replacement.grn != placed.grn
+    replacement = place_receiving(PlaceReceivingCommand(line_id=replacement.id, expected_version=replacement.version,
+        storage_location="1F4", actor=RECEIVER, now=NOW), receiving())
+    assert replacement.warehouse_event_emitted is True
     restocked = dispatch_next_warehouse_received(NOW, warehouse())
-    assert restocked is not None and restocked.id == lot.id
+    assert restocked is not None and restocked.id != lot.id
     assert restocked.balance == Decimal("10")
 
 
@@ -226,6 +230,8 @@ def test_second_return_of_the_same_line_has_its_own_writeoff(erp):
         ),
         receiving(),
     )
+    replacement = place_receiving(PlaceReceivingCommand(line_id=replacement.id, expected_version=replacement.version,
+        storage_location="1F4", actor=RECEIVER, now=NOW), receiving())
     dispatch_next_warehouse_received(NOW, warehouse())
 
     closed = return_to_supplier(command(replacement, quantity=Decimal("3")), receiving(), stock).lines[0]
@@ -340,7 +346,7 @@ def api(erp):
         actor=RECEIVER,
         email="receiver@example.test",
         roles=frozenset({"receiver"}),
-        permissions={"receiving": "edit"},
+        permissions={"receiving": "edit", "quality": "edit"},
     )
     app.dependency_overrides[moscow_now] = lambda: NOW
     yield TestClient(app), receiving, warehouse

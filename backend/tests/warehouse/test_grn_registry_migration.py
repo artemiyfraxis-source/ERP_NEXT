@@ -17,7 +17,7 @@ from app.modules.warehouse.grn_registry import GrnCounterRow
 from app.modules.warehouse.grn import GrnCategory, GrnContext
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseRepository
 from app.workflows.grn_allocation import grn_allocator
-from tests.warehouse.test_grn_allocator import NOW, request
+from tests.warehouse.test_grn_allocator import NOW, request, sessions
 
 REVISION = "0218_grn_registry"
 PARENT = "0216_equipment_screen_group"
@@ -77,6 +77,57 @@ def lot(db, number, **values):
 def receiving(db, number, **values):
     return insert(db, "receiving_lines", **{"grn": number, "warehouse": "ЦАР", "status": "Ожидание", "version": 1,
                   "source_idempotency_key": str(uuid4()), "ordered_quantity": 10, **values})
+
+
+def test_archived_receiving_can_share_identity_but_active_duplicate_is_rejected(database):
+    with sqlite3.connect(database) as db:
+        root = receiving(db, "PPM.26.0000001")
+    command.upgrade(config(database), REVISION)
+    with sqlite3.connect(database) as db:
+        grn_id, category = db.execute("SELECT grn_id, grn_category FROM receiving_lines WHERE id=?", (root,)).fetchone()
+        receiving(db, "PPM.26.0000001", grn_id=grn_id, grn_category=category,
+                  status="Архив ВК", split_of_id=root)
+        with pytest.raises(sqlite3.IntegrityError, match="UNIQUE"):
+            receiving(db, "PPM.26.0000001", grn_id=grn_id, grn_category=category,
+                      status="Ожидание", split_of_id=root)
+        before = snapshot(db)
+    with pytest.raises(RuntimeError, match="downgrade refused"):
+        command.downgrade(config(database), PARENT)
+    with sqlite3.connect(database) as db:
+        unchanged(db, before)
+        assert db.execute("SELECT count(*) FROM sqlite_master WHERE name='grn_print_immutable'").fetchone()[0] == 1
+
+
+def test_receiving_partial_unique_index_covers_both_sql_dialects():
+    from sqlalchemy.dialects import postgresql, sqlite
+    from sqlalchemy.schema import CreateIndex
+    from app.modules.receiving.infrastructure import ReceivingLineRow
+    index = next(item for item in ReceivingLineRow.__table__.indexes if item.name == "uq_receiving_grn_package_active")
+    for dialect in (postgresql.dialect(), sqlite.dialect()):
+        sql = str(CreateIndex(index).compile(dialect=dialect))
+        assert "UNIQUE INDEX" in sql and "WHERE status <> 'Архив ВК'" in sql
+
+
+def test_receiving_partial_unique_enforcement_on_database(sessions):
+    from dataclasses import replace
+    from sqlalchemy.exc import IntegrityError
+    from app.modules.receiving.infrastructure import ReceivingLineRow, _row
+    from app.modules.receiving.domain import create_line_from_expected, ReceivingStatus
+    from tests.receiving.test_supplier_return import expected_message
+    ReceivingLineRow.__table__.create(sessions.kw["bind"])
+    root = replace(create_line_from_expected(expected_message()), grn="PPM.26.0000001")
+    with sessions.begin() as session:
+        session.add(_row(root))
+    archived = replace(root, id=uuid4(), source_event_id=uuid4(), legacy_id="ARCHIVED",
+                       source_idempotency_key="archive", split_of_id=root.id,
+                       status=ReceivingStatus.VK_ARCHIVE)
+    with sessions.begin() as session:
+        session.add(_row(archived))
+    with pytest.raises(IntegrityError, match="grn"):
+        with sessions.begin() as session:
+            session.add(_row(replace(archived, id=uuid4(), source_event_id=uuid4(), legacy_id="ACTIVE",
+                                    source_idempotency_key="active",
+                                    status=ReceivingStatus.WAITING)))
 
 
 def good_and_act(db, number):

@@ -246,6 +246,10 @@ def _source_checks(table):
 def _sources():
     for table in SOURCES:
         with op.batch_alter_table(table) as batch:
+            if table == "receiving_lines":
+                batch.drop_constraint("uq_receiving_grn_package", type_="unique")
+                batch.create_index("uq_receiving_grn_package_active", ["grn", "package"], unique=True,
+                    sqlite_where=sa.text("status <> 'Архив ВК'"), postgresql_where=sa.text("status <> 'Архив ВК'"))
             for column in _source_columns():
                 batch.add_column(column)
             if table == "warehouse_lots":
@@ -354,6 +358,7 @@ def upgrade():
 def downgrade():
     connection = op.get_bind()
     guards = ["SELECT 1 FROM warehouse_material_owners",
+              "SELECT 1 FROM receiving_lines WHERE grn IS NOT NULL GROUP BY grn, package HAVING count(*) > 1",
               "SELECT 1 FROM warehouse_grn_registry WHERE NOT is_legacy",
               "SELECT 1 FROM warehouse_label_templates WHERE category <> '' OR form_id IS NOT NULL",
               "SELECT 1 FROM warehouse_label_jobs WHERE grn_id IS NOT NULL OR grn_category IS NOT NULL "
@@ -387,6 +392,9 @@ def downgrade():
                 batch.drop_constraint("ck_warehouse_lots_csm_project", type_="check")
                 batch.drop_index("ix_warehouse_lots_csm_project_id")
                 batch.drop_column("csm_project_id")
+            if table == "receiving_lines":
+                batch.drop_index("uq_receiving_grn_package_active")
+                batch.create_unique_constraint("uq_receiving_grn_package", ["grn", "package"])
             batch.drop_index(f"ix_{table}_grn_id")
             for suffix in ("grn", "grn_identity", "grn_owner", "material_owner"):
                 batch.drop_constraint(f"fk_{table}_{suffix}", type_="foreignkey")

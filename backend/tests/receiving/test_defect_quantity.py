@@ -172,7 +172,7 @@ def test_the_database_keeps_a_count_within_the_fact_and_null(erp):
 def test_api_inspection_takes_and_returns_the_count(api):
     client, receiving, _ = api
     line = consume_receiving_expected(expected_message(), receiving())
-    body = {"version": line.version, "fact_quantity": "10", "manual_nonconformities": [MECHANICAL_DAMAGE]}
+    body = {"version": line.version, "grn_category": "PPM", "fact_quantity": "10", "manual_nonconformities": [MECHANICAL_DAMAGE]}
 
     missing = client.post(f"/api/receiving/{line.id}/inspect", json=body)
     assert missing.status_code == 422 and "укажите количество брака" in missing.json()["detail"]
@@ -191,7 +191,7 @@ def test_api_batches_carry_their_own_count(api):
     line = consume_receiving_expected(expected_message(), receiving())
     body = {
         "version": line.version, "manual_nonconformities": [MECHANICAL_DAMAGE],
-        "batches": [{"fact_quantity": "6", "defect_quantity": "1"}, {"fact_quantity": "4", "defect_quantity": "4"}],
+        "batches": [{"grn_category": "PPM", "fact_quantity": "6", "defect_quantity": "1"}, {"grn_category": "PPM", "fact_quantity": "4", "defect_quantity": "4"}],
     }
     shared = client.post(f"/api/receiving/{line.id}/inspect", json={**body, "defect_quantity": "1"})
     assert shared.status_code == 422 and "у каждой партии" in shared.json()["detail"]

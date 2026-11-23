@@ -59,6 +59,7 @@ def test_receiving_to_warehouse_is_transactional_and_persistent():
             line_id=line.id,
             expected_version=line.version,
             inspection=InspectionInput(
+            grn_category="PPM", quality_authorized=True,
                 fact_quantity=Decimal("10"),
                 document_quantity=Decimal("10"),
                 ordered_quantity=Decimal("999"),
@@ -91,7 +92,7 @@ def test_receiving_to_warehouse_is_transactional_and_persistent():
     )
 
     assert placed.warehouse_event_emitted is True
-    assert lot.grn == "FRX.26.0000001"
+    assert lot.grn == "PPM.26.000001"
     assert lot.balance == Decimal("10")
     # SK-6: СРОК ГОДНОСТИ and МАССА 1 ШТ (weighed as a hundred at incoming control) reach the stored lot.
     with receiving_factory() as uow:
@@ -102,7 +103,7 @@ def test_receiving_to_warehouse_is_transactional_and_persistent():
     with sessions() as session:
         assert session.scalar(select(func.count()).select_from(ReceivingLineRow)) == 1
         assert session.scalar(select(func.count()).select_from(StockLotRow)) == 1
-        assert session.scalar(select(func.count()).select_from(AuditEventRow)) == 5
+        assert session.scalar(select(func.count()).select_from(AuditEventRow)) == 6
         assert session.scalar(
             select(func.count()).select_from(OutboxMessageRow).where(
                 OutboxMessageRow.published_at.is_not(None)
@@ -152,6 +153,7 @@ def test_quarantine_timer_reads_the_stored_act_date_and_persists_the_move():
                 line_id=line.id,
                 expected_version=line.version,
                 inspection=InspectionInput(
+            grn_category="PPM", quality_authorized=True,
                     fact_quantity=Decimal("10"),
                     manual_nonconformities=("Механическое повреждение / брак",), defect_quantity=Decimal("1"),  # брак -> «Ожидание»
                     document_quantity=Decimal("10"),
@@ -228,6 +230,7 @@ def test_vk_revision_persists_and_one_procurement_line_has_one_live_receiving_li
             line_id=line.id,
             expected_version=line.version,
             inspection=InspectionInput(
+            grn_category="PPM", quality_authorized=True,
                 fact_quantity=Decimal("10"),
                 document_quantity=Decimal("10"),
                 ordered_quantity=Decimal("10"),

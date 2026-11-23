@@ -123,6 +123,22 @@ class Uow:
         self.outbox = Outbox()
         self.commits = 0
 
+    def command_details(self, key):
+        return next((event.details for event in self.audit.items if event.id == key), None)
+
+    def prepare_grns(self, pairs, now):
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session
+        from app.modules.warehouse.grn_registry import GrnRegistryRow, GrnCounterRow, MaterialOwnerRow
+        from app.workflows.receiving_stock import prepare_receiving_grns
+        if not hasattr(self, "session"):
+            engine = create_engine("sqlite:///:memory:")
+            for table in (MaterialOwnerRow.__table__, GrnRegistryRow.__table__, GrnCounterRow.__table__):
+                table.create(engine)
+            self.session = Session(engine)
+            self.session.begin()
+        return prepare_receiving_grns(self, pairs, now)
+
     def __enter__(self):
         return self
 
@@ -155,6 +171,7 @@ def message():
 
 def inspection():
     return InspectionInput(
+            grn_category="PPM", quality_authorized=True,
         fact_quantity=Decimal("10"),
         document_quantity=Decimal("10"),
         ordered_quantity=Decimal("10"),
@@ -195,10 +212,11 @@ def test_inspection_and_placement_emit_one_atomic_warehouse_event():
     assert inspected.status is ReceivingStatus.ACCEPTED
     assert placed.warehouse_event_emitted is True
     assert [item.topic for item in uow.outbox.items] == ["warehouse.received"]
-    assert uow.outbox.items[0].payload["grn"] == "FRX.26.0000001"
+    assert uow.outbox.items[0].payload["grn"] == "PPM.26.000001"
     assert [event.event_type for event in uow.audit.items] == [
         "receiving.expected",
         "receiving.inspected",
+        "receiving.command",
         "receiving.placed",
         "receiving.sent_to_warehouse",
     ]
@@ -323,7 +341,7 @@ def test_new_vk_archives_line_opens_revision_and_audits_both_atomically():
 
     accepted = _inspect(uow, revision, datetime(2026, 9, 22, 10, 0))
     assert accepted.status is ReceivingStatus.ACCEPTED
-    assert accepted.grn != archived.grn
+    assert accepted.grn == archived.grn
 
 
 def test_new_vk_rejects_a_stale_form():
@@ -444,8 +462,8 @@ def test_missing_upd_accepts_the_line_without_any_alert():
         ({"manual_nonconformities": ("Механическое повреждение / брак",), "defect_quantity": Decimal("1")}, "technologist"),
         # …anything else → снабжение (редактируют «Лист закупки»).
         # A shortfall is accepted now (owner, 05.10.2026) but supply still hears of it.
-        ({"fact_quantity": Decimal("9")}, "supply"),
-        ({"fact_quantity": Decimal("8"), "document_quantity": Decimal("8")}, "supply"),
+        ({"grn_category": "PPM", "fact_quantity": Decimal("9")}, "supply"),
+        ({"grn_category": "PPM", "fact_quantity": Decimal("8"), "document_quantity": Decimal("8")}, "supply"),
     ],
 )
 def test_nonconformity_notifies_by_nature(change, audiences):
@@ -471,7 +489,7 @@ def test_nonconformity_notifies_by_nature(change, audiences):
 
 @pytest.mark.parametrize(
     "change",
-    [{}, {"fact_quantity": Decimal("11")}],  # clean, and «Излишек» alone: accepted, nobody is alerted
+    [{}, {"grn_category": "PPM", "fact_quantity": Decimal("11")}],  # clean, and «Излишек» alone: accepted, nobody is alerted
 )
 def test_accepted_inspection_notifies_nobody(change):
     uow = Uow()

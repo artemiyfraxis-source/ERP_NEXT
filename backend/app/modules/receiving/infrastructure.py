@@ -38,7 +38,8 @@ DEFECT_QUANTITY_CHECK = (
 class ReceivingLineRow(Base):
     __tablename__ = "receiving_lines"
     __table_args__ = (
-        UniqueConstraint("grn", "package", name="uq_receiving_grn_package"),
+        Index("uq_receiving_grn_package_active", "grn", "package", unique=True,
+              sqlite_where=text("status <> 'Архив ВК'"), postgresql_where=text("status <> 'Архив ВК'")),
         UniqueConstraint("revision_of_id", name="uq_receiving_lines_revision_of_id"),
         # One live line per procurement line; archived «Архив ВК» rows keep the link as history, and
         # batch/package lines `-ПN` (split_of_id) share the order of the line they came from.
@@ -90,6 +91,18 @@ class ReceivingLineRow(Base):
     accepted_quantity: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
     backorder_quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     grn: Mapped[str | None] = mapped_column(String(32))
+    grn_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), index=True)
+    grn_category: Mapped[str | None] = mapped_column(String(3))
+    grn_context: Mapped[dict | None] = mapped_column(JSON)
+    grn_contract_version: Mapped[int | None] = mapped_column(Integer)
+    material_owner_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    quality_state: Mapped[str | None] = mapped_column(String(16))
+    quality_basis: Mapped[str | None] = mapped_column(Text)
+    quality_decided_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    quality_decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    quality_version: Mapped[int | None] = mapped_column(Integer)
+    expiry_required: Mapped[bool | None] = mapped_column(Boolean)
+
     package: Mapped[str] = mapped_column(String(32), nullable=False)
     storage_location: Mapped[str | None] = mapped_column(String(16))
     inspector_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), index=True)
@@ -178,6 +191,18 @@ def _row(line: ReceivingLine) -> ReceivingLineRow:
         accepted_quantity=line.accepted_quantity,
         backorder_quantity=line.backorder_quantity,
         grn=line.grn,
+        grn_id=line.grn_id,
+        grn_category=line.grn_category,
+        grn_context=line.grn_context,
+        grn_contract_version=line.grn_contract_version,
+        material_owner_id=line.material_owner_id,
+        quality_state=line.quality_state,
+        quality_basis=line.quality_basis,
+        quality_decided_by=line.quality_decided_by,
+        quality_decided_at=line.quality_decided_at,
+        quality_version=line.quality_version,
+        expiry_required=line.expiry_required,
+
         package=line.package,
         storage_location=line.storage_location,
         inspector_id=line.inspector.id if line.inspector else None,
@@ -256,6 +281,18 @@ def _domain(row: ReceivingLineRow) -> ReceivingLine:
         accepted_quantity=row.accepted_quantity,
         backorder_quantity=row.backorder_quantity,
         grn=row.grn,
+        grn_id=row.grn_id,
+        grn_category=row.grn_category,
+        grn_context=row.grn_context,
+        grn_contract_version=row.grn_contract_version,
+        material_owner_id=row.material_owner_id,
+        quality_state=row.quality_state,
+        quality_basis=row.quality_basis,
+        quality_decided_by=row.quality_decided_by,
+        quality_decided_at=row.quality_decided_at,
+        quality_version=row.quality_version,
+        expiry_required=row.expiry_required,
+
         package=row.package,
         storage_location=row.storage_location,
         inspector=inspector,
@@ -597,3 +634,11 @@ class SqlAlchemyReceivingUnitOfWork:
             raise RuntimeError("Unit of Work has not been entered")
         self.session.commit()
         self.committed = True
+
+    def prepare_grns(self, pairs, now):
+        from app.workflows.receiving_stock import prepare_receiving_grns
+        return prepare_receiving_grns(self, pairs, now)
+
+    def command_details(self, key):
+        from app.workflows.receiving_stock import receiving_command_details
+        return receiving_command_details(self.session, key)

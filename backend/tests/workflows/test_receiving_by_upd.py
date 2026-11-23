@@ -269,7 +269,7 @@ PDF = b"%PDF-1.4\n% scan of a paper UPD\n"
 def _as(permission: str, scan: str = "edit") -> None:
     app.dependency_overrides[authenticated_principal] = lambda: Principal(
         actor=Actor(name="Приёмщик", department="ОТК"), email="receiver@example.test", roles=frozenset({"receiver"}),
-        permissions={"receiving": permission, **({"scan": scan} if scan else {})},
+        permissions={"receiving": permission, "quality": permission, **({"scan": scan} if scan else {})},
     )
 
 
@@ -403,7 +403,7 @@ def test_proposal_and_acceptance_of_a_upd_over_two_orders_keep_the_scan_and_reac
     scan = _scan(sessions)
     ticked = [item for item in body["lines"] if item["ticked"]]
     accepted = client.post("/api/receiving/upd/accept", json={
-        "lines": [{"id": item["line"]["id"], "version": item["line"]["version"],
+        "lines": [{"grn_category": "PPM", "id": item["line"]["id"], "version": item["line"]["version"],
                    "document_quantity": item["document_quantity"], "storage_location": "1F4"} for item in ticked],
         "document_number": "771", "document_date": "2026-10-20", "warehouse": "ЦАР", "scan_file": scan,
         "recognised": RECOGNISED,
@@ -435,11 +435,11 @@ def test_acceptance_is_all_or_nothing_and_strangers_on_one_upd_are_refused(stand
     scan = _scan(sessions)
 
     stale = client.post("/api/receiving/upd/accept", json={
-        "lines": [{"id": str(first), "version": 1}, {"id": str(other), "version": 7}], "scan_file": scan,
+        "lines": [{"grn_category": "PPM", "id": str(first), "version": 1}, {"grn_category": "PPM", "id": str(other), "version": 7}], "scan_file": scan,
         "recognised": RECOGNISED, "document_number": "771"})
     assert stale.status_code == 409
     mixed = client.post("/api/receiving/upd/accept", json={
-        "lines": [{"id": str(first), "version": 1}, {"id": str(other), "version": 1}], "scan_file": scan,
+        "lines": [{"grn_category": "PPM", "id": str(first), "version": 1}, {"grn_category": "PPM", "id": str(other), "version": 1}], "scan_file": scan,
         "recognised": RECOGNISED, "document_number": "771"})
     assert mixed.status_code == 422 and "разных поставщиков" in mixed.json()["detail"]
     assert {row.status for row in _lines(sessions).values()} == {"В пути"}
@@ -447,7 +447,7 @@ def test_acceptance_is_all_or_nothing_and_strangers_on_one_upd_are_refused(stand
         assert session.scalar(select(func.count()).select_from(UpdDocumentRow)) == 0
 
     missing = client.post("/api/receiving/upd/accept", json={
-        "lines": [{"id": str(first), "version": 1}], "scan_file": "/api/stock/receipts/files/" + str(uuid4()),
+        "lines": [{"grn_category": "PPM", "id": str(first), "version": 1}], "scan_file": "/api/stock/receipts/files/" + str(uuid4()),
         "recognised": RECOGNISED})
     assert missing.status_code == 422 and "Скан УПД не найден" in missing.json()["detail"]
 
@@ -460,10 +460,10 @@ def test_two_texts_of_one_supplier_are_accepted_together(stand):  # noqa: F811
     second = _waiting(sessions, 2, article="PH-3", supplier="ООО «Элитан»", order="З-2")
 
     accepted = client.post("/api/receiving/upd/accept", json={
-        "lines": [{"id": str(first), "version": 1}, {"id": str(second), "version": 1}], "recognised": RECOGNISED,
+        "lines": [{"grn_category": "PPM", "id": str(first), "version": 1}, {"grn_category": "PPM", "id": str(second), "version": 1}], "recognised": RECOGNISED,
         "document_number": "771", "document_date": "2026-10-20"})
 
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["upd_file"] == "" and accepted.json()["registry"] is None
-    plain = client.post("/api/receiving/deliveries", json={"lines": [{"id": str(uuid4()), "version": 1}]})
+    plain = client.post("/api/receiving/deliveries", json={"lines": [{"grn_category": "PPM", "id": str(uuid4()), "version": 1}]})
     assert plain.status_code == 404
