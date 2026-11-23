@@ -1,3 +1,4 @@
+import type { GrnInput, GrnPassport, MaterialOwner, QualityState } from "./grn";
 import type { CuttingGroup, CuttingSubmission, CuttingWorkResult, MarkingProgress } from "./cuttingGroups";
 import type { Sto, TdFinding, TdIssue, TdIssueInput, TdPrintModel } from "./tdTypes";
 
@@ -310,7 +311,7 @@ export interface WarehouseRackLayout {
   perRack: Record<string, number>;
 }
 
-export interface ReceivingLine {
+export interface ReceivingLine extends GrnPassport {
   id: string;
   legacy_id: string;
   /** ГРН prefix derived from НАЗНАЧЕНИЕ / ЦЕЛЬ / ССЫЛКА; null — the storekeeper picks CSM or PPM. */
@@ -396,7 +397,7 @@ export interface WarehouseDestination {
   last_date: string;
 }
 
-export interface WarehouseLot {
+export interface WarehouseLot extends GrnPassport {
   id: string;
   version: number;
   warehouse: string;
@@ -476,7 +477,7 @@ export interface WarehouseReceipt extends WarehouseReceiptRef, Omit<WarehouseRec
   lots_count: number;
 }
 
-export interface WarehouseReceiptAccept {
+export interface WarehouseReceiptAccept extends GrnInput {
   acceptance_id?: string;
   learning?: WarehouseReceiptLearningChoice;
   article: string;
@@ -3657,7 +3658,7 @@ export interface ReceivingQuery {
 
 export type DeliveryDeviation = "none" | "brak" | "peresort" | "no_quality_doc" | "expired";
 
-export interface DeliveryLinePayload {
+export interface DeliveryLinePayload extends GrnInput {
   id: string;
   version: number;
   document_quantity?: string;
@@ -3835,6 +3836,9 @@ export type WarehouseTotals = {
 };
 
 export const warehouseApi = {
+  materialOwners: () => api<{owners: MaterialOwner[]}>("/api/stock/material-owners"),
+  createMaterialOwner: (display_name: string, legal_identity: string) => api<{owner: MaterialOwner}>("/api/stock/material-owners", {method: "POST", body: JSON.stringify({display_name, legal_identity})}),
+  decideQuality: (lot: WarehouseLot, state: QualityState, basis: string) => api<{lot: WarehouseLot}>(`/api/stock/batches/${encodeURIComponent(lot.id)}/quality`, {method: "POST", body: JSON.stringify({version: lot.version, quality_version: lot.quality_version, state, basis})}),
   list: ({ after, query = "", includeZero = false, warehouse = "", sort = "", desc = false, group = "" }: {
     after?: string;
     query?: string;

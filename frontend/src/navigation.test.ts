@@ -374,3 +374,9 @@ it("maps an address tab to the menu item that stays lit", () => {
   expect(procurementMenuTab("today", true)).toBe("stats"); // a reader has no «Сегодня»
   expect(procurementMenuTab("nonsense", true)).toBe("stats");
 });
+
+it("opens the printer equipment entry for warehouse users and redirects the former designer section",()=>{
+  const keeper=as("operator",{warehouse:"edit"});
+  expect(visibleNav(keeper).some(item=>item.id==="machines")).toBe(true);
+  expect(sectionOfTab("labeldesigner",null)).toBe("machines");
+});

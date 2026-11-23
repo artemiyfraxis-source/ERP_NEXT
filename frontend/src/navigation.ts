@@ -108,7 +108,7 @@ export const NAV: NavItem[] = [
   // «Оборудование» (бывшие «Станки», владелец 19.11.2026): станки цеха с управлением из ERP и без, их наладка, принтеры и
   // приборы агентов; читают мастер и монтажник.
   // ОТК (`quality`) открывает его тоже: рабочее место ВАЦ — в карточке анализатора цепей (владелец 20.11.2026).
-  { id: "machines", label: "Оборудование", sub: "станки цеха · приборы · наладка · состояние на станке", anyPermission: ["production", "myops"], alsoPermission: ["quality"], alsoReadOnly: true, block: "prod" },
+  { id: "machines", label: "Оборудование", sub: "станки цеха · приборы · наладка · состояние на станке", anyPermission: ["production", "myops", "warehouse"], alsoPermission: ["quality"], alsoReadOnly: true, block: "prod" },
   // «Ручная работа» (план «Станки вне проекта», 19.11.2026): журнал работ на любом станке вне проекта; те же ключи, что у «Станков».
   { id: "manualjobs", label: "Ручная работа", sub: "работа на станке вне проекта · журнал за период", anyPermission: ["production", "myops"], alsoPermission: ["warehouse"], block: "prod" },
   // «Задания» (`myops`) и «ОТК» (`quality`) — разделы матрицы со своими ключами (owner 04.10.2026), не часть `production`.
@@ -165,7 +165,7 @@ export const MOVED_TABS: Readonly<Record<string, Readonly<Record<string, Section
 };
 
 /** Sections that are gone, and where their old links land: «Отгрузка» merged into «Приёмка с производства» (owner 29.10). */
-export const SECTION_ALIASES: Readonly<Record<string, Section>> = { shipping: "intake", equipment: "stock" };
+export const SECTION_ALIASES: Readonly<Record<string, Section>> = { labeldesigner: "machines", shipping: "intake", equipment: "stock" };
 
 /** An old section that became a sub-tab of its new one: `?section=equipment` opens «Склад» on «Оборудование» (owner 29.10). */
 export const ALIAS_VIEW: Readonly<Record<string, string>> = { equipment: "equipment" };

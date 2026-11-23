@@ -174,7 +174,9 @@ def lot_label_data(uow, lot_id: UUID) -> GrnLabelData:
 
 
 def _data_in(session, lot, received):
+    from app.shared.project_identity import display_grn_context
     data = label_of(lot, received)
+    data = replace(data, context=display_grn_context(session, data.context))
     if getattr(lot, "material_owner_id", None):
         from .grn_registry import MaterialOwnerRow
         owner = session.get(MaterialOwnerRow, lot.material_owner_id)
@@ -300,6 +302,10 @@ def prepare_label_in(session, content: LabelContent, settings: PrintSettings):
             raise ValueError("Данные этикетки не соответствуют сохранённой идентичности ГРН")
         content = replace(content, grn_number=identity.number)
         source.update(source_kind=identity.source_kind, source_op_id=identity.source_op_id)
+        from .grn import GrnContext
+        source["origin_context"] = {name: str(value) if name == "owner_id" and value is not None else value
+                                    for name in GrnContext.__dataclass_fields__
+                                    for value in [getattr(identity, name)]}
     snapshot = dict(grn_id=content.grn_id, grn_category=content.category or None,
                     grn_number=(content.grn_number or content.code) if content.kind != "instrument" else None,
                     template_kind=content.kind,

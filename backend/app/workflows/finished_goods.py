@@ -92,7 +92,9 @@ def allocate_production_act(session, good, moves):
         return None
     category, purpose = production_grn_category(session, good.project)
     act_id = uuid5(move.id, "acceptance-act")
-    context = GrnContext(project=good.project, production_order=good.project,
+    from app.shared.project_identity import stable_project_key
+    project_id = stable_project_key(session, good.project)
+    context = GrnContext(project=project_id, production_order=project_id,
         acceptance_document=str(act_id), purpose=purpose or "Приёмка собственного изделия из производства")
     request = GrnRequest(category=category, source_kind="finished_goods_act",
         source_op_id=str(act_id), context=context, body_fingerprint=fingerprint_body({

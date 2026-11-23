@@ -1,3 +1,5 @@
+import { GrnFields } from "./GrnFields";
+import { grnError } from "./grn";
 import { Fragment, useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import { api, ApiError, receivingApi, warehouseApi, type WarehouseLot, type WarehouseReceipt as ReceiptDoc, type WarehouseReceiptScan, type WarehouseScanJob, type WarehouseReceiptRule } from "./api";
 import { labelsApi } from "./LabelPrint";
@@ -506,6 +508,12 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
 
   async function accept(row: number, place: string, labels: number, confirmExpected: boolean) {
     const line = lines[row];
+    const selectedError = grnError(line);
+    if (selectedError) throw new Error(selectedError);
+    if (!line.acceptance_id) {
+      line.acceptance_id = crypto.randomUUID();
+      patchLine(row, current => ({...current, acceptance_id: line.acceptance_id}));
+    }
     const saved = await ensureReceipt();
     const result = await warehouseApi.acceptReceiptLot(saved.id, buildAccept(line, headerRef.current, place, labels, confirmExpected));
     patchLine(row, (current) => ({
@@ -671,12 +679,16 @@ export function WarehouseReceipt({ knownLots, typeChoices, onClose, onAccepted }
                           ? <span className="wr-accepted">✓ Принято</span>
                           : !isBlankLine(line) && <>
                             <button type="button" className="rg-link wr-accept-btn" disabled={!canAccept(line) || accepting !== null || checkingRules.has(line.acceptance_id ?? "")} aria-label={`Принять строку ${row + 1}`}
-                              onClick={() => setAccepting(row)}>Принять</button>
+                              onClick={() => { const message=grnError(line); if(message)patchLine(row,current=>({...current,error:message}));else setAccepting(row); }}>Принять</button>
                             <button type="button" className="rg-link" aria-label={`Убрать строку ${row + 1}`}
                               onClick={() => setLines((current) => withTrailingBlank(current.filter((_, index) => index !== row)))}>Убрать</button>
                           </>}
                       </td>
                     </tr>
+                    {!done && !isBlankLine(line) && <tr className="wr-grn-row"><td colSpan={colSpan}>
+                      <GrnFields value={line} disabled={accepting !== null} onChange={next => patchLine(row, current => ({...current, ...next, error:""}))}/>
+                      {line.error && !line.learning && <p className="error-banner" role="alert">{line.error}</p>}
+                    </td></tr>}
                     {!done && line.learning && <tr className="wr-note-row"><td colSpan={colSpan}>
                       <div className="wr-sub" aria-live="polite" style={{ whiteSpace: "normal" }}>
                         <span style={{ fontVariantNumeric: "tabular-nums" }}>По УПД: {line.original?.invoice_quantity || "не прочитано"} {line.original?.invoice_unit}</span>

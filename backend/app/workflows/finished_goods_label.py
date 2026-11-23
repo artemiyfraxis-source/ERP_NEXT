@@ -17,6 +17,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.shared.project_identity import display_grn_context
 from app.modules.shipping.infrastructure import FinishedGoodsActRow, SqlAlchemyFinishedGoodsRepository
 from app.modules.warehouse.labels.layout import GrnLabelData
 from app.modules.warehouse.labels.template import LabelContent, intake_content
@@ -69,7 +70,7 @@ def act_label_data(sessions: Callable[[], Session], grn: str) -> ActLabel:
         ), good.project, good.item_index, {
             "category": row.grn_category or "", "grn_id": row.grn_id, "grn_number": row.grn,
             "quality_state": row.quality_state, "quality_basis": row.quality_basis or "",
-            "context": row.grn_context or {},
+            "context": display_grn_context(session, row.grn_context),
         } if row.grn_contract_version is not None else {})
 
 

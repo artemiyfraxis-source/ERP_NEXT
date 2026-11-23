@@ -15,6 +15,7 @@ from app.shared.article_maker import split_article_maker
 from app.shared.clock import moscow_now
 from app.shared.http_auth import (
     Principal,
+    require_section,
     warehouse_admin_principal,
     warehouse_edit_principal,
     warehouse_journal_principal,
@@ -352,9 +353,12 @@ class MaterialOwnerPayload(BaseModel):
     legal_identity: str = Field(min_length=1, max_length=512)
 
 
+material_owners_view_principal = require_section(("warehouse", "receiving"), "view")
+
+
 @router.get("/material-owners")
 def material_owners(
-    _principal: Annotated[Principal, Depends(warehouse_view_principal)],
+    _principal: Annotated[Principal, Depends(material_owners_view_principal)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
 ) -> dict:
     return {"owners": list_owners(uow_factory())}

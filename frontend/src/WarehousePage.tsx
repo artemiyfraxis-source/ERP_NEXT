@@ -1,3 +1,4 @@
+import { MaterialOwners, LotQuality } from "./MaterialOwners";
 import { Fragment, createContext, useContext, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { LoadMore } from "./LoadMore";
 import { urlParam } from "./navigation";
@@ -68,9 +69,14 @@ export function WarehousePage({ admin = false, readOnly = false, finishedGoods =
   // the old `?section=equipment` lands on the second one). A sub-tab the viewer has no access to falls back to «Материалы».
   const [view, setView] = useState<StockView>(() => {
     const wanted = new URLSearchParams(window.location.search).get("view");
-    return wanted === "goods" && finishedGoods ? "goods" : wanted === "equipment" && equipment ? "equipment" : "stock";
+    return wanted === "owners" ? "owners" : wanted === "goods" && finishedGoods ? "goods" : wanted === "equipment" && equipment ? "equipment" : "stock";
   });
-  const views = finishedGoods || equipment ? <StockViews view={view} onChange={setView} goods={finishedGoods} equipment={equipment} /> : null;
+  const views = <StockViews view={view} onChange={setView} goods={finishedGoods} equipment={equipment} />;
+  if (view === "owners") return <section className="page stock-page">
+    <header className="page-head"><h1>Склад</h1></header>
+    {views}
+    <MaterialOwners readOnly={readOnly} />
+  </section>;
   if (equipment && view === "equipment") return <section className="page stock-page">
     <header className="page-head"><h1>Склад</h1></header>
     {views}
@@ -84,14 +90,15 @@ export function WarehousePage({ admin = false, readOnly = false, finishedGoods =
   return <StockPage admin={admin} readOnly={readOnly} canEditReferences={canEditReferences} views={views} />;
 }
 
-type StockView = "stock" | "goods" | "equipment";
+type StockView = "stock" | "goods" | "equipment" | "owners";
 
 /** «Материалы и комплектующие» | «Готовая продукция» | «Оборудование» под заголовком склада. */
 function StockViews({ view, onChange, goods, equipment }: { view: StockView; onChange: (view: StockView) => void; goods: boolean; equipment: boolean }) {
   const tabs: [StockView, string][] = [["stock", "Материалы и комплектующие"]];
   if (goods) tabs.push(["goods", "Готовая продукция"]);
   if (equipment) tabs.push(["equipment", "Оборудование"]);
-  return <div className="seg-tabs stock-views" role="tablist" aria-label="Склад">
+  tabs.push(["owners", "Владельцы материалов"]);
+  return <div className="seg-tabs stock-views" role="tablist" aria-label="Разделы склада">
     {tabs.map(([key, label]) =>
       <button key={key} type="button" role="tab" aria-selected={view === key} className={view === key ? "on" : undefined} onClick={() => onChange(key)}>{label}</button>)}
   </div>;
@@ -1452,6 +1459,7 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly, canLi
         </div>
       </div>
       <div className="lot-card-actions">
+        <LotQuality lot={lot} onChanged={() => { void mutate(lot.id, async () => undefined); }}/>
         {!readOnly && <>
           <button className="secondary small" disabled={disabled} title="Снять количество с партии" onClick={() => setDialog("writeoff")}>− Списать</button>
           {writtenOff && <button className="secondary small" disabled={disabled} title={`Списано ${lot.written_off} ${lot.unit}`} onClick={() => setDialog("return")}>Вернуть на склад</button>}

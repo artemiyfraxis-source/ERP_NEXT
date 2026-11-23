@@ -331,3 +331,14 @@ def test_receiving_csm_payload_cannot_change_the_registry_order(stand):
         dispatch_next_warehouse_received(NOW, SqlAlchemyWarehouseUnitOfWork(sessions))
     with sessions() as session:
         assert session.query(StockLotRow).one().csm_project_id == context["customer_order"]
+
+
+def test_receiving_can_read_material_owners_but_cannot_create_them(stand):
+    client, sessions = stand
+    csm_context(sessions)
+    actor = Actor(name="Receiver", department="Receiving")
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=actor, email="receiver@example.test", roles=frozenset(), permissions={"receiving":"view"})
+    response = client.get("/api/stock/material-owners")
+    assert response.status_code == 200 and len(response.json()["owners"]) == 1
+    assert client.post("/api/stock/material-owners", json={"display_name":"Owner","legal_identity":"TEST:1"}).status_code == 403

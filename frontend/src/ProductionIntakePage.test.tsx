@@ -384,7 +384,7 @@ describe("Приёмка с производства: свои колонки и
     const expected: Array<[RegExp, string[], string[]]> = [
       [/^В производстве/, ["КБ", "Наименование", "Заказано", "Запущено", "Остаток", "Принять досрочно", "Задания"], ["Принять досрочно 591К.3 КБ1: 14"]],
       [/^Готово/, ["КБ", "Наименование", "Заказано", "Можно принять", "Задания"], ["Принять 591К.3 КБ1: 6"]],
-      [/^Принято/, ["КБ", "Наименование", "Количество", "Упаковать", "ГРН", "Дата приёмки", "Этикетка", "Разрешение на упаковку", "Разрешено по КБ", "Упаковано по КБ"], ["Упаковать 591К.3 КБ1: 10"]],
+      [/^Принято/, ["КБ", "Наименование", "Количество", "Упаковать", "ГРН", "Качество", "Дата приёмки", "Этикетка", "Разрешение на упаковку", "Разрешено по КБ", "Упаковано по КБ"], ["Упаковать 591К.3 КБ1: 10"]],
       [/^Упаковано/, ["КБ", "Наименование", "Упаковано", "Действие", "ГРН"], []],
       [/^На отгрузку/, ["КБ", "Наименование", "Упаковано", "Отгрузка", "ГРН"], ["Отгрузить 591К.3 КБ1"]],
       [/^Отгружено/, ["КБ", "Наименование", "Отгружено", "ГРН", "Действие"], []],
@@ -403,7 +403,7 @@ describe("Приёмка с производства: свои колонки и
     fireEvent.click(tab(/^В ожидании/));
     expect(await screen.findByText("В ожидании производства ничего нет.")).toBeInTheDocument();
     fireEvent.click(tab(/^Все/));
-    await waitFor(() => expect(headers()).toEqual(["КБ", "Наименование", "Количество", "Заказано", "Запущено", "Остаток", "Действие", "ГРН", "Дата приёмки", "Этикетка", "Задания", "Разрешение на упаковку", "Разрешено по КБ", "Упаковано по КБ", ...shippingHeaders]));
+    await waitFor(() => expect(headers()).toEqual(["КБ", "Наименование", "Количество", "Заказано", "Запущено", "Остаток", "Действие", "ГРН", "Качество", "Дата приёмки", "Этикетка", "Задания", "Разрешение на упаковку", "Разрешено по КБ", "Упаковано по КБ", ...shippingHeaders]));
     expect(rowButtons().sort()).toEqual(["Принять досрочно 591К.3 КБ1: 14", "Принять 591К.3 КБ1: 6", "Упаковать 591К.3 КБ1: 10", "Отгрузить 591К.3 КБ1"].sort());
     expect(screen.queryByText(/Счётчики:/)).not.toBeInTheDocument();
     expect(writes()).toEqual([]);
@@ -1109,4 +1109,17 @@ describe("Приёмка с производства: подтверждение
     await screen.findAllByText("ГП.26.0000002");
     expect(screen.queryByRole("button", { name: /^Акт приёмки/ })).not.toBeInTheDocument();
   });
+});
+
+it("shows FRX and R&D act numbers alongside historical acts without renumbering them",async()=>{
+  intakeRows=[row({accepted:"6",remaining:"0",acts:[
+    {grn:"ГП.26.0000001",quantity:"2",received_at:"2026-11-23",location:"1F4"},
+    {grn:"FRX.26.000002",quantity:"2",received_at:"2026-11-23",location:"1F4",grn_contract_version:1,quality_state:"RELEASED",grn_category:"FRX"},
+    {grn:"R&D.26.000001",quantity:"2",received_at:"2026-11-23",location:"1F4",grn_contract_version:1,quality_state:"QTN",grn_category:"R&D"},
+  ]})];
+  render(<ProductionIntakePage principal={admin}/>);
+  await screen.findByRole("button",{name:"Акт приёмки FRX.26.000002"});
+  expect(screen.getByRole("button",{name:"Акт приёмки R&D.26.000001"})).toBeInTheDocument();
+  expect(screen.getByRole("button",{name:"Акт приёмки ГП.26.0000001"})).toBeInTheDocument();
+  expect(screen.getByText("КАРАНТИН")).toBeInTheDocument();
 });

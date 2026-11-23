@@ -391,7 +391,9 @@ it("opens «Оборудование» for Производство or Зада�
   expect(visibleNav(as({ myops: "view" })).some((item) => item.id === "machines")).toBe(true);
   expect(visibleNav(as({ production: "view" })).some((item) => item.id === "machines")).toBe(true);
   expect(visibleNav(as({ quality: "edit" })).some((item) => item.id === "machines")).toBe(true);  // карточка ВАЦ (20.11)
-  expect(visibleNav(as({ warehouse: "edit" })).some((item) => item.id === "machines")).toBe(false);
+  // Склад открывает его тоже: шаблоны этикеток ГРН живут в карточке принтера TSC (владелец 23.11.2026).
+  expect(visibleNav(as({ warehouse: "edit" })).some((item) => item.id === "machines")).toBe(true);
+  expect(visibleNav(as({ receiving: "edit" })).some((item) => item.id === "machines")).toBe(false);
 });
 
 it("a planned machine without a БД.ОБ entry says so calmly instead of a setup error", async () => {

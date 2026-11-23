@@ -185,6 +185,12 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
   }, []);
   const [query, setQuery] = useState("");
   const rows = useMemo(() => data?.rows ?? [], [data]);
+  const wantsPrinter = useRef(urlParam("printer") === "labels" || new URLSearchParams(location.search).get("section") === "labeldesigner");
+  useEffect(() => {
+    if (!wantsPrinter.current || !data) return;
+    const printer = rows.find(row => row.station?.kind === "labels");
+    if (printer) { wantsPrinter.current=false; setView("equipment"); setOpen(printer); }
+  }, [data,rows]);
   // Ссылка на рабочее место ВАЦ (`&tab=vna`, в т. ч. старая из ОТК): карточка Planar, которым оно управляет.
   useEffect(() => {
     if (!wantsBench.current || !data || benchNumber === null) return;
