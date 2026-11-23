@@ -5,7 +5,7 @@ import { PageWindow } from "./PageWindow";
 import { useCurrentUserId } from "./rights";
 import type { ArinstTrace } from "./vnaBenchApi";
 
-/** Sample coordinates deliberately avoid claiming a measured frequency grid. */
+/** Native receipts carry the exact requested grid; legacy receipts retain sample coordinates. */
 export function ArinstPartialChart({ trace }: { trace: ArinstTrace }) {
   const channels = trace.acquisition.measured_channels.filter((channel) => trace.acquisition.data[channel]?.length);
   const curves = channels.map((channel) => ({ channel, values: trace.acquisition.data[channel]!.map(([re, im]) => {
@@ -15,13 +15,19 @@ export function ArinstPartialChart({ trace }: { trace: ArinstTrace }) {
   const values = curves.flatMap((curve) => curve.values.filter((v): v is number => v !== null));
   const low = Math.floor(Math.min(-1, ...values) / 10) * 10;
   const high = Math.ceil(Math.max(0, ...values) / 10) * 10;
-  const x = (i: number, count: number) => 64 + i / Math.max(1, count - 1) * 672;
+  const frequencies = trace.acquisition.frequencies_hz;
+  const confirmed = trace.acquisition.grid_confirmed && frequencies && frequencies.length === trace.acquisition.points && frequencies.length >= 2
+    && frequencies.every((frequency, i) => Number.isSafeInteger(frequency) && frequency > 0 && (i === 0 || frequency > frequencies[i - 1]))
+    && curves.every((curve) => curve.values.length === frequencies.length);
+  const x = (i: number, count: number) => 64 + (confirmed
+    ? (frequencies[i] - frequencies[0]) / (frequencies[frequencies.length - 1] - frequencies[0])
+    : i / Math.max(1, count - 1)) * 672;
   const y = (value: number) => 24 + (high - value) / (high - low) * 172;
   return <section aria-label="Частичные трассы S11/S21">
     <h3>Частичные трассы S11 / S21</h3>
-    <p className="warning-inline">Частотная сетка не подтверждена · исходная коррекция неизвестна. Диагностический замер, без оценки годности.</p>
+    <p className="warning-inline">{confirmed ? "Частотная сетка подтверждена" : "Частотная сетка не подтверждена"} · {trace.acquisition.correction_origin === "raw" ? "без коррекции" : "исходная коррекция неизвестна"}. Диагностический замер, без оценки годности.</p>
     <p>Ориентация: {trace.acquisition.orientation === "reverse" ? "обратная" : "прямая"} · {formatNumber(trace.acquisition.points)} точек · {channels.join(" / ")}</p>
-    {!values.length ? <p className="empty">Нет конечных значений для графика.</p> : <svg viewBox="0 0 800 244" role="img" aria-label="Модуль S11 и S21, дБ, по номеру отсчёта" style={{ width: "100%", maxHeight: 260, color: "var(--foreground)", fontVariantNumeric: "tabular-nums" }}>
+    {!values.length ? <p className="empty">Нет конечных значений для графика.</p> : <svg viewBox="0 0 800 244" role="img" aria-label={`Модуль S11 и S21, дБ, ${confirmed ? "по частоте, МГц" : "по номеру отсчёта"}`} style={{ width: "100%", maxHeight: 260, color: "var(--foreground)", fontVariantNumeric: "tabular-nums" }}>
       {[low, (low + high) / 2, high].map((value) => <g key={value}>
         <line x1="64" x2="736" y1={y(value)} y2={y(value)} stroke="var(--border)" />
         <text x="54" y={y(value) + 4} textAnchor="end" fill="currentColor" fontSize="12">{formatNumber(value)} дБ</text>
@@ -29,9 +35,9 @@ export function ArinstPartialChart({ trace }: { trace: ArinstTrace }) {
       {curves.map(({ channel, values: samples }) => <path key={channel} fill="none" stroke={channel === "S11" ? "var(--foreground)" : "var(--primary)"}
         strokeWidth="2" strokeDasharray={channel === "S21" ? "6 3" : undefined}
         d={samples.map((value, i) => value === null ? "" : `${i === 0 || samples[i - 1] === null ? "M" : "L"}${x(i, samples.length)},${y(value)}`).join(" ")} />)}
-      <text x="64" y="218" fill="currentColor" fontSize="12">1</text>
-      <text x="736" y="218" textAnchor="end" fill="currentColor" fontSize="12">{formatNumber(trace.acquisition.points)}</text>
-      <text x="400" y="239" textAnchor="middle" fill="currentColor" fontSize="12">Номер отсчёта · S11 — сплошная, S21 — пунктир</text>
+      <text x="64" y="218" fill="currentColor" fontSize="12">{confirmed ? formatNumber(frequencies[0] / 1e6, { digits: 6 }) : "1"}</text>
+      <text x="736" y="218" textAnchor="end" fill="currentColor" fontSize="12">{formatNumber(confirmed ? frequencies[frequencies.length - 1] / 1e6 : trace.acquisition.points, { digits: 6 })}</text>
+      <text x="400" y="239" textAnchor="middle" fill="currentColor" fontSize="12">{confirmed ? "Частота, МГц" : "Номер отсчёта"} · S11 — сплошная, S21 — пунктир</text>
     </svg>}
   </section>;
 }

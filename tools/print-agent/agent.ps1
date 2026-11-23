@@ -40,7 +40,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.13.0'
+$script:AgentVersion = '2.13.1'
 $script:VnaIdnNextProbe = [datetime]::MinValue
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
@@ -1364,7 +1364,7 @@ function Test-ArinstPresent {
     try { return @(Find-ArinstTraces).Count -gt 0 } catch { return $false }
 }
 
-# Arinst SCPI protocol 3. Kept in the one-script release package; no external module is loaded.
+# ArinstVL native binary protocol 3. Kept in the one-script release package; no external module is loaded.
 function Get-ArinstUsbCandidates {
     return @(Get-CimInstance -ClassName Win32_PnPEntity -Filter "PNPClass = 'Ports'" -OperationTimeoutSec 5 |
         Where-Object { $_.PNPDeviceID -match '^USB\\VID_0483&PID_5740(?:[&\\]|$)' -and
@@ -1446,47 +1446,116 @@ function Add-ArinstCheckpointReference {
             file = [IO.Path]::GetFileName($path); sha256 = $checkpoint.sha256; parser_status = 'incomplete' } -Force
     }
 }
+function Get-ArinstHeaderChecksum {
+    param([int]$Command, [int]$Sequence, [int]$Device, [int]$Argument, [int]$Length)
+    [long]$sum = [long]$Command + $Sequence + $Device + $Argument + $Length
+    return [uint16](65535 - ((($sum -shr 16) + ($sum -band 65535)) -band 65535))
+}
+function Get-ArinstCrc32 {
+    param([byte[]]$Bytes, [int]$Offset = 0, [int]$Count = -1)
+    if ($Count -lt 0) { $Count = $Bytes.Length - $Offset }
+    if (-not $script:ArinstCrcTable) {
+        $script:ArinstCrcTable = New-Object 'uint32[]' 256
+        for ($i = 0; $i -lt 256; $i++) {
+            [long]$word = $i
+            for ($bit = 0; $bit -lt 8; $bit++) {
+                if ($word -band 1) { $word = ($word -shr 1) -bxor 3988292384 } else { $word = $word -shr 1 }
+            }
+            $script:ArinstCrcTable[$i] = [uint32]$word
+        }
+    }
+    [long]$crc = 4294967295
+    for ($i = $Offset; $i -lt $Offset + $Count; $i++) {
+        $crc = ($crc -shr 8) -bxor [long]$script:ArinstCrcTable[($crc -bxor $Bytes[$i]) -band 255]
+    }
+    return [uint32]($crc -bxor 4294967295)
+}
+function New-ArinstFrame {
+    param([int]$Command, [byte[]]$Payload = @(), [int]$Sequence = 0, [int]$Device = 0, [int]$Argument = 0)
+    # The only transmit builder has no bypass for flash, bootloader or debug commands.
+    if ($Command -notin @(0xD008,0xD001,0xD002,0xD003,0xDA00,0xFCA0,0xFCA1)) {
+        throw 'Arinst: команда отсутствует в разрешённом протоколе'
+    }
+    foreach ($word in @($Sequence,$Device,$Argument)) {
+        if ($word -lt 0 -or $word -gt 65535) { throw 'Arinst: поле заголовка вне допустимых границ' }
+    }
+    if ($Payload.Length -gt 65535) { throw 'Arinst: пакет превышает допустимый размер' }
+    $frame = New-Object byte[] (17 + $Payload.Length); $frame[0] = 170
+    $words = @($Command,$Sequence,$Device,$Argument,$Payload.Length,
+        (Get-ArinstHeaderChecksum $Command $Sequence $Device $Argument $Payload.Length))
+    for ($i = 0; $i -lt 6; $i++) { [BitConverter]::GetBytes([uint16]$words[$i]).CopyTo($frame, 1 + 2 * $i) }
+    $Payload.CopyTo($frame, 13)
+    [BitConverter]::GetBytes((Get-ArinstCrc32 $frame 1 (12 + $Payload.Length))).CopyTo($frame, 13 + $Payload.Length)
+    return ,$frame
+}
+function ConvertFrom-ArinstFrames {
+    param([byte[]]$Buffer)
+    $frames = New-Object 'System.Collections.Generic.List[object]'
+    $offset = 0; $badHeader = 0; $badCrc = 0
+    while ($offset -lt $Buffer.Length) {
+        if ($Buffer[$offset] -ne 170) { $offset++; continue }
+        if ($Buffer.Length - $offset -lt 13) { break }
+        $words = @(for ($i = 0; $i -lt 6; $i++) { [int][BitConverter]::ToUInt16($Buffer, $offset + 1 + 2 * $i) })
+        [long]$sum = 0; foreach ($word in $words) { $sum += $word }
+        if (((($sum -shr 16) + ($sum -band 65535)) -band 65535) -ne 65535) {
+            $badHeader++; $offset++; continue
+        }
+        $length = $words[4]; $end = $offset + 17 + $length
+        if ($end -gt $Buffer.Length) { break }
+        if ([BitConverter]::ToUInt32($Buffer, $offset + 13 + $length) -ne (Get-ArinstCrc32 $Buffer ($offset + 1) (12 + $length))) {
+            $badCrc++; $offset++; continue
+        }
+        $payload = New-Object byte[] $length
+        if ($length) { [Array]::Copy($Buffer, $offset + 13, $payload, 0, $length) }
+        $frames.Add(@{ command = $words[0]; sequence = $words[1]; device = $words[2]; argument = $words[3]; payload = $payload })
+        $offset = $end
+    }
+    $rest = New-Object byte[] ($Buffer.Length - $offset)
+    if ($rest.Length) { [Array]::Copy($Buffer, $offset, $rest, 0, $rest.Length) }
+    return @{ frames = @($frames.ToArray()); rest = $rest; rejected_headers = $badHeader; rejected_crc = $badCrc }
+}
 function Invoke-ArinstWire {
-    param($Connection, [string]$Command, [int]$TimeoutMs = 2000)
-    $queries = @('*IDN?', 'SYST:ACT?', '*STB?', 'SYST:VERS?', 'STAT:OPER?',
-        'SENS:FREQ:STAR?', 'SENS:FREQ:STOP?', 'SENS:SWE:POIN?', 'SENS:BAND?',
-        'CALC1:FORM?', 'CALC2:FORM?', '*OPC?', 'CALC1:DATA? FDATA', 'CALC2:DATA? FDATA')
-    $setter = $Command -cmatch '^(?:SENS:FREQ:(?:STAR|STOP) [0-9]+(?:\.[0-9]+)?|SENS:SWE:POIN [0-9]+|SENS:BAND (?:20|50|100|250|500|1000)|CALC[12]:FORM COMP|INIT)$'
-    if ($Command -cnotin $queries -and -not $setter) { throw 'Arinst: команда отсутствует в разрешённом протоколе' }
-    if ($setter -and -not $Connection.settings_verified) { throw 'Arinst: изменение настроек не подтверждено при вводе в эксплуатацию' }
+    param($Connection, [int]$Command, [byte[]]$Payload = @(), [int]$Argument = 0, [int]$TimeoutMs = 15000)
     if ($Connection.failed -or $Connection.timer.ElapsedMilliseconds -gt 90000) { throw 'Arinst: обмен прерван; повтор команды запрещён' }
     $port = $Connection.port
     if ($port.BytesToRead -gt 0) { $Connection.failed = $true; throw 'Arinst: неожиданные байты перед командой; обмен остановлен' }
-    $tx = [Text.Encoding]::ASCII.GetBytes($Command + "`n")
+    $sequence = [int]$Connection.sequence
+    $tx = New-ArinstFrame $Command $Payload $sequence $Connection.device $Argument
+    $Connection.sequence = ($sequence + 2) -band 65535
     $record = @{ tx_base64 = [Convert]::ToBase64String($tx); rx_base64 = ''; complete = $false }
     $Connection.wire.Add($record)
-    $bytes = New-Object 'System.Collections.Generic.List[byte]'
+    $bytes = New-Object 'System.Collections.Generic.List[byte]'; [byte[]]$pending = @()
     try {
-        # Persist before the native write so process termination cannot erase the attempted command.
+        # Flush the attempted frame before entering native write. Unknown outcomes are never replayed.
         Write-ArinstCheckpoint $Connection
-        if ($setter) { $Connection.mutated = $true }
+        if ($Command -eq 0xDA00) { $Connection.scan_attempted = $true }
         $port.Write($tx, 0, $tx.Length)
-        if ($setter) { $record.complete = $true; return }
         $timer = [Diagnostics.Stopwatch]::StartNew()
         while ($timer.ElapsedMilliseconds -lt $TimeoutMs -and $Connection.timer.ElapsedMilliseconds -lt 90000) {
-            try { $value = $port.ReadByte() } catch {
+            $buffer = New-Object byte[] ([Math]::Max(1, [Math]::Min(4096, $port.BytesToRead)))
+            try { $count = $port.Read($buffer, 0, $buffer.Length) } catch {
                 $cause = $_.Exception
                 while ($cause.InnerException) { $cause = $cause.InnerException }
                 if ($cause -is [TimeoutException]) { continue }
                 throw
             }
-            if ($value -lt 0) { throw 'Arinst: поток COM закрыт' }
-            $bytes.Add([byte]$value)
-            if ($bytes.Count % 1024 -eq 0) {
-                $record.rx_base64 = [Convert]::ToBase64String($bytes.ToArray())
-                Write-ArinstCheckpoint $Connection
-            }
-            if ($bytes.Count -gt 65536) { throw 'Arinst: ответ превышает допустимый размер' }
-            if ($value -eq 10) {
+            if ($count -le 0) { throw 'Arinst: поток COM закрыт' }
+            for ($i = 0; $i -lt $count; $i++) { $bytes.Add($buffer[$i]) }
+            $record.rx_base64 = [Convert]::ToBase64String($bytes.ToArray())
+            Write-ArinstCheckpoint $Connection
+            if ($bytes.Count -gt 1MB) { throw 'Arinst: ответ превышает допустимый размер' }
+            $pending = [byte[]]($pending + $buffer[0..($count - 1)])
+            $parsed = ConvertFrom-ArinstFrames $pending; $pending = $parsed.rest
+            if ($parsed.frames.Count) {
+                if ($parsed.frames.Count -ne 1 -or $pending.Length) { throw 'Arinst: лишние данные после ответа' }
+                $reply = $parsed.frames[0]
+                if ($reply.command -ne $Command -or $reply.sequence -ne (($sequence + 1) -band 65535)) {
+                    throw 'Arinst: команда или номер ответа не совпали с запросом'
+                }
+                if ($reply.device -ne 0x17) { throw 'Arinst: ответ не от VNA-DL в рабочем режиме' }
                 $record.complete = $true
-                return [Text.Encoding]::ASCII.GetString($bytes.ToArray()).TrimEnd([char[]]@(13,10))
+                return $reply
             }
-            if (($value -lt 32 -and $value -ne 13) -or $value -gt 126) { throw 'Arinst: получен нетекстовый ответ вместо SCPI' }
         }
         throw 'Arinst: время ожидания ответа истекло; результат операции неизвестен'
     } catch { $Connection.failed = $true; throw }
@@ -1495,32 +1564,43 @@ function Invoke-ArinstWire {
         Write-ArinstCheckpoint $Connection
     }
 }
-function ConvertFrom-ArinstIdn {
-    param([string]$Text)
-    if ($Text -cnotmatch '^Arinst,VNA-DL,([0-9]+-[0-9]+-[0-9]+),([0-9]+\.[0-9]+\.[0-9]+)$') {
-        throw 'Arinst: ответ идентификации не соответствует VNA-DL'
-    }
-    $uid = $Matches[1]; $firmware = $Matches[2]
-    Assert-ArinstSerial ('arinst:' + $uid)
-    if ([version]$firmware -lt [version]'2.0.0') { throw 'Arinst: прошивка не поддерживает документированный SCPI' }
-    return @{ serial = 'arinst:' + $uid; hardware_uid = $uid; firmware = $firmware; model = 'VNA-DL' }
+function ConvertFrom-ArinstIdentityWords {
+    param([byte[]]$Payload, [string]$Separator = '-')
+    if ($Payload.Length -ne 12) { throw 'Arinst: неверная длина ответа идентификации' }
+    return ((0,4,8 | ForEach-Object { [BitConverter]::ToUInt32($Payload, $_).ToString([Globalization.CultureInfo]::InvariantCulture) }) -join $Separator)
 }
-function ConvertFrom-ArinstLicense {
-    param([string]$Text)
-    if ($Text -cnotmatch '^(TRIAL,([0-9]{1,3})|LOCKED,0|ACTIVATED,0)$') { throw 'Arinst: неизвестный ответ о лицензии' }
-    $parts = $Text.Split(','); $seconds = [int]$parts[1]
-    if ($seconds -gt 600) { throw 'Arinst: неверный остаток пробного времени' }
-    $state = $parts[0]
-    if ($state -ceq 'TRIAL' -and $seconds -eq 0) { $state = 'LOCKED' }
-    $message = if ($state -ceq 'TRIAL') { 'Пробный режим API — осталось ' + [Math]::Ceiling($seconds / 60.0) + ' мин' }
-        elseif ($state -ceq 'ACTIVATED') { 'Лицензия активна' }
-        else { 'Время пробного режима вышло — переподключите прибор вручную или активируйте лицензию' }
-    return @{ license_state = $state; trial_remaining_seconds = $(if ($state -ceq 'TRIAL') { $seconds } else { $null }); message = $message }
+function ConvertFrom-ArinstOptions {
+    param([byte[]]$Payload)
+    if (-not $Payload.Length -or @($Payload | Where-Object { $_ -lt 32 -or $_ -gt 126 }).Count) { throw 'Arinst: неверный ответ о возможностях прибора' }
+    $text = [Text.Encoding]::ASCII.GetString($Payload); $fields = @{}
+    foreach ($part in $text.Split(';')) {
+        $pair = $part.Split('=')
+        if ($pair.Count -ne 2 -or -not $pair[0] -or $fields.ContainsKey($pair[0])) { throw 'Arinst: неверный список возможностей прибора' }
+        $fields[$pair[0]] = $pair[1]
+    }
+    if (-not $fields.ContainsKey('SR') -or -not $fields.ContainsKey('BW')) { throw 'Arinst: прибор не сообщил диапазон или полосу ПЧ' }
+    $range = @($fields.SR.Split(',') | ForEach-Object {
+        if ($_ -cnotmatch '^[0-9]+$') { throw 'Arinst: неверный диапазон прибора' }
+        [long]::Parse($_, [Globalization.CultureInfo]::InvariantCulture)
+    })
+    if ($range.Count -ne 2 -or $range[0] -lt 1 -or $range[1] -le $range[0]) { throw 'Arinst: неверный диапазон прибора' }
+    $bandwidths = @($fields.BW.Split(',') | ForEach-Object {
+        if ($_ -cnotmatch '^[0-9]+(?:\.[0-9]+)?$') { throw 'Arinst: неверная полоса ПЧ прибора' }
+        $hz = [decimal]::Parse($_, [Globalization.CultureInfo]::InvariantCulture) * 1000
+        if ($hz -lt 1 -or $hz -gt [int]::MaxValue -or $hz -ne [decimal]::Floor($hz)) { throw 'Arinst: неверная полоса ПЧ прибора' }
+        [int]$hz
+    })
+    if ($bandwidths.Count -gt 256 -or @($bandwidths | Select-Object -Unique).Count -ne $bandwidths.Count) { throw 'Arinst: неверный список полос ПЧ' }
+    $slice = 255
+    if ($fields.ContainsKey('MAX_SLICE_POINTS')) {
+        if ($fields.MAX_SLICE_POINTS -cnotmatch '^[0-9]+$' -or [decimal]$fields.MAX_SLICE_POINTS -lt 1) { throw 'Arinst: неверный размер пакета точек' }
+        $slice = [int][Math]::Min([decimal]255, [decimal]$fields.MAX_SLICE_POINTS)
+    }
+    return @{ raw = $text; scan_range_hz = $range; bandwidths_hz = $bandwidths; max_slice_points = $slice }
 }
 function Open-ArinstConnection {
     param([string]$Serial, [string]$EvidencePath)
     $config = Get-ArinstDeviceConfig $Serial
-    # A failed reconnect must not leave yesterday's successful observation looking current.
     $oldPath = Get-ArinstObservationPath $Serial
     if ([IO.File]::Exists($oldPath)) { Remove-Item -LiteralPath $oldPath -Force }
     if (@(Get-Process | Where-Object { $_.ProcessName -match '(?i)arinst' }).Count) {
@@ -1530,18 +1610,25 @@ function Open-ArinstConnection {
     if ($candidates.Count -ne 1) { throw 'Arinst: подтверждённый USB-прибор не найден; проверьте подключение' }
     $port = New-ArinstSerialPort $candidates[0].port
     if (-not $EvidencePath) { $EvidencePath = Join-Path (Get-VnaControlRoot) ('arinst-identify-' + $Serial.Substring(7) + '.json') }
-    $connection = @{ port = $port; timer = [Diagnostics.Stopwatch]::StartNew(); failed = $false; mutated = $false
-        settings_verified = ($config.settings_verified -is [bool] -and $config.settings_verified)
-        wire = (New-Object 'System.Collections.Generic.List[object]'); drain = $null; usb_path = $config.usb_path
-        expected_serial = $Serial; evidence_path = $EvidencePath }
+    $connection = @{ port = $port; timer = [Diagnostics.Stopwatch]::StartNew(); failed = $false; scan_attempted = $false
+        sequence = 0; device = 0; wire = (New-Object 'System.Collections.Generic.List[object]'); drain = $null
+        usb_path = $config.usb_path; expected_serial = $Serial; evidence_path = $EvidencePath }
     try {
         Write-ArinstCheckpoint $connection
         try { $port.Open() } catch { throw 'Порт занят другим приложением или недоступен — проверьте подключение и права пользователя' }
         $connection.drain = Wait-ArinstSilence $port
-        $identity = ConvertFrom-ArinstIdn (Invoke-ArinstWire $connection '*IDN?')
-        if ($identity.serial -cne $Serial) { throw 'Arinst: аппаратный UID не совпадает с выбранным СИ; обмен остановлен' }
-        $license = ConvertFrom-ArinstLicense (Invoke-ArinstWire $connection 'SYST:ACT?')
-        $connection.identity = $identity; $connection.license = $license
+        Write-ArinstCheckpoint $connection
+        $id = Invoke-ArinstWire $connection 0xD008
+        $uid = ConvertFrom-ArinstIdentityWords $id.payload
+        if (('arinst:' + $uid) -cne $Serial) { throw 'Arinst: аппаратный UID не совпадает с выбранным СИ; обмен остановлен' }
+        $type = Invoke-ArinstWire $connection 0xD001
+        $connection.device = $type.device
+        $version = Invoke-ArinstWire $connection 0xD002
+        $firmware = ConvertFrom-ArinstIdentityWords $version.payload '.'
+        $options = Invoke-ArinstWire $connection 0xD003
+        $connection.options = ConvertFrom-ArinstOptions $options.payload
+        $connection.identity = @{ serial = $Serial; hardware_uid = $uid; firmware = $firmware; model = 'VNA-DL' }
+        $connection.license = @{ license_state = 'not_required'; trial_remaining_seconds = $null; message = 'Связь: протокол ArinstVL' }
         $connection.observed_at = [DateTime]::UtcNow.ToString('o')
         Save-ArinstObservation $connection
         return $connection
@@ -1549,12 +1636,11 @@ function Open-ArinstConnection {
 }
 function Save-ArinstObservation {
     param($Connection)
-    $identity = $Connection.identity; $license = $Connection.license
+    $identity = $Connection.identity
     Write-VnaJson (Get-ArinstObservationPath $identity.serial) @{
         source = 'arinst'; serial = $identity.serial; hardware_uid = $identity.hardware_uid; firmware = $identity.firmware
         model = $identity.model; observed_at = $Connection.observed_at; usb_path = $Connection.usb_path
-        license_state = $license.license_state; trial_remaining_seconds = $license.trial_remaining_seconds
-        settings_verified = $Connection.settings_verified
+        license_state = 'not_required'; trial_remaining_seconds = $null; options = $Connection.options
     }
 }
 function Get-ArinstControlInventory {
@@ -1564,34 +1650,23 @@ function Get-ArinstControlInventory {
         try {
             $observation = Read-VnaJson (Get-ArinstObservationPath $config.serial)
             if (-not $observation -or $observation.usb_path -ine $config.usb_path -or
+                $observation.license_state -cne 'not_required' -or
                 @($Candidates | Where-Object { $_.usb_path -ieq $config.usb_path }).Count -ne 1) { continue }
             $age = ([DateTime]::UtcNow - [DateTime]::Parse($observation.observed_at).ToUniversalTime()).TotalSeconds
             if ($age -lt -5 -or $age -gt 180) { continue }
-            $state = [string]$observation.license_state
-            $seconds = if ($state -ceq 'TRIAL') { [Math]::Max(0, [int]$observation.trial_remaining_seconds) } else { $null }
             $busy = @(Get-Process -Name ArinstVL -ErrorAction SilentlyContinue).Count -gt 0
-            $ready = -not $busy -and ($state -ceq 'ACTIVATED' -or ($state -ceq 'TRIAL' -and $seconds -gt $age))
-            $ops = @('connect','read_profile','close')
-            if ($config.settings_verified -eq $true) { $ops += @('apply_profile','measure_standard','capture') }
-            $result += @{ source = 'arinst'; serial = $observation.serial; version = 3; methods = @(); ops = $ops
+            $result += @{ source = 'arinst'; serial = $observation.serial; version = 3; methods = @()
+                ops = @('connect','read_profile','apply_profile','measure_standard','capture','close')
                 model = 'VNA-DL'; firmware = $observation.firmware; hardware_uid = $observation.hardware_uid
-                identity_verified = $true; license_state = $state; trial_remaining_seconds = $seconds
-                control_ready = $ready; reason = $(if ($busy) { 'Закройте ArinstVL, затем подключите прибор через ERP' } else { '' })
+                identity_verified = $true; license_state = 'not_required'; trial_remaining_seconds = $null
+                control_ready = (-not $busy); reason = $(if ($busy) { 'Закройте ArinstVL, затем подключите прибор через ERP' } else { '' })
                 observed_at = $observation.observed_at }
         } catch { Write-Log ('Arinst: ошибка сохранённой идентификации: ' + $_.Exception.Message) }
     }
     return $result
 }
-function ConvertFrom-ArinstNumber {
-    param([string]$Text)
-    $value = 0.0
-    if ($Text -cnotmatch '^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[Ee][+-]?[0-9]+)?$' -or
-        -not [double]::TryParse($Text, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$value) -or
-        [double]::IsNaN($value) -or [double]::IsInfinity($value)) { throw 'Arinst: ответ содержит недопустимое число' }
-    return $value
-}
 function Assert-ArinstProfile {
-    param($Profile)
+    param($Profile, $Options = $null)
     if ($null -eq $Profile) { throw 'Arinst: профиль не задан' }
     $names = if ($Profile -is [Collections.IDictionary]) { @($Profile.Keys) } else { @($Profile.PSObject.Properties.Name) }
     if ($names.Count -ne 4 -or @($names | Where-Object { $_ -cnotin @('start_hz','stop_hz','points','if_bandwidth_hz') }).Count) {
@@ -1601,32 +1676,93 @@ function Assert-ArinstProfile {
         $value = $Profile.$field
         if ($null -eq $value -or $value -is [bool] -or $value -isnot [ValueType] -or
             [double]::IsNaN([double]$value) -or [double]::IsInfinity([double]$value) -or
-            [double]$value -lt 1000000 -or [double]$value -gt 8800000000) { throw 'Arinst: частота вне диапазона 1–8800 МГц' }
+            [double]$value -lt 1000000 -or [double]$value -gt 9000000000 -or [double]$value -ne [Math]::Floor([double]$value)) {
+            throw 'Arinst: частота должна быть целым числом в диапазоне 1–9000 МГц'
+        }
     }
-    if ($Profile.start_hz -ge $Profile.stop_hz) { throw 'Arinst: начало диапазона должно быть меньше конца' }
-    [void](ConvertTo-VnaInteger $Profile.points 2 1000 'точки Arinst')
-    [void](ConvertTo-VnaInteger $Profile.if_bandwidth_hz 20 1000 'полоса ПЧ Arinst')
-    if ($Profile.if_bandwidth_hz -notin @(20,50,100,250,500,1000)) { throw 'Arinst: неподдерживаемая полоса ПЧ' }
+    $points = ConvertTo-VnaInteger $Profile.points 2 1000 'точки Arinst'
+    [void](ConvertTo-VnaInteger $Profile.if_bandwidth_hz 1 ([int]::MaxValue) 'полоса ПЧ Arinst')
+    if ($Profile.stop_hz - $Profile.start_hz -lt $points - 1) { throw 'Arinst: диапазон слишком узок для возрастающей сетки' }
+    if ($Options -and ($Profile.start_hz -lt $Options.scan_range_hz[0] -or $Profile.stop_hz -gt $Options.scan_range_hz[1] -or
+        $Profile.if_bandwidth_hz -notin $Options.bandwidths_hz)) { throw 'Arinst: профиль не соответствует возможностям прибора' }
+}
+function Get-ArinstProfilePath {
+    param($Command)
+    return Join-Path (Get-VnaControlRoot) ('arinst-profile-' + ([guid]::Parse($Command.session_id)).ToString() + '.json')
 }
 function Read-ArinstProfile {
-    param($Connection)
-    $profile = @{ start_hz = (ConvertFrom-ArinstNumber (Invoke-ArinstWire $Connection 'SENS:FREQ:STAR?'))
-        stop_hz = (ConvertFrom-ArinstNumber (Invoke-ArinstWire $Connection 'SENS:FREQ:STOP?'))
-        points = (ConvertFrom-ArinstNumber (Invoke-ArinstWire $Connection 'SENS:SWE:POIN?'))
-        if_bandwidth_hz = (ConvertFrom-ArinstNumber (Invoke-ArinstWire $Connection 'SENS:BAND?')) }
-    Assert-ArinstProfile $profile
-    return $profile
+    param($Command, $Options)
+    $saved = Read-VnaJson (Get-ArinstProfilePath $Command)
+    if (-not $saved) { return $null }
+    if ($saved.serial -cne $Command.instrument_serial -or $saved.session_id -cne $Command.session_id) { throw 'Arinst: профиль принадлежит другой сессии или прибору' }
+    Assert-ArinstProfile $saved.profile $Options
+    return $saved.profile
 }
-function ConvertFrom-ArinstPairs {
-    param([string]$Text, [int]$Points)
-    if ($Points -lt 2 -or $Points -gt 1000) { throw 'Arinst: неверное число точек' }
-    $values = $Text.Split(',')
-    if ($values.Count -ne 2 * $Points) { throw 'Arinst: число комплексных значений не совпадает с профилем' }
-    $pairs = @()
-    for ($i = 0; $i -lt $values.Count; $i += 2) {
-        $pairs += ,@((ConvertFrom-ArinstNumber $values[$i].Trim()), (ConvertFrom-ArinstNumber $values[$i+1].Trim()))
+function Get-ArinstFrequencyGrid {
+    param($Profile)
+    Assert-ArinstProfile $Profile
+    # Decimal arithmetic preserves integer floor for non-divisible spans and both endpoints.
+    $grid = New-Object 'long[]' ([int]$Profile.points)
+    for ($i = 0; $i -lt $grid.Length; $i++) {
+        $grid[$i] = [long]$Profile.start_hz + [long][decimal]::Floor(([decimal]$i * ([decimal]$Profile.stop_hz - [decimal]$Profile.start_hz)) / ($grid.Length - 1))
     }
-    return ,$pairs
+    return ,$grid
+}
+function New-ArinstScanPayload {
+    param([long[]]$Frequencies, [int]$BandwidthIndex)
+    if ($Frequencies.Count -lt 1 -or $Frequencies.Count -gt 255 -or $BandwidthIndex -lt 0 -or $BandwidthIndex -gt 255) { throw 'Arinst: неверный пакет точек' }
+    $payload = New-Object byte[] (2 + 8 * $Frequencies.Count)
+    $payload[0] = [byte]$BandwidthIndex; $payload[1] = [byte]$Frequencies.Count
+    for ($i = 0; $i -lt $Frequencies.Count; $i++) {
+        if ($Frequencies[$i] -lt 1) { throw 'Arinst: частота должна быть положительной' }
+        [BitConverter]::GetBytes([uint64]$Frequencies[$i]).CopyTo($payload, 2 + 8 * $i)
+    }
+    return ,$payload
+}
+function ConvertFrom-ArinstScan {
+    param([byte[]]$Payload, [int]$Points, [int]$Channel = 0)
+    if ($Points -lt 1 -or $Points -gt 255 -or $Channel -notin @(0,1,2) -or $Payload.Length -lt 8) { throw 'Arinst: неверный ответ измерения' }
+    $n = [BitConverter]::ToSingle($Payload, 0); $aux = [BitConverter]::ToSingle($Payload, 4)
+    $stride = if ($Channel -eq 0) { 16 } else { 8 }; $expected = 8 + $Points * $stride
+    # Both real ch0 captures contain a final undocumented pair. Preserve it, never count it as a measured point.
+    $allowedLengths = @($expected)
+    if ($Channel -eq 0) { $allowedLengths += $expected + 8 }
+    if ($n -ne $Points -or $Payload.Length -notin $allowedLengths) { throw 'Arinst: число комплексных значений не совпадает с запросом' }
+    $channels = @(if ($Channel -eq 0) { 'S11'; 'S21' } elseif ($Channel -eq 1) { 'S11' } else { 'S21' })
+    $data = @{}; foreach ($name in $channels) { $data[$name] = New-Object 'System.Collections.Generic.List[object]' }
+    for ($i = 0; $i -lt $Points; $i++) {
+        for ($c = 0; $c -lt $channels.Count; $c++) {
+            $re = [double][BitConverter]::ToSingle($Payload, 8 + $stride * $i + $c * 8)
+            $im = [double][BitConverter]::ToSingle($Payload, 12 + $stride * $i + $c * 8)
+            if ([double]::IsNaN($re) -or [double]::IsInfinity($re) -or [double]::IsNaN($im) -or [double]::IsInfinity($im)) { throw 'Arinst: ответ содержит недопустимое число' }
+            $data[$channels[$c]].Add(@($re,$im))
+        }
+    }
+    if ([single]::IsNaN($aux) -or [single]::IsInfinity($aux)) { throw 'Arinst: ответ содержит недопустимое вспомогательное число' }
+    foreach ($name in $channels) { $data[$name] = @($data[$name].ToArray()) }
+    $trailer = if ($Payload.Length -gt $expected) { [Convert]::ToBase64String($Payload, $expected, 8) } else { '' }
+    return @{ data = $data; auxiliary = [double]$aux; trailer_base64 = $trailer }
+}
+function Invoke-ArinstScan {
+    param($Connection, $Profile)
+    Assert-ArinstProfile $Profile $Connection.options
+    $grid = Get-ArinstFrequencyGrid $Profile
+    $index = -1
+    for ($i = 0; $i -lt $Connection.options.bandwidths_hz.Count; $i++) {
+        if ($Connection.options.bandwidths_hz[$i] -eq $Profile.if_bandwidth_hz) { $index = $i; break }
+    }
+    $s11 = New-Object 'System.Collections.Generic.List[object]'; $s21 = New-Object 'System.Collections.Generic.List[object]'
+    $sliceSize = [int]$Connection.options.max_slice_points
+    for ($start = 0; $start -lt $grid.Length; $start += $sliceSize) {
+        $last = [Math]::Min($grid.Length - 1, $start + $sliceSize - 1)
+        [long[]]$slice = $grid[$start..$last]
+        $reply = Invoke-ArinstWire $Connection 0xDA00 (New-ArinstScanPayload $slice $index) 0
+        if ($reply.argument -ne 0) { throw 'Arinst: канал ответа не совпал с запросом' }
+        $scan = ConvertFrom-ArinstScan $reply.payload $slice.Length 0
+        foreach ($pair in $scan.data.S11) { $s11.Add($pair) }; foreach ($pair in $scan.data.S21) { $s21.Add($pair) }
+        # Auxiliary float and undocumented trailing bytes remain in the full raw RX transcript.
+    }
+    return @{ frequencies_hz = $grid; data = @{ S11 = @($s11.ToArray()); S21 = @($s21.ToArray()) } }
 }
 function Invoke-ArinstCommand {
     param($Command, $Status)
@@ -1646,12 +1782,8 @@ function Invoke-ArinstCommand {
     }
     if (@($argNames | Where-Object { $_ -cnotin $allowed }).Count) { throw 'Arinst: неизвестные аргументы операции' }
     if ($Command.op -cin @('apply_profile','capture','measure_standard')) { Assert-ArinstProfile $argsValue.profile }
-    if ($Command.op -cin @('capture','measure_standard') -and $argsValue.orientation -cnotin @('forward','reverse')) {
-        throw 'Arinst: подтвердите направление подключения кабеля'
-    }
-    if ($Command.op -ceq 'measure_standard' -and $argsValue.standard -cnotin @('OPEN','SHORT','LOAD','THRU')) {
-        throw 'Arinst: неподдерживаемая калибровочная мера'
-    }
+    if ($Command.op -cin @('capture','measure_standard') -and $argsValue.orientation -cnotin @('forward','reverse')) { throw 'Arinst: подтвердите направление подключения кабеля' }
+    if ($Command.op -ceq 'measure_standard' -and $argsValue.standard -cnotin @('OPEN','SHORT','LOAD','THRU')) { throw 'Arinst: неподдерживаемая калибровочная мера' }
     if ($Command.op -cin @('apply_profile','capture','measure_standard') -and (Test-Path -LiteralPath (Get-VnaQuarantinePath $Command))) {
         throw 'Arinst: исход предыдущей операции неизвестен; требуется проверка прибора перед новым измерением'
     }
@@ -1659,55 +1791,37 @@ function Invoke-ArinstCommand {
     try {
         $evidencePath = Join-Path (Get-VnaControlRoot) ('arinst-wire-' + ([guid]::Parse($Command.command_id)).ToString() + '.json')
         $connection = Open-ArinstConnection $Command.instrument_serial -EvidencePath $evidencePath
-        if ($connection.license.license_state -ceq 'LOCKED' -and $Command.op -cnotin @('connect','close')) { throw $connection.license.message }
         $result = @{ source = 'arinst'; serial = $connection.identity.serial; hardware_uid = $connection.identity.hardware_uid
-            firmware = $connection.identity.firmware; license = $connection.license; op = $Command.op
-            started_at = $started; parser_status = 'complete'; correction_origin = 'unknown' }
+            model = $connection.identity.model; firmware = $connection.identity.firmware; options = $connection.options
+            license = $connection.license; op = $Command.op; started_at = $started; parser_status = 'complete'; correction_origin = 'raw' }
         if ($Command.op -ceq 'apply_profile') {
-            # Check the commissioning gate before any setters; no persistent store command exists.
-            if (-not $connection.settings_verified) { throw 'Arinst: изменение настроек не подтверждено при вводе в эксплуатацию' }
-            $current = Read-ArinstProfile $connection
-            $profile = $argsValue.profile
-            # Avoid an invalid intermediate start > stop when moving to a non-overlapping band.
-            $fields = if ($profile.start_hz -ge $current.stop_hz) { @('stop_hz','start_hz') } else { @('start_hz','stop_hz') }
-            $commands = @{ start_hz = 'SENS:FREQ:STAR'; stop_hz = 'SENS:FREQ:STOP'; points = 'SENS:SWE:POIN'; if_bandwidth_hz = 'SENS:BAND' }
-            foreach ($field in @($fields + @('points','if_bandwidth_hz'))) {
-                $text = ([double]$profile.$field).ToString('0.#########', [Globalization.CultureInfo]::InvariantCulture)
-                Invoke-ArinstWire $connection ($commands[$field] + ' ' + $text)
-            }
-            $result.profile = Read-ArinstProfile $connection
-            foreach ($field in $commands.Keys) { Assert-VnaEqual $result.profile.$field $profile.$field $field }
-        } elseif ($Command.op -ceq 'read_profile') { $result.profile = Read-ArinstProfile $connection }
+            Assert-ArinstProfile $argsValue.profile $connection.options
+            Write-VnaJson (Get-ArinstProfilePath $Command) @{ serial = $Command.instrument_serial; session_id = $Command.session_id; profile = $argsValue.profile }
+            $result.profile = Read-ArinstProfile $Command $connection.options
+        } elseif ($Command.op -ceq 'read_profile') { $result.profile = Read-ArinstProfile $Command $connection.options }
         elseif ($Command.op -cin @('capture','measure_standard')) {
-            if (-not $connection.settings_verified) { throw 'Arinst: измерение не подтверждено при вводе в эксплуатацию' }
-            $profile = Read-ArinstProfile $connection
-            foreach ($field in $profile.Keys) { Assert-VnaEqual $profile.$field $argsValue.profile.$field $field }
-            Invoke-ArinstWire $connection 'CALC1:FORM COMP'
-            Invoke-ArinstWire $connection 'CALC2:FORM COMP'
-            if ((Invoke-ArinstWire $connection 'CALC1:FORM?') -cne 'COMP' -or
-                (Invoke-ArinstWire $connection 'CALC2:FORM?') -cne 'COMP') { throw 'Arinst: комплексный формат не подтверждён' }
-            Invoke-ArinstWire $connection 'INIT'
-            if ((Invoke-ArinstWire $connection '*OPC?' 50000) -cne '1') { throw 'Arinst: завершение развёртки не подтверждено' }
-            $s11 = ConvertFrom-ArinstPairs (Invoke-ArinstWire $connection 'CALC1:DATA? FDATA' 15000) $profile.points
-            $s21 = ConvertFrom-ArinstPairs (Invoke-ArinstWire $connection 'CALC2:DATA? FDATA' 15000) $profile.points
-            $after = Read-ArinstProfile $connection
-            foreach ($field in $profile.Keys) { Assert-VnaEqual $after.$field $profile.$field $field }
-            $license = ConvertFrom-ArinstLicense (Invoke-ArinstWire $connection 'SYST:ACT?')
-            $connection.license = $license; $connection.observed_at = [DateTime]::UtcNow.ToString('o'); Save-ArinstObservation $connection
-            if ($license.license_state -ceq 'LOCKED') { throw $license.message }
-            $result.license = $license; $result.profile = $profile
-            $result.acquisition = @{ schema = 'arinst.partial.v1'; measured_channels = @('S11','S21')
-                data = @{ S11 = $s11; S21 = $s21 }; orientation = $argsValue.orientation
-                grid_confirmed = $false; frequencies_hz = $null; correction_origin = 'unknown'; points = [int]$profile.points }
+            $profile = Read-ArinstProfile $Command $connection.options
+            if (-not $profile) { throw 'Arinst: сначала примените профиль сессии' }
+            foreach ($field in @('start_hz','stop_hz','points','if_bandwidth_hz')) { Assert-VnaEqual $profile.$field $argsValue.profile.$field $field }
+            $scan = Invoke-ArinstScan $connection $profile
+            $connection.observed_at = [DateTime]::UtcNow.ToString('o'); Save-ArinstObservation $connection
+            $result.profile = $profile
+            $result.acquisition = @{ schema = 'arinst.partial.v1'; measured_channels = @('S11','S21'); data = $scan.data
+                orientation = $argsValue.orientation; grid_confirmed = $true; frequencies_hz = [long[]]$scan.frequencies_hz
+                correction_origin = 'raw'; points = [int]$profile.points }
             if ($Command.op -ceq 'measure_standard') { $result.standard = $argsValue.standard }
-        } elseif ($Command.op -ceq 'close') { $result.closed = $true; $result.rf_stopped = $null }
+        } elseif ($Command.op -ceq 'close') {
+            $result.closed = $true; $result.rf_stopped = $null
+            $profilePath = Get-ArinstProfilePath $Command
+            if ([IO.File]::Exists($profilePath)) { Remove-Item -LiteralPath $profilePath -Force }
+        }
         $result.finished_at = [DateTime]::UtcNow.ToString('o'); $result.duration_ms = $connection.timer.ElapsedMilliseconds
         $result.raw_evidence = @{ drain = $connection.drain; wire = @($connection.wire.ToArray()) }
         $result.raw_sha256 = Get-VnaDigest (ConvertTo-VnaCanonical $result.raw_evidence)
         return $result
     } catch {
         if ($connection) {
-            if ($connection.mutated) {
+            if ($connection.scan_attempted) {
                 Write-VnaJson (Get-VnaQuarantinePath $Command) @{ session_id = $Command.session_id
                     serial = $Command.instrument_serial; command_id = $Command.command_id; created_at = [DateTime]::UtcNow.ToString('o') }
             }

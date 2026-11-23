@@ -318,7 +318,7 @@ class VnaDeviceControl(BaseModel):
     firmware: str = Field(default="", max_length=80)
     hardware_uid: str = Field(default="", max_length=100)
     identity_verified: bool = False
-    license_state: Literal["unknown", "TRIAL", "LOCKED", "ACTIVATED"] = "unknown"
+    license_state: Literal["unknown", "not_required", "TRIAL", "LOCKED", "ACTIVATED"] = "unknown"
     trial_remaining_seconds: int | None = Field(default=None, ge=0, le=600, strict=True)
     control_ready: bool = False
     reason: str = Field(default="", max_length=500)
@@ -336,7 +336,7 @@ class VnaDeviceControl(BaseModel):
                 raise ValueError("Некорректные операции Arinst; калибровку выполняет сервер")
             if (self.license_state == "TRIAL") != (self.trial_remaining_seconds is not None):
                 raise ValueError("Остаток времени допустим только для пробной лицензии")
-            if self.control_ready and (self.license_state not in ("ACTIVATED", "TRIAL") or
+            if self.control_ready and (self.license_state not in ("not_required", "ACTIVATED", "TRIAL") or
                     (self.license_state == "TRIAL" and not self.trial_remaining_seconds)):
                 raise ValueError("Заблокированная лицензия не разрешает управление")
         else:

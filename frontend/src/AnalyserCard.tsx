@@ -11,7 +11,7 @@ import type { VnaBenchDevice } from "./vnaBenchApi";
    оборудовании и вся работа должна быть там»; «нужно делать связку и второго векторника»). Работа — по тому, что
    сообщает агент: Planar (S2VNA) — рабочее место ВАЦ целиком (`VnaBench`: калибровка АКМ, сеанс, проверки, экраны);
    Arinst — отдельный диагностический протокол; ArinstVL сохраняет Touchstone на резервной вкладке.
-   «Подключение» — последним и свёрнутым. */
+   «Подключение» — в строке состояния, подробности свёрнуты. */
 
 const sameNumber = (a: string, b: string) => a.replace(/\s+/g, "").toUpperCase() === b.replace(/\s+/g, "").toUpperCase();
 
@@ -23,7 +23,7 @@ export function drivesBench(row: MachineRow, benchNumber: string | null): boolea
 const toneClass = (tone: Tone | undefined) => (tone && tone !== "neutral" ? `tone-${tone}` : "");
 
 /** «Подключение»: паспорт прибора у агента — свёрнут внизу, строка-сводка видна всегда. Значения переносятся. */
-export function AnalyserConnection({ row, device }: { row: MachineRow; device?: VnaBenchDevice }) {
+export function AnalyserConnection({ row, device, embedded = false }: { row: MachineRow; device?: VnaBenchDevice; embedded?: boolean }) {
   if (device) {
     const online = device.vna_online ?? Boolean(device.serial);
     row = { ...row, pc: device.bound_pc ?? device.pc_name ?? "", ip: device.agent_ip ?? "",
@@ -38,13 +38,14 @@ export function AnalyserConnection({ row, device }: { row: MachineRow; device?: 
     ["Устройство", row.device], ["Артикул", row.article], ["ПК", row.pc], ["IP", row.ip], ["Агент", row.service],
     ["Версия агента", row.version], ["Последний сигнал", row.last_seen ? formatMoment(row.last_seen) : ""], ["Также на ПК", row.others]];
   const summary = [row.pc && `ПК ${row.pc}`, row.version && `агент ${row.version}`].filter(Boolean).join(" · ");
+  const content = <dl>{facts.map(([label, value, tone]) => <div key={label}>
+    <dt>{label}</dt><dd className={toneClass(tone)}>{value || EMPTY}</dd>
+  </div>)}</dl>;
+  if (embedded) return <div className="machine-facts analyser-connection">{content}</div>;
   return <details className="machine-facts analyser-connection">
     <summary><b>Подключение</b> <span className="machine-muted">· связь с агентом:</span> <span className={toneClass(row.link.tone)}>{row.link.text}</span>
       {summary && <span className="machine-muted"> · {summary}</span>}</summary>
-    <dl>{facts.map(([label, value, tone]) => <div key={label}>
-      <dt>{label}</dt>
-      <dd className={toneClass(tone)}>{value || EMPTY}</dd>
-    </div>)}</dl>
+    {content}
   </details>;
 }
 
@@ -170,7 +171,7 @@ function ArinstFileWork({ row, canQuality }: { row: MachineRow; canQuality: bool
             </tr>)}</tbody>
           </table></div>}
           <div className="analyser-command">
-            <span className="machine-muted">Сохранение в КБ/СИ — после ввода Arinst в эксплуатацию. Файл ArinstVL доступен для скачивания.</span>
+            <span className="machine-muted">Сохранение в КБ/СИ — после стендового сравнения Arinst. Файл ArinstVL доступен для скачивания.</span>
             <button type="button" className="secondary small" onClick={() => openSection("quality", { tab: "vswr" })}>Открыть замеры КСВН</button>
           </div>
         </section>}
@@ -192,7 +193,8 @@ export function ArinstWork({ row, canQuality }: { row: MachineRow; canQuality: b
       <button type="button" role="tab" tabIndex={tab === "file" ? 0 : -1} className={tab === "file" ? "on" : ""} aria-selected={tab === "file"} aria-controls="arinst-file" id="arinst-file-tab" onClick={() => setTab("file")}>Файл из ArinstVL</button>
     </div>
     <div role="tabpanel" id="arinst-control" aria-labelledby="arinst-control-tab" hidden={tab !== "control"}>
-      <ArinstBench key={row.instrument_id} instrumentId={row.instrument_id} pc={row.pc} agentOnline={row.link.code === "ok"} lastSeen={row.last_seen} />
+      <ArinstBench key={row.instrument_id} instrumentId={row.instrument_id} pc={row.pc} agentOnline={row.link.code === "ok"} lastSeen={row.last_seen}
+        connection={<AnalyserConnection row={row} embedded />} />
     </div>
     {tab === "file" && <div role="tabpanel" id="arinst-file" aria-labelledby="arinst-file-tab">
       <p className="warning-inline">Перед работой в ArinstVL закройте сеанс ERP. Для возврата к управлению через ERP закройте ArinstVL.</p>
@@ -217,12 +219,12 @@ export function AnalyserCard({ row, benchNumber, canQuality, close }: {
         <button type="button" className="secondary small" onClick={close}>Закрыть</button>
       </header>
       {planar && (!canQuality ? <p className="machine-muted">Рабочее место ВАЦ открыто сотрудникам с «ОТК» на правку.</p>
-        : bench ? <VnaBench canEdit={canQuality} connection={row ? (device) => <AnalyserConnection row={row} device={device} /> : undefined} />
+        : bench ? <VnaBench canEdit={canQuality} connection={row ? (device) => <AnalyserConnection row={row} device={device} embedded /> : undefined} />
           : benchNumber === null ? <p className="empty" role="status">Загрузка…</p>
             : benchNumber === "" ? <p className="warning-inline" role="status">Рабочее место ВАЦ на сервере сейчас не отвечает — обновите страницу позже.</p>
               : <p className="machine-muted">Рабочее место ВАЦ ведёт {benchNumber}; этим прибором оно не управляет.</p>)}
       {row?.vna === "arinst" && <ArinstWork row={row} canQuality={canQuality} />}
-      {row && !(planar && bench && canQuality) && <AnalyserConnection row={row} />}
+      {row && !(planar && bench && canQuality) && !(row.vna === "arinst" && row.instrument_id && canQuality) && <AnalyserConnection row={row} />}
     </section>
   </PageWindow>;
 }

@@ -70,6 +70,69 @@ async function findObject(text: string) {
   fireEvent.click(screen.getByRole("button", { name: "Найти" }));
 }
 
+it("opens an instrument session automatically after a unique scan, retaining the target across tabs", async () => {
+  vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state({ session: null }));
+  vi.spyOn(vnaBenchApi, "resolve").mockResolvedValue({ candidates: [si035] });
+  const start = vi.spyOn(vnaBenchApi, "startSession").mockResolvedValue(state({ session: session({ steps: allPassed }) }));
+  vi.spyOn(vnaBenchApi, "plan").mockResolvedValue(plan);
+  vi.spyOn(productionApi, "instruments").mockResolvedValue({ instruments: [] });
+  render(<VnaBench canEdit />);
+  await findObject("СИ.035");
+  await waitFor(() => expect(start).toHaveBeenCalledExactlyOnceWith({}));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Замерить" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("tab", { name: "Проверки" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Замер" }));
+  expect(screen.getByText("СИ.035 · Переход ADP1A, зав. № N8B141")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Замерить" })).toBeEnabled();
+  expect(document.querySelectorAll(".vna-bench-head button.primary")).toHaveLength(1);
+});
+
+it.each(["viewer", "warming"])("does not open a session automatically for %s", async (mode) => {
+  vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state({ session: null, device: { ...state().device,
+    s2vna_ready: mode !== "warming", warmup_min: mode === "warming" ? 28 : 60 } }));
+  vi.spyOn(vnaBenchApi, "resolve").mockResolvedValue({ candidates: [si035] });
+  vi.spyOn(productionApi, "instruments").mockResolvedValue({ instruments: [] });
+  const start = vi.spyOn(vnaBenchApi, "startSession");
+  render(<VnaBench canEdit={mode !== "viewer"} />);
+  await findObject("СИ.035");
+  await screen.findByText("СИ.035 · Переход ADP1A, зав. № N8B141");
+  expect(start).not.toHaveBeenCalled();
+  if (mode === "warming") {
+    expect(screen.getByRole("button", { name: "Открыть сеанс" })).toBeDisabled();
+    expect(screen.getByText("Дождитесь прогрева: ещё 12 мин")).toBeInTheDocument();
+    expect(screen.getByText("✓ АКМ подключён")).toBeInTheDocument();
+  }
+});
+
+it("loads the fixture chain for the last measured object without another scan", async () => {
+  const restored = { ...si035, left: { instrument_id: "si-009", reversed: true } };
+  vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state({ session: session({ steps: allPassed, items: [item({ target: restored })] }) }));
+  vi.spyOn(vnaBenchApi, "plan").mockResolvedValue(plan);
+  vi.spyOn(productionApi, "instruments").mockResolvedValue({ instruments: [instrument("si-009", "СИ.009", ["СИ.009.s2p"])] });
+  render(<VnaBench canEdit />);
+  fireEvent.click(await screen.findByText(/^Оснастка и частота/));
+  const left = screen.getByLabelText("Оснастка слева (к порту 1)");
+  await waitFor(() => expect(within(left).getByRole("option", { name: "СИ.009 · Переход СИ.009" })).toBeInTheDocument());
+  expect(left).toHaveValue("si-009");
+  expect(screen.getByLabelText("сторона 2 к ВАЦ")).toBeChecked();
+});
+
+it("does not replace a newly opened session with an older in-flight poll", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  let finish!: (value: VnaBenchState) => void;
+  vi.spyOn(vnaBenchApi, "state").mockResolvedValueOnce(state({ session: null }))
+    .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  vi.spyOn(vnaBenchApi, "startSession").mockResolvedValue(state());
+  render(<VnaBench canEdit />);
+  await screen.findByRole("button", { name: "Открыть сеанс" });
+  await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+  fireEvent.click(screen.getByRole("button", { name: "Открыть сеанс" }));
+  await screen.findByRole("button", { name: "Калибровать АКМ" });
+  await act(async () => { finish(state({ session: null })); });
+  expect(screen.getByRole("button", { name: "Калибровать АКМ" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Открыть сеанс" })).not.toBeInTheDocument();
+});
+
 it("shows the bench header: PC, VNA, S2VNA, temperatures, calibration time and check due dates", async () => {
   vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state());
   render(<VnaBench canEdit />);
@@ -193,7 +256,7 @@ it("says why the calibration is invalid and why the device is refused, in Russia
   expect(await screen.findByText("Сеанс не открыт")).toBeInTheDocument();
   expect(screen.getByText("Не готов — прогрев 12 из 40 мин")).toBeInTheDocument();
   expect(screen.getAllByRole("alert")[0]).toHaveTextContent("Заводской номер ВАЦ не совпал с карточкой СИ.002");
-  expect(screen.getByRole("button", { name: "Открыть сеанс для СИ и проверок" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Открыть сеанс" })).toBeDisabled();
 });
 
 it("opens a session on the adapter grid and confirms the calibration; the confidence test has no button", async () => {
@@ -201,13 +264,14 @@ it("opens a session on the adapter grid and confirms the calibration; the confid
   const start = vi.spyOn(vnaBenchApi, "startSession").mockResolvedValue(state({ session: session({ steps: [step("calibration", "pending")] }) }));
   const run = vi.spyOn(vnaBenchApi, "runStep").mockResolvedValue(state({ session: session({ steps: [step("calibration", "passed"), step("confidence", "running")] }) }));
   render(<VnaBench canEdit />);
-  fireEvent.click(await screen.findByRole("button", { name: "Открыть сеанс для СИ и проверок" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Открыть сеанс" }));
   await waitFor(() => expect(start).toHaveBeenCalledWith({}));
 
   const steps = await screen.findByRole("list", { name: "Шаги сеанса" });
   expect(within(steps).getAllByRole("listitem").map((li) => li.querySelector("strong")?.textContent))
     .toEqual(["Калибровка АКМ", "Доверительный тест", "Нагрузка: порт 1", "Нагрузка: порт 2"]);
   expect(screen.getByText(/Подключите АКМ к концам обоих кабелей/)).toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText("Разъёмы осмотрены и почищены"));
   fireEvent.click(screen.getByRole("button", { name: "Калибровать АКМ" }));
   await waitFor(() => expect(run).toHaveBeenCalledWith("s1", 3, "calibration"));
   expect(await screen.findByText(/Тест идёт сам сразу после калибровки/)).toBeInTheDocument();
@@ -221,6 +285,7 @@ it("offers only a new calibration after a failed confidence test", async () => {
   render(<VnaBench canEdit />);
   expect(await screen.findByText(/Калибровка не подтверждена/)).toBeInTheDocument();
   expect(screen.getByText(/Доверительный тест: не пройдено/)).toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText("Разъёмы осмотрены и почищены"));
   fireEvent.click(screen.getByRole("button", { name: "Откалибровать заново" }));
   await waitFor(() => expect(run).toHaveBeenCalledWith("s1", 3, "calibration"));
 });
@@ -231,6 +296,7 @@ it("offers a new calibration when the calibration expired after all steps", asyn
       reason: "Калибровка старше 4 часов — откалибруйте заново", temperatures: null } }));
   render(<VnaBench canEdit />);
   expect(await screen.findByText("Калибровка недействительна.")).toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText("Разъёмы осмотрены и почищены"));
   expect(screen.getByRole("button", { name: "Откалибровать заново" })).toBeEnabled();
 });
 
@@ -255,8 +321,9 @@ it("finds an adapter, shows its plan card with the fixture chain and the suggest
   expect(screen.getByText(/Цепочка «напрямую»/)).toBeInTheDocument();
   expect(screen.getByText("по серии и норме: до 18 ГГц")).toBeInTheDocument();
   expect(screen.getByText(/Сначала пройдите калибровку/)).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Измерить" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Измерить нагрузку на порту 1" })).toBeEnabled();
 
+  fireEvent.click(screen.getByText(/^Оснастка и частота/));
   const left = screen.getByLabelText("Оснастка слева (к порту 1)");
   await waitFor(() => expect(within(left).getAllByRole("option").map((option) => option.textContent))
     .toEqual(["нет — напрямую", "СИ.009 · Переход СИ.009", "СИ.008 · Переход СИ.008"]));
@@ -280,7 +347,7 @@ it("measures a ready adapter with the chosen chain", async () => {
     items: [item({ connections: [{ no: 1, status: "running", max_vswr: null, max_mhz: null, measured_at: null }] })] }) }));
   render(<VnaBench canEdit />);
   await findObject("СИ.035");
-  fireEvent.click(await screen.findByRole("button", { name: "Измерить" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Замерить" }));
   await waitFor(() => expect(measure).toHaveBeenCalledWith("s1", 3, si035));
 });
 
@@ -291,8 +358,7 @@ it("opens a КБ session on its ETK band from a found item when no session is op
   vi.spyOn(vnaBenchApi, "plan").mockResolvedValue({ ...plan, screen_name: "ОТК — кабельная сборка", band_mhz: [1, 6000] });
   render(<VnaBench canEdit />);
   await findObject("ПЗ-0001/3");
-  expect(await screen.findByText(/Для КБ калибровка идёт на полосе ЭТК задания ПЗ-0001/)).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Открыть сеанс для КБ" }));
+  // A unique scan opens the matching ETK session automatically.
   await waitFor(() => expect(start).toHaveBeenCalledWith({ assembly: { task_id: "t1", operation_id: "op-vswr" } }));
   expect(await screen.findByText("ОТК — кабельная сборка")).toBeInTheDocument();
 });
@@ -332,7 +398,7 @@ it("asks an adapter on the border for connection 2 of 3, turned by 120°", async
   expect(screen.getByText("Подключение 2 из 3 — отключите объект, поверните разъём на 120° и подключите снова. Кабели не двигайте.")).toBeInTheDocument();
   expect(screen.getByRole("img", { name: /норма не более 1,06/ })).toBeInTheDocument();
   expect(screen.getByText("Норма ± U 0,012")).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Записать в карточку" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Сохранить" })).not.toBeInTheDocument();
   expect(within(screen.getByRole("table", { name: "Подключения" })).getByText("в пределах нормы + U")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Измерить заново" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Измерить: 2 из 3" }));
@@ -364,7 +430,7 @@ it("records a final adapter verdict and prints its label", async () => {
   render(<VnaBench canEdit />);
   await findObject("СИ.035");
   expect(await screen.findByText("Соответствует")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Записать в карточку" }));
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
   await waitFor(() => expect(record).toHaveBeenCalledWith("s1", "i1", 3));
   expect(await screen.findByText("Записано: карточка СИ.035, 19.11 15:10")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Печать этикетки" }));
@@ -389,7 +455,9 @@ it("turns a server refusal code into a Russian reason, never the code", async ()
   vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state({ session: session({ steps: [step("calibration", "pending")] }) }));
   vi.spyOn(vnaBenchApi, "runStep").mockRejectedValue(new ApiError("screen_changed", 409, { code: "screen_changed", message: "screen hash mismatch" }));
   render(<VnaBench canEdit />);
-  fireEvent.click(await screen.findByRole("button", { name: "Калибровать АКМ" }));
+  await screen.findByRole("button", { name: "Калибровать АКМ" });
+  fireEvent.click(screen.getByLabelText("Разъёмы осмотрены и почищены"));
+  fireEvent.click(screen.getByRole("button", { name: "Калибровать АКМ" }));
   expect(await screen.findByText(/Экран S2VNA изменили вручную/)).toBeInTheDocument();
   expect(screen.queryByText(/screen_changed/)).not.toBeInTheDocument();
   expect(refusalText({ code: "new_code", message: "Новая причина" })).toBe("Новая причина");
@@ -510,7 +578,9 @@ it("never shows an empty refusal banner", async () => {
   vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state({ session: session({ steps: [step("calibration", "pending")] }) }));
   vi.spyOn(vnaBenchApi, "runStep").mockRejectedValue(new ApiError("", 409, { code: "unknown_code", message: "" }));
   render(<VnaBench canEdit />);
-  fireEvent.click(await screen.findByRole("button", { name: "Калибровать АКМ" }));
+  await screen.findByRole("button", { name: "Калибровать АКМ" });
+  fireEvent.click(screen.getByLabelText("Разъёмы осмотрены и почищены"));
+  fireEvent.click(screen.getByRole("button", { name: "Калибровать АКМ" }));
   expect(await screen.findByText("Команда ВАЦ не выполнена")).toBeInTheDocument();
 });
 

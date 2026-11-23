@@ -6,12 +6,14 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.modules.production import vna_bench as bench
-from app.modules.production.vna_bench_protocol import command_args, validate_result_v3
+from app.modules.production.vna_bench_protocol import ArinstProfile, command_args, validate_result_v3
 from app.modules.production.vna_sessions import fingerprint
 from tests.production.test_arinst_calibration import context, make_standards, D  # noqa: F401
 
 SERIAL = "arinst:3932198-827215893-540422231"
-PROFILE = dict(start_hz=1000000.0, stop_hz=2000000.0, points=2, if_bandwidth_hz=1000)
+PROFILE = dict(start_hz=1000000, stop_hz=2000000, points=2, if_bandwidth_hz=1000)
+OPTIONS = dict(scan_range_hz=[1000000, 9000000000], bandwidths_hz=[20, 50, 100, 250, 500, 1000],
+               max_slice_points=255, raw="SR=1000000,9000000000;BW=0.02,0.05,0.1,0.25,0.5,1;PR=0")
 
 
 def receipt(op="capture", args=None):
@@ -19,16 +21,18 @@ def receipt(op="capture", args=None):
     raw = dict(drain=dict(discarded_bytes=0, discarded_base64=""),
                wire=[dict(tx_base64="KlVJRD8K", rx_base64="MQo=", complete=True)])
     result = dict(source="arinst", serial=SERIAL, hardware_uid=SERIAL[7:], firmware="2.0.0",
-        license=dict(license_state="TRIAL", trial_remaining_seconds=600, message="Пробный режим API — осталось 10 мин"),
+        model="VNA-DL", options=deepcopy(OPTIONS),
+        license=dict(license_state="not_required", trial_remaining_seconds=None, message="Связь: протокол ArinstVL"),
         op=op, started_at="2026-11-23T12:00:00Z", finished_at="2026-11-23T12:00:01Z", duration_ms=1000,
-        parser_status="complete", correction_origin="unknown", raw_evidence=raw, raw_sha256=fingerprint(raw))
+        parser_status="complete", correction_origin="raw", raw_evidence=raw, raw_sha256=fingerprint(raw))
     if op in ("apply_profile", "read_profile", "capture", "measure_standard"):
         result["profile"] = deepcopy(args.get("profile", PROFILE))
     if op in ("capture", "measure_standard"):
+        profile = ArinstProfile.model_validate(result["profile"])
         result["acquisition"] = dict(schema="arinst.partial.v1", measured_channels=["S11", "S21"],
-            data={"S11": [[0.1, 0.0]] * PROFILE["points"], "S21": [[0.9, 0.0]] * PROFILE["points"]},
-            orientation=args["orientation"], grid_confirmed=False, frequencies_hz=None,
-            correction_origin="unknown", points=PROFILE["points"])
+            data={"S11": [[0.1, 0.0]] * profile.points, "S21": [[0.9, 0.0]] * profile.points},
+            orientation=args["orientation"], grid_confirmed=True, frequencies_hz=profile.frequencies(),
+            correction_origin="raw", points=profile.points)
     if op == "measure_standard":
         result["standard"] = args["standard"]
     if op == "close":
@@ -47,7 +51,8 @@ def test_driver_receipt(stored, wire, args):
 
 
 @pytest.mark.parametrize("field,value", [("points", 1001), ("points", True), ("start_hz", 0),
-    ("stop_hz", 1e6), ("stop_hz", 8.9e9), ("if_bandwidth_hz", 200), ("power_dbm", 0)])
+    ("stop_hz", 1e6), ("stop_hz", 9.1e9), ("start_hz", 1000000.5), ("start_hz", True), ("stop_hz", 10 ** 400),
+    ("if_bandwidth_hz", 0), ("power_dbm", 0)])
 def test_only_supported_profile_settings(field, value):
     with pytest.raises(ValueError):
         command_args(3, "apply_profile", {"profile": {**PROFILE, field: value}})
@@ -67,7 +72,9 @@ def test_invalid_receipt_is_not_persistable(patch):
 
 @pytest.mark.parametrize("patch", [
     {"data": {"S11": [[0.1, 0.0]] * 2}}, {"points": 3}, {"orientation": "reverse"},
-    {"grid_confirmed": True, "frequencies_hz": [1e6, 2e6]}, {"correction_origin": "raw"},
+    {"grid_confirmed": False}, {"frequencies_hz": None}, {"correction_origin": "unknown"},
+    {"frequencies_hz": [1000000, 1000000]}, {"frequencies_hz": [1000000, 2000001]},
+    {"frequencies_hz": [1e6, 2e6]}, {"frequencies_hz": [1000000, 9000000001]},
     {"measured_channels": ["S11", "S11"]}, {"data": {"S11": [[float("nan"), 0]] * 2, "S21": [[1, 0]] * 2}},
 ])
 def test_partial_trace_cannot_fabricate_grid_or_channels(patch):
@@ -84,18 +91,57 @@ def test_trial_counts_down_with_sqlite_wall_clock_and_does_not_renew():
     assert bench.arinst_license("ACTIVATED", None, observed, now)["message"] == "Лицензия активна"
 
 
-def test_unknown_grid_is_never_calibration_input():
-    with pytest.raises(ValueError, match="не подтверждены"):
+def test_native_license_has_no_countdown():
+    now = datetime(2026, 11, 23, tzinfo=timezone.utc)
+    state = bench.arinst_license("not_required", None, now, now + timedelta(days=10))
+    assert state == dict(state="not_required", trial_remaining_seconds=None, message="Связь: протокол ArinstVL")
+
+
+def test_native_exact_integer_grid_including_nondivisible_span_and_9ghz():
+    profile = {**PROFILE, "points": 1000, "stop_hz": 9000000000}
+    args = dict(profile=profile, orientation="forward")
+    raw = receipt("capture", args)
+    result = validate_result_v3("capture", args, SERIAL, raw)
+    grid = result["acquisition"]["frequencies_hz"]
+    assert len(grid) == 1000 and grid[0] == 1000000 and grid[-1] == 9000000000
+    assert grid[1] == 1000000 + 8999000000 // 999
+    raw["acquisition"]["frequencies_hz"][500] += 1
+    with pytest.raises(ValueError, match="Сетка"):
+        validate_result_v3("capture", args, SERIAL, raw)
+
+
+def test_native_options_limit_profile_and_allow_reported_bandwidth():
+    args = dict(profile={**PROFILE, "if_bandwidth_hz": 200}, orientation="forward")
+    raw = receipt("capture", args)
+    with pytest.raises(ValueError, match="не поддерживается"):
+        validate_result_v3("capture", args, SERIAL, raw)
+    raw["options"]["bandwidths_hz"].append(200)
+    assert validate_result_v3("capture", args, SERIAL, raw)["profile"]["if_bandwidth_hz"] == 200
+    raw["options"]["scan_range_hz"][1] = 1500000
+    with pytest.raises(ValueError, match="не поддерживается"):
+        validate_result_v3("capture", args, SERIAL, raw)
+
+
+def test_native_profile_requires_distinct_integer_points_and_can_be_unset():
+    with pytest.raises(ValueError, match="Шаг"):
+        ArinstProfile.model_validate({**PROFILE, "stop_hz": 1000001, "points": 3})
+    raw = receipt("read_profile"); raw["profile"] = None
+    assert validate_result_v3("device_status", {}, SERIAL, raw)["profile"] is None
+
+
+def test_missing_characterized_standards_is_clear_refusal():
+    with pytest.raises(ValueError, match="характеристики мер"):
         bench.arinst_solve({}, [(receipt("measure_standard", dict(profile=PROFILE, orientation="forward", standard="OPEN")),
                                   "artifact", "0" * 64)])
 
 
 def solver_inputs(context):
-    profile = {**PROFILE, "points": 3, "stop_hz": 2e9}
+    profile = {**PROFILE, "points": 3, "stop_hz": 2000000000}
+    grid = tuple(ArinstProfile.model_validate(profile).frequencies())
     context = replace(context, instrument_uid=SERIAL[7:], profile_fingerprint=fingerprint(profile))
-    standards = make_standards(context)
+    standards = tuple(replace(m, standard=replace(m.standard, frequencies=grid),
+                              measured=replace(m.measured, frequencies=grid)) for m in make_standards(context))
     snapshot = dict(operator=dict(id="operator", name="Test", department="QC"),
-        commissioning=dict(raw_semantics_evidence="synthetic-raw-semantics-v1", grid_evidence="synthetic-grid"),
         calibration_context=asdict(context),
         characterized_standards={m.standard.kind: bench.arinst_json(asdict(m.standard)) for m in standards})
     captures = []

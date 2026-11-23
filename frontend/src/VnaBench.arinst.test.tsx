@@ -11,8 +11,9 @@ function state(): ArinstBenchState {
     source: "arinst", device: { instrument_id: "si1", inventory_number: "СИ.001", serial: "arinst:1-2-3", printed_serial: "001",
       hardware_uid: "1-2-3", firmware: "1", machine_id: "pc1", control_ready: true, reason: null,
       supported_ops: ["connect", "close", "apply_profile", "measure_standard", "capture"],
-      license: { state: "TRIAL", trial_remaining_seconds: 121, message: "" } },
-    profile, calibration: { valid: false, status: "required" }, acceptance: { eligible: false, code: "commissioning_required", message: "Сетка и коррекция не подтверждены" },
+      license: { state: "not_required", trial_remaining_seconds: null, message: "Связь: протокол ArinstVL" },
+      options: { scan_range_hz: [1e6, 9e9], bandwidths_hz: [20, 50, 100, 250, 500, 1000], max_slice_points: 255, raw: "" } },
+    profile, calibration: { valid: false, status: "required" }, acceptance: { eligible: false, code: "commissioning_required", message: "Ожидается стендовое сравнение" },
     session: { id: "s1", version: 7, step: 0, state: "ready", status: "open", owned: true, operator: "Контролёр", error: null, steps: [], command: null, artifacts: [] },
     latest_trace: null,
   };
@@ -24,33 +25,48 @@ async function show(value = state()) {
   return view;
 }
 
-it("selects Arinst by UUID, shows live licence and the commissioning reason without Planar controls", async () => {
+it("routes the main action to calibration settings, then measurement when calibrated", async () => {
+  vi.spyOn(productionApi, "instruments").mockResolvedValue({ instruments: [] });
+  const first = await show();
+  fireEvent.click(screen.getByRole("button", { name: "Калибровать" }));
+  expect(screen.getByText(/^Калибровка по мерам ·/).closest("details")).toHaveAttribute("open");
+  expect(screen.getByText(/^Калибровка по мерам ·/)).toHaveFocus();
+  first.unmount(); vi.restoreAllMocks();
+  const calibrated = state(); calibrated.calibration = { valid: true, status: "valid" };
+  const capture = vi.spyOn(arinstBenchApi, "capture").mockResolvedValue(calibrated);
+  await show(calibrated);
+  fireEvent.click(screen.getByRole("button", { name: "Замерить" }));
+  await waitFor(() => expect(capture).toHaveBeenCalledWith("s1", 7, "forward"));
+});
+
+it("selects Arinst by UUID and shows the native link and bench-comparison gate", async () => {
   await show();
   expect(arinstBenchApi.state).toHaveBeenCalledWith("si1", expect.any(AbortSignal));
-  expect(screen.getByText("Пробный режим API — осталось 3 мин")).toBeInTheDocument();
+  expect(screen.getByText("Связь: протокол ArinstVL")).toBeInTheDocument();
+  expect(screen.queryByText(/Пробный режим|Лицензия активна|лицензии API/)).toBeNull();
   expect(screen.getByText(/ПК последнего обнаружения: ПК ОТК.*ArinstVL закрыт/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Сохранить в КБ/СИ" })).toBeDisabled();
-  expect(screen.getByText("Сохранение в КБ/СИ — после ввода Arinst в эксплуатацию")).toBeInTheDocument();
+  expect(screen.getByText("Сохранение в КБ/СИ — после стендового сравнения Arinst")).toBeInTheDocument();
   expect(screen.queryByText("Калибровка АКМ")).toBeNull();
   expect(screen.queryByRole("button", { name: /сброс|питание|активировать лицензию/i })).toBeNull();
 });
 
-it.each(["LOCKED", "UNKNOWN"] as const)("blocks acquisition when licence is %s while leaving release available", async (license) => {
-  const value = state(); value.device.license.state = license;
+it("uses server control readiness while leaving release available", async () => {
+  const value = state(); value.device.control_ready = false; value.device.reason = "Прибор не подключён";
   await show(value);
   expect(screen.getByRole("button", { name: "Снять S11 / S21" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Прервать сеанс" })).toBeEnabled();
 });
 
-it("counts down locally and refuses an expired trial even during a slow poll", async () => {
+it("keeps native acquisition available without a trial countdown", async () => {
   vi.useFakeTimers();
-  const value = state(); value.device.license.trial_remaining_seconds = 1;
+  const value = state();
   vi.spyOn(arinstBenchApi, "state").mockResolvedValueOnce(value).mockImplementation(() => new Promise(() => {}));
   render(<ArinstBench instrumentId="si1" pc="ПК" agentOnline lastSeen={null} />);
   await act(async () => {});
-  await act(async () => { await vi.advanceTimersByTimeAsync(1100); });
-  expect(screen.getByText(/Время пробного режима вышло — переподключите прибор вручную/)).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Снять S11 / S21" })).toBeDisabled();
+  await act(async () => { await vi.advanceTimersByTimeAsync(601000); });
+  expect(screen.queryByText(/пробного режима|лицензия/i)).toBeNull();
+  expect(screen.getByRole("button", { name: "Снять S11 / S21" })).toBeEnabled();
 });
 
 it("opens a session without Planar arguments, then closes with the current version", async () => {
@@ -116,16 +132,42 @@ it("checks a profile, presents old to new, and writes only after confirmation", 
   fireEvent.click(screen.getByRole("button", { name: "Проверить изменения" }));
   expect(write).not.toHaveBeenCalled();
   expect(screen.getByText(/Калибровка станет недействительной/)).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Подтвердить запись профиля" }));
+  fireEvent.click(screen.getByRole("button", { name: "Применить профиль сеанса" }));
   await waitFor(() => expect(write).toHaveBeenCalledWith("s1", 7, { ...profile, start_hz: 10.5e6 }));
 });
 
-it.each([['Конец, МГц', '0,5'], ['Конец, МГц', '8801'], ['Число точек', '1001'], ['Число точек', '2.5']])("refuses invalid profile %s=%s", async (label, number) => {
+it.each([['Конец, МГц', '0,5'], ['Конец, МГц', '9001'], ['Начало, МГц', '1,0000001'], ['Конец, МГц', '1,000001'], ['Число точек', '1001'], ['Число точек', '2.5']])("refuses invalid profile %s=%s", async (label, number) => {
   await show(); screen.getByText(/^Профиль ·/).closest("details")!.open = true;
   fireEvent.change(screen.getByLabelText(label), { target: { value: number } });
   fireEvent.click(screen.getByRole("button", { name: "Проверить изменения" }));
   expect(screen.getByRole("alert")).toHaveTextContent("Укажите возрастающий диапазон");
-  expect(screen.queryByRole("button", { name: "Подтвердить запись профиля" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Применить профиль сеанса" })).toBeNull();
+});
+
+it("starts with an explicit host profile and uses the advertised range and bandwidths", async () => {
+  const value = state(); value.profile = null;
+  value.device.options!.bandwidths_hz = [33, 333];
+  const apply = vi.spyOn(arinstBenchApi, "profile").mockResolvedValue(state());
+  await show(value);
+  expect(screen.getByText("Задайте профиль сеанса")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Снять S11 / S21" })).toBeDisabled();
+  screen.getByText(/^Профиль ·/).closest("details")!.open = true;
+  expect(screen.queryByRole("option", { name: "20" })).toBeNull();
+  fireEvent.change(screen.getByLabelText("Начало, МГц"), { target: { value: "1,000001" } });
+  fireEvent.change(screen.getByLabelText("Конец, МГц"), { target: { value: "9000" } });
+  fireEvent.change(screen.getByLabelText("Число точек"), { target: { value: "1000" } });
+  fireEvent.change(screen.getByLabelText("Полоса ПЧ, Гц"), { target: { value: "333" } });
+  fireEvent.click(screen.getByRole("button", { name: "Проверить изменения" }));
+  expect(apply).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Применить профиль сеанса" }));
+  await waitFor(() => expect(apply).toHaveBeenCalledWith("s1", 7, { start_hz: 1000001, stop_hz: 9e9, points: 1000, if_bandwidth_hz: 333 }));
+});
+
+it("does not invent bandwidth choices before the device options arrive", async () => {
+  const value = state(); value.device.options = null;
+  await show(value); screen.getByText(/^Профиль ·/).closest("details")!.open = true;
+  expect(screen.getByRole("button", { name: "Проверить изменения" })).toBeDisabled();
+  expect(screen.getByText("Переподключите прибор, чтобы получить доступные диапазон и полосу ПЧ")).toBeInTheDocument();
 });
 
 it("checks registry role instead of promoting an SMA-MF06 load kit into SOL", async () => {
@@ -198,15 +240,15 @@ it.each(["close", "abort"] as const)("finishes %s feedback when polling no longe
   expect(screen.queryByText("Отправлено агенту — ожидается результат")).toBeNull();
 });
 
-it("does not add reply transport time back to the trial countdown", async () => {
+it("accepts a delayed native state without adding a licence requirement", async () => {
   vi.useFakeTimers();
-  const delayed = state(); delayed.device.license.trial_remaining_seconds = 5;
+  const delayed = state();
   let resolve!: (value: ArinstBenchState) => void;
   vi.spyOn(arinstBenchApi, "state").mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
   render(<ArinstBench instrumentId="si1" pc="Последний ПК" agentOnline lastSeen={null} />);
   await act(async () => { await vi.advanceTimersByTimeAsync(10_000); resolve(delayed); });
-  expect(screen.getByText(/Время пробного режима вышло — переподключите прибор вручную/)).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Снять S11 / S21" })).toBeDisabled();
+  expect(screen.getByText("Связь: протокол ArinstVL")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Снять S11 / S21" })).toBeEnabled();
   expect(screen.getByText(/ПК последнего обнаружения: Последний ПК/)).toBeInTheDocument();
 });
 

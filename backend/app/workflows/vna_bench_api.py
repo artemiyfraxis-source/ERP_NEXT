@@ -11,7 +11,7 @@ The screen's contract is `frontend/src/vnaBenchApi.ts` (S5): every POST queues a
 the screen polls `GET state`; refusals are `detail: {code, message}`. Each accepted capture is judged in the agent's
 result request in the same unit of work as its receipt (journal row, matings, VSWR attempt, the session's next step).
 Arinst v3 selects a separate diagnostic state DTO and preserves raw receipt artifacts. Quality save endpoints
-remain blocked until the frequency grid, correction semantics, standards and independent verification are commissioned.
+remain blocked until characterized standards and an independent physical bench comparison are commissioned.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ from app.modules.production.mating_api import record_batch
 from app.modules.production.matings import end_names
 from app.modules.production.rf_infrastructure import RfRepository
 from app.modules.production.traceability import InstrumentFile, InstrumentFileKind
-from app.modules.production.vna_bench_protocol import ArinstProfile, Screen, screen_hash
+from app.modules.production.vna_bench_protocol import ArinstOptions, ArinstProfile, Screen, screen_hash
 from app.modules.production.vna_check_infrastructure import VALUE_FIELDS, VnaCheckRepository, VnaCheckRow
 from app.modules.production.vna_checks import (LOAD_LIMIT, KitTolerance, assert_confidence_points, confidence_from_receipt,
                                                control_standard, expected_verdict, flex, journal_number,
@@ -702,7 +702,7 @@ def _arinst_state(uow, principal, now, vna, row):
             ready = bool(ops and pc and device and device.present and not pc.legacy
                          and as_utc(bench.aware(pc.last_seen, now)) >= as_utc(now) - LIVE_FOR
                          and as_utc(bench.aware(device.last_seen, now)) >= as_utc(now) - LIVE_FOR
-                         and license_view["state"] in ("TRIAL", "ACTIVATED"))
+                         and license_view["state"] in ("not_required", "TRIAL", "ACTIVATED"))
             if not ready:
                 readiness = "Прибор или агент недоступен; проверьте подключение"
         except ScanJobClosed as error:
@@ -726,6 +726,7 @@ def _arinst_state(uow, principal, now, vna, row):
     return dict(source="arinst", device=dict(instrument_id=str(vna.id), inventory_number=vna.inventory_number,
         serial=serial, printed_serial=vna.serial_number, hardware_uid=identity.hardware_uid if identity else None,
         firmware=row.snapshot.get("firmware") if row else identity.firmware if identity else None,
+        options=row.snapshot.get("options") if row else None,
         machine_id=binding.machine_id if binding else None, control_ready=ready, reason=readiness,
         license=license_view, supported_ops=sorted(ops or ()), power_dbm=None, temperature_c=None, rf_stopped=None),
         calibration=row.snapshot.get("calibration") if row else dict(valid=False, status="required"),
@@ -804,6 +805,8 @@ def arinst_connect(session_id: UUID, payload: Version, principal: Person, now: N
 def arinst_profile(session_id: UUID, payload: ArinstProfileInput, principal: Person, now: Now, factory: Factory):
     def action(uow, repository, row):
         _arinst_ready(uow, row, payload.version, now, "apply_profile")
+        if row.snapshot.get("options"):
+            ArinstOptions.model_validate(row.snapshot["options"]).validate_profile(payload.profile)
         snapshot = bench.arinst_invalidated(row.snapshot, "Профиль изменён; требуется новая калибровка")
         repository.append(row, [bench.arinst_step("apply_profile", dict(profile=payload.profile.model_dump(mode="json")))],
                           now, snapshot=snapshot)
@@ -815,6 +818,8 @@ def arinst_profile(session_id: UUID, payload: ArinstProfileInput, principal: Per
 def arinst_calibrate(session_id: UUID, payload: ArinstCalibrationInput, principal: Person, now: Now, factory: Factory):
     def action(uow, repository, row):
         _arinst_ready(uow, row, payload.version, now, "measure_standard")
+        if row.snapshot.get("profile") is None:
+            raise ValueError("Сначала задайте профиль измерения Arinst")
         kit = uow.instruments.get(payload.kit_id)
         rf = RfRepository(uow.session)
         if kit is None or rf.get(payload.kit_id).role != "solt_kit":
@@ -858,6 +863,8 @@ def arinst_confirm(session_id: UUID, payload: Version, principal: Person, now: N
 def arinst_capture(session_id: UUID, payload: ArinstCaptureInput, principal: Person, now: Now, factory: Factory):
     def action(uow, repository, row):
         _arinst_ready(uow, row, payload.version, now, "capture")
+        if row.snapshot.get("profile") is None:
+            raise ValueError("Сначала задайте профиль измерения Arinst")
         # A diagnostic acquisition never consumes a successful connection number or writes a quality decision.
         if payload.target is not None:
             raise Refusal("commissioning_required", bench.ARINST_COMMISSIONING)
@@ -887,10 +894,11 @@ def _complete_arinst(uow, repository, row, command_id, payload, now):
         return
     result = command.result
     snapshot, tail, message = dict(row.snapshot), None, ""
+    snapshot["options"] = result["options"]
     if result["firmware"] != snapshot["firmware"]:
         snapshot = bench.arinst_invalidated(snapshot, "Прошивка прибора изменилась")
         snapshot["firmware"] = result["firmware"]
-    if result["profile"] is not None:
+    if result["profile"] is not None or command.op == "device_status":
         if snapshot["profile"] != result["profile"]:
             snapshot = bench.arinst_invalidated(snapshot, "Фактический профиль изменился")
         snapshot["profile"] = result["profile"]

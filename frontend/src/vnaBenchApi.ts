@@ -270,6 +270,7 @@ const id = encodeURIComponent;
 
 // Protocol 3 has partial diagnostic traces, not Planar's ACM/acceptance DTO.
 export interface ArinstProfile { start_hz: number; stop_hz: number; points: number; if_bandwidth_hz: number }
+export interface ArinstOptions { scan_range_hz: [number, number]; bandwidths_hz: number[]; max_slice_points: number; raw: string }
 export interface ArinstStep {
   op: string; human: boolean; label: string;
   args: { standard?: "OPEN" | "SHORT" | "LOAD" | "THRU"; orientation?: "forward" | "reverse" };
@@ -294,7 +295,8 @@ export interface ArinstBenchState {
     instrument_id: string; inventory_number: string; serial: string; printed_serial: string | null;
     hardware_uid: string | null; firmware: string | null; machine_id: string | null;
     control_ready: boolean; reason: string | null; supported_ops: string[];
-    license: { state: "TRIAL" | "LOCKED" | "ACTIVATED" | "UNKNOWN"; trial_remaining_seconds: number | null; message: string };
+    license: { state: "not_required" | "TRIAL" | "LOCKED" | "ACTIVATED" | "UNKNOWN"; trial_remaining_seconds: number | null; message: string };
+    options?: ArinstOptions | null;
   };
   profile: ArinstProfile | null;
   calibration: { valid: boolean; status: string; reason?: string | null };

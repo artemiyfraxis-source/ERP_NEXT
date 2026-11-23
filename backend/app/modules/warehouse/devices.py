@@ -94,9 +94,9 @@ class VnaControlRow(Base):
         CheckConstraint("version >= 1", name="ck_vna_control_version"),
         CheckConstraint("source IN ('s2vna','arinst')", name="ck_vna_control_source"),
         CheckConstraint("trim(serial) <> '' AND ((source = 'arinst' AND serial = 'arinst:' || hardware_uid AND hardware_uid <> '') OR (source = 's2vna' AND lower(serial) NOT LIKE 'arinst:%'))", name="ck_vna_control_serial"),
-        CheckConstraint("license_state IN ('unknown','TRIAL','LOCKED','ACTIVATED')", name="ck_vna_control_license"),
+        CheckConstraint("license_state IN ('unknown','not_required','TRIAL','LOCKED','ACTIVATED')", name="ck_vna_control_license"),
         CheckConstraint("(license_state = 'TRIAL' AND trial_remaining_seconds IS NOT NULL AND trial_remaining_seconds BETWEEN 0 AND 600) OR (license_state <> 'TRIAL' AND trial_remaining_seconds IS NULL)", name="ck_vna_control_trial"),
-        CheckConstraint("source <> 'arinst' OR NOT control_ready OR (identity_verified AND version = 3 AND (license_state = 'ACTIVATED' OR (license_state = 'TRIAL' AND trial_remaining_seconds > 0)))", name="ck_vna_control_ready"),
+        CheckConstraint("source <> 'arinst' OR NOT control_ready OR (identity_verified AND version = 3 AND (license_state IN ('not_required','ACTIVATED') OR (license_state = 'TRIAL' AND trial_remaining_seconds > 0)))", name="ck_vna_control_ready"),
     )
     machine_id: Mapped[str] = mapped_column(String(80), ForeignKey("warehouse_scan_agents.machine_id", ondelete="CASCADE"), primary_key=True)
     serial: Mapped[str] = mapped_column(String(300), primary_key=True)
@@ -275,7 +275,7 @@ def control_capability(session, machine_id: str, now: datetime, *, serial: str =
         remaining = (control.trial_remaining_seconds or 0) - (now - reported).total_seconds()
         if control.license_state == "LOCKED" or (control.license_state == "TRIAL" and remaining <= 0):
             raise ScanJobClosed("Время пробного режима вышло — переподключите прибор вручную или активируйте лицензию")
-        if not control.control_ready or not control.identity_verified or control.license_state not in ("TRIAL", "ACTIVATED"):
+        if not control.control_ready or not control.identity_verified or control.license_state not in ("not_required", "TRIAL", "ACTIVATED"):
             raise ScanJobClosed(control.reason or "Arinst не готов к управлению через ERP")
     return control.methods
 

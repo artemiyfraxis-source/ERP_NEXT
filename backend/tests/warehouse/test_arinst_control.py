@@ -22,8 +22,8 @@ def reports(clock):
     return [dict(source="s2vna", name=NAME, serial="26030095", version=2, methods=["acm"], ops=["device_status", "release"],
                  identity_verified=True, control_ready=True, observed_at=clock.now.isoformat()),
             dict(source="arinst", serial=SERIAL, version=3, methods=[], ops=["connect", "read_profile", "close"],
-                 model="VNA-DL", firmware="2.0.0", hardware_uid=UID, identity_verified=True, license_state="TRIAL",
-                 trial_remaining_seconds=600, control_ready=True, observed_at=clock.now.isoformat())]
+                 model="VNA-DL", firmware="2.0.0", hardware_uid=UID, identity_verified=True, license_state="not_required",
+                 trial_remaining_seconds=None, control_ready=True, observed_at=clock.now.isoformat())]
 
 
 def beat(capture, items=None, **extra):
@@ -80,6 +80,7 @@ def test_inventory_only_planar_retains_full_capture_identity(capture):
 
 def test_cached_observation_and_trial_cannot_be_refreshed_by_poll_or_heartbeat(capture):
     initial = reports(capture[2])
+    initial[1]["license_state"] = "TRIAL"  # Old agent observations remain conservative.
     initial[1]["trial_remaining_seconds"] = 5
     assert beat(capture, initial).status_code == 200
     capture[2].now += timedelta(seconds=6)
@@ -92,6 +93,22 @@ def test_cached_observation_and_trial_cannot_be_refreshed_by_poll_or_heartbeat(c
     with capture[3]() as session:
         with pytest.raises(ScanJobClosed):
             vna_jobs.control_station(session, SERIAL, capture[2].now, source="arinst")
+
+
+def test_native_license_never_counts_down_but_identity_still_expires(capture):
+    initial = reports(capture[2])
+    assert beat(capture, initial).status_code == 200
+    capture[2].now += timedelta(seconds=61)
+    assert beat(capture, initial).status_code == 200
+    with capture[3]() as session:
+        control = session.get(devices.VnaControlRow, ("pc-1", SERIAL))
+        assert control.license_state == "not_required" and control.trial_remaining_seconds is None
+        assert devices.control_capability(session, "pc-1", capture[2].now, serial=SERIAL, source="arinst") == []
+    capture[2].now += timedelta(minutes=4)
+    assert beat(capture, initial).status_code == 200
+    with capture[3]() as session:
+        with pytest.raises(ScanJobClosed):
+            devices.control_capability(session, "pc-1", capture[2].now, serial=SERIAL, source="arinst")
 
 
 @pytest.mark.parametrize("patch", [

@@ -2,7 +2,7 @@
 
 Protocol v1 (`vna_sessions.py`) is unchanged; v2 adds ops and extends the capture receipt. No instrument IO, SCPI
 text, COM member names or file paths live here — the agent maps each typed op to its own fixed calls.
-Protocol v3 uses partial-channel JSON receipts; unknown frequency/correction evidence cannot authorize quality saves.
+Protocol v3 uses native exact-grid, raw partial-channel receipts; physical comparison still gates quality saves.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import base64
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, Field, model_validator
+from pydantic import AfterValidator, Field, field_validator, model_validator
 
 from .vna_sessions import (ARGS, OPS, RESULTS, CaptureArgs, Captured, Digest, EmptyArgs, Profile, Result,
                            StrictModel, Trace, fingerprint, validate_result)
@@ -308,16 +308,51 @@ ARINST_OPS = ("connect", "read_profile", "apply_profile", "measure_standard", "c
 
 
 class ArinstProfile(StrictModel):
-    start_hz: float = Field(ge=1e6, le=8.8e9)
-    stop_hz: float = Field(ge=1e6, le=8.8e9)
+    start_hz: int = Field(ge=1_000_000, le=9_000_000_000)
+    stop_hz: int = Field(ge=1_000_000, le=9_000_000_000)
     points: int = Field(ge=2, le=1000, strict=True)
-    if_bandwidth_hz: Literal[20, 50, 100, 250, 500, 1000]
+    if_bandwidth_hz: int = Field(ge=1, le=1_000_000, strict=True)
+
+    @field_validator("start_hz", "stop_hz", mode="before")
+    @classmethod
+    def integer_hz(cls, value):
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value  # Field bounds also reject integers too large to convert to a float.
+        if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+            return int(value)
+        raise ValueError("Частоты Arinst задаются целым числом герц")
 
     @model_validator(mode="after")
     def ordered(self):
         if self.start_hz >= self.stop_hz:
             raise ValueError("Начало диапазона должно быть меньше конца")
+        if self.stop_hz - self.start_hz < self.points - 1:
+            raise ValueError("Шаг сетки Arinst должен быть не меньше одного герца")
         return self
+
+    def frequencies(self) -> list[int]:
+        """The exact integer-Hz grid sent by the native agent, including both endpoints."""
+        return [self.start_hz + i * (self.stop_hz - self.start_hz) // (self.points - 1)
+                for i in range(self.points)]
+
+
+class ArinstOptions(StrictModel):
+    scan_range_hz: tuple[Annotated[int, Field(ge=1_000_000, le=9_000_000_000, strict=True)],
+                         Annotated[int, Field(ge=1_000_000, le=9_000_000_000, strict=True)]]
+    bandwidths_hz: list[Annotated[int, Field(ge=1, le=1_000_000, strict=True)]] = Field(min_length=1, max_length=256)
+    max_slice_points: int = Field(ge=1, le=255, strict=True)
+    raw: str = Field(min_length=1, max_length=4096)
+
+    @model_validator(mode="after")
+    def ordered(self):
+        if self.scan_range_hz[0] >= self.scan_range_hz[1] or len(set(self.bandwidths_hz)) != len(self.bandwidths_hz):
+            raise ValueError("Некорректные возможности Arinst")
+        return self
+
+    def validate_profile(self, profile: ArinstProfile):
+        if (profile.start_hz < self.scan_range_hz[0] or profile.stop_hz > self.scan_range_hz[1]
+                or profile.if_bandwidth_hz not in self.bandwidths_hz):
+            raise ValueError("Профиль не поддерживается подключённым Arinst")
 
 
 class ArinstApply(StrictModel):
@@ -337,7 +372,7 @@ ARGS_V3 = {"prepare": EmptyArgs, "device_status": EmptyArgs, "apply_profile": Ar
 
 
 class ArinstLicense(StrictModel):
-    license_state: Literal["TRIAL", "LOCKED", "ACTIVATED"]
+    license_state: Literal["not_required", "TRIAL", "LOCKED", "ACTIVATED"]
     trial_remaining_seconds: int | None = Field(default=None, ge=0, le=600, strict=True)
     message: str = Field(max_length=300)
 
@@ -373,7 +408,7 @@ class ArinstWire(StrictModel):
 
 class ArinstEvidence(StrictModel):
     drain: ArinstDrain
-    wire: list[ArinstWire] = Field(min_length=1, max_length=100)
+    wire: list[ArinstWire] = Field(min_length=1, max_length=1004)
 
 
 class ArinstPartial(StrictModel):
@@ -382,11 +417,9 @@ class ArinstPartial(StrictModel):
     data: dict[Literal["S11", "S21"], Annotated[list[Complex], Field(min_length=2, max_length=1000)]]
     orientation: Literal["forward", "reverse"]
     points: int = Field(ge=2, le=1000, strict=True)
-    # C0 driver has no commissioned frequency/raw-semantics evidence. Do not let a
-    # receipt or a browser opt itself into acceptance by supplying a guessed grid.
-    grid_confirmed: Literal[False]
-    frequencies_hz: None
-    correction_origin: Literal["unknown"]
+    grid_confirmed: Literal[True]
+    frequencies_hz: list[Annotated[int, Field(ge=1_000_000, le=9_000_000_000, strict=True)]] = Field(min_length=2, max_length=1000)
+    correction_origin: Literal["raw"]
 
     @model_validator(mode="after")
     def channels(self):
@@ -395,6 +428,9 @@ class ArinstPartial(StrictModel):
                 or set(self.data) != {"S11", "S21"}
                 or any(len(v) != self.points for v in self.data.values())):
             raise ValueError("Неполные или повторяющиеся каналы Arinst")
+        if (len(self.frequencies_hz) != self.points
+                or any(a >= b for a, b in zip(self.frequencies_hz, self.frequencies_hz[1:]))):
+            raise ValueError("Неверная сетка частот Arinst")
         return self
 
 
@@ -403,13 +439,15 @@ class ArinstResult(StrictModel):
     serial: str = Field(pattern=r"^arinst:(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})$")
     hardware_uid: str = Field(min_length=5, max_length=32)
     firmware: str = Field(min_length=1, max_length=80)
+    model: Literal["VNA-DL"]
+    options: ArinstOptions
     license: ArinstLicense
     op: Literal["connect", "read_profile", "apply_profile", "measure_standard", "capture", "close"]
     started_at: datetime
     finished_at: datetime
     duration_ms: int = Field(ge=0, le=180000, strict=True)
     parser_status: Literal["complete"]
-    correction_origin: Literal["unknown"]
+    correction_origin: Literal["raw"]
     profile: ArinstProfile | None = None
     acquisition: ArinstPartial | None = None
     standard: Literal["OPEN", "SHORT", "LOAD", "THRU"] | None = None
@@ -438,12 +476,15 @@ def validate_result_v3(op: str, args: dict, serial: str, raw: dict) -> dict:
     acquisition = op in ("capture", "measure_standard")
     if (result.acquisition is not None) != acquisition:
         raise ValueError("Данные развёртки не соответствуют операции")
-    if (result.profile is not None) != (acquisition or op in ("apply_profile", "device_status")):
-        raise ValueError("Нет фактического профиля Arinst")
+    if op != "device_status" and (result.profile is not None) != (acquisition or op == "apply_profile"):
+        raise ValueError("Нет профиля сеанса Arinst")
+    if result.profile is not None:
+        result.options.validate_profile(result.profile)
     if result.profile is not None and "profile" in args and result.profile != ArinstProfile.model_validate(args["profile"]):
         raise ValueError("Прочитанный профиль Arinst не совпадает с заданным")
     if acquisition and (result.acquisition.points != result.profile.points
-                        or result.acquisition.orientation != args["orientation"]):
+                        or result.acquisition.orientation != args["orientation"]
+                        or result.acquisition.frequencies_hz != result.profile.frequencies()):
         raise ValueError("Сетка или ориентация развёртки не соответствует команде")
     if result.standard != (args["standard"] if op == "measure_standard" else None):
         raise ValueError("Измерена другая калибровочная мера")

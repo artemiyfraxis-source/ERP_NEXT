@@ -34,7 +34,7 @@ function serve(calls: string[], { captures = [FILE] as unknown[], bench = BENCH 
     if (url === "/api/production/vna-bench/state") return json(bench);
     if (url === "/api/production/vna-bench/state?instrument_id=si-001") return json({
       source: "arinst", device: { instrument_id: "si-001", control_ready: true, supported_ops: ["connect", "close"],
-        reason: null, license: { state: "ACTIVATED", trial_remaining_seconds: null } },
+        reason: null, license: { state: "not_required", trial_remaining_seconds: null } },
       profile: null, calibration: { valid: false, status: "required" }, acceptance: { eligible: false, message: "Не введён в эксплуатацию" }, session: null, latest_trace: null,
     });
     if (url.startsWith("/api/production/vna-bench/screens")) return json({ screens: [] });
@@ -58,7 +58,7 @@ it("opens the VNA workplace in the Planar card, keeps the passport folded in «�
   fireEvent.click(await screen.findByText("СИ.002"));
   const card = await screen.findByRole("dialog", { name: /СИ\.002/ });
   expect(await within(card).findByText("Калибровки нет")).toBeTruthy();
-  expect(within(card).getByRole("button", { name: "Открыть сеанс для СИ и проверок" })).toBeEnabled();
+  expect(within(card).getByRole("button", { name: "Открыть сеанс" })).toBeEnabled();
   expect(within(card).getByRole("tab", { name: "Экраны" })).toBeTruthy();
   const connection = within(card).getByText("Подключение").closest("details")!;
   expect(connection.open).toBe(false);
@@ -79,8 +79,9 @@ it.each([true, false])("header and connection use the bound agent when its onlin
   expect(await screen.findByText(online ? "Агент на связи" : "Агент не на связи")).toBeTruthy();
   const connection = screen.getByText("Подключение").closest("details")!;
   expect(connection.querySelector("summary")).toHaveTextContent(`связь с агентом: ${online ? "На связи" : "Нет связи"}`);
-  expect(connection.querySelector("summary")).toHaveTextContent("ПК DESKTOP-5O46RH6 · агент 2.12.0");
-  expect(within(connection).getByText("DESKTOP-5O46RH6")).toBeTruthy();
+  expect(connection.querySelector("summary")).toHaveTextContent("ПК DESKTOP-5O46RH6");
+  expect(within(connection).getByText("2.12.0")).toBeTruthy();
+  expect(within(connection).getAllByText("DESKTOP-5O46RH6").length).toBeGreaterThan(0);
   expect(within(connection).getByText("192.168.1.99")).toBeTruthy();
   expect(within(connection).getByText(/Последний раз ВАЦ виден .* на DESKTOP-PTA57QF/)).toBeTruthy();
   expect(within(connection).queryByText("192.168.1.121")).toBeNull();
@@ -134,7 +135,8 @@ it("names the Arinst state in operator words from what the agent reports", () =>
 it("selects the registered Arinst workplace and moves between fallback tabs using the keyboard", async () => {
   const calls: string[] = []; serve(calls);
   render(<AnalyserCard row={ARINST} benchNumber="СИ.002" canQuality close={() => {}} />);
-  expect(await screen.findByText("Лицензия активна")).toBeInTheDocument();
+  expect(await screen.findByText("Связь: протокол ArinstVL")).toBeInTheDocument();
+  expect(screen.queryByText(/Пробный режим|Лицензия активна/)).toBeNull();
   expect(calls).toContain("GET /api/production/vna-bench/state?instrument_id=si-001");
   expect(calls).not.toContain("GET /api/production/vna-bench/state");
   const control = screen.getByRole("tab", { name: "Управление через ERP" });

@@ -5426,6 +5426,29 @@ a.button-link { display: inline-block; text-decoration: none; text-align: center
 .vna-bench .num { font-variant-numeric: tabular-nums; }
 .vna-bench .muted-text { color: var(--muted-foreground); font-size: 13px; }
 .vna-bench .seg-tabs { justify-self: start; margin: 0; }
+.vna-bench { font-variant-numeric: tabular-nums; }
+.vna-bench [hidden] { display: none; }
+.vna-bench-status-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.vna-bench-status-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; min-width: 0; font-size: 13px; }
+.vna-bench-status-strip > span:not(.tone-danger):not(.tone-warn) { color: var(--muted-foreground); }
+.vna-bench-status-strip > strong { font-size: 15px; font-weight: 500; }
+.vna-bench-main-action { display: grid; justify-items: end; gap: 4px; flex: 0 0 auto; max-width: 300px; }
+.vna-bench-main-action > button { min-height: 44px; min-width: 160px; }
+.vna-bench-main-action > span { font-size: 12px; text-align: right; overflow-wrap: anywhere; }
+.vna-bench-connection { margin-top: 8px; font-size: 12px; color: var(--muted-foreground); }
+.vna-bench-connection > summary, .vna-bench-view > summary, .vna-bench-settings > summary { cursor: pointer; min-height: 32px; align-content: center; }
+.vna-bench-connection[open] > summary, .vna-bench-settings[open] > summary { margin-bottom: 8px; }
+.vna-bench-readiness { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 24px; padding: 0 16px; font-size: 13px; }
+.vna-bench-readiness label { display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; }
+.vna-bench-readiness input { width: 16px; height: 16px; margin: 0; accent-color: var(--primary); }
+.vna-bench .vna-bench-selected { margin-bottom: 0; overflow-wrap: anywhere; }
+.vna-bench .vna-bench-tools { font-size: 12px; }
+.vna-bench-tools button { min-height: 36px; }
+.vna-bench button, .vna-bench summary, .vna-bench label { touch-action: manipulation; }
+.vna-bench :is(button, summary, input, select):focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.vna-bench-settings, .vna-bench-view { font-size: 13px; }
+.vna-bench-completed { padding: 0 16px; }
+.vna-bench-target { overflow-wrap: anywhere; }
 .vna-bench-facts { display: flex; flex-wrap: wrap; gap: 8px 32px; margin: 0; }
 .vna-bench-facts dt, .vna-bench-plan dt { color: var(--muted-foreground); font-size: 12px; }
 .vna-bench-facts dd, .vna-bench-plan dd { margin: 0; font-size: 14px; font-variant-numeric: tabular-nums; }
@@ -5452,6 +5475,7 @@ a.button-link { display: inline-block; text-decoration: none; text-align: center
 .vna-bench-verdict .status-chip { height: 24px; line-height: 24px; font-size: 13px; }
 .vna-bench-prompt { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-left: 3px solid var(--primary); border-radius: 4px; background: var(--accent); font-size: 13px; line-height: 1.45; }
 .vna-bench-prompt > span, .vna-bench-prompt > strong { flex: 1 1 480px; }
+.vna-bench .vna-bench-prompt > button { min-height: 44px; }
 .vna-bench-result .vswr-chart { max-width: 1100px; }
 .vna-bench table { width: auto; justify-self: start; border-collapse: collapse; font-size: 13px; }
 .vna-bench th { padding: 4px 12px 4px 0; color: var(--muted-foreground); font-size: 12px; font-weight: 500; text-align: left; border-bottom: 1px solid var(--border); }
@@ -5474,7 +5498,8 @@ a.button-link { display: inline-block; text-decoration: none; text-align: center
 .vna-bench-body { display: grid; gap: 12px; min-width: 0; }
 .vna-bench-target > button, .vna-bench-result > button, .vna-bench-start > button { justify-self: start; }
 @media (max-width: 1100px) { .vna-bench-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 8px; } .vna-bench-steps li:nth-child(3) { border-left: 0; padding-left: 0; } }
-@media (pointer: coarse) { .vna-bench button { min-height: 40px; } }
+@media (max-width: 760px) { .vna-bench-status-row { align-items: stretch; flex-direction: column; } .vna-bench-main-action { max-width: none; justify-items: start; } .vna-bench-main-action > span { text-align: left; } }
+@media (pointer: coarse) { .vna-bench button, .vna-bench summary { min-height: 44px; } }
 /* «ВАЦ — рабочее место» → «Экраны» (VnaScreensEditor.tsx) */
 .vna-screens { display: grid; gap: 8px; }
 .vna-screens-head, .vna-screen-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }

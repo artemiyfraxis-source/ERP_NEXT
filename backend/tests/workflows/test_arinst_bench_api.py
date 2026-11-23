@@ -93,7 +93,9 @@ def ready(env):
 def test_open_read_capture_receipt_replay_close_and_partial_artifacts(env):
     view = ready(env)
     assert view["profile"] == PROFILE and view["device"]["printed_serial"] == "26030096"
-    assert view["device"]["license"]["trial_remaining_seconds"] == 600
+    assert view["device"]["license"]["state"] == "not_required"
+    assert view["device"]["license"]["trial_remaining_seconds"] is None
+    assert view["device"]["options"]["scan_range_hz"] == [1000000, 9000000000]
     assert view["device"]["power_dbm"] is None and not view["calibration"]["valid"]
     view = action(env, view, "arinst/capture", orientation="reverse")
     assert view["session"]["state"] == "awaiting_dut"
@@ -113,7 +115,7 @@ def test_open_read_capture_receipt_replay_close_and_partial_artifacts(env):
         assert session.scalar(select(func.count()).select_from(VnaBenchItemRow)) == 0
         artifact = session.scalar(select(VnaArtifactRow).where(VnaArtifactRow.command_id == UUID(command["id"])))
         assert artifact.file_name.endswith(".json") and artifact.evidence["orientation"] == "reverse"
-        assert b'"S12"' not in artifact.content and b'"frequencies_hz":null' in artifact.content
+        assert b'"S12"' not in artifact.content and b'"frequencies_hz":[1000000,2000000]' in artifact.content
     view = action(env, after, "close")
     command = poll(env)
     assert command["op"] == "close"
@@ -125,6 +127,25 @@ def test_exact_identity_does_not_head_of_line_block_planar(env):
     open_session(env)
     assert poll(env, "26030095") is None
     assert poll(env)["instrument_serial"] == SERIAL
+
+
+def test_native_connect_without_host_profile_requires_explicit_apply(env):
+    open_session(env)
+    send(env, poll(env))
+    read = poll(env)
+    result = receipt("read_profile"); result["profile"] = None
+    send(env, read, result)
+    view = state(env)
+    assert view["profile"] is None and view["device"]["control_ready"]
+    post(env, f"/sessions/{view['session']['id']}/arinst/capture",
+         dict(version=view["session"]["version"], orientation="forward"), 422)
+    view = action(env, view, "arinst/profile", profile=PROFILE)
+    send(env, poll(env))
+    view = state(env)
+    assert view["profile"] == PROFILE
+    assert view["acceptance"]["eligible"] is False and "стендовое сравнение" in view["acceptance"]["message"]
+    post(env, f"/sessions/{view['session']['id']}/arinst/profile",
+         dict(version=view["session"]["version"], profile={**PROFILE, "if_bandwidth_hz": 200}), 422)
 
 
 def test_direct_identity_required_but_legacy_capture_keeps_printed_serial(env):
@@ -274,6 +295,7 @@ def test_delayed_receipt_does_not_renew_trial_or_override_newer_heartbeat(env):
     open_session(env)
     command = poll(env)
     result = receipt("connect")
+    result["license"]["license_state"] = "TRIAL"
     result["license"]["trial_remaining_seconds"] = 60
     env[2].now += timedelta(seconds=50)
     send(env, command, result)
@@ -299,8 +321,9 @@ def test_delayed_receipt_cannot_override_newer_license_observation(env):
     command = poll(env)
     env[2].now += timedelta(seconds=50)
     items = reports(env[2]); items[1]["trial_remaining_seconds"] = 5
+    items[1]["license_state"] = "TRIAL"
     assert beat(env, items).status_code == 200
-    send(env, command, receipt("connect"))  # old snapshot says 600 seconds
+    send(env, command, receipt("connect"))  # An older receipt must not override newer observation.
     assert state(env)["device"]["license"]["trial_remaining_seconds"] == 5
 
 

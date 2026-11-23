@@ -43,8 +43,9 @@ VNA_MODEL = "S50180"
 SESSION_OPS = frozenset({"device_status", "apply_screen", "acm_confidence", "store_memory", "release"})
 UNCALIBRATED = dict(calibrated_at=None, calibration_temps=None, profile_hash=None, calibration_check_id=None)
 PORT_TO_END = {"1": "А", "2": "Б"}
-ARINST_COMMISSIONING = ("Сохранение Arinst заблокировано: не подтверждены фактическая сетка частот, "
-                        "исходная коррекция, характеристики мер и независимая проверка")
+ARINST_COMMISSIONING = ("Сохранение Arinst заблокировано: требуется стендовое сравнение "
+                        "с подтверждёнными характеристиками калибровочных мер")
+ARINST_RAW_EVIDENCE = "arinst-native-bench-2026-11-23"
 CONNECT_ACM = "Подключите АКМ к концам обоих кабелей (порт 1 АКМ — к кабелю порта 1), не сдвигая кабели"
 KIT_ORDER = tuple((kind, port) for port in (1, 2) for kind in ("OPEN", "SHORT", "LOAD")) + (("THRU", 0),)
 
@@ -65,7 +66,7 @@ def arinst_license(state, seconds, observed_at, now):
         remaining = max(0, int((seconds or 0) - max(0, (as_utc(now) - as_utc(aware(observed_at, now))).total_seconds())))
         if remaining == 0:
             state = "LOCKED"
-    message = {"ACTIVATED": "Лицензия активна",
+    message = {"not_required": "Связь: протокол ArinstVL", "ACTIVATED": "Лицензия активна",
                "LOCKED": "Время пробного режима вышло — переподключите прибор вручную или активируйте лицензию"}.get(state)
     if state == "TRIAL":
         message = f"Пробный режим API — осталось {math.ceil(remaining / 60)} мин"
@@ -81,26 +82,24 @@ def arinst_calibration_steps(snapshot, *, orientation, transmission, run_id):
                        item=dict(kind="arinst_calibration", run_id=run_id)) for standard in standards]
 
 
-def arinst_acquisition(receipt, evidence_id, context, commissioning):
-    """The single adapter into T3. A candidate linear grid never enters the solver."""
+def arinst_acquisition(receipt, evidence_id, context):
+    """Use the validated native grid and bench-confirmed raw semantics in T3."""
     data = receipt["acquisition"]
     if (data.get("grid_confirmed") is not True or not data.get("frequencies_hz")
-            or data.get("correction_origin") != "raw" or not commissioning.get("raw_semantics_evidence")
-            or not commissioning.get("grid_evidence")):
-        raise ValueError(ARINST_COMMISSIONING)
-    profile = ArinstProfile.model_validate(receipt["profile"]).model_dump(mode="json")
+            or data.get("correction_origin") != "raw" or receipt.get("correction_origin") != "raw"):
+        raise ValueError("Для калибровки Arinst нужны исходные данные с подтверждённой сеткой")
+    parsed_profile = ArinstProfile.model_validate(receipt["profile"])
+    profile = parsed_profile.model_dump(mode="json")
     if (context.instrument_uid != receipt["hardware_uid"] or context.firmware != receipt["firmware"]
             or context.profile_fingerprint != fingerprint(profile)
             or context.if_bandwidth_hz != profile["if_bandwidth_hz"]
             or context.orientation != data["orientation"]
-            or len(data["frequencies_hz"]) != profile["points"]
-            or data["frequencies_hz"][0] != profile["start_hz"]
-            or data["frequencies_hz"][-1] != profile["stop_hz"]):
+            or data["frequencies_hz"] != parsed_profile.frequencies()):
         raise ValueError("Настройка Arinst изменилась после калибровки")
     return arinst_math.Acquisition(context, tuple(data["frequencies_hz"]),
         tuple(complex(*p) for p in data["data"]["S11"]), evidence_id,
         tuple(complex(*p) for p in data["data"]["S21"]) if "S21" in data["data"] else None,
-        correction_origin="raw", raw_semantics_evidence=commissioning["raw_semantics_evidence"], grid_confirmed=True)
+        correction_origin="raw", raw_semantics_evidence=ARINST_RAW_EVIDENCE, grid_confirmed=True)
 
 
 def arinst_json(value):
@@ -117,21 +116,21 @@ def arinst_json(value):
 def arinst_solve(snapshot, standards):
     """Map immutable acquisitions and server-owned characterized definitions to SOL/THRU.
 
-    The current C0 driver cannot supply commissioned grid/raw evidence. Browser input
-    cannot set commissioning or standard coefficients. A numerical solution also needs
+    Browser input cannot set characterized standard coefficients. A numerical solution also needs
     a separate physical verification before it may authorize any quality result.
     """
-    commissioning = snapshot.get("commissioning", {})
-    if not commissioning.get("grid_evidence") or not commissioning.get("raw_semantics_evidence"):
-        raise ValueError(ARINST_COMMISSIONING)
+    if not snapshot.get("calibration_context") or not snapshot.get("characterized_standards"):
+        raise ValueError("Для калибровки Arinst нужны подтверждённые характеристики мер и плоскость измерения")
     context = arinst_math.CalibrationContext(**snapshot["calibration_context"])
     measured = []
     for receipt, artifact_id, artifact_hash in standards:
+        if receipt["standard"] not in snapshot["characterized_standards"]:
+            raise ValueError("Не подтверждены характеристики калибровочной меры Arinst")
         definition = dict(snapshot["characterized_standards"][receipt["standard"]])
         definition["response"] = tuple(complex(*v) for v in definition["response"])
         standard = arinst_math.CalibrationStandard(**definition)
         measured.append(arinst_math.StandardMeasurement(standard,
-            arinst_acquisition(receipt, artifact_id, context, commissioning)))
+            arinst_acquisition(receipt, artifact_id, context)))
     thru = next((m for m in measured if m.standard.kind == "THRU"), None)
     solved = arinst_math.solve_sol([m for m in measured if m.standard.kind != "THRU"], thru=thru)
     return dict(schema="arinst.calibration.v1", coefficients=arinst_json(asdict(solved)),
