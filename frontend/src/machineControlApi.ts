@@ -203,7 +203,8 @@ export type RunStage = "writing" | "failed" | "moved" | "ready" | "running" | "f
 
 export interface MachineRun {
   id: string;
-  kind: "cutting" | "manual";
+  kind: "cutting" | "manual" | "wire";
+  wire?: string | null;
   label: string;
   group_id: string | null;
   length_mm: string | null;
@@ -243,11 +244,12 @@ export interface MachineRunState {
 
 export type RunRequest =
   | { kind: "cutting"; group_id: string; length_mm: string; values?: Record<string, string> }
+  | { kind: "wire"; wire: string; values?: Record<string, string> }
   | { kind: "manual"; job_id: string; values?: Record<string, string> };
 
 export type ConfirmedRunRequest =
   | (Extract<RunRequest, { kind: "cutting" }> & TransferConfirmation)
-  | (Extract<RunRequest, { kind: "manual" }> & { expected_active_run_id: string | null });
+  | (Extract<RunRequest, { kind: "manual" | "wire" }> & { expected_active_run_id: string | null });
 
 export interface RunClose {
   run_id: string;
@@ -297,6 +299,8 @@ export const machineControlApi = {
     api<MachineCommand>(`${card(inventory)}/run`, post({ ...body, confirm_state: confirmState })),
   closeRun: (inventory: string, body: RunClose) =>
     api<{ run: MachineRun; manual: ManualJob | null }>(`${card(inventory)}/run/close`, post(body)),
+  resetRun: (inventory: string, expectedActiveRunId: string | null, confirmState: number | null) =>
+    api<MachineCommand>(`${card(inventory)}/run/reset`, post({ expected_active_run_id: expectedActiveRunId, confirm_state: confirmState })),
   cuttingRuns: (groupId: string, signal?: AbortSignal) =>
     api<{ runs: CuttingMachineRun[] }>(`/api/production/machines/runs/cutting/${encodeURIComponent(groupId)}`, { signal }),
   correct: (inventory: string, body: CorrectionBody) => api<CorrectionResult>(`${card(inventory)}/correction`, post(body)),

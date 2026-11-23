@@ -203,8 +203,7 @@ it("shows one list grouped by purpose; the link is a badge; «Только по�
   await waitFor(() => expect(within(dialog).getByLabelText("Длина провода")).toHaveValue("325,00"));
   expect(within(dialog).getByText("3 621 шт/ч")).toBeTruthy();
   expect(calls).toContain("/api/production/machines/u19");
-  fireEvent.click(within(dialog).getByRole("button", { name: "Наладка · ждёт" }));
-  expect(await screen.findByRole("dialog", { name: "Наладка ОБ.019" })).toBeTruthy();
+  expect(within(dialog).queryByRole("button", { name: "Наладка · ждёт" })).toBeNull();
 });
 
 it("«Только подключённые» keeps only what is on line now, not everything with an agent", async () => {
@@ -364,7 +363,7 @@ it("keeps PC, agent, link and an extra agent answer in the status line without a
   expect(screen.queryByText("Подключение")).toBeNull();
 });
 
-it("opens journal and full parameters from header buttons in PageWindows without bottom folds", async () => {
+it("keeps only journal and close in the machine header", async () => {
   machines();
   vi.spyOn(manualJobsApi, "list").mockResolvedValue({ date_from: "", date_to: "", rows: [], can_edit: false, waiting_count: 0 });
   globalThis.window.history.replaceState({}, "", "/?section=machines&equipment=u19");
@@ -383,11 +382,10 @@ it("opens journal and full parameters from header buttons in PageWindows without
     expect.any(String), expect.any(String), "u19", expect.any(AbortSignal), false));
   fireEvent.keyDown(window, { key: "Escape" });
   expect(screen.queryByRole("dialog", { name: "Журнал станка" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Все параметры" }));
-  const parameters = await screen.findByRole("dialog", { name: "Все параметры" });
-  expect(await within(parameters).findByRole("table", { name: "Провод и зачистка" })).toBeInTheDocument();
-  expect(within(parameters).getByLabelText("Длина провода")).toHaveValue("325,00");
-  fireEvent.click(within(parameters).getByRole("button", { name: "Закрыть" }));
+  expect(within(journal.closest("header")!).getAllByRole("button").map((button) => button.textContent)).toEqual(["Журнал", "Закрыть"]);
+  expect(screen.queryByRole("button", { name: "Все параметры" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Ручная работа" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Наладка" })).toBeNull();
   expect(screen.queryByRole("dialog", { name: "Все параметры" })).toBeNull();
 });
 

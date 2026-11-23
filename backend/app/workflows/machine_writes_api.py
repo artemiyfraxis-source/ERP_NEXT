@@ -47,7 +47,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.modules.equipment_setup.recipe_infrastructure import SqlAlchemyRecipes
-from app.modules.equipment_setup.recipes import (EtkNominal, latest_for_wire, ob019_proposal, recipe_holds, recipe_wire,
+from app.modules.equipment_setup.recipes import (OB019_SPEED_PARAMETERS, EtkNominal, latest_for_wire, ob019_proposal, recipe_holds, recipe_wire,
                                                  wire_key)
 from app.modules.production import machine_control
 from app.modules.production import machine_runs as runs
@@ -413,7 +413,8 @@ def _plan_rows(session, link: rules.MachineLinkRow, nominal: EtkNominal, length:
     stored = commands.offsets(session, link.equipment_id)
     words = rules.snapshot_words(session.get(rules.MachineSnapshotRow, link.equipment_id))
     rows, missing = [], []
-    for key in WIRE_KEYS:
+    speed_keys = tuple(item.key for item in OB019_SPEED_PARAMETERS if recipe_holds(recipe, item.key))
+    for key in (*WIRE_KEYS, *speed_keys):
         base = reference[key] if key in recipe_keys else etk[key]
         final = key in recipe_keys and recipe_holds(recipe, key)
         offset = None if final else Decimal(0) if key == "length_mm" else commands.offset_value(stored.get(key))
@@ -421,7 +422,7 @@ def _plan_rows(session, link: rules.MachineLinkRow, nominal: EtkNominal, length:
         if value is None:
             missing.append(rules.OB019_FIELDS[key].label)
         live = rules.field_value(key, words)
-        rows.append({"key": key, "label": rules.OB019_FIELDS[key].label, "unit": "мм", "nominal": _shown(base.value),
+        rows.append({"key": key, "label": rules.OB019_FIELDS[key].label, "unit": rules.OB019_FIELDS[key].unit, "nominal": _shown(base.value),
                      "source": base.source, "offset": _shown(offset), "value": _shown(value),
                      "live": None if live is None else _shown(Decimal(str(live)))})
     blocking = [rules.OB019_FIELDS[key].label for key in ("length_mm", "strip_front_mm", "strip_back_mm")
@@ -430,9 +431,9 @@ def _plan_rows(session, link: rules.MachineLinkRow, nominal: EtkNominal, length:
 
 
 # The ETK gives length and strip of a job; cut diameter and knife back-off are the machine's own (Слава's эталон).
-JOB_RECIPE_KEYS = ("diameter_mm", "knife_back_mm")
+JOB_RECIPE_KEYS = ("diameter_mm", "knife_back_mm", *(item.key for item in OB019_SPEED_PARAMETERS))
 # Without a job everything but the length comes from the wire's recipe, else the reference fallback.
-WIRE_RECIPE_KEYS = tuple(key for key in WIRE_KEYS if key != "length_mm")
+WIRE_RECIPE_KEYS = tuple(key for key in WIRE_KEYS if key != "length_mm") + tuple(item.key for item in OB019_SPEED_PARAMETERS)
 
 
 def _transfer_plan(session, link: rules.MachineLinkRow, group_id: UUID, length_text: str,
@@ -562,14 +563,19 @@ def transfer(inventory: str, payload: TransferPayload, principal: Writer, factor
         refuse_when_done(plan)
         writes = [commands.FieldWrite(row["key"], row["value"]) for row in plan["rows"] if row["value"] is not None]
         writes += [commands.FieldWrite(key, value) for key, value in plan["job"].items() if value not in ("", None)]
-        writes += marking_writes(plan)
+        current = runs.current(session, link.equipment_id)
+        new_job = not (runs.is_open(current) and runs.same_job(runs.info(current),
+                                                            runs.cutting(payload.group_id, payload.length_mm, "", None)))
+        writes += marking_writes(plan, new_job=new_job)
         return _enqueue(uow, link, principal, "transfer", writes, transfer_summary(plan), now,
                         run=cutting_run(plan, payload.length_mm))
 
 
-def marking_writes(plan: dict) -> list[commands.FieldWrite]:
+def marking_writes(plan: dict, *, new_job: bool = False) -> list[commands.FieldWrite]:
     """The ETK laser marking of a job plan (workflows/ob019_marking.py) — written with the job, 422 when it cannot be."""
     marking = plan.get("marking")
+    if marking is None and new_job:
+        marking = marking_plan({"mode": "none"}, Decimal(0), latin)
     if marking is None:
         return []
     if marking["blocking"]:

@@ -12,6 +12,11 @@ production/machine_runs.py; the write itself is the card's write queue (machine_
   writes the ETK plan (the same words as «Передать на станок»); with `values` — those (the drawing edited by hand)
   plus the ETK marking (422 «Маркировка: …» when it is blocked, nothing written).
   A manual job writes `values` plus its own order number «R-000001», product line and planned quantity.
+- The same POST accepts `{kind: "wire", wire, values, expected_active_run_id, confirm_state}` for a standalone
+  batch. Values include a positive quantity, length and all confirmed geometry. The client stages recipe/reference
+  values before confirmation; this endpoint never injects later changes from the mutable wire recipe.
+- `POST .../run/reset` `{expected_active_run_id, confirm_state}` prepares «Новый тираж»: preserves the old run's
+  count, sets D22 to the fresh D649 counter and clears job/marking fields. D649/D645 are never written.
 - `POST /api/production/machines/card/{ОБ}/run/close` (edit) `{run_id}` for a cutting run → closed with the machine
   count (the hand-in in «Мои задания» is pre-filled with it, the operator confirms there); for a manual run also
   `{version, good, defect, defect_reason, material, material_note}` → the manual job is finished (`count_source` plc, or
@@ -43,12 +48,13 @@ from app.shared.clock import moscow_now
 from app.shared.events import AuditEvent
 from app.shared.http_auth import Principal
 
-from .machine_writes_api import (_can_edit, _confirm, _enqueue, _journal, _link, can_control,
+from .machine_writes_api import (_can_edit, _closed, _confirm, _enqueue, _journal, _link, _wire_choices, _wire_plan, can_control,
                                  confirm_active_run, confirmed_transfer_plan, ExpectedSource, locked_link,
                                  cutting_run, latin, machines_edit_principal, marking_writes, refuse_when_done,
                                  refuse_while_manual, settle_run, transfer_summary)
 from .machines_api import Reader
 from .manual_jobs_api import view as manual_view
+from .ob019_setup import wire_label
 
 router = APIRouter(prefix="/api/production/machines", tags=["production"])
 Factory = Annotated[Callable, Depends(production_uow_factory)]
@@ -61,14 +67,20 @@ class Payload(BaseModel):
 
 
 class RunPayload(Payload):
-    kind: Literal["cutting", "manual"]
+    kind: Literal["cutting", "manual", "wire"]
     group_id: UUID | None = None
     length_mm: str = Field(default="", max_length=20)
     job_id: UUID | None = None
+    wire: str = Field(default="", max_length=200)
     values: dict[str, str | int | float] = Field(default_factory=dict, max_length=len(rules.OB019_FIELDS))
     confirm_state: int | None = None
     expected_source: ExpectedSource | None = None
     expected_active_run_id: UUID | None = None
+
+
+class ResetPayload(Payload):
+    expected_active_run_id: UUID | None
+    confirm_state: int
 
 
 class ClosePayload(Payload):
@@ -118,6 +130,44 @@ def _whole(value: object) -> int | None:
     return number if number > 0 else None
 
 
+def _wire_run(uow, link, payload: RunPayload, principal: Principal, now: datetime) -> dict:
+    """Prepare a confirmed standalone batch; a resend changes only explicitly entered values."""
+    session = uow.session
+    if "expected_active_run_id" not in payload.model_fields_set:
+        raise HTTPException(409, "Обновите карточку и подтвердите загрузку тиража")
+    name = wire_label(payload.wire)
+    choices = {item["label"].casefold(): item["label"] for item in _wire_choices(session, link)}
+    if name.casefold() not in choices:
+        raise HTTPException(422, "Выберите провод из справочника или сохранённых настроек")
+    name = choices[name.casefold()]
+    refuse_while_manual(session, link.equipment_id)
+    previous = runs.current(session, link.equipment_id)
+    same = runs.is_open(previous) and runs.same_job(runs.info(previous), runs.wire(name, "", None))
+    old = runs.info(previous) if same else {}
+    values: dict[str, object] = dict(payload.values)
+    quantity = _whole(values.get("total_set"))
+    if quantity is None:
+        raise HTTPException(422, "Тираж: целое число штук больше нуля")
+    length = str(values.get("length_mm", old.get("length_mm", "")))
+    plan = _wire_plan(session, link, name, length)
+    if not same:
+        # The full reviewed geometry is authoritative. Recomputing recipe defaults here would silently inject
+        # settings changed since the preview, including a speed omitted because it matched the machine then.
+        required = ("length_mm", "strip_front_mm", "pull_front_mm", "strip_back_mm", "pull_back_mm",
+                    "diameter_mm", "knife_back_mm")
+        values = {**{item.key: item.value for item in marking_writes(plan, new_job=True)}, **values}
+        missing = [rules.OB019_FIELDS[key].label for key in required if key not in values]
+        if missing:
+            raise HTTPException(422, "Для нового провода не задано: " + ", ".join(missing))
+        values["order_number"] = ""
+        values["order_quantity"] = 0
+        values["product"] = plan["job"]["product"]
+    run = runs.wire(name, length, quantity)
+    run["expect"] = {**(old.get("expect") or {}), **runs.expect(values, empty=True)}
+    writes = [commands.FieldWrite(key, value) for key, value in values.items()]
+    return _enqueue(uow, link, principal, "transfer", writes, f"Загрузить тираж: {run['label']}", now, run=run)
+
+
 @router.post("/card/{inventory}/run")
 def start_run(inventory: str, payload: RunPayload, principal: Writer, factory: Factory, now: Now) -> dict:
     with factory() as uow:
@@ -125,8 +175,11 @@ def start_run(inventory: str, payload: RunPayload, principal: Writer, factory: F
         link = locked_link(session, inventory)
         _confirm(session, link, payload.confirm_state)
         job = (runs.cutting(payload.group_id, payload.length_mm, "", None) if payload.kind == "cutting"
+               else runs.wire(wire_label(payload.wire), "", None) if payload.kind == "wire"
                else runs.manual(payload.job_id, "", None))
         confirm_active_run(session, link.equipment_id, payload.expected_active_run_id, job)
+        if payload.kind == "wire":
+            return _wire_run(uow, link, payload, principal, now)
         if payload.kind == "cutting":
             if payload.group_id is None or not payload.length_mm.strip():
                 raise HTTPException(422, "Выберите задание резки")
@@ -155,7 +208,7 @@ def start_run(inventory: str, payload: RunPayload, principal: Writer, factory: F
                     key: plan["job"].get(key) for key in ("order_number", "product")}
                 writes += [commands.FieldWrite(key, value) for key, value in identity.items()
                            if kept is None and key not in payload.values and value not in ("", None)]
-                writes += [item for item in marking_writes(plan) if item.key not in payload.values]
+                writes += [item for item in marking_writes(plan, new_job=not again) if item.key not in payload.values]
                 run = cutting_run({**plan, "quantity": _whole(payload.values.get("total_set")) or plan["quantity"]},
                                   payload.length_mm, payload.values)
                 if kept is not None:
@@ -166,7 +219,9 @@ def start_run(inventory: str, payload: RunPayload, principal: Writer, factory: F
                 refuse_when_done(plan)
                 writes = [commands.FieldWrite(row["key"], row["value"]) for row in plan["rows"] if row["value"] is not None]
                 writes += [commands.FieldWrite(key, value) for key, value in plan["job"].items() if value not in ("", None)]
-                writes += marking_writes(plan)
+                current = runs.current(session, link.equipment_id)
+                new_job = not (runs.is_open(current) and runs.same_job(runs.info(current), job))
+                writes += marking_writes(plan, new_job=new_job)
                 run = cutting_run(plan, payload.length_mm)
             return _enqueue(uow, link, principal, "transfer", writes, transfer_summary(plan), now, run=run)
         job = session.get(manual.ManualJobRow, payload.job_id) if payload.job_id else None
@@ -194,6 +249,48 @@ def start_run(inventory: str, payload: RunPayload, principal: Writer, factory: F
         run = {**runs.manual(job.id, label, _whole(values.get("total_set"))), "expect": runs.expect(values)}
         return _enqueue(uow, link, principal, "transfer", writes, f"Передать на станок: ручная работа {label}", now,
                         run=run)
+
+
+@router.post("/card/{inventory}/run/reset")
+def reset_run(inventory: str, payload: ResetPayload, principal: Writer, factory: Factory, now: Now) -> dict:
+    """Explicit new-batch preparation: target equals the live counter; never write a PLC counter register."""
+    with factory() as uow:
+        session = uow.session
+        link = locked_link(session, inventory)
+        _confirm(session, link, payload.confirm_state)
+        settle_run(uow, link.equipment_id, now)
+        previous = runs.current(session, link.equipment_id, for_update=True)
+        active = str(previous.id) if runs.is_open(previous) else None
+        if active != (str(payload.expected_active_run_id) if payload.expected_active_run_id else None):
+            raise HTTPException(409, "Задание на станке изменилось — обновите карточку и подтвердите новый тираж")
+        refuse_while_manual(session, link.equipment_id)
+        if runs.is_open(previous) and (previous.status in commands.OPEN or runs.pending(previous)):
+            raise HTTPException(409, runs.CLOSE_CHECKING)
+        # Reuse the normal counter age, link and idle checks. Only the absolute target is used below.
+        try:
+            _, quantity = commands.quantity_as_target([commands.FieldWrite("total_set", 1)],
+                session.get(rules.MachineSnapshotRow, link.equipment_id), now)
+            values = {"total_set": quantity["counter"], "order_quantity": 0, "order_number": "", "product": "",
+                      **{item.key: item.value for item in marking_writes({}, new_job=True)}}
+            row, expired = commands.enqueue(session, equipment_id=link.equipment_id, purpose="settings",
+                writes=[commands.FieldWrite(key, value) for key, value in values.items()], summary="Новый тираж",
+                actor_id=principal.actor.id, actor_name=principal.actor.name, now=now)
+        except commands.MachineCommandRefused as error:
+            raise HTTPException(409, str(error)) from error
+        except rules.MachineWriteInvalid as error:
+            raise HTTPException(422, str(error)) from error
+        _closed(uow, expired, principal.actor, now)
+        if runs.is_open(previous):
+            words, link_ok, _problem = _live(session, link.equipment_id, now)
+            closed = runs.close(previous, words, link_ok, now, principal.actor.name, "Новый тираж")
+            _journal(uow, link.equipment_id, "run_closed", principal.actor, now,
+                     f"Задание завершено: {closed.get('label', '')} — по станку {closed.get('machine_count')} шт",
+                     command_id=str(previous.id))
+        _journal(uow, link.equipment_id, "write_queued", principal.actor, now,
+                 f"Новый тираж: записать цель {quantity['counter']}; очистить маркировку и связь с заданием",
+                 command_id=str(row.id))
+        uow.commit()
+        return commands.command_view(row)
 
 
 @router.post("/card/{inventory}/run/close")
