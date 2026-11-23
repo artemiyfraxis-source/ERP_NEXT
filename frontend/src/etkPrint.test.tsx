@@ -35,6 +35,36 @@ function techcard(operation: Record<string, unknown>): ProjectTechcard {
 
 afterEach(() => vi.restoreAllMocks());
 
+it.each(["", "0"])("shows unknown label-print time instead of false zero (%s) on screen and print", async (norm) => {
+  stubFetch();
+  const card = techcard({
+    code: "PRINT_MARK_LABEL", type: "coaxCutTut", title: "Печать этикеток",
+    times: { operation_seconds: "", machine_seconds: "0" },
+    time: [{ name: "Этикетки", norm }],
+  });
+  const before = structuredClone(card);
+  render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
+  expect(await screen.findByLabelText("Расчётное время")).toHaveTextContent("не задано");
+  expect(screen.getByLabelText("Расчётное время")).not.toHaveTextContent("0 мин");
+  const html = buildPrintDocumentHtml("ТК", etkPrintPages(card, []));
+  expect(html).toMatch(/Расчётное время[\s\S]*не задано/);
+  expect(card).toEqual(before);
+});
+
+it("does not report a partial sum as the total when one time norm is missing", async () => {
+  stubFetch();
+  const card = techcard({ time: [{ name: "Печать", norm: "2" }, { name: "Нарезка", norm: "" }] });
+  render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
+  expect(await screen.findByLabelText("Расчётное время")).toHaveTextContent("не задано");
+});
+
+it("preserves an explicitly supplied zero time norm", async () => {
+  stubFetch();
+  const card = techcard({ times: { operation_seconds: "0" }, time: [{ name: "Этикетки", norm: "0" }] });
+  render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
+  expect(await screen.findByLabelText("Расчётное время")).toHaveTextContent("0 мин");
+});
+
 function stubFetch() {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
     new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));

@@ -75,7 +75,9 @@ describe("ПФ коаксиальной сборки: картинка на ра
 
   it("изделие: оба разъёма, ТУТ на обоих концах и размер 275 мм; без заглушки «Раз…»", () => {
     const svg = art("Кабельная сборка");
-    expect(texts(svg)).toEqual(expect.arrayContaining(["SMA-Male (вилка)", "SMA-Female bulkhead (розетка)", "L = 275 мм"]));
+    expect(svg).toContain('aria-label="SMA-Male (вилка)"');
+    expect(svg).toContain('aria-label="SMA-Female bulkhead (розетка)"');
+    expect(texts(svg)).toContain("L = 275 мм");
     expect(texts(svg).filter((text) => text === "ТУТ")).toHaveLength(2);
     expect(svg).not.toMatch(/Раз|Разъ/);
     expect(svg).not.toContain('data-part="connector"');

@@ -4,6 +4,7 @@ feeding the stage that takes its pieces. The ETK's operation order (and so the p
 `{task}:{op_index}:{mark_index}`) does not change — only the grouping into ПФ."""
 
 from decimal import Decimal
+from dataclasses import replace
 
 from app.modules.techcards.domain.pf_split import generator_split, op_stages, same_split
 from app.modules.techcards.domain.route import RouteOp, parse_route
@@ -35,7 +36,7 @@ FAKRA_TAPE = [
 ]
 
 
-def test_fakra_cable_labels_and_tubes_are_three_input_less_pf_feeding_the_marked_cable():
+def test_historical_fakra_order_keeps_label_inputs_until_a_rebuild():
     stages = op_stages(FAKRA_TAPE)
     assert [stages[position] for position in (1, 2, 3, 4, 7)] == ["wires", "labels", "tubes", "marked", "marked"]
     route = generator_split(FAKRA_TAPE, "Кабельная сборка FAKRA")
@@ -50,6 +51,21 @@ def test_fakra_cable_labels_and_tubes_are_three_input_less_pf_feeding_the_marked
                             ("wires", "marked")]
     assert not any(edge.target in {"wires", "labels", "tubes"} for edge in route.edges)
     assert not any(block.kit for block in route.blocks)
+
+
+def test_rebuilt_fakra_labels_feed_final_while_tubes_still_feed_preparation():
+    ordered = [op for op in FAKRA_TAPE if op.key != "coaxInsLabel"]
+    heat = next(index for index, op in enumerate(ordered) if op.key == "coaxHeat")
+    ordered.insert(heat, next(op for op in FAKRA_TAPE if op.key == "coaxInsLabel"))
+    ordered = [replace(op, position=index + 1) for index, op in enumerate(ordered)]
+    route = generator_split(ordered, "Кабельная сборка FAKRA")
+    stages = op_stages(ordered)
+    assert stages[next(op.position for op in ordered if op.key == "coaxInsLabel")] == "final"
+    assert stages[4] == "marked"
+    assert ("labels", "final") in edges(route)
+    assert ("tubes", "marked") in edges(route)
+    assert ("marked", "A") in edges(route)
+    assert next(block.name for block in route.blocks if block.key == "marked") == "Кабель с трубками и деталями"
 
 
 def test_a_fakra_etk_stored_with_one_blanks_pf_is_proposed_split_without_links_between_the_preparations():

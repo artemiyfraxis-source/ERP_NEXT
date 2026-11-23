@@ -12,7 +12,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from dataclasses import replace as _replace
 
-from .domain.pf_split import generator_split, same_split
+from .domain.pf_split import generator_split, same_split, validate_coax_finishing
 from .domain.route import (
     Block, Route, RouteError, RouteOp, chain_route, derive_route, parse_route, route_json, route_levels, route_totals,
 )
@@ -935,8 +935,8 @@ def _mark_rows(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[st
 _MARK_SERIAL_TOKEN = re.compile(r"\{№(?::[1-6])?\}")
 
 
-def _coax_serial_mark_rows(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[str, str]]:
-    """Expose serial labels once, at printing; installation reuses the same physical labels."""
+def _coax_mark_rows(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[str, str]]:
+    """Expose the complete label output once, at printing; installation reuses the same physical labels."""
     material = "Лента Vell VL-S641, 18 мм" if op.get("markMaterial") == "tape" else "Термотрубка"
     return [{
         "target": "Кабель", "text": str(mark.get("text") or ""), "material": material,
@@ -1261,6 +1261,12 @@ def _time(op: Mapping[str, Any], config: Mapping[str, Any], result_name: str) ->
     kind = _kind(op)
     wires = _wires(op, config)
     quantity = _part_quantity(config)
+    printing = (operation_type == "coaxCutTut" and op.get("markMaterial") == "tape") or (
+        operation_type == "cutTut" and _wire_marks(op)) or (
+        operation_type == "insMark" and op.get("markPhase") == "print")
+    if printing and not str(op.get("tOp") if op.get("tOp") is not None else "").strip():
+        # PRINT_MARK_LABEL has no approved norm in the operation library. Empty is unknown, never free work.
+        return [{"name": result_name, "norm": ""}]
     operation_minutes = _decimal(op.get("tOp")) / 60
     if config.get("mode") == "rework":
         linear = linear_seconds(op.get("linearTiming"), _decimal(config["rework"]["cutLength"]) / 1000) if operation_type == "cutWire" else None
@@ -1921,10 +1927,10 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
                        "lPlusB": _coax(config).get("lPlusB"), "cutTolerance": "0…+5 мм", "drawingTolerance": "0…+10 мм"})
     if op.get("marks") and operation_type.startswith("coax"):
         fields["coaxMarks"] = deepcopy(op["marks"])
-        if operation_type == "coaxCutTut" and any(
+        if operation_type == "coaxCutTut" and (op.get("markMaterial") == "tape" or any(
             _MARK_SERIAL_TOKEN.search(str(mark.get("text") or "")) for mark in _mark_items(op)
-        ):
-            fields["marks"] = _coax_serial_mark_rows(op, config)
+        )):
+            fields["marks"] = _coax_mark_rows(op, config)
     if operation_type == "coaxInsSleeve" and _coax(config).get("fakraCutStrip"):
         end = _coax_end(op, config)
         if end.get("kind") in {"straight", "angled"}:
@@ -2842,6 +2848,8 @@ def _typed_operation(
         "times": _times(op),
         "fields": fields,
     }
+    if any(not row["norm"] for row in operation["time"]):
+        warnings.append(f"Операция {position} ({code}): норма времени не задана — расчётное время не определено.")
     label = str(op.get("label") or "").strip()
     if config.get("topologyVersion") == 1:
         operation.update({"opKey": op["opKey"], "dependsOn": deepcopy(op.get("dependsOn", []))})
@@ -2901,8 +2909,8 @@ def _typed_operation(
 
 
 def _times(op: Mapping[str, Any]) -> dict[str, str]:
-    return {"operation_seconds": str(op.get("tOp") or ""), "setup_seconds": str(op.get("tPrep") or ""),
-            "machine_seconds": str(op.get("tMachine") or "")}
+    return {name: "" if op.get(key) is None else str(op[key]) for name, key in (
+        ("operation_seconds", "tOp"), ("setup_seconds", "tPrep"), ("machine_seconds", "tMachine"))}
 
 
 def _physical_topology(config: Mapping[str, Any]) -> dict[str, Any]:
@@ -3206,6 +3214,8 @@ def _route(
     if route is None and config.get("mode") == "rework":
         route = _replace(chain_route(ops, final_name), manual=False, generated=True)
     route = route or derive_route(ops, final_name)
+    if strict and config.get("mode") == "coax":
+        validate_coax_finishing(route, ops)
     totals = route_totals(route, {op.position: op.minutes for op in ops}, quantity)
     if config.get("topologyVersion") == 1 and route.generated and all(edge.per_unit == 1 for edge in route.edges):
         # These edges encode precedence, not repeated material inputs. Shared ancestors ran only once.
@@ -3748,9 +3758,11 @@ def _tube_word(op: Mapping[str, Any]) -> str:
     return "ТТК" if "ТТК" in art else "ТУТ" if "ТУТ" in art else ""
 
 
-def _scheme_step(op: Mapping[str, Any]) -> str:
+def _scheme_step(op: Mapping[str, Any], config: Mapping[str, Any]) -> str:
     """What an inner operation of a ПФ hands on, short: «Контакты установлены в разъём», «Оплётка надета»."""
     operation_type = str(op.get("type") or "")
+    if operation_type.startswith("coax"):
+        return _coax_result_name(op, config, [op])
     kind = _kind(op)
     if kind == "ins":
         return "Контакты установлены в разъём"
@@ -3825,7 +3837,7 @@ def _scheme_chain(
     for block in route.blocks:
         last = operations[block.ops[-1] - 1]
         names[block.key] = block.name or (final_name if block.final else "") or (
-            _result_name(last, config, "") if block.kit else _scheme_step(last))
+            _result_name(last, config, "") if block.kit else _scheme_step(last, config))
     by_key = {block.key: block for block in route.blocks}
 
     def number(key: str) -> tuple[int, ...]:
@@ -3842,7 +3854,7 @@ def _scheme_chain(
             if block.kit:
                 result = _result_name(op, config, previous, [operations[item - 1] for item in block.ops[:index + 1]])
             else:
-                result = names[block.key] if last else _scheme_step(op)
+                result = names[block.key] if last else _scheme_step(op, config)
             if index:
                 semis = [{**_row(previous, count), "source": f"операция {_op_number(block.ops[index - 1])}"}]
             elif codes is not None and codes[position - 1].startswith("CUT_"):
@@ -4134,6 +4146,45 @@ def _ordered_physical_config(config: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _coax_finishing_config(config: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Apply the finishing rule on rebuilds too; issued documents and pinned production tasks stay immutable."""
+    if config.get("mode") != "coax":
+        return config
+    raw = config.get("ops")
+    if not isinstance(raw, list) or any(not isinstance(op, Mapping) for op in raw):
+        return config
+    colors = [index for index, op in enumerate(raw) if op.get("type") == "coaxConnColor"]
+    order = [index for index in range(len(raw)) if index not in colors]
+    label = next((index for index in order if raw[index].get("opKey") == "coaxInsLabel"), None)
+    coax = _coax(config)
+    heat = next((index for index in order if raw[index].get("opKey") == "coaxHeat" and (
+        raw[index].get("protective") or (coax.get("markMaterial") == "tape" and coax.get("markProtect")))), None)
+    if label is not None and heat is not None:
+        checks = [index for index in order if raw[index].get("type") == "coaxVswr"]
+        order = [index for index in order if index not in {label, heat, *checks}] + [label, heat, *checks]
+    order += colors
+    if order == list(range(len(raw))) and not (label is not None and heat is not None):
+        return config
+    result = deepcopy(dict(config))
+    result["ops"] = [deepcopy(raw[index]) for index in order]
+    if label is not None and heat is not None and not result.get("tab"):
+        result["tab"] = "coax"
+    if result.get("opOrder"):
+        result["opOrder"] = [str(op.get("opKey") or "") for op in result["ops"]]
+    route = result.get("route")
+    if isinstance(route, Mapping):
+        if route.get("source") in {"generated", "derived"}:
+            # Positional membership and source edges belonged to the old recipe. Re-derive the automatic PFs.
+            result.pop("route")
+            result["tab"] = "coax"
+        else:
+            positions = {old + 1: new + 1 for new, old in enumerate(order)}
+            for block in route.get("blocks") or []:
+                if isinstance(block, dict) and isinstance(block.get("ops"), list):
+                    block["ops"] = sorted(positions.get(pos, pos) for pos in block["ops"])
+    return result
+
+
 def build_etk(
     config: Mapping[str, Any], cards: Sequence[OperationCardTemplate], *,
     operation_library_commit: str = "",
@@ -4141,7 +4192,7 @@ def build_etk(
 ) -> dict[str, Any]:
     """Return an immutable document snapshot suitable for ProjectTechcard.rebuild. `operation_library_commit` — only a
     provenance label in `source` (documents built from the SUPPLYMAP library carry its commit); empty — none."""
-    config = _coax_quantity_config(config)
+    config = _coax_finishing_config(_coax_quantity_config(config))
     if _coax(config).get("lengthBasis") == "finished":
         coax = dict(_coax(config))
         values = []

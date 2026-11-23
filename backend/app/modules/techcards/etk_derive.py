@@ -159,6 +159,8 @@ def _apply_route(document: dict[str, Any], stored: object, conflicts: list[dict[
     try:
         ops, final_name, quantity = _route_ops(document, strict=False)
         route = route_domain.parse_route({**stored, "blocks": raw_blocks}, ops, final_name, manual=True)
+        if (document.get("build_config") or {}).get("mode") == "coax":
+            pf_split.validate_coax_finishing(route, ops)
         route = replace(route, generated=stored.get("source") == "generated")
         totals = route_domain.route_totals(route, {op.position: op.minutes for op in ops}, quantity)
         return {**document, "route": route_domain.route_json(route, totals)}
