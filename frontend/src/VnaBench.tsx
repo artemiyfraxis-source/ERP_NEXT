@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ApiError, failureText, productionApi, type ProductionInstrument } from "./api";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { ApiError, failureText, productionApi, vnaCaptureApi, type ProductionInstrument, type VnaAgent } from "./api";
 import { formatMoment, formatNumber, glueUnits, toNumber } from "./format";
 import { VswrChart } from "./VswrChart";
 import { ScreenSwitcher, VnaScreensEditor, lossTitle } from "./VnaScreensEditor";
@@ -13,6 +13,7 @@ import {
   type VnaBenchCheckPhase,
   type VnaBenchConnection,
   type VnaBenchDue,
+  type VnaBenchDevice,
   type VnaBenchFixture,
   type VnaBenchItem,
   type VnaBenchPlan,
@@ -129,13 +130,14 @@ type Tab = "measure" | "checks" | "screens";
 const TABS: { id: Tab; label: string }[] = [{ id: "measure", label: "Замер" }, { id: "checks", label: "Проверки" },
   { id: "screens", label: "Экраны" }];
 
-export function VnaBench({ canEdit }: { canEdit: boolean }) {
+export function VnaBench({ canEdit, connection }: { canEdit: boolean; connection?: (device: VnaBenchDevice) => ReactNode }) {
   const [state, setState] = useState<VnaBenchState | null>(null);
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [busy, setBusy] = useState("");
   const [tab, setTab] = useState<Tab>("measure");
   const [attempt, setAttempt] = useState(0);
+  const [notice, setNotice] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -144,13 +146,14 @@ export function VnaBench({ canEdit }: { canEdit: boolean }) {
     return () => { active = false; };
   }, [attempt]);
 
-  // Пока агент выполняет команду — опрос раз в 2 с; без команды экран не дёргает сервер.
-  const polling = sessionBusy(state);
+  // При отказе ждём подключения прибора: новый отчёт другого ПК должен открыть явный перенос.
+  const commandBusy = sessionBusy(state);
+  const polling = commandBusy || Boolean(state?.device.refusal);
   useEffect(() => {
     if (!polling) return;
-    const timer = window.setTimeout(() => setAttempt((value) => value + 1), POLL_MS);
+    const timer = window.setTimeout(() => setAttempt((value) => value + 1), commandBusy ? POLL_MS : 10_000);
     return () => window.clearTimeout(timer);
-  }, [polling, state, attempt]);
+  }, [polling, commandBusy, state, attempt]);
 
   const refusalOf = (reason: unknown): string => {
     if (reason instanceof ApiError && reason.status === 409) setAttempt((value) => value + 1);
@@ -213,8 +216,24 @@ export function VnaBench({ canEdit }: { canEdit: boolean }) {
     if (session) await vnaBenchApi.close(session.id, session.version);
     return vnaBenchApi.startSession(assembly ? { assembly } : {});
   });
+  const transfer = (target: VnaAgent) => act("transfer", async () => {
+    const offer = state.device.transfer;
+    if (!offer || !state.device.instrument_id) return state;
+    setNotice("");
+    await vnaCaptureApi.transfer(state.device.instrument_id, offer.serial, offer.owner_id, target.id);
+    setNotice(`ВАЦ перенесён на ${target.pc}`);
+    return vnaBenchApi.state();
+  });
   return <section className="vna-bench" aria-label="ВАЦ — рабочее место">
     <BenchHeader state={state} />
+    {state.device.transfer && canEdit && <div className="form-actions">
+      {state.device.transfer.agents.map((target) => <button type="button" className="secondary" key={target.id}
+        disabled={Boolean(busy)} onClick={() => void transfer(target)}>
+        {busy === "transfer" ? "Переносим ВАЦ…" : `Перенести ВАЦ на ${target.pc}`}
+      </button>)}
+    </div>}
+    {notice && <p role="status" className="success-banner">{notice}</p>}
+    {state.device.transfer_blocked_reason && <p className="warning-inline">{state.device.transfer_blocked_reason}</p>}
     {error && <div className="error-banner" role="alert">{error}</div>}
     {loadError && <div className="warning-inline" role="status">{loadError} Показано последнее известное состояние.</div>}
     {session && session.owned === false && <div className="warning-inline" role="status">
@@ -253,6 +272,7 @@ export function VnaBench({ canEdit }: { canEdit: boolean }) {
       {tab === "screens" && <VnaScreensEditor session={session} calibrationValid={state.calibration.valid} canEdit={canEdit}
         show={showScreen} />}
     </div>
+    {connection?.(state.device)}
   </section>;
 }
 
@@ -284,8 +304,9 @@ function BenchHeader({ state }: { state: VnaBenchState }) {
   const monthly = dueText(state.due.find((due) => due.kind === "monthly"));
   return <div className="panel vna-bench-head">
     <dl className="vna-bench-facts">
-      <div><dt>ПК</dt><dd>{device.pc_name ?? "—"} <span className={device.agent_online ? "tone-ok" : "tone-danger"}>{device.agent_online ? "на связи" : "нет связи"}</span></dd></div>
-      <div><dt>ВАЦ</dt><dd>{device.instrument_number} {device.model}{device.serial ? `, зав. № ${device.serial}` : ""}</dd></div>
+      <div><dt>ПК</dt><dd>{device.bound_pc ?? device.pc_name ?? "—"} <span className={device.agent_online ? "tone-ok" : "tone-danger"}>{device.agent_online ? "Агент на связи" : "Агент не на связи"}</span></dd></div>
+      <div><dt>ВАЦ</dt><dd>{device.instrument_number} {device.model}{device.serial ? `, зав. № ${device.serial}` : ""}
+        {device.vna_online !== undefined && <span className={device.vna_online ? "tone-ok" : "tone-warn"}> · {device.vna_online ? "ВАЦ на связи" : "ВАЦ не подключён"}</span>}</dd></div>
       <div><dt>S2VNA</dt><dd className={ready ? "tone-ok" : "tone-warn"}>{ready ? "Готов" : device.s2vna_ready === false
         ? `Не готов${device.warmup_min !== null ? ` — прогрев ${device.warmup_min} из 40 мин` : ""}` : "нет данных"}</dd></div>
       <div><dt>Температура</dt><dd className="num">{temperatureText(state)}</dd></div>
@@ -295,6 +316,10 @@ function BenchHeader({ state }: { state: VnaBenchState }) {
       <div><dt>Ежемесячная</dt><dd className={monthly.tone}>{monthly.text}</dd></div>
     </dl>
     {device.refusal && <div className="warning-inline" role="alert">{refusalText(device.refusal)}</div>}
+    {device.last_seen_pc && device.last_seen_pc !== (device.bound_pc ?? device.pc_name)
+      && device.refusal?.code !== "vna_not_connected" && <p className="warning-inline">
+        Последний раз ВАЦ виден {formatMoment(device.last_seen_at)} на {device.last_seen_pc}.
+      </p>}
   </div>;
 }
 

@@ -1,7 +1,7 @@
 """«ВАЦ — рабочее место» end to end: the S5 screen's API against a stub protocol-v2 agent (S3 + S4)."""
 
 import base64
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -17,6 +17,12 @@ from app.modules.production.rf_interfaces import RfDetails, RfInterface
 from app.modules.production.vna_check_infrastructure import VnaCheckRow
 from app.modules.production.vna_checks import KitStandard, kit_response
 from app.modules.production.vna_session_infrastructure import VnaBenchItemRow, VnaSessionRow
+from app.modules.warehouse.devices import DeviceRow, VnaBindingRow, VnaControlRow
+from app.modules.warehouse.scan_agents import ScanAgentRow
+from app.shared.http_auth import Principal, authenticated_principal
+from app.shared.identity import Actor
+from app.shared.persistence import AuditEventRow
+from app.workflows.vna_bench_api import _agent_code
 from tests.identity.test_api_tokens import _bearer, _csrf, _issue, _login, tokens_api  # noqa: F401
 from tests.production.test_api import production_api  # noqa: F401
 from tests.warehouse.test_vna_jobs import CLAIM, HEARTBEAT, NAME, S2_INSTRUMENT, capture  # noqa: F401
@@ -393,6 +399,147 @@ def test_agent_without_protocol_2_ops_cannot_open_a_bench_session(env):
     control_heartbeat(env["agent"], ops=OPS[:3])
     assert post(env, "/sessions", expect=409)["detail"]["code"] == "agent_old"
     assert state(env)["device"]["refusal"]["code"] == "agent_old"
+
+
+@pytest.mark.parametrize("message,code", [
+    ("Подключённый ВАЦ с нужным серийным номером не найден", "vna_not_connected"),
+    ("Агент на закреплённом ПК не отвечает", "agent_offline"),
+    ("Агент не поддерживает актуальный протокол vna_control версии 1 или 2", "agent_old"),
+    ("Метод калибровки не подтверждён агентом на этом ПК", "agent_capability_missing"),
+    ("ВАЦ не закреплён за этим ПК", "station_setup"),
+    ("Привязка ВАЦ изменилась", "conflict"),
+    ("Серийный номер ВАЦ изменился", "serial_changed"),
+    ("ВАЦ занят", "device_busy"),
+    ("Неизвестная причина", "refused"),
+])
+def test_station_refusal_codes(message, code):
+    assert _agent_code(message) == code
+
+
+def test_online_agent_without_control_advertisement_is_not_offline(env):
+    with env["sessions"]() as db:
+        db.delete(db.get(VnaControlRow, "pc-1"))
+        db.commit()
+    device = state(env)["device"]
+    assert device["agent_online"] is True
+    assert device["vna_online"] is True
+    assert device["refusal"]["code"] == "agent_old"
+
+
+@pytest.mark.parametrize("online", [True, False])
+def test_agent_and_vna_presence_are_separate(env, online):
+    with env["sessions"]() as db:
+        db.get(DeviceRow, ("pc-1", "s2vna", SERIAL)).present = False
+        db.delete(db.get(VnaControlRow, "pc-1"))
+        if not online:
+            db.get(ScanAgentRow, "pc-1").last_seen = env["clock"].now - timedelta(minutes=4)
+        db.commit()
+    device = state(env)["device"]
+    assert device["agent_online"] is online
+    assert device["vna_online"] is False
+    assert device["serial"] is None and device["s2vna_ready"] is None
+    assert device["refusal"]["code"] == ("vna_not_connected" if online else "agent_offline")
+    if online:
+        assert "Включите ВАЦ, подключите USB и запустите S2VNA" in device["refusal"]["message"]
+    assert post(env, "/sessions", expect=409)["detail"]["code"] == device["refusal"]["code"]
+
+
+@pytest.mark.parametrize("present,target_live,age", [(False, True, 1440), (True, True, 0), (True, False, 0), (True, True, 4)])
+@pytest.mark.parametrize("owner_reported", [True, False])
+def test_last_seen_elsewhere_and_explicit_transfer_offer(env, present, target_live, age, owner_reported):
+    now = env["clock"].now
+    with env["sessions"]() as db:
+        old = db.get(DeviceRow, ("pc-1", "s2vna", SERIAL))
+        old.present, old.last_seen = False, now - timedelta(days=3)
+        if not owner_reported:
+            db.delete(old)
+        db.add(ScanAgentRow(machine_id="pc-2", pc_name="DESKTOP-PTA57QF", version="2.12.0",
+                            first_seen=now, last_seen=now if target_live else now - timedelta(minutes=4)))
+        db.add(DeviceRow(machine_id="pc-2", kind="s2vna", device_id=SERIAL, name=NAME, present=present,
+                         last_seen=now - timedelta(minutes=age)))
+        db.commit()
+    device = state(env)["device"]
+    assert device["bound_pc"] == device["pc_name"] == "ОТК-ВАЦ"
+    assert device["last_seen_pc"] == "DESKTOP-PTA57QF"
+    assert datetime.fromisoformat(device["last_seen_at"]) == now - timedelta(minutes=age)
+    assert "DESKTOP-PTA57QF" in device["refusal"]["message"]
+    if present and target_live and age <= 3:
+        assert device["transfer"]["owner_id"] == "pc-1"
+        assert device["transfer"]["serial"] == SERIAL
+        assert [a["id"] for a in device["transfer"]["agents"]] == ["pc-2"]
+        response = env["admin"].post("/api/stock/vna/jobs/transfer", headers=_csrf(env["admin"]),
+                    json=dict(instrument_id=S2_INSTRUMENT, serial=SERIAL, owner_id="pc-1", agent_id="pc-2"))
+        assert response.status_code == 200, response.text
+        assert state(env)["device"]["bound_pc"] == "DESKTOP-PTA57QF"
+        with env["sessions"]() as db:
+            assert db.scalar(select(func.count()).select_from(AuditEventRow).where(
+                AuditEventRow.event_type == "warehouse.vna_transferred")) == 1
+    else:
+        assert device["transfer"] is None
+        with env["sessions"]() as db:
+            assert db.get(VnaBindingRow, SERIAL).machine_id == "pc-1"
+
+
+def test_transfer_offer_is_admin_only_and_current_presence_is_rechecked(env, monkeypatch):
+    now = env["clock"].now
+    with env["sessions"]() as db:
+        old = db.get(DeviceRow, ("pc-1", "s2vna", SERIAL))
+        old.present, old.last_seen = False, now - timedelta(days=1)
+        db.add(ScanAgentRow(machine_id="pc-2", pc_name="Другой ПК", version="2.12.0", first_seen=now, last_seen=now))
+        db.add(DeviceRow(machine_id="pc-2", kind="s2vna", device_id=SERIAL, name=NAME, present=True, last_seen=now))
+        db.commit()
+    assert state(env)["device"]["transfer"]
+    body = dict(instrument_id=S2_INSTRUMENT, serial=SERIAL, owner_id="pc-1", agent_id="pc-2")
+    with monkeypatch.context() as patch:
+        patch.setitem(app.dependency_overrides, authenticated_principal, lambda: Principal(
+            actor=Actor(id=uuid4(), name="Контролёр", department="ОТК"), email="qc@example.test",
+            roles=frozenset({"qc"}), permissions={"quality": "edit"}))
+        assert state(env)["device"]["transfer"] is None
+        assert env["admin"].post("/api/stock/vna/jobs/transfer", json=body,
+                                 headers=_csrf(env["admin"])).status_code == 403
+    with env["sessions"]() as db:
+        db.get(DeviceRow, ("pc-2", "s2vna", SERIAL)).present = False
+        db.commit()
+    response = env["admin"].post("/api/stock/vna/jobs/transfer", json=body, headers=_csrf(env["admin"]))
+    assert response.status_code == 409, response.text
+    with env["sessions"]() as db:
+        assert db.get(VnaBindingRow, SERIAL).machine_id == "pc-1"
+
+
+def test_old_session_readiness_is_not_live_after_unplugging(env):
+    post(env, "/sessions")
+    env["stub"].drive()
+    assert state(env)["device"]["s2vna_ready"] is True
+    with env["sessions"]() as db:
+        db.get(DeviceRow, ("pc-1", "s2vna", SERIAL)).present = False
+        db.commit()
+    view = state(env)["device"]
+    assert view["vna_online"] is False
+    assert view["s2vna_ready"] is None
+    assert view["refusal"]["code"] == "vna_not_connected"
+
+
+def test_transfer_cannot_strand_a_calibrated_session_on_the_old_pc(env):
+    calibrated = calibrate(env)
+    now = env["clock"].now
+    with env["sessions"]() as db:
+        old = db.get(DeviceRow, ("pc-1", "s2vna", SERIAL))
+        old.present, old.last_seen = False, now - timedelta(minutes=1)
+        db.add(ScanAgentRow(machine_id="pc-2", pc_name="Другой ПК", version="2.12.0", first_seen=now, last_seen=now))
+        db.add(DeviceRow(machine_id="pc-2", kind="s2vna", device_id=SERIAL, name=NAME, present=True, last_seen=now))
+        db.commit()
+    device = state(env)["device"]
+    assert device["transfer"] is None
+    assert "завершите сеанс" in device["transfer_blocked_reason"]
+    response = env["admin"].post("/api/stock/vna/jobs/transfer", headers=_csrf(env["admin"]),
+                json=dict(instrument_id=S2_INSTRUMENT, serial=SERIAL, owner_id="pc-1", agent_id="pc-2"))
+    assert response.status_code == 409 and "завершите сеанс" in response.text
+    with env["sessions"]() as db:
+        assert db.get(VnaBindingRow, SERIAL).machine_id == "pc-1"
+        row = db.get(VnaSessionRow, UUID(calibrated["session"]["id"]))
+        assert row.machine_id == "pc-1" and row.state == "ready"
+        assert db.scalar(select(func.count()).select_from(AuditEventRow).where(
+            AuditEventRow.event_type == "warehouse.vna_transferred")) == 0
 
 
 def test_identical_receipt_is_acknowledged_once_and_different_one_conflicts(env):

@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { ApiError, productionApi, type ProductionInstrument } from "./api";
+import { ApiError, productionApi, vnaCaptureApi, type ProductionInstrument } from "./api";
 import { VnaBench, connectionPrompt, dueText, phaseHint } from "./VnaBench";
 import {
   refusalText,
@@ -80,6 +80,87 @@ it("shows the bench header: PC, VNA, S2VNA, temperatures, calibration time and c
   expect(screen.getByText("действует до 18:40")).toBeInTheDocument();
   expect(screen.getByText("до 23.11")).toBeInTheDocument();
   expect(screen.getByText("просрочена с 18.11")).toBeInTheDocument();
+});
+
+it("keeps the agent online when the VNA is disconnected and shows the last PC", async () => {
+  const message = "ВАЦ не подключён. Последний раз виден 20.11 16:09 МСК на DESKTOP-PTA57QF. Включите ВАЦ, подключите USB и запустите S2VNA.";
+  vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state({ session: null, device: { ...state().device,
+    bound_pc: "ОТК-121", vna_online: false, serial: null, s2vna_ready: null,
+    last_seen_pc: "DESKTOP-PTA57QF", last_seen_at: "2026-11-20T16:09:00+03:00",
+    refusal: { code: "vna_not_connected", message },
+  } }));
+  render(<VnaBench canEdit />);
+  expect(await screen.findByText("Агент на связи")).toBeInTheDocument();
+  expect(screen.getByText(/· ВАЦ не подключён/)).toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent(message);
+  expect(screen.queryByText(/программа печати/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Перенести ВАЦ/ })).not.toBeInTheDocument();
+});
+
+it("says when the bound PC agent is offline", async () => {
+  vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state({ session: null, device: { ...state().device,
+    agent_online: false, vna_online: false, serial: null, s2vna_ready: null,
+    refusal: { code: "agent_offline", message: "" },
+  } }));
+  render(<VnaBench canEdit />);
+  expect(await screen.findByText("Агент не на связи")).toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent(/запущен агент ERP/);
+});
+
+it("uses the existing transfer API only on an explicit click and refreshes state", async () => {
+  const original = state({ session: null, device: { ...state().device, bound_pc: "ОТК-121", vna_online: false,
+    last_seen_pc: "DESKTOP-PTA57QF", last_seen_at: "2026-11-20T16:09:00+03:00",
+    transfer: { serial: "26030095", owner_id: "pc-1", agents: [{ id: "pc-2", pc: "DESKTOP-PTA57QF", version: "2.12.0", vna: null }] },
+  } });
+  const load = vi.spyOn(vnaBenchApi, "state").mockResolvedValue(original);
+  const transfer = vi.spyOn(vnaCaptureApi, "transfer").mockResolvedValue({ status: "transferred" });
+  render(<VnaBench canEdit />);
+  const button = await screen.findByRole("button", { name: "Перенести ВАЦ на DESKTOP-PTA57QF" });
+  expect(transfer).not.toHaveBeenCalled();
+  load.mockResolvedValue(state({ session: null, device: { ...state().device, pc_name: "DESKTOP-PTA57QF", bound_pc: "DESKTOP-PTA57QF" } }));
+  fireEvent.click(button);
+  await waitFor(() => expect(transfer).toHaveBeenCalledWith("si-002", "26030095", "pc-1", "pc-2"));
+  expect(await screen.findByText("ВАЦ перенесён на DESKTOP-PTA57QF")).toBeInTheDocument();
+  expect(load).toHaveBeenCalledTimes(2);
+});
+
+it("refreshes a disconnected station until the new PC reports the VNA", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  const disconnected = state({ session: null, device: { ...state().device,
+    refusal: { code: "vna_not_connected", message: "Подключите ВАЦ" }, transfer: null,
+  } });
+  const load = vi.spyOn(vnaBenchApi, "state").mockResolvedValue(disconnected);
+  render(<VnaBench canEdit />);
+  await screen.findByRole("alert");
+  load.mockResolvedValue({ ...disconnected, device: { ...disconnected.device,
+    transfer: { serial: "26030095", owner_id: "pc-1", agents: [{ id: "pc-2", pc: "НОВЫЙ-ПК", version: "2.12.0", vna: null }] },
+  } });
+  await act(async () => { await vi.advanceTimersByTimeAsync(10_100); });
+  expect(screen.getByRole("button", { name: "Перенести ВАЦ на НОВЫЙ-ПК" })).toBeInTheDocument();
+});
+
+it("shows the transfer refusal beside the action and refreshes a stale offer", async () => {
+  const offered = state({ session: null, device: { ...state().device,
+    transfer: { serial: "26030095", owner_id: "pc-1", agents: [{ id: "pc-2", pc: "НОВЫЙ-ПК", version: "2.12.0", vna: null }] },
+  } });
+  const load = vi.spyOn(vnaBenchApi, "state").mockResolvedValue(offered);
+  vi.spyOn(vnaCaptureApi, "transfer").mockRejectedValue(new ApiError("Прибор уже отключён", 409));
+  render(<VnaBench canEdit />);
+  const button = await screen.findByRole("button", { name: "Перенести ВАЦ на НОВЫЙ-ПК" });
+  load.mockResolvedValue(state({ session: null }));
+  fireEvent.click(button);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Прибор уже отключён");
+  await waitFor(() => expect(screen.queryByRole("button", { name: /Перенести ВАЦ/ })).not.toBeInTheDocument());
+  expect(screen.queryByText(/ВАЦ перенесён на/)).not.toBeInTheDocument();
+});
+
+it("explains why an active session blocks transfer", async () => {
+  vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state({ device: { ...state().device, transfer: null,
+    transfer_blocked_reason: "Сначала завершите сеанс ВАЦ на закреплённом ПК, затем перенесите прибор",
+  } }));
+  render(<VnaBench canEdit />);
+  expect(await screen.findByText(/Сначала завершите сеанс ВАЦ/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Перенести ВАЦ/ })).not.toBeInTheDocument();
 });
 
 it("says why the calibration is invalid and why the device is refused, in Russian", async () => {

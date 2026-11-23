@@ -1,4 +1,4 @@
-import { api, type VswrTracePoint } from "./api";
+import { api, type VnaTransfer, type VswrTracePoint } from "./api";
 
 /* Клиент «ВАЦ — рабочее место» (план «ВАЦ только через ERP», слайс S5). Все формы экрана — в этом одном файле, по
    контракту сервера `backend/app/workflows/vna_bench_api.py` (S3/S4): входы — его модели SessionInput/Target/CheckInput,
@@ -20,7 +20,19 @@ export interface VnaBenchTemperatures { vna_c: (number | null)[]; acm_c: number 
 export interface VnaBenchDevice {
   /** Имя ПК ОТК, где работает агент. */
   pc_name: string | null;
+  /** ПК привязки; наличие ВАЦ на другом ПК не меняет владельца сеанса. */
+  bound_pc?: string | null;
+  bound_agent_id?: string | null;
   agent_online: boolean;
+  agent_last_seen?: string | null;
+  agent_ip?: string | null;
+  /** Свежий отчёт именно о приборе на закреплённом ПК, отдельно от связи с агентом. */
+  vna_online?: boolean;
+  last_seen_pc?: string | null;
+  last_seen_at?: string | null;
+  /** Явный перенос доступен администратору, когда другой живой ПК сообщает прибор сейчас. */
+  transfer?: VnaTransfer | null;
+  transfer_blocked_reason?: string | null;
   agent_version: string | null;
   /** Карточка ВАЦ в реестре СИ: «СИ.002». */
   instrument_number: string;
@@ -304,7 +316,9 @@ export async function vnaBenchAvailable(): Promise<boolean> {
 
 /** Отказы агента и сервера — понятной русской причиной с тем, что делать. Неизвестный код — текст сервера. */
 const REFUSALS: Record<string, string> = {
-  agent_offline: "Агент на ПК ОТК не отвечает — проверьте, что ПК включён и программа печати запущена.",
+  agent_offline: "Агент на закреплённом ПК не отвечает — проверьте, что ПК включён и запущен агент ERP.",
+  vna_not_connected: "ВАЦ не подключён — включите ВАЦ, подключите USB и запустите S2VNA.",
+  agent_capability_missing: "Агент не подтвердил метод калибровки — проверьте подключение АКМ и настройки управления ВАЦ.",
   agent_old: "Агент на ПК ОТК старый и не умеет рабочее место ВАЦ — он обновится сам в течение 5 минут.",
   device_busy: "ВАЦ занят другой командой — дождитесь её окончания или нажмите «Прервать».",
   serial_changed: "Заводской номер ВАЦ не совпал с карточкой СИ.002 — подключён другой прибор. Замеры запрещены.",
@@ -336,7 +350,7 @@ const REFUSALS: Record<string, string> = {
   refused: "Команда не выполнена.",
 };
 /** Коды, у которых текст сервера точнее общего: в нём номер СИ, список мер, имя поля. */
-const DETAILED = new Set(["station_setup", "no_fixture_file", "no_reference", "kit_choice", "conflict", "invalid", "not_found", "refused"]);
+const DETAILED = new Set(["vna_not_connected", "station_setup", "no_fixture_file", "no_reference", "kit_choice", "conflict", "invalid", "not_found", "refused"]);
 
 /** Ни кода в словаре, ни текста сервера — всё равно понятная строка, никогда не пустой баннер. */
 export const REFUSAL_FALLBACK = "Команда ВАЦ не выполнена";

@@ -51,10 +51,10 @@ from app.modules.production.vna_session_infrastructure import VnaCommandRow, Vna
 from app.modules.production.vna_sessions import TERMINAL, Profile, SessionConflict, StrictModel, resolved_profile
 from app.modules.production.vswr import RecordVswrCommand, VswrFileInput, record_vswr
 from app.modules.warehouse import vna_jobs
-from app.modules.warehouse.devices import DeviceRow, VnaBindingRow, VnaControlRow
+from app.modules.warehouse.devices import DeviceRow, VnaBindingRow
 from app.modules.warehouse.scan_agents import LIVE_FOR, ScanAgentRow
 from app.modules.warehouse.scan_jobs import ScanJobClosed
-from app.shared.clock import as_utc
+from app.shared.clock import MOSCOW, as_utc
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 from .coax_vswr_api import CoaxRefs, _task_etk, task_norm
@@ -91,13 +91,23 @@ class Refusal(Exception):
 
 
 def _agent_code(message: str) -> str:
+    if "Подключённый ВАЦ с нужным серийным номером не найден" in message:
+        return "vna_not_connected"
+    if "Агент на закреплённом ПК не отвечает" in message:
+        return "agent_offline"
+    if "не закреплён" in message:
+        return "station_setup"
+    if "Привязка ВАЦ изменилась" in message:
+        return "conflict"
+    if "Метод калибровки не подтверждён" in message:
+        return "agent_capability_missing"
     if "версии 1" in message or "не поддерживает рабочее место" in message:
         return "agent_old"
     if "серийный" in message.lower():
         return "serial_changed"
     if "занят" in message or "Сначала завершите" in message:
         return "device_busy"
-    return "agent_offline"
+    return "refused"
 
 
 @contextmanager
@@ -249,17 +259,25 @@ def _latest_status(commands):
     return done[-1] if done else None
 
 
-def _device(uow, vna, row, commands, now):
+def _device(uow, vna, row, commands, now, *, can_transfer=False):
     serial = (vna.serial_number or "").strip() if vna else ""
     binding = uow.session.get(VnaBindingRow, serial) if serial else None
     agent = uow.session.get(ScanAgentRow, binding.machine_id) if binding else None
-    control = uow.session.get(VnaControlRow, binding.machine_id) if binding else None
-    live = lambda moment: moment is not None and as_utc(moment) >= as_utc(now) - LIVE_FOR  # noqa: E731
-    device = uow.session.scalar(select(DeviceRow).where(
-        DeviceRow.machine_id == binding.machine_id, DeviceRow.kind == "s2vna", DeviceRow.device_id == serial,
-        DeviceRow.present.is_(True))) if binding else None
+    live = lambda moment: moment is not None and as_utc(bench.aware(moment, now)) >= as_utc(now) - LIVE_FOR  # noqa: E731
+    reports = list(uow.session.execute(select(DeviceRow, ScanAgentRow).join(ScanAgentRow).where(
+        DeviceRow.kind == "s2vna", DeviceRow.device_id == serial, ScanAgentRow.legacy.is_(False))
+        .order_by(DeviceRow.last_seen.desc(), ScanAgentRow.machine_id))) if serial else []
+    device = next((d for d, pc in reports if binding and pc.machine_id == binding.machine_id), None)
+    agent_online = bool(agent and not agent.legacy and live(agent.last_seen))
+    vna_online = bool(agent_online and device and device.present and live(device.last_seen))
+    last_device, last_pc = reports[0] if reports else (None, None)
+    targets = [dict(id=pc.machine_id, pc=pc.pc_name or pc.machine_id, version=pc.version,
+                    vna=dict(name=d.name, ready=True)) for d, pc in reports
+               if binding and pc.machine_id != binding.machine_id and live(pc.last_seen) and d.present
+               and live(d.last_seen) and (device is None or as_utc(d.last_seen) > as_utc(device.last_seen))]
+    transfer_blocked = bool(targets and VnaSessionRepository(uow.session).active(vna.id, serial))
     status = _latest_status(commands)
-    reading = status.result if status else {}
+    reading = status.result if status and vna_online and row and row.machine_id == binding.machine_id else {}
     temperatures = reading.get("temperatures")
     if temperatures is None and row is not None and row.calibration_temps:
         temperatures = row.calibration_temps
@@ -274,15 +292,28 @@ def _device(uow, vna, row, commands, now):
             refusal = dict(code=_agent_code(str(error)), message=str(error))
         finally:
             savepoint.rollback()
+    if refusal and refusal["code"] == "vna_not_connected":
+        seen = (f" Последний раз виден {as_utc(bench.aware(last_device.last_seen, now)).astimezone(MOSCOW):%d.%m %H:%M} МСК"
+                f" на {last_pc.pc_name or last_pc.machine_id}." if last_device else "")
+        refusal["message"] = f"ВАЦ не подключён.{seen} Включите ВАЦ, подключите USB и запустите S2VNA."
     model = row.snapshot.get("vna_model") if row else (vna_model(f"{vna.name} {vna.doc_designation or ''}") if vna else "")
     acm = reading.get("acm")
-    return dict(pc_name=(agent.pc_name or agent.machine_id) if agent else None,
-                agent_online=bool(agent and live(agent.last_seen) and control and live(control.reported_at)),
+    bound_pc = (agent.pc_name or agent.machine_id) if agent else None
+    return dict(pc_name=bound_pc, bound_pc=bound_pc, bound_agent_id=binding.machine_id if binding else None,
+                agent_online=agent_online, vna_online=vna_online,
+                agent_last_seen=bench.aware(agent.last_seen, now) if agent else None,
+                agent_ip=(agent.ip_lan or agent.ip_seen) if agent else None,
+                last_seen_pc=(last_pc.pc_name or last_pc.machine_id) if last_pc else None,
+                last_seen_at=bench.aware(last_device.last_seen, now) if last_device else None,
+                transfer=dict(serial=serial, owner_id=binding.machine_id, agents=targets)
+                if can_transfer and targets and not vna_online and not transfer_blocked else None,
+                transfer_blocked_reason="Сначала завершите сеанс ВАЦ на закреплённом ПК, затем перенесите прибор"
+                if can_transfer and transfer_blocked and not vna_online else None,
                 agent_version=agent.version if agent else None,
                 instrument_number=vna.inventory_number if vna else "", instrument_id=str(vna.id) if vna else None,
                 model=f"Planar {model}" if model else (vna.name if vna else ""),
-                serial=serial if device is not None and live(device.last_seen) else None,
-                s2vna_ready=reading.get("ready") if status else (True if device is not None and live(device.last_seen) else None),
+                serial=serial if vna_online else None,
+                s2vna_ready=reading.get("ready") if reading else (True if vna_online else None),
                 warmup_min=reading.get("warmup_min"), temperatures=temperatures,
                 acm=dict(model=acm["model"], serial=acm["serial"]) if acm else None, refusal=refusal,
                 read_at=status.finished_at if status else None)
@@ -561,7 +592,9 @@ def _state(uow, principal, now, vna=None, row=None):
                        command=_command_view(row, commands),
                        items=[_item_view(uow, repository, row, r, runs, items, commands) for r in runs if r["kind"] in ITEMS],
                        checks=[_check_view(uow, row, r, runs, items, commands) for r in runs if r["kind"] in CHECK_NAMES])
-    return dict(device=_device(uow, vna, row, commands, now), calibration=_calibration(row, now),
+    return dict(device=_device(uow, vna, row, commands, now,
+                             can_transfer=principal.full_access and not principal.service and principal.viewer is None),
+                calibration=_calibration(row, now),
                 due=_due(uow, vna, row, now), session=session)
 
 
