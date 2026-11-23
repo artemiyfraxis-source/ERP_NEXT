@@ -15,7 +15,7 @@ import {
 } from "./api";
 import { ETK_CONNECTION_COLUMNS, ETK_TUBE_COLUMNS, ETK_NOT_SET, etkDocumentConnectionRows, etkPhysicalConfig, etkTubePlacementRows, etkContactSpecs, etkDrawHarness, etkDrawTubeCut, etkFigure, etkParams, type EtkParams, type EtkTopologyData } from "./etkDraw";
 import { poolSetupParts, setupUnitLabel } from "./equipmentPool";
-import { etkMarkLabelsPage, etkPrintPages } from "./etkPrint";
+import { etkMarkLabelsPage, etkPrintPages, operationKeyOf } from "./etkPrint";
 import { hasMarkSerial, markLabelList, markSerialTemplate, type MarkSerialRange } from "./markSerial";
 import { etkPartSource, etkRouteOf, etkSemiSource, etkSourceLines, formatMinutes, type EtkPfGroup } from "./etkRoute";
 import { etkConfigOp, etkPfArt } from "./etkPfArt";
@@ -457,7 +457,7 @@ export function DefectsView({ text, code, number, alwaysOpen = false }: { text: 
 
 /** Same key as backend project_cards.operation_key: code::connector::side. */
 function etkOperationKey(operation: EtkOperation): string {
-  return `${String(operation.code ?? "").trim()}::${String(operation.connector ?? "").trim()}::${String(operation.side ?? "").trim()}`;
+  return operationKeyOf(operation);
 }
 
 function toolSub(tool: EtkTool): string {

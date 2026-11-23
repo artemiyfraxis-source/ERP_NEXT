@@ -2,6 +2,7 @@
 заданию, мощность по календарю цеха, прогноз и недели. Ничего не пишет."""
 
 from datetime import date, datetime
+from dataclasses import replace
 from decimal import Decimal
 from uuid import uuid4
 
@@ -102,6 +103,32 @@ def test_workload_without_issued_techcards_is_empty(production_api):  # noqa: F8
     body = client.get("/api/production/workload").json()
 
     assert body["projects"] == [] and body["bottlenecks"] == [] and len(body["weeks"]) == 8
+
+
+def test_workload_keeps_unknown_only_kbs_and_preserves_piece_factors_in_partial_totals(production_api):  # noqa: F811
+    client, _operator = production_api
+    partial = issue_card("803К.1", "КБ1", [("CUT_WIRE", "Резка", 900, 0), ("INS_x", "Монтаж", None, 0)])
+    issue_card("804К.1", "КБ1", [("INS_x", "Монтаж", None, 0)])
+    document = dict(partial.document)
+    document["route"] = {
+        "source": "manual", "final": "finish",
+        "blocks": [{"key": "cut", "ops": [1]}, {"key": "finish", "ops": [2], "final": True}],
+        "edges": [{"from": "cut", "to": "finish", "per_unit": 2}],
+    }
+    with app.state.techcards_uow_factory() as uow:
+        uow.techcards.save(replace(partial, document=document))
+        uow.commit()
+    response = client.get("/api/production/workload")
+    assert response.status_code == 200, response.text
+    projects = {item["project"]: item for item in response.json()["projects"]}
+    assert projects["803К.1"]["hours"] == 5
+    for name, known_hours in (("803К.1", 5), ("804К.1", 0)):
+        row = projects[name]
+        assert row["hours"] == known_hours
+        assert row["unknown_operations"] == 1
+        assert row["ready"] is None and row["status"] == "неполные нормы"
+        assert row["kbs"][0]["unknown_operations"] == 1
+        assert "Норма времени не задана: 1 оп." in row["kbs"][0]["site_note"]
 
 
 def _as(roles, permissions):

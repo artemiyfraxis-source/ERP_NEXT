@@ -20,13 +20,11 @@ function str(value: unknown): string {
   return value == null ? "" : String(value);
 }
 
-/** Old builders stored missing operation norms as zero. Keep unknown time explicit in screen and print. */
+/** Preserve the stored norm: blank is unknown, while an explicit zero is a known value. */
 export function etkTimeRows(operation: Row): Array<{ name: string; norm: string }> {
-  const times = obj(operation.times);
-  const missingNorm = "times" in operation && !str(times.operation_seconds).trim();
   return list(operation.time).map((row) => ({
     name: str(row.name),
-    norm: missingNorm && str(row.norm).trim() !== "" && Number(str(row.norm).replace(",", ".")) === 0 ? "" : str(row.norm),
+    norm: str(row.norm),
   }));
 }
 

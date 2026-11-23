@@ -29,6 +29,7 @@ export interface EtkRouteChip {
   /** «на изделие» с учётом всех входов: время и число операций. */
   rolledMinutes: number;
   rolledOps: number;
+  rolledUnknownOperations?: number;
   feeds: EtkRouteFeed[];
   final: boolean;
 }
@@ -58,6 +59,8 @@ export function etkRouteOf(document: Record<string, unknown> | null | undefined)
     unit_minutes: num(block.unit_minutes),
     rolled_minutes: num(block.rolled_minutes),
     rolled_ops: num(block.rolled_ops),
+    ...(num(block.unknown_operations) > 0 ? { unknown_operations: num(block.unknown_operations) } : {}),
+    ...(num(block.rolled_unknown_operations) > 0 ? { rolled_unknown_operations: num(block.rolled_unknown_operations) } : {}),
     ...(block.kit === true ? { kit: true } : {}),
     ...(typeof block.label === "string" && block.label ? { label: block.label } : {}),
   }));
@@ -138,6 +141,14 @@ export function formatMinutes(value: number): string {
   return String(Math.round(value * 100) / 100).replace(".", ",");
 }
 
+/** A numeric subtotal is a lower bound whenever at least one operation has no time norm. */
+export function formatTimeTotal(minutes: number, unknown = 0, unit = "мин"): string {
+  const value = minutes > 0 && minutes < .01 ? String(Number(minutes.toPrecision(2))).replace(".", ",") : formatMinutes(minutes);
+  const total = `${unknown ? "≥ " : ""}${value} ${unit}`;
+  const noun = unknown % 10 === 1 && unknown % 100 !== 11 ? "операции" : "операций";
+  return unknown ? `${total}, не задано у ${unknown} ${noun}` : total;
+}
+
 /** Блоки полосы в порядке «источники → потребители» с номерами и тем, что чем питается. */
 export function etkRouteChips(route: EtkRoute): EtkRouteChip[] {
   const blocks = topological(route);
@@ -152,9 +163,10 @@ export function etkRouteChips(route: EtkRoute): EtkRouteChip[] {
     name: block.name.trim() || `Блок ${number.get(block.key)}`,
     ops: block.ops.length,
     first: block.ops.length ? Math.min(...block.ops) : null,
-    perUnit: block.unit_minutes > 0 ? `${formatMinutes(block.unit_minutes)} мин/шт` : "",
+    perUnit: formatTimeTotal(block.unit_minutes, block.unknown_operations, "мин/шт"),
     rolledMinutes: block.rolled_minutes,
     rolledOps: block.rolled_ops,
+    ...(block.rolled_unknown_operations ? { rolledUnknownOperations: block.rolled_unknown_operations } : {}),
     feeds: route.edges.filter((edge) => edge.to === block.key)
       .flatMap((edge) => { const source = byKey.get(edge.from); return source ? [{ edge, source }] : []; })
       .sort((a, b) => (number.get(a.source.key) ?? 0) - (number.get(b.source.key) ?? 0))
@@ -180,7 +192,7 @@ export function etkRouteSummary(chips: EtkRouteChip[]): string {
   const last = chips.find((chip) => chip.final);
   return [
     pluralBlocks(chips.length),
-    last && last.rolledMinutes > 0 ? `на изделие ${formatMinutes(last.rolledMinutes)} мин` : "",
+    last ? `на изделие ${formatTimeTotal(last.rolledMinutes, last.rolledUnknownOperations)}` : "",
     last && last.rolledOps > 0 ? `${last.rolledOps} оп.` : "",
   ].filter(Boolean).join(" · ");
 }
@@ -350,6 +362,7 @@ export interface EtkPfGroup {
   output: EtkPfRow[];
   /** Норма ПФ, мин на партию: Σ норм его операций. */
   minutes: number;
+  unknownOperations?: number;
 }
 
 export type EtkPfOperation = { components?: unknown; result?: unknown; time?: unknown; times?: unknown };
@@ -371,11 +384,23 @@ function resultNameOf(block: { ops: number[] }, operations: EtkPfOperation[]): s
 
 /** Норма операции ЭТК, мин на партию (как `_operation_minutes` на сервере): Σ строк времени, без них — секунды карты
  *  на штуку × партия; подготовка в норму не входит (владелец 18.10). */
-export function operationMinutes(operation: EtkPfOperation | null | undefined, batch: number): number {
+export function operationTimeSummary(operation: EtkPfOperation | null | undefined, batch: number): { minutes: number; unknown: boolean } {
+  const norm = (value: unknown): number | null => {
+    if (value == null || typeof value === "boolean" || !String(value).trim()) return null;
+    const parsed = Number(String(value).trim().replace(",", "."));
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+  };
   const time = (Array.isArray(operation?.time) ? operation.time : []).map(record);
-  if (time.length) return time.reduce((sum, row) => sum + num(row.norm), 0);
-  const times = record(operation?.times);
-  return (num(times.operation_seconds) * (batch > 0 ? batch : 1)) / 60;
+  if (time.length) {
+    const values = time.map((row) => norm(row.norm));
+    return { minutes: values.reduce<number>((sum, value) => sum + (value ?? 0), 0), unknown: values.some((value) => value == null) };
+  }
+  const seconds = norm(record(operation?.times).operation_seconds);
+  return { minutes: ((seconds ?? 0) * (batch > 0 ? batch : 1)) / 60, unknown: seconds == null };
+}
+
+export function operationMinutes(operation: EtkPfOperation | null | undefined, batch: number): number {
+  return operationTimeSummary(operation, batch).minutes;
 }
 
 /** Сложить строки одного артикула (без артикула — названия) и единицы; строка без числа остаётся своей. */
@@ -412,6 +437,8 @@ export function etkPfGroups(route: PfRoute | null, operations: EtkPfOperation[],
   return blocks.map((block): EtkPfGroup => {
     const own = block.ops.map((position) => operations[position - 1]).filter((operation): operation is EtkPfOperation => !!operation);
     const last = own[own.length - 1];
+    const timing = own.map((operation) => operationTimeSummary(operation, batch));
+    const unknownOperations = timing.filter((item) => item.unknown).length;
     return {
       key: block.key,
       number: number.get(block.key) ?? 0,
@@ -430,7 +457,8 @@ export function etkPfGroups(route: PfRoute | null, operations: EtkPfOperation[],
         }))
         .sort((a, b) => a.number - b.number),
       output: last ? rows(last.result) : [],
-      minutes: own.reduce((sum, operation) => sum + operationMinutes(operation, batch), 0),
+      minutes: timing.reduce((sum, item) => sum + item.minutes, 0),
+      ...(unknownOperations ? { unknownOperations } : {}),
     };
   });
 }

@@ -25,7 +25,8 @@ from .etk_live import (
     VIEW_KEYS, fresh_card, load_templates, seen_versions, stamp_templates, template_for, template_record,
 )
 from .domain.route import RouteError, parse_route, route_json, route_totals
-from .project_cards import operation_key
+from .domain.pf_split import validate_coax_finishing
+from .project_cards import operation_key, operation_aliases, resolved_operation_key
 from .scheme_corrections import EVENT as SCHEME_CORRECTED, scheme_correction
 from .template_sheets import make_template_id
 
@@ -231,7 +232,10 @@ def _hand_route(document: dict[str, Any], raw: object, generated: bool = False) 
     if not ops:
         raise RouteError("нет операций")
     route = replace(parse_route(raw, ops, final_name, manual=True), generated=generated)
-    return route_json(route, route_totals(route, {op.position: op.minutes for op in ops}, quantity))
+    if (document.get("build_config") or {}).get("mode") == "coax":
+        validate_coax_finishing(route, ops)
+    return route_json(route, route_totals(route, {op.position: op.minutes for op in ops}, quantity,
+                            unknown_positions={op.position for op in ops if op.unknown_time}))
 
 
 def _operation_keys(document: dict[str, Any] | None) -> list[str] | None:
@@ -248,6 +252,9 @@ def _keep_hand_route(previous: dict[str, Any] | None, document: dict[str, Any]) 
     build has no split of its own (derived); a new generated split replaces it. A scheme the generator drew in the
     config (`build_config.route` with source «generated», «Сложная сборка») is a generated one too: the hand-cut ПФ
     win over it."""
+    aliases = operation_aliases(previous, document)
+    if aliases:
+        document = {**document, "operation_key_aliases": aliases}
     old = (previous or {}).get("route")
     new = document.get("route") if isinstance(document, dict) else None
     old_source = old.get("source") if isinstance(old, dict) else None
@@ -255,18 +262,34 @@ def _keep_hand_route(previous: dict[str, Any] | None, document: dict[str, Any]) 
     if old_source not in ("manual", "generated") or new_source == "manual" or (old_source == "generated" and new_source == "generated"):
         return document
     keys = _operation_keys(previous)
-    if not keys or keys != _operation_keys(document):
+    if not keys:
+        if old_source == "manual":
+            raise TechcardValidationError("Ручная схема ПФ не сопоставлена с операциями — требуется проверка технолога")
         return document
     try:
-        return {**document, "route": _hand_route(document, old, generated=old_source == "generated")}
-    except (RouteError, AttributeError, IndexError, KeyError, TypeError, ValueError):
+        positions = {key: position for position, key in enumerate(_operation_keys(document) or [], start=1)}
+        mapped = deepcopy(old)
+        for block in mapped["blocks"]:
+            block["ops"] = [positions[resolved_operation_key(keys[position - 1], document)] for position in block["ops"]]
+        return {**document, "route": _hand_route(document, mapped, generated=old_source == "generated")}
+    except (RouteError, AttributeError, IndexError, KeyError, TypeError, ValueError) as error:
+        if old_source == "manual":
+            raise TechcardValidationError(f"Ручная схема ПФ не подошла: {error}") from error
         return document
+
+
+def _validate_saved_sketches(uow: UnitOfWork, card: ProjectTechcard) -> None:
+    sketches = getattr(uow.techcards, "sketches", lambda _card_id: ())(card.id)
+    keys = [resolved_operation_key(sketch.operation_key, card.document or {}) for sketch in sketches]
+    if None in keys or len(keys) != len(set(keys)):
+        raise TechcardValidationError("Эскиз не сопоставлен с операцией — требуется проверка технолога перед пересборкой")
 
 
 def rebuild_project_techcard(command: RebuildProjectTechcardCommand, uow: UnitOfWork) -> ProjectTechcard:
     with uow:
         current = _current(command, uow)
         updated = _with_inputs(current.rebuild(_keep_hand_route(current.document, command.document), command.now), command.inputs)
+        _validate_saved_sketches(uow, updated)
         uow.techcards.save(updated)
         if updated.revision > current.revision:
             _record_revision(uow, updated, _revision(updated, "Пересборка", command.actor, command.now))
@@ -293,6 +316,7 @@ def _auto_built(
     except ValueError as error:
         raise TechcardValidationError(str(error)) from error
     updated = _with_inputs(current.rebuild(_keep_hand_route(current.document, document), command.now), command.inputs)
+    _validate_saved_sketches(uow, updated)
     return updated, document
 
 

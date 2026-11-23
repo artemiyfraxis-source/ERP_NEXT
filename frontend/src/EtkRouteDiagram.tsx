@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { EtkRoute } from "./api";
 import type { PfArt } from "./etkPfArt";
-import { etkOpRuns, etkPfComponentInputs, etkPfGroups, etkPfNeed, etkRoutePathDiagram, etkPfOutName, etkRouteChips, etkRouteDiagram, etkRouteSummary, formatMinutes, opNumber, type EtkPfGroup, type EtkPfOperation, type EtkPfRow } from "./etkRoute";
+import { etkOpRuns, etkPfComponentInputs, etkPfGroups, etkPfNeed, etkRoutePathDiagram, etkPfOutName, etkRouteChips, etkRouteDiagram, etkRouteSummary, formatTimeTotal, opNumber, type EtkPfGroup, type EtkPfOperation, type EtkPfRow } from "./etkRoute";
 import { formatQty } from "./format";
 import { CableArt } from "./RouteCanvas";
 import "./EtkRouteDiagram.css";
@@ -298,7 +298,7 @@ export function EtkRouteDiagram<T extends EtkPfOperation & { position?: number }
                   onClick={(event) => { event.stopPropagation(); enter(() => group?.ops.length && onPick?.(group.ops[0])); }}>
                   <span className="etk-dag-top"><b>{label}</b>{box.kit && <small>комплект</small>}{box.final && <em className="etk-route-final">изделие</em>}
                     {!onPick && open && <em className="etk-route-final etk-dag-here">ваше задание</em>}
-                    {group && group.minutes > 0 && <span className="etk-dag-time" title="Норма ПФ на партию">{formatMinutes(group.minutes)} мин</span>}</span>
+                    {group && <span className="etk-dag-time" title="Норма ПФ на партию">{formatTimeTotal(group.minutes, group.unknownOperations)}</span>}</span>
                   <span className="etk-dag-name">{box.name}</span>
                   {brief && group && group.ops.length > 0 && <small className="etk-dag-brief">оп. {etkOpRuns(group.ops.map((position) => list[position - 1]?.position || position), opNumber)}</small>}
                 </button>

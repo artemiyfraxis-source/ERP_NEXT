@@ -15,7 +15,7 @@ import { ETK_TOOLING_SECTIONS, etkLabelResult, etkTimeRows, etkOperationName, et
 import { figuresForDefect, stdFiguresPrintHtml, type StdFigureIndex } from "./stdFigures";
 import { formatDateTime, formatNumber, unitLabel } from "./format";
 import { etkCardSourceNote } from "./etkCardSource";
-import { etkPartSource, etkPfGroups, etkPfOutName, etkRouteDiagram, etkRouteOf, etkSemiSource, formatMinutes, opNumber, type EtkPfRow } from "./etkRoute";
+import { etkPartSource, etkPfGroups, etkPfOutName, etkRouteDiagram, etkRouteOf, etkSemiSource, formatTimeTotal, opNumber, type EtkPfRow } from "./etkRoute";
 import { hasMarkSerial, markLabelList, markSerialTemplate, type MarkSerialRange } from "./markSerial";
 import type { PrintBlock, PrintPage } from "./print";
 
@@ -85,7 +85,7 @@ function solderRows(operation: Row): string[][] {
 }
 
 export function operationKeyOf(operation: Row): string {
-  return `${text(operation.code).trim()}::${text(operation.connector).trim()}::${text(operation.side).trim()}`;
+  return text(operation.operation_key) || `${text(operation.code).trim()}::${text(operation.connector).trim()}::${text(operation.side).trim()}`;
 }
 
 function sketchImg(url: string | undefined): string {
@@ -139,7 +139,7 @@ function pfTable(route: EtkRoute | null, operations: Row[], batch: number): Prin
   return [{ heading: "Полуфабрикаты" }, { table: {
     columns: ["ПФ", "Операции", "Вход", "Выход"],
     rows: groups.map((group) => [
-      [`ПФ ${group.label}${group.final ? " · изделие" : ""}`, group.name, group.minutes > 0 ? `${formatMinutes(group.minutes)} мин на партию` : ""].filter(Boolean).join("\n"),
+      [`ПФ ${group.label}${group.final ? " · изделие" : ""}`, group.name, `${formatTimeTotal(group.minutes, group.unknownOperations)} на партию`].filter(Boolean).join("\n"),
       group.ops.map((position) => `${opNumber(Number(operations[position - 1]?.position) || position)} ${operations[position - 1] ? etkOperationTitle(operations[position - 1]) : ""}`.trim()).join("\n"),
       [...(inputs.get(group.key) ?? []).map((input) => `ПФ ${input.label}: ${input.text}${input.times ? ` ${input.times}` : ""}`),
         ...group.components.map((row) => [row.art || row.name || "", pfQty(row)].filter(Boolean).join(" — "))].join("\n"),

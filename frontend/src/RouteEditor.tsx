@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { formatMinutes } from "./etkRoute";
+import { formatTimeTotal } from "./etkRoute";
 import { PerUnit } from "./RouteDiagram";
 import { FacesThumb, FinalThumb, RouteCanvas, TubeThumbs, WireThumbs, type CanvasCard } from "./RouteCanvas";
 import { CRIMP_STAGES, EMPTY_ART, GEN_CARD, GEN_SPACING, blockCards, crimpWires, genArtHeight, genCardHeight, genCards, headExtra, inputsHeightWrapped, layoutFlow, levelCount, opRowHeight, opsMinutes, pickFlow, widestRow, FLOW_GAP_X, type CardKind, type GenArt, type GenStage } from "./routeCards";
@@ -184,7 +184,8 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
   const titleOf = (card: ViewCard) => (card.level ? `${card.level} · ${card.title}` : card.title);
   const metaOf = (card: ViewCard) => {
     const minutes = opsMinutes(card.ops, quantity);
-    return `${card.ops.length} оп.${minutes != null ? ` · ${formatMinutes(minutes)} мин/шт` : ""}${blockView && route.blocks.find((item) => item.key === card.id)?.kit ? " · комплект на изделие" : ""}`;
+    const unknown = card.ops.filter((op) => op.minutes == null || op.unknownTime).length;
+    return `${card.ops.length} оп. · ${formatTimeTotal(minutes ?? 0, unknown, "мин/шт")}${blockView && route.blocks.find((item) => item.key === card.id)?.kit ? " · комплект на изделие" : ""}`;
   };
   // Названия не обрезаются: операции и заголовок переносятся, высота карточки — по числу строк.
   const sizes = new Map(gen.cards.map((card) => [card.id, {
@@ -365,7 +366,7 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
               <span className="rc-op-no">{numberOf(op.position)}</span>
               <span className="rc-op-name">{op.label}</span>
               {op.codeNote && <span className="rc-op-note" title={`Карта заменена: ${op.codeNote}`}>заменена</span>}
-              <span className="rc-op-time">{op.minutes != null ? `${formatMinutes(op.minutes / (quantity > 0 ? quantity : 1))} мин` : ""}</span>
+              <span className="rc-op-time">{op.minutes != null ? formatTimeTotal(op.minutes / (quantity > 0 ? quantity : 1), op.unknownTime ? 1 : 0) : "не задано"}</span>
             </button>
           </li>;
         })}
@@ -447,7 +448,7 @@ export function RouteEditor({ ops, finalName = "", quantity = 1, value, onChange
     </div>
     <div className="route-summary">
       {!editing && preview?.summary ? preview.summary : <>{gen.cards.length} {blockView ? "ПФ" : pluralRu(gen.cards.length, "карточка", "карточки", "карточек")} · {ops.length} {pluralRu(ops.length, "операция", "операции", "операций")}
-      {total?.rolled != null && <> · на изделие <strong>{formatMinutes(total.rolled)} мин</strong> ({timeSource})</>}</>}
+      {total && <> · на изделие <strong>{formatTimeTotal(total.rolled ?? 0, total.rolledUnknownOperations)}</strong> ({timeSource})</>}</>}
     </div>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {notice && <div className="warning-inline">{notice}</div>}

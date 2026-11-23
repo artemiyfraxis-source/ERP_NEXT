@@ -13,6 +13,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from app.modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
 from app.modules.techcards.etk_read import IssuedLots, _item_index, card_views, issued_card_for_item, pinned_card, saved_harness
+from app.modules.techcards.project_cards import document_sketches
 from app.workflows.etk_lots import IssuedKitLots
 from app.workflows.project_kitset import closed_kb_keys
 from app.modules.techcards.project_cards import TechcardStatus
@@ -1189,7 +1190,8 @@ def operation_etk_sketches(
         card = issued_card_for_item(techcards, task.project, task.item)
         if card is None:
             raise HTTPException(status_code=404, detail="Нет выданной ЭТК по этой позиции")
-        sketches = techcards.techcards.sketches(card.id)
+        shown, _ = pinned_card(techcards, card, task.techcard_revision)
+        sketches = document_sketches(techcards.techcards.sketches(card.id), card.document, shown.document)
     return {"items": [{
         "operation_key": sketch.operation_key, "file_name": sketch.file_name, "size": sketch.size,
         "uploaded_by": sketch.uploaded_by, "uploaded_at": sketch.uploaded_at.isoformat(),
@@ -1212,8 +1214,11 @@ def operation_etk_sketch(
     with techcards_factory() as techcards:
         card = issued_card_for_item(techcards, task.project, task.item)
         found = None
-        if card is not None and operation_key in {sketch.operation_key for sketch in techcards.techcards.sketches(card.id)}:
-            found = techcards.techcards.sketch_content(card.id, operation_key)
+        if card is not None:
+            shown, _ = pinned_card(techcards, card, task.techcard_revision)
+            sketches = document_sketches(techcards.techcards.sketches(card.id), card.document, shown.document)
+            if operation_key in {sketch.operation_key for sketch in sketches}:
+                found = techcards.techcards.sketch_content(card.id, operation_key)
     if found is None:
         raise HTTPException(status_code=404, detail="Эскиз не найден")
     sketch, content = found

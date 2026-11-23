@@ -2848,6 +2848,9 @@ def _typed_operation(
         "times": _times(op),
         "fields": fields,
     }
+    if config.get("mode") == "coax" and op.get("opKey"):
+        operation["opKey"] = str(op["opKey"])
+        operation["operation_key"] = f"{code.strip()}::op:{op['opKey']}::{operation['side'].strip()}"
     if any(not row["norm"] for row in operation["time"]):
         warnings.append(f"Операция {position} ({code}): норма времени не задана — расчётное время не определено.")
     label = str(op.get("label") or "").strip()
@@ -3058,20 +3061,38 @@ def _chain_results(config: Mapping[str, Any]) -> list[str]:
     return names
 
 
+def operation_time_summary(operation: Mapping[str, Any], quantity: Decimal) -> tuple[Decimal, bool]:
+    """Known minutes and whether the total is incomplete; explicit zero remains a known norm."""
+    def number(raw: Any) -> Decimal | None:
+        if raw is None or isinstance(raw, bool) or not str(raw).strip():
+            return None
+        try:
+            value = Decimal(str(raw).strip().replace(",", "."))
+        except (InvalidOperation, ValueError):
+            return None
+        return value if value.is_finite() and value >= 0 else None
+
+    rows = _list(operation.get("time"))
+    if rows:
+        values = [number(row.get("norm")) if isinstance(row, Mapping) else None for row in rows]
+        return sum((value for value in values if value is not None), Decimal(0)), any(value is None for value in values)
+    times = operation.get("times") if isinstance(operation.get("times"), Mapping) else {}
+    seconds = number(times.get("operation_seconds"))
+    return (seconds * quantity / 60, False) if seconds is not None else (Decimal(0), True)
+
+
 def _row_minutes(operation: Mapping[str, Any]) -> Decimal | None:
-    """Σ of the operation's ETK time rows, minutes per batch; None — it has no time rows."""
-    rows = [row for row in _list(operation.get("time")) if isinstance(row, Mapping)]
-    return sum((_decimal(row.get("norm")) for row in rows), Decimal(0)) if rows else None
+    """Complete row norm, or None for absent/incomplete rows (never an invented zero)."""
+    if not _list(operation.get("time")):
+        return None
+    minutes, unknown = operation_time_summary(operation, Decimal(1))
+    return None if unknown else minutes
 
 
 def _operation_minutes(operation: Mapping[str, Any], quantity: Decimal) -> Decimal:
     """The ETK time norm of the operation, minutes per batch; an operation without time rows (moved from SUPPLYMAP)
     counts its seconds per unit × batch (no setup, ETK_VERSION 4)."""
-    minutes = _row_minutes(operation)
-    if minutes is not None:
-        return minutes
-    times = operation.get("times") if isinstance(operation.get("times"), Mapping) else {}
-    return _decimal(times.get("operation_seconds")) * quantity / 60
+    return operation_time_summary(operation, quantity)[0]
 
 
 def _document_batch(document: Mapping[str, Any]) -> Decimal:
@@ -3085,8 +3106,8 @@ def _document_batch(document: Mapping[str, Any]) -> Decimal:
 def operation_norms(document: Mapping[str, Any] | None) -> tuple[Decimal, tuple[Decimal | None, ...]]:
     """The ETK's own time norms — what production plans by: the batch the ETK is counted for and, for every operation
     of the document in order, its norm in minutes per batch — Σ of its time rows, as the ETK shows them and the block
-    scheme sums them. None — the operation has no time rows (moved from SUPPLYMAP, made by hand): its card's seconds
-    per unit and setup are all there is."""
+    scheme sums them. None means absent or incomplete rows; `operation_time_summary` supplies the numeric lower
+    bound and the unknown-time flag, and only absent rows may fall back to the card's seconds per unit."""
     if not isinstance(document, Mapping):
         return Decimal(1), ()
     operations = [item for item in _list(document.get("operations")) if isinstance(item, Mapping)]
@@ -3125,6 +3146,7 @@ def _route_ops(document: Mapping[str, Any], *, strict: bool) -> tuple[list[Route
             position=position, type=str(source.get("type") or operation.get("type") or ""),
             code=str(operation.get("code") or ""), name=name or f"Операция {position}",
             minutes=_operation_minutes(operation, quantity),
+            unknown_time=operation_time_summary(operation, quantity)[1],
             side=str(source.get("side") or operation.get("side") or ""), key=str(source.get("opKey") or ""),
         ))
     return ops, str(config.get("assemblyName") or kit.get("name") or ""), quantity
@@ -3216,7 +3238,8 @@ def _route(
     route = route or derive_route(ops, final_name)
     if strict and config.get("mode") == "coax":
         validate_coax_finishing(route, ops)
-    totals = route_totals(route, {op.position: op.minutes for op in ops}, quantity)
+    totals = route_totals(route, {op.position: op.minutes for op in ops}, quantity,
+                            unknown_positions={op.position for op in ops if op.unknown_time})
     if config.get("topologyVersion") == 1 and route.generated and all(edge.per_unit == 1 for edge in route.edges):
         # These edges encode precedence, not repeated material inputs. Shared ancestors ran only once.
         parents: dict[str, list[str]] = defaultdict(list)
@@ -3264,7 +3287,8 @@ def propose_route(document: Mapping[str, Any] | None) -> dict[str, Any] | None:
     # A scheme still «one ПФ per operation» (`derived`) is not cut into ПФ even when the split comes out the same
     # (cut, crimp A, side A, crimp B, side B — a ПФ per operation): the proposal names the ПФ and launches by them.
     return {
-        "route": route_json(route, route_totals(route, {op.position: op.minutes for op in ops}, quantity)),
+        "route": route_json(route, route_totals(route, {op.position: op.minutes for op in ops}, quantity,
+                            unknown_positions={op.position for op in ops if op.unknown_time})),
         "same": same_split(route, current) and (current_json or {}).get("source") != "derived",
         "rule": rule,
     }
@@ -3492,7 +3516,13 @@ def _distinct_typed_keys(built: list[dict[str, Any]]) -> None:
     shrink on two connectors of a side) would share the ETK key and the build would be refused: the second and later
     ones get their ETK number on the connector. The first keeps its key, so a unique operation never changes."""
     taken: set[tuple[str, str, str]] = set()
+    stable: set[str] = set()
     for operation in built:
+        if operation.get("operation_key"):
+            if operation["operation_key"] in stable:
+                raise ValueError("Операции коаксиала должны иметь уникальные смысловые ключи и сторону")
+            stable.add(operation["operation_key"])
+            continue
         key = _etk_key(operation)
         if key in taken:
             code, connector, side = key
@@ -3680,7 +3710,8 @@ def _build_manual(
     }
     # Totals from the ETK time rows, as the read path (`document_route`) counts them.
     minutes = {operation["position"]: _operation_minutes(operation, quantity) for operation in built}
-    document["route"] = route_json(route, route_totals(route, minutes, quantity))
+    document["route"] = route_json(route, route_totals(route, minutes, quantity,
+        unknown_positions={op["position"] for op in built if operation_time_summary(op, quantity)[1]}))
     return document
 
 
@@ -4181,7 +4212,7 @@ def _coax_finishing_config(config: Mapping[str, Any]) -> Mapping[str, Any]:
             positions = {old + 1: new + 1 for new, old in enumerate(order)}
             for block in route.get("blocks") or []:
                 if isinstance(block, dict) and isinstance(block.get("ops"), list):
-                    block["ops"] = sorted(positions.get(pos, pos) for pos in block["ops"])
+                    block["ops"] = [positions.get(pos, pos) for pos in block["ops"]]
     return result
 
 

@@ -356,14 +356,24 @@ class SqlAlchemyTechcardRepository:
         row.content, row.uploaded_by, row.uploaded_at = content, sketch.uploaded_by, sketch.uploaded_at
 
     def delete_sketch(self, card_id: UUID, operation_key: str) -> int:
+        found = self._sketch_row(card_id, operation_key)
+        if found is None:
+            return 0
         return self.session.execute(delete(OperationSketchRow).where(
-            OperationSketchRow.project_card_id == card_id, OperationSketchRow.operation_key == operation_key,
+            OperationSketchRow.id == found.id,
         )).rowcount or 0
 
     def _sketch_row(self, card_id: UUID, operation_key: str) -> OperationSketchRow | None:
-        return self.session.scalar(select(OperationSketchRow).where(
-            OperationSketchRow.project_card_id == card_id, OperationSketchRow.operation_key == operation_key,
-        ))
+        card = self.session.get(ProjectTechcardRow, card_id)
+        aliases = ((card.document or {}).get("operation_key_aliases") or {}) if card else {}
+        target = aliases.get(operation_key, operation_key)
+        keys = {operation_key, target, *(key for key, value in aliases.items() if value == target)}
+        rows = list(self.session.scalars(select(OperationSketchRow).where(
+            OperationSketchRow.project_card_id == card_id, OperationSketchRow.operation_key.in_(keys),
+        )))
+        if len(rows) > 1:
+            raise TechcardValidationError("Несколько эскизов сопоставлены с одной операцией — требуется проверка технолога")
+        return rows[0] if rows else None
 
 
 class SqlAlchemyOperationCardRepository:
