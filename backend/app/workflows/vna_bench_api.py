@@ -24,7 +24,7 @@ from uuid import UUID, uuid4, uuid5
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.modules.production import vna_bench as bench
@@ -33,21 +33,23 @@ from app.modules.production.autoplan_api import references_uow_factory
 from app.modules.production.domain import ProductionValidationError
 from app.modules.production.infrastructure import (ProductionInstrumentFileRow, ProductionInstrumentRow,
                                                    ProductionSerialRow, ProductionTaskRow)
-from app.modules.production.instrument_characterization import application, series_cap_ghz
+from app.modules.production.instrument_characterization import application, characterization, connector_line, series_cap_ghz
 from app.modules.production.instrument_norms import loss_uncertainty_for, norm_for, uncertainty_for, vna_model
 from app.modules.production.mating_api import record_batch
 from app.modules.production.matings import end_names
 from app.modules.production.rf_infrastructure import RfRepository
+from app.modules.production.rf_interfaces import RfDetails, parse_interfaces
 from app.modules.production.traceability import InstrumentFile, InstrumentFileKind
 from app.modules.production.vna_bench_protocol import Screen, screen_hash
 from app.modules.production.vna_check_infrastructure import VALUE_FIELDS, VnaCheckRepository, VnaCheckRow
+from app.modules.production.vna_characterization import is_characterization_file
 from app.modules.production.vna_checks import (LOAD_LIMIT, KitTolerance, assert_confidence_points, confidence_from_receipt,
                                                control_standard, expected_verdict, flex, journal_number,
                                                kit_standard as judge_kit_standard, load_vswr, same_grid)
 from app.modules.production.vna_dsp import TRACES, TwoPort, VnaDataError, read_touchstone, select_band, summary, vswr, write_touchstone
 from app.modules.production.vna_screen_infrastructure import VnaScreenRepository, definition_of
 from app.modules.production.vna_screens import ItemLimits, ScreenDef, item_limits, number_text, screen as bench_screen
-from app.modules.production.vna_session_infrastructure import VnaCommandRow, VnaSessionRepository, VnaSessionRow
+from app.modules.production.vna_session_infrastructure import VnaBenchItemRow, VnaCommandRow, VnaSessionRepository, VnaSessionRow
 from app.modules.production.vna_sessions import TERMINAL, Profile, SessionConflict, StrictModel, resolved_profile
 from app.modules.production.vswr import RecordVswrCommand, VswrFileInput, record_vswr
 from app.modules.warehouse import vna_jobs
@@ -57,6 +59,7 @@ from app.modules.warehouse.scan_jobs import ScanJobClosed
 from app.shared.clock import MOSCOW, as_utc
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
+from app.shared.http_auth import Principal, require_section
 from .coax_vswr_api import CoaxRefs, _task_etk, task_norm
 from .vna_capture_instrument import capture_instrument
 from .vna_measurement_api import Factory, Now, Person, _expire
@@ -66,6 +69,7 @@ router = APIRouter(tags=["production"])
 PREFIX = "/api/production/vna-bench"
 Techcards = Annotated[Callable | None, Depends(techcards_uow_factory)]
 Refs = Annotated[Callable | None, Depends(references_uow_factory)]
+Reader = Annotated[Principal, Depends(require_section("quality", "view"))]
 MEASURING = ("instrument", "assembly")       # stopped by a failed weekly/monthly control (разд. 14)
 ITEMS = ("instrument", "assembly")
 CHECKS = {"flex": "flex", "weekly": "control_standard", "monthly": "kit_standards"}
@@ -820,6 +824,45 @@ def close(session_id: UUID, payload: Version, principal: Person, now: Now, facto
 
 
 # ---- objects ---------------------------------------------------------------------------------------------------------
+
+@router.get(PREFIX + "/targets")
+def targets(_principal: Reader, factory: Factory):
+    """Registry RF targets; connection/band readiness remains the existing plan's decision."""
+    with _refusals(), factory() as uow:
+        repository = RfRepository(uow.session)
+        details = repository.list()
+        result = []
+        for card in uow.session.scalars(select(ProductionInstrumentRow).order_by(ProductionInstrumentRow.inventory_number)):
+            rf = details.get(card.id, RfDetails())
+            # Reuse registry RF roles and the same name parser as connector_line/planner.
+            ports = rf.interfaces or parse_interfaces(card.name)
+            if card.vna_app or rf.role in ("vna", "auto_calibration"):
+                continue
+            if not ports and rf.role == "unknown":
+                continue
+            result.append(dict(kind="instrument", instrument_id=str(card.id), number=card.inventory_number,
+                               name=card.name, serial_number=card.serial_number or None,
+                               interfaces_text=connector_line(card.name, card.serial_number or "", rf), last_measured_at=None))
+        ids = [UUID(entry["instrument_id"]) for entry in result]
+        item = VnaBenchItemRow
+        last = {instrument_id: measured.isoformat() for instrument_id, measured in uow.session.execute(
+            select(item.instrument_id, func.max(item.created_at)).where(
+                item.instrument_id.in_(ids), item.kind == "instrument", item.target == "dut").group_by(item.instrument_id))}
+        # History is ordered by measurement date, not upload order (older curves may be backfilled).
+        # Stream metadata first; only named measurement bodies within the planner's 2 MiB bound are parsed.
+        file_row = ProductionInstrumentFileRow
+        files = select(file_row).where(file_row.instrument_id.in_(ids), func.lower(file_row.file_name).like("%.s2p"),
+                                       func.length(file_row.content) <= 2 * 1024 * 1024).execution_options(yield_per=1)
+        for row in uow.session.scalars(files):
+            if not is_characterization_file(row.file_name):
+                continue
+            measured = characterization(uow.instrument_files.get(row.instrument_id, row.id))
+            if measured and measured.measured_on.isoformat() > last.get(row.instrument_id, "")[:10]:
+                last[row.instrument_id] = measured.measured_on.isoformat()
+        for entry in result:
+            entry["last_measured_at"] = last.get(UUID(entry["instrument_id"]))
+        return {"targets": result}
+
 
 @router.post(PREFIX + "/resolve")
 def resolve(payload: ResolveInput, principal: Person, factory: Factory):

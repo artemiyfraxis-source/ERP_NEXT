@@ -238,6 +238,74 @@ def matings(env, instrument_id):
             InstrumentMatingRow.instrument_id == instrument_id))
 
 
+def test_target_list_reuses_rf_registry_and_excludes_vna_acm_and_non_rf(env):
+    with env["sessions"]() as db:
+        for number, name, details in (
+            ("СИ.201", "Термометр", None),
+            ("СИ.202", "Кабель", RfDetails((port(), port(male=False)))),
+            ("СИ.203", "Комплект нагрузок", RfDetails(role="load_kit")),
+            ("СИ.204", "Переход SMA розетка – SMA вилка", None),
+            ("СИ.205", "Другой ВАЦ", RfDetails((port(), port()), "vna")),
+        ):
+            card_id = uuid4()
+            db.add(ProductionInstrumentRow(id=card_id, version=1, inventory_number=number, name=name,
+                                          instrument_type="Оснастка", kind="Принадлежность", status="Действует"))
+            db.flush()
+            if details:
+                RfRepository(db).save(card_id, details)
+        db.commit()
+    response = env["admin"].get(URL + "/targets")
+    assert response.status_code == 200, response.text
+    rows = {row["number"]: row for row in response.json()["targets"]}
+    assert {"СИ.035", "СИ.009", "СИ.003", "СИ.100", "СИ.101", "СИ.202", "СИ.203", "СИ.204"} <= rows.keys()
+    assert not {"СИ.104", "СИ.201", "СИ.205"} & rows.keys()
+    assert S2_INSTRUMENT not in {row["instrument_id"] for row in rows.values()}
+    assert rows["СИ.035"] == dict(kind="instrument", instrument_id=str(env["ids"]["dut"]), number="СИ.035",
+                                  name="Переход коаксиальный ADP1A 3,5 мм", serial_number="N8B035",
+                                  interfaces_text="3.5mm вилка – 3.5mm розетка", last_measured_at=None)
+
+
+@pytest.mark.parametrize("permissions,status", [({"quality": "view"}, 200), ({"production": "edit"}, 403), ({}, 403)])
+def test_target_list_requires_quality_view_not_edit(env, monkeypatch, permissions, status):
+    monkeypatch.setitem(app.dependency_overrides, authenticated_principal, lambda: Principal(
+        actor=Actor(id=uuid4(), name="Наблюдатель", department="ОТК"), email="viewer@example.test",
+        roles=frozenset(), permissions=permissions))
+    response = env["admin"].get(URL + "/targets")
+    assert response.status_code == status, response.text
+
+
+def test_target_list_uses_accepted_captures_and_imported_measurement_date(env):
+    view = calibrate(env)
+    measure(env, view)
+
+    def rows():
+        response = env["admin"].get(URL + "/targets")
+        assert response.status_code == 200, response.text
+        return {row["number"]: row for row in response.json()["targets"]}
+
+    assert rows()["СИ.035"]["last_measured_at"] is None  # queued command is not a measurement
+    env["stub"].drive()
+    assert rows()["СИ.035"]["last_measured_at"][:10] == env["clock"].now.date().isoformat()
+    with env["sessions"]() as db:
+        for key, content in (("standard", touchstone([1e7, 18e9], [0j, 0j], [1 + 0j, 1 + 0j])),
+                             ("cable1", b"invalid touchstone")):
+            db.add(ProductionInstrumentFileRow(id=uuid4(), instrument_id=env["ids"][key], kind="Прочее",
+                file_name="Замер ВАЦ S50180, 01.10.2026.s2p", content=content, uploaded_at=env["clock"].now,
+                uploaded_by=db.scalar(select(VnaSessionRow.operator_id))))
+        db.commit()
+    listed = rows()
+    assert listed["СИ.009"]["last_measured_at"] == "2026-10-01"  # not the later upload date
+    assert listed["СИ.100"]["last_measured_at"] is None
+    with env["sessions"]() as db:
+        for day, content in (("01.09.2026", touchstone([1e7, 18e9], [0j, 0j], [1 + 0j, 1 + 0j])),
+                             ("01.11.2026", b"invalid touchstone")):
+            db.add(ProductionInstrumentFileRow(id=uuid4(), instrument_id=env["ids"]["standard"], kind="Прочее",
+                file_name=f"Замер ВАЦ S50180, {day}.s2p", content=content, uploaded_at=env["clock"].now + timedelta(hours=1),
+                uploaded_by=db.scalar(select(VnaSessionRow.operator_id))))
+        db.commit()
+    assert rows()["СИ.009"]["last_measured_at"] == "2026-10-01"
+
+
 def test_calibration_journal_item_record_and_close(env):
     view = calibrate(env)
     with env["sessions"]() as session:
