@@ -16,11 +16,16 @@ from app.modules.references.api import references_uow_factory
 from app.modules.references.application import custom_columns
 from app.modules.references.domain import TechOperationTab
 from app.shared.clock import moscow_now
-from app.shared.http_auth import Principal, references_view_principal
+from app.shared.http_auth import Principal, references_view_principal, require_section
 from app.shared.stored_files import file_response
 from app.shared.persistence import AuditEventRow
 
 router = APIRouter(prefix="/api/references/instruments", tags=["references"])
+# A person reaches the card with «Справочник» view and is then sorted by ОТК / «Справочник» edit below; a token edits
+# only with `refs:write` — a read-only `refs:read` token is refused at the gate, not inside the endpoint.
+instrument_edit_principal = require_section(
+    "erpref", "view", detail="Раздел «Справочник» вам не открыт.", scopes=("refs:write",),
+)
 
 
 def _result(catalog, item):
@@ -63,7 +68,7 @@ def instrument(
 def edit_instrument(
     record_id: UUID,
     payload: UpdateInstrumentPayload,
-    principal: Annotated[Principal, Depends(references_view_principal)],
+    principal: Annotated[Principal, Depends(instrument_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     factory: Annotated[Callable, Depends(references_uow_factory)],
 ):
