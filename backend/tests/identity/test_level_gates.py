@@ -21,7 +21,7 @@ from app.modules.shipping import api as shipping_api
 from app.modules.warehouse import scan_jobs_api
 from app.shared import http_auth
 from app.shared.http_auth import Principal, authenticated_principal
-from app.workflows import employee_card_api, machine_writes_api, machines_api, manual_jobs_api, marking_labels, vna_screens_api
+from app.workflows import employee_card_api, instrument_catalog_api, machine_writes_api, machines_api, manual_jobs_api, marking_labels, vna_screens_api
 from tests.access_levels import principal_as
 
 # Every route dependency of the contract; references_suppliers is `_map_rights` inside references/api.py.
@@ -51,6 +51,9 @@ DEPENDENCIES = {
     "manual_jobs_material": manual_jobs_api.manual_jobs_material_principal,
     # «ВАЦ — рабочее место» → «Экраны» (0207, S5b): ОТК reads the saved VNA screens; editing is production_quality.
     "vna_screens_view": vna_screens_api.vna_screens_view_principal,
+    # One СИ registry (0217, 23.11.2026): the «Средства измерений» card opens with «Справочник» view (ОТК / «Справочник»
+    # edit rights are checked inside); a token edits only with `refs:write`.
+    "instrument_edit": instrument_catalog_api.instrument_edit_principal,
 }
 
 
