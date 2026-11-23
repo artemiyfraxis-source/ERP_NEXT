@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from copy import deepcopy
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -47,25 +48,24 @@ def operation_key(operation: dict[str, Any]) -> str:
     return f"{code}::{connector}::{side}"
 
 
-_IDENTITY_ATTRIBUTES = frozenset({
-    "type", "side", "art", "article", "name", "len", "length", "qty", "count", "units",
-    "ep", "epB", "firstTerm", "wires", "wire", "wireIdxs", "wireSources", "pins", "marks", "harness",
-    "material", "braid", "connector", "cable", "coax", "coaxEnd", "coaxB", "ends",
-    "tutCount", "tutSegs", "tutParts", "wrapKind", "spliceWeld", "terminal", "contact",
-    "physicalEnds", "id", "wireId", "endId", "end", "pin", "from", "to", "idx", "unit", "cores",
-    "double", "doublePins", "perTerm", "fold", "sleeves", "method", "markTube", "wireMarks",
-    "branch", "label", "tin", "crimpBatch",
+_OPERATION_METADATA = frozenset({
+    "id", "index", "position", "order", "created_at", "updated_at", "createdAt", "updatedAt", "timestamp",
+    "templateId", "templateVersion", "tPrep", "tOp", "tMachine", "linearTiming",
+    # Reference-owned marking times and template tooling/inventory are refreshed separately.
+    "markKit", "equipmentTools",
+    # with_technology regenerates these caches from the recipe's material fields;
+    # old snapshots may lack them. Thermal override safety is checked separately.
+    "shrinkMaterials", "shrinkRequirements",
 })
 
 
-def _material_identity(value: Any) -> Any:
-    """Recipe material/endpoint attributes, excluding template text, timing and reference norms."""
-    if isinstance(value, Mapping):
-        return {key: _material_identity(item) for key, item in value.items()
-                if key in _IDENTITY_ATTRIBUTES or key.endswith(("Art", "Name", "Len", "Length", "Kind", "Label"))}
-    if isinstance(value, list):
-        return [_material_identity(item) for item in value]
-    return value
+def _recipe_identity(operation: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep all recipe data except known operation metadata, including future fields.
+
+    Exclusions apply only to the operation itself: nested IDs/indexes identify physical
+    wires and endpoints, and nested positions/label text define the work to perform.
+    """
+    return {key: value for key, value in operation.items() if key not in _OPERATION_METADATA}
 
 
 def _aligned_recipe(document: Mapping[str, Any], index: int) -> Mapping[str, Any] | None:
@@ -99,8 +99,11 @@ def with_operation_fingerprints(document: Mapping[str, Any] | None) -> dict[str,
         if raw is None or raw.get("opKey"):
             continue
         identity = {"code": op.get("code"), "side": op.get("side") or "",
-                    "recipe": _material_identity(raw), "connector_article": op.get("connector_article") or "",
-                    "materials": _material_identity(op.get("components") or [])}
+                    "recipe": _recipe_identity(raw), "connector_article": op.get("connector_article") or "",
+                    # Display consumption totals depend on batch size; per-piece quantities
+                    # and lengths belong to the recipe. Keep all other material attributes.
+                    "materials": [{key: value for key, value in item.items() if key != "norm"}
+                                  for item in op.get("components") or []]}
         encoded = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         op["operation_fingerprint"] = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
     return result
@@ -135,10 +138,11 @@ def operation_aliases(previous: Mapping[str, Any] | None, document: Mapping[str,
     raw_ops = config.get("ops") or []
     targets = {operation_key(op) for op in document.get("operations") or []}
     target_ops = {operation_key(op): op for op in document.get("operations") or []}
-    by_fingerprint: dict[str, set[str]] = {}
-    for key, op in target_ops.items():
+    source_counts = Counter(op.get("operation_fingerprint") for op in old_ops)
+    by_fingerprint: dict[str, list[str]] = {}
+    for op in document.get("operations") or []:
         if fingerprint := op.get("operation_fingerprint"):
-            by_fingerprint.setdefault(fingerprint, set()).add(key)
+            by_fingerprint.setdefault(fingerprint, []).append(operation_key(op))
     candidates: dict[str, set[str]] = {}
     for index, old in enumerate(old_ops):
         key = operation_key(old)
@@ -162,14 +166,16 @@ def operation_aliases(previous: Mapping[str, Any] | None, document: Mapping[str,
             fingerprint = old.get("operation_fingerprint")
             target = None
             if fingerprint:
+                matches = by_fingerprint.get(fingerprint, [])
+                # An occupied positional key cannot disambiguate identical recipes.
+                # Require a unique source and destination before transferring any content.
+                if matches and (source_counts[fingerprint] > 1 or len(matches) > 1):
+                    raise _ambiguous_operation(old)
                 if key in targets:
                     if fingerprint != target_ops[key].get("operation_fingerprint"):
                         raise _ambiguous_operation(old)
                     target = key
                 else:
-                    matches = by_fingerprint.get(fingerprint, set())
-                    if len(matches) > 1:
-                        raise _ambiguous_operation(old)
                     target = next(iter(matches), None)
             elif _positional_operation(old):
                 indistinguishable = sum((op.get("code"), op.get("side")) == (old.get("code"), old.get("side"))

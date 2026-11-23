@@ -16,6 +16,7 @@ operations by key instead of by place, so it survives a rebuild that moves the o
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import replace
@@ -99,15 +100,30 @@ def derive(
     gone is returned in `conflicts`, never dropped. A card without inputs cannot be derived: (None, [no_inputs])."""
     if not isinstance(inputs, Mapping) or not inputs:
         return None, [_conflict(NO_INPUTS, NO_INPUTS_MESSAGE)]
+    overrides = overrides if isinstance(overrides, Mapping) else {}
     try:
         document = project_cards.with_operation_fingerprints(stamp_templates(build_etk(
             enrich(deepcopy(dict(inputs))), templates, operation_library_commit=operation_library_commit,
             technology_source=technology_source,
         ), templates))
         aliases = operation_aliases(previous_document, document)
+        # Inputs backfill also derives saved edits/routes without a previous snapshot.
+        # A matching position/fingerprint is insufficient when the target is not unique.
+        edits, route = overrides.get("operations"), overrides.get("route")
+        saved_keys = set(edits) if isinstance(edits, Mapping) else set()
+        if isinstance(route, Mapping):
+            for block in route.get("blocks") or []:
+                if isinstance(block, Mapping):
+                    saved_keys.update(block.get("ops") or [])
+        saved_targets = {aliases.get(key, key) for key in saved_keys}
+        counts = Counter(op.get("operation_fingerprint") for op in document["operations"])
+        for op in document["operations"]:
+            fingerprint = op.get("operation_fingerprint")
+            if operation_key(op) in saved_targets and fingerprint and counts[fingerprint] > 1:
+                raise TechcardValidationError(
+                    "Несколько операций имеют одну смысловую идентичность — требуется проверка технолога")
     except (ValueError, KeyError, TypeError, AttributeError, IndexError, TechcardValidationError) as error:
         return None, [_conflict(BUILD_FAILED, f"сборка не удалась: {error}")]
-    overrides = overrides if isinstance(overrides, Mapping) else {}
     conflicts: list[dict[str, str]] = []
     if aliases:
         document["operation_key_aliases"] = aliases

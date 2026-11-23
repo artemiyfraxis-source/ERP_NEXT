@@ -13,13 +13,14 @@ from app.modules.techcards.etk_derive import derive, route_override
 from app.modules.techcards.infrastructure import ProjectTechcardRow, SqlAlchemyTechcardsUnitOfWork
 from app.modules.techcards.project_cards import (
     OperationSketch, ProjectTechcard, TechcardValidationError, document_sketches, operation_aliases, operation_key,
+    with_operation_fingerprints,
 )
 from app.workflows.etk_refresh import Context, NOTE_PREFIX, REASON_BUILDER, evaluate
 from app.workflows.techcard_build import Refs
 from tests.references.test_load_mirror import sessions  # noqa: F401
 from .test_etk_coax_fakra import FRESH, _fresh_cards
 from .test_project_cards import project_techcards_api  # noqa: F401
-from .test_etk_builder import CARDS, kit
+from .test_etk_builder import CARDS, FIXTURES, kit
 
 NOW = datetime(2026, 11, 23, 12)
 
@@ -439,3 +440,197 @@ def test_legacy_material_match_cannot_move_saved_content_to_a_different_branch(a
     updated, revision, result = evaluate(card, ctx, saved_sketch_keys=(key,))
     assert result.status == "conflict" and revision is None
     assert updated.document == card.document and updated.revision == card.revision
+
+
+@pytest.mark.parametrize("saved_kind", ["sketch", "edit", "route"])
+@pytest.mark.parametrize("backfill", [False, True])
+def test_legacy_label_text_swap_keeps_saved_content_and_revision(saved_kind, backfill):
+    config = {"mode": "wire", "partQty": 1, "assemblyName": "Labels", "ops": [
+        {"type": "coaxCutTut", "opNum": "PRINT_MARK_LABEL", "markMaterial": "tape", "tOp": "6",
+         "marks": [{"text": text, "place": "A", "minMm": 100, "qty": 1}]}
+        for text in ("LABEL_A", "LABEL_B")
+    ]}
+    document = etk_builder.build_etk(config, CARDS)
+    card = ProjectTechcard.create(project="LABEL", item_index="KB1", product_name="Labels",
+                                  source_calculation="", deadline=None, now=NOW).rebuild(document, NOW).issue(NOW)
+    key = operation_key(card.document["operations"][0])
+    if saved_kind == "edit":
+        edited = deepcopy(card.document["operations"][0])
+        edited["card"] = {"steps": [{"text": "MANUAL_FOR_LABEL_A"}]}
+        card = card.edit_operation(key, edited, NOW)
+        card = replace(card, overrides={"operations": {key: {"operation": deepcopy(edited)}}})
+    elif saved_kind == "route":
+        card.document["route"]["source"] = "manual"
+        card.document["route"]["edges"][0]["per_unit"] = 2
+        card = replace(card, overrides={"route": route_override(card.document)})
+    if backfill:
+        for op in card.document["operations"]:
+            op.pop("operation_fingerprint", None)
+        for edit in (card.overrides or {}).get("operations", {}).values():
+            edit["operation"].pop("operation_fingerprint", None)
+    config["ops"].reverse()
+    card = replace(card, inputs=config)
+    before = deepcopy(card)
+    ctx = Context(Refs(None), tuple(CARDS), "", None, "label-identity-test", REASON_BUILDER, NOW)
+    updated, revision, result = evaluate(card, ctx, saved_sketch_keys=(key,) if saved_kind == "sketch" else ())
+    assert result.status == "conflict" and revision is None
+    assert result.conflicts and "позиционный ключ" in updated.review_note
+    assert updated.revision == before.revision and updated.document == before.document
+    assert updated.overrides == before.overrides and updated.manual_operation_keys == before.manual_operation_keys
+    if saved_kind == "sketch":
+        sketch = OperationSketch(key, "LABEL_A.png", "image/png", 5, "Technologist", NOW)
+        assert document_sketches([sketch], updated.document) == [sketch]
+
+
+def _legacy_recipe_document(recipes):
+    """Keep output fields equal so they cannot mask lost recipe identity in the matcher."""
+    return {
+        "build_config": {"mode": "wire", "ops": deepcopy(recipes)},
+        "operations": [{"position": index, "connector": str(index), "code": "OP",
+                        "type": raw["type"], "side": raw.get("side", ""),
+                        "template_id": raw.get("templateId", ""), "components": []}
+                       for index, raw in enumerate(recipes, 1)],
+    }
+
+
+@pytest.mark.parametrize("duplicate_side", ["source", "target", "both"])
+@pytest.mark.parametrize("same_key", [False, True])
+def test_legacy_duplicate_fingerprints_conflict_even_when_positional_key_matches(duplicate_side, same_key):
+    raw = {"type": "coaxCutTut", "marks": [{"text": "LABEL_A", "place": "A"}]}
+    previous = _legacy_recipe_document([raw] * (2 if duplicate_side in {"source", "both"} else 1))
+    target = _legacy_recipe_document([raw] * (2 if duplicate_side in {"target", "both"} else 1))
+    if not same_key:
+        for op in target["operations"]:
+            op["connector"] = str(op["position"] + 10)
+    with pytest.raises(TechcardValidationError, match="проверка технолога"):
+        operation_aliases(previous, target)
+
+
+# Independently enumerate all fixture fields, excluding only known top-level metadata/timing.
+# Do not import the production exclusion set: a newly excluded defining field must fail this test.
+_FIXTURE_METADATA = {"templateId", "tPrep", "tOp", "tMachine"}
+
+
+def _recipe_leaves(value, path=()):
+    if isinstance(value, dict) and value:
+        for key, item in value.items():
+            if path or key not in _FIXTURE_METADATA:
+                yield from _recipe_leaves(item, (*path, key))
+    elif isinstance(value, list) and value:
+        for index, item in enumerate(value):
+            yield from _recipe_leaves(item, (*path, index))
+    else:
+        yield path, value
+
+
+def _fixture_recipe_variants():
+    variants = {}
+    for file in FIXTURES["files"].values():
+        for raw in file["payload"].get("config", {}).get("ops", []):
+            for path, value in _recipe_leaves(raw):
+                variants.setdefault((raw["type"], path), (raw, value))
+    return [pytest.param(raw, path, value, id=f"{kind}:{'.'.join(map(str, path))}")
+            for (kind, path), (raw, value) in variants.items()]
+
+
+@pytest.mark.parametrize("raw,path,value", _fixture_recipe_variants())
+def test_every_fixture_recipe_field_prevents_silent_transfer_on_swap(raw, path, value):
+    changed = deepcopy(raw)
+    parent = changed
+    for part in path[:-1]:
+        parent = parent[part]
+    parent[path[-1]] = (not value if isinstance(value, bool) else
+                       value + 1 if isinstance(value, (int, float)) else
+                       value + "_CHANGED" if isinstance(value, str) else "CHANGED")
+    previous = _legacy_recipe_document([raw, changed])
+    rebuilt = _legacy_recipe_document([changed, raw])
+    # All saved content uses these aliases; refuse occupied positional keys, or map to
+    # the same recipe if changing the side makes the former key free.
+    try:
+        aliases = operation_aliases(previous, rebuilt)
+    except TechcardValidationError:
+        return
+    targets = {operation_key(op): index for index, op in enumerate(rebuilt["operations"])}
+    for index, op in enumerate(previous["operations"]):
+        key = operation_key(op)
+        assert targets[aliases.get(key, key)] == 1 - index
+
+
+@pytest.mark.parametrize("path", [
+    ("marks", 0, "text"), ("marks", 0, "place"), ("marks", 0, "position"), ("marks", 0, "minMm"),
+    ("marks", 0, "scope"), ("placements", 0, "position"), ("wires", 0, "id"), ("wires", 0, "idx"),
+    ("wires", 0, "wireId"), ("ep", "endId"), ("ep", "pin"), ("futureAttribute", "value"),
+])
+def test_nested_positions_identifiers_and_new_recipe_fields_define_identity(path):
+    raw = {"type": "coaxCutTut", "marks": [{"text": "LABEL_A", "place": "A", "position": 1,
+                                         "minMm": 100, "scope": "cable"}],
+           "placements": [{"position": 1}], "wires": [{"id": "wire-A", "idx": 1, "wireId": "A"}],
+           "ep": {"endId": "A", "pin": "1"}, "futureAttribute": {"value": "A"}}
+    value = raw
+    for part in path:
+        value = value[part]
+    test_every_fixture_recipe_field_prevents_silent_transfer_on_swap(raw, path, value)
+
+
+def test_recipe_metadata_changes_keep_unique_legacy_identity():
+    raw = {"type": "cutTut", "tutArt": "TUBE", "tutLen": 20,
+           "id": "old", "index": 1, "position": 1, "order": 1,
+           "created_at": "yesterday", "updatedAt": "yesterday", "timestamp": "yesterday",
+           "templateId": "old-template", "tPrep": "10", "tOp": "20", "tMachine": "30"}
+    changed = {**raw, "id": "new", "index": 2, "position": 2, "order": 2,
+               "created_at": "today", "updatedAt": "today", "timestamp": "today",
+               "templateId": "new-template", "tPrep": "11", "tOp": "21", "tMachine": "31",
+               "linearTiming": {"setup_seconds": "10", "seconds_per_meter": "2"},
+               "markKit": {"norms": {"tubePrint": {"operation_seconds": "10", "setup_seconds": "20"}}},
+               "equipmentTools": [{"position": 0, "inventory": "NEW"}],
+               "shrinkMaterials": [{"art": "TUBE"}], "shrinkRequirements": [{"status": "missing"}]}
+    previous = with_operation_fingerprints(_legacy_recipe_document([raw]))
+    target = with_operation_fingerprints(_legacy_recipe_document([changed]))
+    assert previous["operations"][0]["operation_fingerprint"] == target["operations"][0]["operation_fingerprint"]
+    assert operation_aliases(previous, target) == {}
+
+
+def test_batch_quantity_keeps_identity_but_piece_quantity_change_conflicts():
+    config = {"mode": "wire", "partQty": 1, "assemblyName": "Tube", "ops": [
+        {"type": "cutTut", "opNum": "CUT_TUT", "tutArt": "TUBE", "tutCount": 2, "tutLen": 20, "tOp": "6"},
+    ]}
+    previous = etk_builder.build_etk(config, [])
+    config["partQty"] = 2
+    resized = etk_builder.build_etk(config, [])
+    assert previous["operations"][0]["components"] != resized["operations"][0]["components"]
+    assert operation_aliases(previous, resized) == {}
+    config["ops"][0]["tutCount"] = 3
+    with pytest.raises(TechcardValidationError, match="позиционный ключ"):
+        operation_aliases(previous, etk_builder.build_etk(config, []))
+
+
+@pytest.mark.parametrize("field", ["art", "name", "unit", "color", "position", "id"])
+def test_generated_material_attributes_define_identity(field):
+    previous = _legacy_recipe_document([{"type": "cutTut"}])
+    previous["operations"][0]["components"] = [{field: "A"}]
+    target = deepcopy(previous)
+    target["operations"][0]["components"][0][field] = "B"
+    with pytest.raises(TechcardValidationError, match="позиционный ключ"):
+        operation_aliases(previous, target)
+
+
+@pytest.mark.parametrize("saved_kind", ["edit", "route", None])
+def test_duplicate_target_fingerprints_cannot_take_saved_content_without_previous_document(saved_kind):
+    raw = {"type": "cutTut", "opNum": "CUT_TUT", "tutArt": "TUBE", "tutLen": 20, "tOp": "6"}
+    config = {"mode": "wire", "partQty": 1, "assemblyName": "Tube", "ops": [raw, deepcopy(raw)]}
+    previous = with_operation_fingerprints(etk_builder.build_etk(config, []))
+    overrides = {}
+    if saved_kind == "edit":
+        edited = deepcopy(previous["operations"][0])
+        edited["card"] = {"steps": [{"text": "MANUAL_FOR_FIRST_TUBE"}]}
+        overrides["operations"] = {operation_key(edited): {"operation": edited}}
+    elif saved_kind == "route":
+        previous["route"]["source"] = "manual"
+        previous["route"]["edges"][0]["per_unit"] = 2
+        overrides["route"] = route_override(previous)
+    document, conflicts = derive(config, overrides, lambda value: value, [])
+    if saved_kind is None:
+        assert document is not None and conflicts == []
+    else:
+        assert document is None
+        assert any("смысловую идентичность" in item["message"] for item in conflicts)
