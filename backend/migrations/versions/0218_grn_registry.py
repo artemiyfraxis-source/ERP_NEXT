@@ -1,7 +1,6 @@
 """Shared GRN identities, per-category/year counters and receipt/print metadata.
 
-Integration dependency: 0217 is reserved by the instrument-registry PR. The coordinator
-must re-parent this revision to its actual revision id before integration; no guessed slug.
+Follows 0217_unify_instrument_catalog (single Alembic head).
 Legacy identifiers, stock quantities, package keys and printed bytes are never rewritten.
 Reconciliation runs BEFORE DDL, including ambiguous lineage and six-digit capacity checks.
 Downgrade is for pre-cutover rehearsal only and refuses new-contract activity.
@@ -16,7 +15,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "0218_grn_registry"
-down_revision = "0216_equipment_screen_group"
+down_revision = "0217_unify_instrument_catalog"
 branch_labels = None
 depends_on = None
 DESTRUCTIVE = False

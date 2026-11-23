@@ -1,4 +1,4 @@
-"""HTTP «Ручная работа» (plan «Станки вне проекта», slice S1; 19.11.2026). Rules and tables: production/manual_jobs.py.
+"""HTTP «Работа» (plan «Станки вне проекта», slice S1; 19.11.2026). Rules and tables: production/manual_jobs.py.
 
 Started, finished and cancelled by «Производство» or «Задания» on edit — the same named gate as «Станки»
 (`machines_edit_principal`, tests/identity/test_level_gates.py). The journal is read by them and by «Склад» too
@@ -73,9 +73,9 @@ Writer = Annotated[Principal, Depends(machines_edit_principal)]
 # Slice S3: the journal and the material window open to «Склад» as well; «Не списывать» is said by either side on edit,
 # «Списать с партии» only with «Склад» on edit (`warehouse_edit_principal`, the gate of every write-off).
 MANUAL_SECTIONS = ("production", "myops", "warehouse")
-manual_jobs_view_principal = require_section(MANUAL_SECTIONS, "view", detail="Раздел «Ручная работа» вам не открыт.")
+manual_jobs_view_principal = require_section(MANUAL_SECTIONS, "view", detail="Журнал работ вам не открыт.")
 manual_jobs_material_principal = require_section(MANUAL_SECTIONS, "edit",
-                                                 detail="Решать, что делать с материалом ручной работы, вам не разрешено.")
+                                                 detail="Решать, что делать с материалом работы, вам не разрешено.")
 JournalReader = Annotated[Principal, Depends(manual_jobs_view_principal)]
 MAX_DAYS = 366
 
@@ -354,7 +354,7 @@ def start(payload: StartPayload, principal: Writer, factory: Factory, now: Now) 
         material = " · ".join(part for part in (row.wire, row.contact, f"{_shown(row.length_mm)} мм" if row.length_mm
                                                 else "") if part)
         _journal(uow, row, "started", principal, now,
-                 f"Начата ручная работа {jobs.number_text(row.number)} на {_inventory(machine)}: {row.purpose}"
+                 f"Начата работа {jobs.number_text(row.number)} на {_inventory(machine)}: {row.purpose}"
                  + (f" ({material})" if material else ""))
         result = view(row, machine)
         uow.commit()
@@ -372,7 +372,7 @@ def finish(job_id: UUID, payload: FinishPayload, principal: Writer, factory: Fac
             row = jobs.finish(session, job_id, payload.version, result, actor_name=principal.actor.name, now=now)
         except (KeyError, jobs.ManualJobInvalid, jobs.ManualJobConflict) as error:
             raise _errors(error) from error
-        _close_run(session, row, now, principal, "Ручная работа завершена")
+        _close_run(session, row, now, principal, "Работа завершена")
         material = jobs.MATERIAL_TEXTS[row.material][0] + (f": {row.material_note}" if row.material_note else "")
         defect = f", брак {row.defect_quantity} ({row.defect_reason})" if row.defect_quantity else ""
         _journal(uow, row, "finished", principal, now,
@@ -391,7 +391,7 @@ def cancel(job_id: UUID, payload: CancelPayload, principal: Writer, factory: Fac
             row = jobs.cancel(session, job_id, payload.version, payload.reason, actor_name=principal.actor.name, now=now)
         except (KeyError, jobs.ManualJobInvalid, jobs.ManualJobConflict) as error:
             raise _errors(error) from error
-        _close_run(session, row, now, principal, "Ручная работа отменена")
+        _close_run(session, row, now, principal, "Работа отменена")
         _journal(uow, row, "cancelled", principal, now, f"Отменена {jobs.number_text(row.number)}: {row.cancel_reason}")
         answer = view(row, session.get(EquipmentMachineRow, row.equipment_id))
         uow.commit()

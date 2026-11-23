@@ -5,4 +5,18 @@
 .pf-block li small { display: block; color: var(--muted-foreground); }
 .pf-block .pf-hint { color: var(--muted-foreground); }
 .pf-boxes b { font-variant-numeric: tabular-nums; }
+.mo-instruction-title { font-size: inherit; font-weight: 600; text-align: left; }
+.etk-machine-operations { min-width: 0; margin: 8px 0; }
+.etk-machine-operations h3 { margin: 8px 0; font-size: 14px; font-weight: 500; }
+.etk-machine-operations .data-table td { white-space: normal; vertical-align: top; }
+.etk-machine-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.etk-machine-actions a { display: inline-flex; align-items: center; text-decoration: none; }
+.etk-machine-operations .etk-machine-actions a.primary { color: var(--primary-foreground); }
+.cutting-group-instruction { display: grid; gap: 8px; }
+.cutting-group-instruction > .mo-etk { border: 0; padding: 0; box-shadow: none; }
+.etk-machine-actions .warning-inline { flex-basis: 100%; }
+.etk-machine-operations button:focus-visible, .etk-machine-actions a:focus-visible, .mo-instruction-title:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+@media (pointer: coarse) {
+  .etk-machine-actions a, .etk-machine-operations button, .mo-instruction-title { min-height: 40px; }
+}
 @media (pointer: coarse) { .pf-block summary { min-height: 40px; display: flex; align-items: center; } }

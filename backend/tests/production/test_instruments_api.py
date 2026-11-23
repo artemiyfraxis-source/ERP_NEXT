@@ -54,7 +54,8 @@ def test_pending_registration_and_listing_preserve_null_evidence(production_api,
     instrument = result.json()["instrument"]
     assert instrument == {**BASE, **dict.fromkeys(EVIDENCE), "status": PENDING, "id": instrument["id"], "version": 1,
                           "kind": "Средство измерений", "parent_id": None, "serial_number": "", "suggested_serial_number": None, "manufacturer": "",
-                          "doc_designation": "", "quantity": 1, "storage_location": "", "warehouse_grn": "", "warehouse_writeoff_id": None, "vna_app": "", "files": []}
+                          "doc_designation": "", "quantity": 1, "storage_location": "", "warehouse_grn": "", "warehouse_writeoff_id": None, "vna_app": "", "files": [],
+                          "article": "", "notes": "", "measurement_category": "", "custom_fields": {}}
     assert client.get("/api/production/instruments").json()["instruments"] == [instrument]
     duplicate = client.post("/api/production/instruments", json={**BASE, "status": PENDING})
     assert duplicate.status_code == 422 and "уже есть" in duplicate.json()["detail"]

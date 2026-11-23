@@ -20,7 +20,7 @@ from app.workflows.grn_allocation import grn_allocator
 from tests.warehouse.test_grn_allocator import NOW, request, sessions
 
 REVISION = "0218_grn_registry"
-PARENT = "0216_equipment_screen_group"
+PARENT = "0217_unify_instrument_catalog"
 STAMP = "2026-11-23 12:00:00"
 
 

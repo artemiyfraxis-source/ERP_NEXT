@@ -13,7 +13,7 @@ const principal = {
 };
 const viewer = { ...principal, permissions: { shipping: "view" as const } };
 const admin = { ...principal, roles: ["admin"], access_level: "admin", permissions: { shipping: "edit" as const, shipping_goods: "edit" as const } };
-const shippingHeaders = ["Статус", "Организация", "Получатель", "Телефон", "Адрес", "Способ доставки", "ТК", "Комментарий для склада", "Для перевозчика", "Трек", "Ждём для трека", "УПД", "№ УПД", "Дата УПД", "Файл УПД", "PL", "DN", "Доставка КБ"];
+const shippingHeaders = ["Статус", "Ждём", "УПД", "№ УПД", "Дата УПД", "Файл УПД", "Трек", "PL", "DN", "Организация", "Получатель", "Телефон", "Адрес", "Способ доставки", "ТК", "Комментарий для склада", "Для перевозчика", "Доставка КБ"];
 
 const row = (over: Record<string, unknown>) => ({
   project: "591К.3", customer: "Заказчик", deadline: "2026-10-25", item_index: "КБ1", name: "Жгут", unit: "шт", stage: "В работе",
@@ -222,8 +222,8 @@ it("shipment permission and unknown blockers remain visible once, including pick
     missing_ship: ["№ УПД", "разрешение на отгрузку без УПД", "согласование склада"] }];
   render(<ProductionIntakePage principal={principal} />);
   await screen.findByText(packedShipment.number);
-  expect(cell(shipmentRows()[0], "Ждём для трека")).toBe("разрешение на отгрузку без УПД, согласование склада");
-  expect(cell(bodyRows()[0], "Ждём для трека")).toBe("");
+  expect(cell(shipmentRows()[0], "Ждём")).toBe("№ УПД, разрешение на отгрузку без УПД, согласование склада");
+  expect(cell(bodyRows()[0], "Ждём")).toBe("");
   expect(screen.getAllByText(/разрешение на отгрузку без УПД, согласование склада/)).toHaveLength(1);
 });
 
@@ -458,7 +458,7 @@ describe("Приёмка с производства: свои колонки и
     expect(screen.queryByRole("button", { name: /Раскрыть/ })).not.toBeInTheDocument();
     expect(screen.queryByText(/· раскрыть/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Excel по позициям" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Короба и PL/DN" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^(Изменить|Открыть) упаковку ОТГ-/ })).toBeInTheDocument();
     for (const position of bodyRows()) {
       expect(["Организация", "Получатель", "Телефон", "Адрес", "ТК", "Трек", "№ УПД", "PL", "DN"].map((label) => cell(position, label))).toEqual(Array(9).fill(""));
       expect(position.querySelector("small")).toBeNull();
@@ -479,7 +479,7 @@ describe("Приёмка с производства: свои колонки и
     expect(shipmentRows()[0]).toHaveTextContent("5 шт");
     expect(rowButtons().filter((name) => name.startsWith("Упаковать"))).toEqual(["Упаковать 591К.3 КБ1: 15", "Упаковать 591К.3 КБ1: 5"]);
     expect(screen.queryByRole("button", { name: /Упаковать.*: 20$/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Короба и PL/DN" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^(Изменить|Открыть) упаковку ОТГ-/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Упаковать 591К.3 КБ1: 5" }));
     const dialog = await screen.findByRole("dialog", { name: "Упаковка 591К.3" });
     expect(within(dialog).getByRole("article", { name: "Отправка ОТГ-20261029-01" })).toBeInTheDocument();
@@ -603,30 +603,33 @@ describe("Приёмка с производства: свои колонки и
     intakeRows = [row({ accepted: "4", packed: "4", remaining: "0", delivered: "4", tasks: [] })];
     shipments = [packedShipment];
     const first = render(<ProductionIntakePage principal={principal} />);
-    const off = await screen.findByRole("button", { name: "Трек ОТГ-20261029-01" });
+    // Держит только № УПД (владелец 23.11): кнопка говорит, что сделать, — «Вписать № УПД…» открывает данные отправки.
+    expect(await screen.findByRole("button", { name: "Вписать № УПД ОТГ-20261029-01" })).toBeEnabled();
     expect(tab(/^Упаковано/)).toHaveAttribute("aria-selected", "true");
-    expect(off).toBeDisabled();
-    expect(off.getAttribute("title")).toContain("не хватает: № УПД");
-    expect(screen.queryByRole("button", { name: "Без УПД ОТГ-20261029-01" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Трек ОТГ-20261029-01" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Отгрузить без УПД ОТГ-20261029-01" })).not.toBeInTheDocument();
     expect(rowButtons()).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Вписать № УПД ОТГ-20261029-01" }));
+    expect(await screen.findByRole("dialog", { name: "Данные отправки ОТГ-20261029-01" })).toBeInTheDocument();
     first.unmount();
 
     // Сервер решает сам (`no_upd_offered`): не предлагает — выключенный «Трек…», даже если слова пробелов похожи.
     shipments = [{ ...packedShipment, missing_ship_codes: ["upd_number", "track_number"], no_upd_offered: false }];
     const second = render(<ProductionIntakePage principal={principal} />);
-    expect(await screen.findByRole("button", { name: "Трек ОТГ-20261029-01" })).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "Без УПД ОТГ-20261029-01" })).not.toBeInTheDocument();
-    // Пропуск УПД виден в своей ячейке и не дублируется текстовым перечнем.
+    expect(await screen.findByRole("button", { name: "Вписать № УПД ОТГ-20261029-01" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Отгрузить без УПД ОТГ-20261029-01" })).not.toBeInTheDocument();
+    // «Ждём» прямо говорит, чего не хватает, рядом со статусом.
     expect(cell(shipmentRows()[0], "№ УПД")).toBe("не заполнено");
-    expect(cell(shipmentRows()[0], "Ждём для трека")).toBe("—");
+    expect(cell(shipmentRows()[0], "Ждём")).toBe("№ УПД, трек-номер");
     second.unmount();
 
     shipments = [{ ...packedShipment, upd_type: null, missing_ship: ["тип УПД", "трек-номер"], missing_ship_codes: ["upd_type", "track_number"], no_upd_offered: true }];
     approvals = [[403, { detail: "Неверный разрешительный ПИН." }], [200, { shipment: packedShipment }]];
     render(<ProductionIntakePage principal={principal} />);
-    expect(await screen.findByRole("button", { name: "Без УПД ОТГ-20261029-01" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Отгрузить без УПД ОТГ-20261029-01" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Внести УПД ОТГ-20261029-01" })).toBeInTheDocument();
     expect(rowButtons()).toEqual([]);
-    fireEvent.click(screen.getByRole("button", { name: "Без УПД ОТГ-20261029-01" }));
+    fireEvent.click(screen.getByRole("button", { name: "Отгрузить без УПД ОТГ-20261029-01" }));
     const pinWindow = await screen.findByRole("dialog", { name: "Отгрузка без УПД · ОТГ-20261029-01" });
     const who = within(pinWindow).getByLabelText("Кто разрешает");
     await waitFor(() => expect(within(who).getAllByRole("option").map((option) => option.textContent)).toEqual(["выберите", "Артемий", "Зингер", "Касаточкин"]));
@@ -665,14 +668,14 @@ describe("Приёмка с производства: свои колонки и
     shipments = [{ ...packedShipment, missing_data: [] }];
     const printed = capturePrintFrames();
     render(<ProductionIntakePage principal={principal} />);
-    await screen.findByRole("button", { name: "Трек ОТГ-20261029-01" });
+    await screen.findByRole("button", { name: "Вписать № УПД ОТГ-20261029-01" });
     expect(screen.queryByRole("button", { name: /^(Документы|Сформировать отгрузочные) / })).not.toBeInTheDocument();
     expect(cell(shipmentRows()[0], "PL")).toContain("PL591К.3-1");
     expect(cell(shipmentRows()[0], "DN")).toContain("DN591К.3-1");
     // PL печатается прямо из строки, как раньше из шапки отправки.
     fireEvent.click(screen.getByRole("button", { name: "Печать PL PL591К.3-1" }));
     await waitFor(() => expect(calls.some((call) => /\/shipments\/s1\/print\?document=pl/.test(call.url))).toBe(true));
-    fireEvent.click(screen.getByRole("button", { name: "Короба и PL/DN" }));
+    fireEvent.click(screen.getByRole("button", { name: /^(Изменить|Открыть) упаковку ОТГ-/ }));
     const dialog = await screen.findByRole("dialog", { name: "Упаковка 591К.3" });
     const card = within(within(dialog).getByRole("article", { name: "Отправка ОТГ-20261029-01" }));
     fireEvent.click(card.getByRole("button", { name: "Печать PL" }));
@@ -718,13 +721,13 @@ it("ЭДО без № (владелец 20.11): сервер предлагае�
   const offered = { ...packedShipment, missing_data: ["№ УПД"], missing_ship_codes: ["upd_number", "track_number"], no_upd_offered: true };
   shipments = [offered];
   const packed = render(<ProductionIntakePage principal={principal} />);
-  expect(await screen.findByRole("button", { name: "Без УПД ОТГ-20261029-01" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Отгрузить без УПД ОТГ-20261029-01" })).toBeInTheDocument();
   packed.unmount();
 
   shipments = [{ ...offered, status: "Собрана", pl_number: "", dn_number: "DN591К.3-1" }];
   const assembled = render(<ProductionIntakePage principal={principal} />);
   fireEvent.click(await screen.findByRole("tab", { name: /^Все/ }));
-  expect(await screen.findByRole("button", { name: "Без УПД ОТГ-20261029-01" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Отгрузить без УПД ОТГ-20261029-01" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Трек ОТГ-20261029-01" })).not.toBeInTheDocument();
   assembled.unmount();
 
@@ -732,7 +735,7 @@ it("ЭДО без № (владелец 20.11): сервер предлагае�
   render(<ProductionIntakePage principal={principal} />);
   fireEvent.click(await screen.findByRole("tab", { name: /^Все/ }));
   await screen.findByText("ОТГ-20261029-01");
-  expect(screen.queryByRole("button", { name: "Без УПД ОТГ-20261029-01" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Отгрузить без УПД ОТГ-20261029-01" })).not.toBeInTheDocument();
 });
 
 it("DN «Сформировать» зовёт выдачу DN у упакованной отправки без DN", async () => {
@@ -768,7 +771,7 @@ it("склад видит общие данные и редактирует ка
     fireEvent.click(within(card).getByRole("button", { name: "Закрыть" }));
 
     fireEvent.click(tab(/^Упаковано/));
-    fireEvent.click((await screen.findAllByRole("button", { name: "Короба и PL/DN" }))[0]);
+    fireEvent.click((await screen.findAllByRole("button", { name: /^(Изменить|Открыть) упаковку ОТГ-/ }))[0]);
     const pack = await screen.findByRole("dialog", { name: "Упаковка 591К.3" });
     const shipCard = within(within(pack).getByRole("article", { name: "Отправка ОТГ-20261029-01" }));
     expect(shipCard.getByRole("button", { name: "Сохранить документы" })).toBeInTheDocument();

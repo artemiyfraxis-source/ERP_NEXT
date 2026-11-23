@@ -26,7 +26,7 @@ export interface NavItem {
   /** Opens when any of these keys is granted (a section made of tabs with their own keys). */
   anyPermission?: string[];
   /** Also opens for these keys, which do not own the screen: «Доступы» neither names the screen under them nor
-   *  moves their row («Ручная работа» for «Склад», S3: the warehouse decides the material of finished jobs). */
+   *  moves their row. */
   alsoPermission?: string[];
   /** The `alsoPermission` keys open the screen for reading only, whatever their mode: «ОТК» on edit reads «Оборудование»
    *  (its analyser cards) but never edits or commands a machine (review of #999, 20.11.2026). */
@@ -68,11 +68,11 @@ export const navKey = (item: NavItem) => (item.tab ? `${item.id}:${item.tab}` : 
 
 export const BLOCKS: Array<{ id: BlockId; title: string; sub: string }> = [
   { id: "prod", title: "Производство", sub: "проекты · планирование · задания" },
-  { id: "supply", title: "Снабжение", sub: "оформить заявку · сегодня · заявки · запросы КП · закупка · счета и поставки · статистика" },
+  { id: "supply", title: "Снабжение", sub: "оформить заявку · сегодня · заявки · запросы КП · закупка · счета и поставки · первичная документация · статистика" },
   // Приёмка sits in Склад: the storekeeper does incoming inspection, not the buyer (SUPPLYMAP, owner 26.07.2026).
   { id: "stock", title: "Склад", sub: "приёмка · остатки · выдача · отгрузка" },
   { id: "mgmt", title: "Менеджмент", sub: "данные отправок · производственный план" },
-  // Primary documents of purchasing (УПД, счета, их цепочка): a block of their own (Витя's edit 4, owner-approved 23.10).
+  // Kept for old block URLs; hidden while empty. Purchasing documents now belong to «Снабжение» (owner 23.11).
   { id: "docs", title: "Документация", sub: "первичная документация" },
   // Reference books are not a production step (owner 29.09.2026): their own block, last in the menu.
   { id: "refs", title: "Справочники", sub: "база данных · шаблоны техкарт · закупка" },
@@ -109,8 +109,6 @@ export const NAV: NavItem[] = [
   // приборы агентов; читают мастер и монтажник.
   // ОТК (`quality`) открывает его тоже: рабочее место ВАЦ — в карточке анализатора цепей (владелец 20.11.2026).
   { id: "machines", label: "Оборудование", sub: "станки цеха · приборы · наладка · состояние на станке", anyPermission: ["production", "myops", "warehouse"], alsoPermission: ["quality"], alsoReadOnly: true, block: "prod" },
-  // «Ручная работа» (план «Станки вне проекта», 19.11.2026): журнал работ на любом станке вне проекта; те же ключи, что у «Станков».
-  { id: "manualjobs", label: "Ручная работа", sub: "работа на станке вне проекта · журнал за период", anyPermission: ["production", "myops"], alsoPermission: ["warehouse"], block: "prod" },
   // «Задания» (`myops`) и «ОТК» (`quality`) — разделы матрицы со своими ключами (owner 04.10.2026), не часть `production`.
   // «ОТК»: очередь на проверку, брак цеха и ОТК, средства измерения; приёмку и реестр ведёт правка `quality`, решение по
   // браку — правка `production` (экран сам прячет то, что не открыто).
@@ -124,8 +122,9 @@ export const NAV: NavItem[] = [
   { id: "myrequests", label: "Мои заявки", sub: "мои позиции и на каком они этапе", permission: "myrequests", block: "supply", within: "card" },
   { id: "requests", label: "Заявки", sub: "проверить и передать в закупку", permission: "requests", block: "supply", within: "procurement", menuWithoutParent: true },
   // «Снабжение» — the former «Лист закупки» (Витя's edit 4): the buyer's daily work plus «Статистика». Its reference
-  // books moved to «Справочники → Закупка», its documents to «Документация → Первичная документация» (same key).
+  // books moved to «Справочники → Закупка»; «Первичная документация» is back in «Снабжение» (owner 23.11, same key).
   { id: "procurement", label: "Снабжение", sub: "сегодня · заявки · запросы КП · счета и поставки · статистика", permission: "procurement", block: "supply" },
+  { id: "primarydocs", label: "Первичная документация", sub: "УПД · счета Kaiten · цепочка документов · поиск по документам", permission: "procurement", block: "supply" },
   // Склад
   { id: "receiving", label: "Приёмка", sub: "входной контроль и оприходование", permission: "receiving", block: "stock" },
   { id: "stock", label: "Склад", sub: "остатки · внести · переместить · оборудование", permission: "warehouse", block: "stock" },
@@ -147,8 +146,6 @@ export const NAV: NavItem[] = [
   { id: "access", label: "Доступы", sub: "уровни × разделы · исключения по сотрудникам", fullAccessOnly: true, block: "admin" },
   { id: "notifications", label: "Уведомления", sub: "мои события", block: "mgmt", within: "cabinet" },
   { id: "operations", label: "Системный журнал", sub: "аудит и очередь событий", permission: "operations", block: "admin" },
-  // Документация
-  { id: "primarydocs", label: "Первичная документация", sub: "УПД · счета Kaiten · цепочка документов · поиск по документам", permission: "procurement", block: "docs" },
   // Справочники: after «База данных» above
   { id: "purchasingrefs", label: "Закупка", sub: "поставщики · номенклатура · каталог закупок · настройки", permission: "procurement", block: "refs" },
 ];
@@ -202,6 +199,12 @@ export function hasFullAccess(principal: Principal): boolean {
 /** The section is open at `minimum` (default: for reading): a full-access level, or the matrix says so. */
 export function canSee(principal: Principal, section: string, minimum: AccessMode = "view"): boolean {
   return hasFullAccess(principal) || hasAccess(principal.permissions, section, minimum);
+}
+
+/** Legacy journal links are resolved only after authentication. Warehouse readers need no machine access. */
+export function manualJobsDestination(principal: Principal): "machines" | "stock" | null {
+  if (canSee(principal, "production") || canSee(principal, "myops")) return "machines";
+  return canSee(principal, "warehouse") ? "stock" : null;
 }
 
 /** «Режим просмотра» (ID-6): edit controls only when the backend would pass the write too — the section is on edit
@@ -259,7 +262,13 @@ export function visibleBlocks(principal: Principal, capabilities: NavCapabilitie
       .filter(([tab]) => !(tab === "today" && isViewOnly(principal, item)))
       .map(([tab, label, sub]) => ({ ...item, tab, label, sub }));
   return BLOCKS
-    .map((block) => ({ ...block, items: items.filter((item) => item.block === block.id && inMenu(item)).flatMap(expand) }))
+    .map((block) => {
+      const menu = items.filter((item) => item.block === block.id && inMenu(item)).flatMap(expand);
+      const documents = menu.findIndex((item) => item.id === "primarydocs");
+      const orders = menu.findIndex((item) => item.id === "procurement" && item.tab === "orders");
+      if (documents >= 0 && orders >= 0) menu.splice(orders + 1, 0, ...menu.splice(documents, 1));
+      return { ...block, items: menu };
+    })
     .filter((block) => block.items.length > 0);
 }
 
@@ -269,7 +278,7 @@ export function urlParam(name: string): string {
 }
 
 export function isSection(value: string | null): value is Section {
-  return NAV.some(({ id }) => id === value);
+  return value === "manualjobs" || NAV.some(({ id }) => id === value);
 }
 
 export function isBlock(value: string | null): value is BlockId {
@@ -286,7 +295,7 @@ export function openPlace(section: string, params: Record<string, string> = {}) 
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
-/** A UPD's card in «Документация → Первичная документация» (`&upd=<id>`), from any screen that names the document. */
+/** A UPD's card in «Снабжение → Первичная документация» (`&upd=<id>`), from any screen that names the document. */
 export function openUpdCard(id: string) {
   openPlace("primarydocs", { tab: "upd", upd: id });
 }

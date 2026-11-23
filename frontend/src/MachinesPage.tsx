@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnalyserCard, drivesBench } from "./AnalyserCard";
+import { failureText, productionApi } from "./api";
 import { EMPTY, formatMoment } from "./format";
 import { equipmentSetupApi, type SetupViewer } from "./equipmentSetupApi";
 import { EquipmentSetupPage } from "./EquipmentSetupPage";
-import { machinesApi, usePolled, type MachineRow, type Tone } from "./machinesApi";
+import { machinesApi, usePolled, type MachineRow, type MachineTaskContext, type Tone } from "./machinesApi";
 import { MachineSetupPart } from "./MachineSetup";
 import { MachineWorkCard } from "./MachineWorkCard";
-import { ManualJobWindow } from "./ManualJobWindow";
+import { WorkJournal } from "./ManualJobsPage";
 import { MarkingMachineCard } from "./MarkingMachineCard";
-import { manualJobsApi, type ManualJob } from "./manualJobsApi";
 import { Ob019Card } from "./Ob019Card";
 import { urlParam } from "./navigation";
 import { Ob019SetupPanel } from "./Ob019SetupPanel";
@@ -23,13 +23,13 @@ import "./machines.css";
  *  группам назначения (`family` строки: «Резка», «Опрессовка», «Принтеры и МФУ», …; порядок — `families` ответа API;
  *  владелец 20.11.2026: «почему тут по разным раскидано»). Связь — значок на плитке; фильтр «Только подключённые»
  *  оставляет станки и приборы, которыми ERP управляет через агента.
- *  На плитке — артикул, участок, «Ждёт наладки» по открытому заданию; в карточке станка — «Наладка» и «Ручная работа».
+ *  На плитке — артикул, участок, «Ждёт наладки» по открытому заданию; в карточке станка — «Наладка» и журнал работ.
  *  Анализатор цепей открывает свою карточку (`AnalyserCard`): Planar — рабочее место ВАЦ (бывшая вкладка ОТК, владелец
  *  20.11.2026; старая ссылка `?section=quality&tab=vna` ведёт сюда, `&tab=vna` открывает эту карточку), Arinst — замер файлом. */
 
-export type View = "setup" | "equipment";
+export type View = "setup" | "equipment" | "journal";
 type Site = "" | "ЦАР" | "ЖУК";
-const VIEWS: [View, string][] = [["setup", "Запросы на наладку"], ["equipment", "Всё оборудование"]];
+const VIEWS: [View, string][] = [["setup", "Запросы на наладку"], ["equipment", "Всё оборудование"], ["journal", "Журнал работ"]];
 const SITES: [Site, string][] = [["", "Все участки"], ["ЦАР", "ЦАР"], ["ЖУК", "ЖУК"]];
 const OTHER_FAMILY = "Прочее";
 
@@ -83,8 +83,8 @@ function MachineTile({ row, open }: { row: MachineRow; open: (row: MachineRow) =
 }
 
 /** Карточка плитки без живой карточки: станок без управления (сведения + «Наладка»), принтер, прибор. */
-function MachineInfo({ row, close, manual, canWrite, saved }: {
-  row: MachineRow; close: () => void; manual?: () => void; canWrite: boolean; saved: () => void;
+function MachineInfo({ row, close, canWrite, saved, journal }: {
+  row: MachineRow; close: () => void; canWrite: boolean; saved: () => void; journal?: () => void;
 }) {
   const title = titleOf(row);
   const facts: [string, string, Tone?][] = row.kind === "machine" && !row.controlled
@@ -96,7 +96,7 @@ function MachineInfo({ row, close, manual, canWrite, saved }: {
     <section className="panel machine-card">
       <header className="machine-card-head">
         <h2>{title}</h2>
-        {manual && <button type="button" className="secondary small machine-manual" onClick={manual}>Ручная работа</button>}
+        {journal && <button type="button" className="secondary small" onClick={journal}>Журнал</button>}
         <button type="button" className="secondary small" onClick={close}>Закрыть</button>
       </header>
       {row.link.code === "not_installed" && row.kind === "machine"
@@ -157,7 +157,45 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
     return () => { live = false; };
   }, [canQuality]);
   const [setupOf, setSetupOf] = useState<MachineRow | null>(null);
-  const [manual, setManual] = useState<{ row: MachineRow; job: ManualJob | null } | null>(null);
+  const [journalOf, setJournalOf] = useState<MachineRow | null>(null);
+  const [route, setRoute] = useState(() => window.location.search);
+  const params = useMemo(() => new URLSearchParams(route), [route]);
+  const equipment = params.get("equipment");
+  const hasSource = ["task", "operation", "etk_position", "load"].some((key) => params.has(key));
+  const [resolved, setResolved] = useState<{ route: string; context: MachineTaskContext | null; error: string } | null>(null);
+  useEffect(() => {
+    const changed = () => setRoute(window.location.search);
+    window.addEventListener("popstate", changed);
+    return () => window.removeEventListener("popstate", changed);
+  }, []);
+  useEffect(() => {
+    setJournalOf(null); setSetupOf(null);
+  }, [route]);
+  useEffect(() => {
+    let alive = true;
+    const taskId = params.get("task"), operationId = params.get("operation");
+    const position = Number(params.get("etk_position"));
+    if (!hasSource) { setResolved({ route, context: null, error: "" }); return; }
+    if (!equipment || !taskId || !operationId || !Number.isSafeInteger(position) || position < 1) {
+      setResolved({ route, context: null, error: "Ссылка на задание неполная — откройте станок из инструкции заново" });
+      return;
+    }
+    productionApi.operationMachineActions(taskId, operationId).then((answer) => {
+      if (!alive) return;
+      const matches = answer.actions.filter((action) => action.etk_position === position && action.equipment_id === equipment);
+      const action = matches.length === 1 ? matches[0] : null;
+      if (answer.task_id !== taskId || answer.operation_id !== operationId || !action?.can_open
+        || (action.card_kind !== "ob099" && !action.source)) {
+        setResolved({ route, context: null, error: action?.blocker || "Задание или станок изменились — откройте инструкцию заново" });
+      } else setResolved({ route, context: { taskId, operationId, action, loadRequested: params.get("load") === "1" }, error: "" });
+    }).catch((reason) => {
+      if (alive) setResolved({ route, context: null, error: failureText(reason, "Не удалось проверить задание — откройте инструкцию заново") });
+    });
+    return () => { alive = false; };
+  }, [params, route, equipment, hasSource]);
+  const incoming = resolved?.route === route ? resolved.context : null;
+  const routeError = resolved?.route === route ? resolved.error : "";
+  const sourceReady = !hasSource || Boolean(incoming);
   const wantsBench = useRef(urlParam("tab") === "vna");
   const [chosen, setView] = useState<View | null>(initialView ?? (wantsBench.current ? "equipment" : null));
   useEffect(() => {
@@ -169,27 +207,40 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
     return () => { live = false; };
   }, [setupViewer, chosen]);
   // «Запросы на наладку» — только тому, кому открыта наладка (её ключ проверяет App).
-  const view: View = chosen === "setup" && setupViewer ? "setup" : "equipment";
+  const view: View = params.get("view") === "journal" ? "journal" : equipment || wantsBench.current ? "equipment"
+    : chosen === "setup" && setupViewer ? "setup" : chosen === "journal" ? "journal" : "equipment";
+  const changeView = (next: View) => {
+    setView(next);
+    setOpen(null);
+    const url = new URL(window.location.href);
+    for (const key of ["equipment", "task", "operation", "etk_position", "load"]) url.searchParams.delete(key);
+    url.searchParams.set("view", next);
+    window.history.replaceState(window.history.state, "", url);
+    setRoute(url.search);
+  };
   const [site, setSite] = useState<Site>("");
-  /** Идёт ручная работа на этом станке — открываем её (завершить / отменить), иначе — новую с этим станком. */
-  const openManual = useCallback(async (row: MachineRow) => {
-    let job: ManualJob | null = null;
-    if (row.equipment_id) {
-      const now = new Date();
-      const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-      try {
-        job = (await manualJobsApi.list(day, day, row.equipment_id)).rows.find((item) => item.status === "running") ?? null;
-      } catch { /* нет связи — окно новой работы скажет об этом само */ }
-    }
-    setManual({ row, job });
-  }, []);
   const [query, setQuery] = useState("");
   const rows = useMemo(() => data?.rows ?? [], [data]);
+  const openMachine = (row: MachineRow) => {
+    const url = new URL(window.location.href);
+    for (const key of ["task", "operation", "etk_position", "load"]) url.searchParams.delete(key);
+    if (row.equipment_id) url.searchParams.set("equipment", row.equipment_id); else url.searchParams.delete("equipment");
+    window.history.replaceState(window.history.state, "", url);
+    setRoute(url.search);
+    setOpen(row);
+  };
+  const closeMachine = () => {
+    setOpen(null);
+    const url = new URL(window.location.href);
+    for (const key of ["equipment", "task", "operation", "etk_position", "load"]) url.searchParams.delete(key);
+    window.history.replaceState(window.history.state, "", url);
+    setRoute(url.search);
+  };
   const wantsPrinter = useRef(urlParam("printer") === "labels" || new URLSearchParams(location.search).get("section") === "labeldesigner");
   useEffect(() => {
     if (!wantsPrinter.current || !data) return;
     const printer = rows.find(row => row.station?.kind === "labels");
-    if (printer) { wantsPrinter.current=false; setView("equipment"); setOpen(printer); }
+    if (printer) { wantsPrinter.current=false; setView("equipment"); openMachine(printer); }
   }, [data,rows]);
   // Ссылка на рабочее место ВАЦ (`&tab=vna`, в т. ч. старая из ОТК): карточка Planar, которым оно управляет.
   useEffect(() => {
@@ -199,7 +250,8 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
     setOpen(row ?? (benchNumber ? "bench" : null));
   }, [data, benchNumber, rows]);
   // Открытая карточка Planar держит `&tab=vna` в адресе — её можно сохранить закладкой.
-  const opened = open === "bench" ? null : open && (rows.find((row) => row.key === open.key) ?? open);
+  const opened = equipment ? (sourceReady ? rows.find((row) => row.equipment_id === equipment) ?? null : null)
+    : hasSource ? null : open === "bench" ? null : open && (rows.find((row) => row.key === open.key) ?? open);
   const benchOpen = open === "bench" || opened?.vna === "s2vna";
   useEffect(() => {
     const url = new URL(window.location.href);
@@ -222,7 +274,7 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
   const connected = (row: MachineRow) => row.link.code === "ok" && (row.kind === "machine" || row.state.tone === "ok");
   const connectedCount = found.filter((row) => atSite(row) && connected(row)).length;
   const siteCount = (which: Site) => found.filter((row) => (!which || (row.kind === "machine" && row.site === which)) && (!onlyConnected || connected(row))).length;
-  const shown = view === "setup" ? [] : found.filter((row) => atSite(row) && (!onlyConnected || connected(row))).sort(byNumber);
+  const shown = view !== "equipment" ? [] : found.filter((row) => atSite(row) && (!onlyConnected || connected(row))).sort(byNumber);
   const families = data?.families ?? [];
   // Группа строки — её `family`; группа, которой нет в `families` ответа, встаёт перед «Прочее», а не прячется в нём.
   const inGroup = (row: MachineRow) => row.family || OTHER_FAMILY;
@@ -232,52 +284,59 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
     : "Нет оборудования — установите агент ERP или отметьте станок в БД.ОБ галочкой «Показывать в «Оборудовании»»";
   return <section className="page machines-page">
     <header className="page-head"><h1>Оборудование</h1></header>
+    {routeError && <div className="error-banner" role="alert">{routeError}</div>}
+    {hasSource && resolved?.route !== route && <p className="empty">Проверка задания…</p>}
+    {equipment && sourceReady && data && !opened && <p className="error-banner" role="alert">Станок из ссылки не найден — откройте инструкцию заново</p>}
     {error && <div className="error-banner" role="alert">{error}</div>}
     {!data && !error
       ? <p className="empty">Загрузка…</p>
       : <>
         <div className="machine-toolbar">
-          {setupViewer && <div className="seg-tabs" role="tablist" aria-label="Оборудование">
-            {VIEWS.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={view === id} className={view === id ? "on" : ""}
-              onClick={() => setView(id)}>{label}</button>)}
-          </div>}
-          {view !== "setup" && showSites && <div className="seg-tabs sub" role="radiogroup" aria-label="Участок">
+          <div className="seg-tabs" role="tablist" aria-label="Оборудование">
+            {VIEWS.filter(([id]) => id !== "setup" || setupViewer).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={view === id} className={view === id ? "on" : ""}
+              onClick={() => changeView(id)}>{label}</button>)}
+          </div>
+          {view === "equipment" && showSites && <div className="seg-tabs sub" role="radiogroup" aria-label="Участок">
             {SITES.map(([id, label]) => <button key={id || "all"} type="button" role="radio" aria-checked={site === id} className={site === id ? "on" : ""}
               onClick={() => setSite(id)}>{label}<span className={`ship-tab-count${siteCount(id) ? "" : " is-zero"}`}>{siteCount(id)}</span></button>)}
           </div>}
-          {view !== "setup" && <label className="machine-only-connected">
+          {view === "equipment" && <label className="machine-only-connected">
             <input type="checkbox" checked={onlyConnected} onChange={(event) => setOnlyConnected(event.target.checked)} />
             Только подключённые<span className="ship-tab-count">{connectedCount}</span></label>}
-          {view !== "setup" && <input className="search" type="search" name="equipment-search" autoComplete="off" spellCheck={false} aria-label="Поиск оборудования" placeholder="№, название, артикул, ПК или IP"
+          {view === "equipment" && <input className="search" type="search" name="equipment-search" autoComplete="off" spellCheck={false} aria-label="Поиск оборудования" placeholder="№, название, артикул, ПК или IP"
             value={query} onChange={(event) => setQuery(event.target.value)} />}
         </div>
         {view === "setup" && <EquipmentSetupPage embedded />}
-        {view !== "setup" && !shown.length && (query.trim() ? <p className="empty">Ничего не найдено по «{query.trim()}»</p> : <p className="empty">{empty}</p>)}
+        {view === "equipment" && !shown.length && (query.trim() ? <p className="empty">Ничего не найдено по «{query.trim()}»</p> : <p className="empty">{empty}</p>)}
         {groups.map(([title, group]) => group.length > 0 && <section key={title} className="machine-group" aria-label={title}>
           <h2>{title} <span className="machine-muted">· {group.length}</span></h2>
-          <div className="machine-tiles">{group.map((row) => <MachineTile key={row.key} row={row} open={setOpen} />)}</div>
+          <div className="machine-tiles">{group.map((row) => <MachineTile key={row.key} row={row} open={openMachine} />)}</div>
         </section>)}
       </>}
+    {view === "journal" && <WorkJournal />}
     {/* Карточка по признакам строки, без пересечений: живая ОБ.019 → станок маркировки → анализатор цепей → принтер или МФУ склада → паспорт. */}
     {opened?.card && opened.equipment_id
-      ? <Ob019Card equipmentId={opened.equipment_id} title={[titleOf(opened), opened.article].filter(Boolean).join(" · ")}
-        close={() => setOpen(null)}
+      ? <Ob019Card key={`${opened.equipment_id}:${route}`} incoming={incoming ?? undefined} equipmentId={opened.equipment_id} title={[titleOf(opened), opened.article].filter(Boolean).join(" · ")}
+        close={closeMachine} openJournal={() => setJournalOf(opened)}
         actions={<>
           <button type="button" className="secondary small machine-manual" onClick={() => setSetupOf(opened)}>
             Наладка{opened.pending_setup ? " · ждёт" : ""}</button>
-          <button type="button" className="secondary small" onClick={() => void openManual(opened)}>Ручная работа</button>
         </>} />
       : opened?.marking && opened.equipment_id
-        ? <MarkingMachineCard row={opened} canWrite={canWrite} close={() => setOpen(null)} />
+        ? <MarkingMachineCard key={`${opened.equipment_id}:${route}`} incoming={incoming ?? undefined} row={opened} canWrite={canWrite} close={closeMachine} openJournal={() => setJournalOf(opened)} />
         : open === "bench" || opened?.vna
-          ? <AnalyserCard row={opened} benchNumber={benchNumber} canQuality={canQuality} close={() => setOpen(null)} />
-          : opened?.station ? <WarehouseDeviceCard row={opened} station={opened.station} close={() => setOpen(null)} />
+          ? <AnalyserCard row={opened} benchNumber={benchNumber} canQuality={canQuality} close={closeMachine} />
+          : opened?.station ? <WarehouseDeviceCard row={opened} station={opened.station} close={closeMachine} />
           : opened && hasWorkCard(opened)
-            ? <MachineWorkCard row={opened} canWrite={canWrite} close={() => setOpen(null)} openSetup={() => setSetupOf(opened)} />
-            : opened && <MachineInfo row={opened} close={() => setOpen(null)} canWrite={canWrite} saved={() => undefined}
-            manual={opened.kind === "machine" ? () => void openManual(opened) : undefined} />}
+            ? <MachineWorkCard key={`${opened.equipment_id}:${route}`} incoming={incoming ?? undefined} row={opened} canWrite={canWrite} close={closeMachine} openSetup={() => setSetupOf(opened)} openJournal={() => setJournalOf(opened)} />
+            : opened && <MachineInfo row={opened} close={closeMachine} canWrite={canWrite} saved={() => undefined} journal={opened.equipment_id ? () => setJournalOf(opened) : undefined} />}
     {setupOf && <SetupWindow row={setupOf} canWrite={canWrite} setupViewer={setupViewer} close={() => setSetupOf(null)} saved={() => undefined} />}
-    {manual && <ManualJobWindow job={manual.job} equipmentId={manual.row.equipment_id} inventory={manual.row.inventory}
-      close={() => setManual(null)} />}
+    {journalOf?.equipment_id && <PageWindow label={`Журнал · ${titleOf(journalOf)}`} close={() => setJournalOf(null)} width={1400} dismissable>
+      <section className="panel machine-card">
+      <header className="machine-card-head"><strong>{titleOf(journalOf)}</strong>
+        <button type="button" className="secondary small" onClick={() => setJournalOf(null)}>Закрыть журнал</button></header>
+      <WorkJournal equipmentId={journalOf.equipment_id} />
+      </section>
+    </PageWindow>}
   </section>;
 }

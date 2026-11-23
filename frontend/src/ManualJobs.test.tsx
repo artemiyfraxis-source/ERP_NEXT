@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { AccessMode, Principal } from "./api";
 import type { MachineRow } from "./machinesApi";
 import { MachinesPage } from "./MachinesPage";
-import { ManualJobsPage } from "./ManualJobsPage";
+import { ManualJobsPage, WorkJournal } from "./ManualJobsPage";
 import { ManualJobWindow } from "./ManualJobWindow";
 import type { ManualJob, ManualJobOptions } from "./manualJobsApi";
 import { visibleNav } from "./navigation";
@@ -62,7 +62,7 @@ it("lists the jobs of the period and finishes a running one with the material de
   expect(calls[0].url).toMatch(/date_from=\d{4}-\d{2}-\d{2}&date_to=\d{4}-\d{2}-\d{2}$/);
   expect(screen.getAllByText("Не списывать").length).toBeGreaterThan(0);
   fireEvent.click(screen.getAllByText("Р-000001")[0]);
-  const dialog = await screen.findByRole("dialog", { name: "Ручная работа Р-000001" });
+  const dialog = await screen.findByRole("dialog", { name: "Работа Р-000001" });
   const finish = within(dialog).getByRole("button", { name: "Завершить работу" }) as HTMLButtonElement;
   expect(finish.disabled).toBe(true);
   const issue = within(dialog).getByRole("radio", { name: /Списать с партии/ }) as HTMLInputElement;
@@ -114,13 +114,13 @@ it("starts a job on the machine it was opened from, with an эталон filling
   await waitFor(() => expect(saved).toHaveBeenCalled());
   expect(calls.find((call) => call.url.endsWith("/manual-jobs"))?.body).toEqual({ equipment_id: "u19", purpose: "Образцы для ОТК",
     wire: "ПВАМ 0,5", contact: "", length_mm: "120", quantity_planned: null, reference_id: "r1" });
-  expect(await screen.findByRole("dialog", { name: "Ручная работа Р-000009" })).toBeTruthy();
+  expect(await screen.findByRole("dialog", { name: "Работа Р-000009" })).toBeTruthy();
 });
 
 it("refuses a second job on a busy machine before sending", async () => {
   serve([]);
   render(<ManualJobWindow inventory="ОБ.099" close={() => undefined} />);
-  expect(await screen.findByText(/На станке уже идёт ручная работа Р-000002/)).toBeTruthy();
+  expect(await screen.findByText(/На станке уже идёт работа Р-000002/)).toBeTruthy();
   fireEvent.change(screen.getByLabelText("Зачем"), { target: { value: "Проба" } });
   expect((screen.getByRole("button", { name: "Начать работу" }) as HTMLButtonElement).disabled).toBe(true);
 });
@@ -142,9 +142,8 @@ it("a machine without control starts work outside a task from its work card", as
   });
   render(<MachinesPage canWrite />);
   fireEvent.click(await screen.findByText("ОБ.037"));
-  // A machine without control opens its work card; work outside a task starts on «Вне задания».
+  // A machine without control opens its normal start form.
   const card = await screen.findByRole("dialog", { name: /ОБ\.037/ });
-  fireEvent.click(await within(card).findByRole("tab", { name: "Вне задания" }));
   expect((await within(card).findByRole("combobox", { name: "Станок" }) as HTMLInputElement).value).toBe("ОБ.037 · BZW-880");
 });
 
@@ -174,14 +173,12 @@ it("the work card shows the job already running on the machine", async () => {
   expect(calls.some((url) => url.includes("/manual-jobs?") && url.endsWith("equipment_id=u19"))).toBe(true);
 });
 
-it("shows «Ручная работа» to Производство, Задания or Склад", () => {
+it("removes «Работа» from navigation for every journal reader", () => {
   const user = { id: "1", email: "u@example.test", name: "Сотрудник", department: "Цех" };
   const as = (permissions: Record<string, AccessMode>): Principal => ({ user, roles: ["operator"], access_level: "operator", permissions });
-  const item = visibleNav(as({ myops: "view" })).find((entry) => entry.id === "manualjobs");
-  expect(item?.label).toBe("Ручная работа");
-  expect(visibleNav(as({ production: "edit" })).some((entry) => entry.id === "manualjobs")).toBe(true);
-  // The warehouse finds there the jobs whose material waits for it (S3).
-  expect(visibleNav(as({ warehouse: "view" })).some((entry) => entry.id === "manualjobs")).toBe(true);
+  for (const permissions of [{ myops: "view" }, { production: "edit" }, { warehouse: "view" }] as Record<string, AccessMode>[]) {
+    expect(visibleNav(as(permissions)).some((entry) => entry.id === "manualjobs")).toBe(false);
+  }
   expect(visibleNav(as({ projects: "edit" })).some((entry) => entry.id === "manualjobs")).toBe(false);
 });
 
@@ -196,4 +193,60 @@ it("says the count of jobs in the right Russian form (21 работа, 25 раб
   serve([], many(25));
   render(<ManualJobsPage />);
   expect(await summary()).toMatch(/: 25 работ$/);
+});
+
+it("keeps a fixed machine UUID even for the backend's all-machine pending response", async () => {
+  const calls: { url: string; body?: unknown }[] = [];
+  serve(calls, [DONE, { ...DONE, id: "other", equipment_id: "u99", number: "Р-000099" }]);
+  render(<WorkJournal equipmentId="u19" period={{ from: "2020-01-01", to: "2020-01-31" }} />);
+  await screen.findByText("Р-000002");
+  expect(screen.queryByText("Р-000099")).toBeNull();
+  expect(calls[0].url).toContain("date_from=2020-01-01&date_to=2020-01-31&equipment_id=u19");
+  fireEvent.click(screen.getByRole("button", { name: /Ждёт решения склада/ }));
+  await waitFor(() => expect(calls.some(call => call.url.endsWith("equipment_id=u19&waiting=true"))).toBe(true));
+  await screen.findByText("Р-000002");
+  expect(screen.queryByText("Р-000099")).toBeNull();
+  expect(screen.getByRole("combobox", { name: "Станок" })).toBeDisabled();
+});
+
+it("filters by equipment identity when different units share an inventory label", async () => {
+  serve([], [RUNNING, { ...DONE, equipment_id: "u99", inventory: RUNNING.inventory }]);
+  render(<WorkJournal />);
+  await screen.findByText("Р-000001");
+  fireEvent.change(screen.getByRole("combobox", { name: "Станок" }), { target: { value: "u99" } });
+  expect(screen.queryByText("Р-000001")).toBeNull();
+  expect(screen.getByText("Р-000002")).toBeTruthy();
+});
+
+it("clears old rows on a failed period request and allows a retry", async () => {
+  const fetch = serve([]);
+  render(<WorkJournal />);
+  await screen.findByText("Р-000001");
+  fetch.mockResolvedValueOnce(json({ detail: "Нет связи с журналом" }, 503));
+  fireEvent.change(screen.getByLabelText("Начало периода"), { target: { value: "2020-01-01" } });
+  expect(await screen.findByRole("alert")).toHaveTextContent("Нет связи с журналом");
+  expect(screen.queryByText("Р-000001")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
+  await screen.findByText("Р-000001");
+});
+
+it("preserves user search across period loads, failures and retry", async () => {
+  const fetch = serve([]);
+  render(<WorkJournal />);
+  await screen.findByText("Р-000001");
+  const search = screen.getByRole("searchbox", { name: "Поиск: Журнал работ" });
+  fireEvent.change(search, { target: { value: "Р-000001" } });
+  expect(screen.queryByText("Р-000002")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Начало периода"), { target: { value: "2020-01-01" } });
+  await screen.findByText("Р-000001");
+  expect(search).toHaveValue("Р-000001");
+  expect(screen.queryByText("Р-000002")).toBeNull();
+  fetch.mockResolvedValueOnce(json({ detail: "Нет связи с журналом" }, 503));
+  fireEvent.click(screen.getByRole("button", { name: /Ждёт решения склада/ }));
+  await screen.findByRole("alert");
+  expect(search).toHaveValue("Р-000001");
+  fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
+  await screen.findByText("Р-000001");
+  expect(search).toHaveValue("Р-000001");
+  expect(screen.queryByText("Р-000002")).toBeNull();
 });

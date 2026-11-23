@@ -140,6 +140,8 @@ def plan_rewrites(
     now = moscow_now()
     for model, columns in LIVE_COLUMNS:
         counts = report.tables[model.__tablename__] = TableCount()
+        if model.__tablename__ == "equipment_measuring_units":
+            continue  # Immutable pre-cutover provenance, never a live description to rewrite.
         for row in session.scalars(select(model)):
             if isinstance(row, TechOperationRecordRow) and (row.tab == "ob" or row.material_archived):
                 continue

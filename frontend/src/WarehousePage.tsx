@@ -31,11 +31,12 @@ import { WarehouseReceipt } from "./WarehouseReceipt";
 import { lotDocuments, receiptLine, shortDate } from "./warehouseReceiptLogic";
 import { FinishedGoodsPanel } from "./FinishedGoodsPanel";
 import { EquipmentPage } from "./EquipmentPage";
+import { WorkJournal } from "./ManualJobsPage";
 import { StockLinkDialog } from "./StockLinkDialog";
 import { downloadStockTable, ItemTypesPanel, RackLayoutPanel, StockImportPanel, StockJournalPanel } from "./WarehouseReferences";
 import {
   agreeing, chooserColumns, ColumnChooser, columnTitle, COLUMN_HINTS, defaultLayout, documentsLayout, moveColumn, readLayout, readLayouts,
-  readLocalLayouts, shownColumns as visibleColumns, STOCK_VIEWS, TABLE_KINDS, writeLayouts,
+  readLocalLayouts, REQUIRED_STOCK_COLUMNS, shownColumns as visibleColumns, STOCK_VIEWS, TABLE_KINDS, writeLayouts,
   type ColumnKey, type ColumnLayout, type TableKind,
 } from "./WarehouseColumns";
 import { loadPersonalViews, migrateLocalView, resetPersonalView, savePersonalView } from "./personalViews";
@@ -69,13 +70,24 @@ export function WarehousePage({ admin = false, readOnly = false, finishedGoods =
   // the old `?section=equipment` lands on the second one). A sub-tab the viewer has no access to falls back to «Материалы».
   const [view, setView] = useState<StockView>(() => {
     const wanted = new URLSearchParams(window.location.search).get("view");
-    return wanted === "owners" ? "owners" : wanted === "goods" && finishedGoods ? "goods" : wanted === "equipment" && equipment ? "equipment" : "stock";
+    return wanted === "owners" ? "owners" : wanted === "work-materials" ? "work-materials" : wanted === "goods" && finishedGoods ? "goods" : wanted === "equipment" && equipment ? "equipment" : "stock";
   });
-  const views = <StockViews view={view} onChange={setView} goods={finishedGoods} equipment={equipment} />;
+  const changeView = (next: StockView) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("view", next);
+    window.history.replaceState(window.history.state, "", url);
+    setView(next);
+  };
+  const views = <StockViews view={view} onChange={changeView} goods={finishedGoods} equipment={equipment} />;
   if (view === "owners") return <section className="page stock-page">
     <header className="page-head"><h1>Склад</h1></header>
     {views}
     <MaterialOwners readOnly={readOnly} />
+  </section>;
+  if (view === "work-materials") return <section className="page stock-page">
+    <header className="page-head"><h1>Склад</h1></header>
+    {views}
+    <WorkJournal mode="materials" />
   </section>;
   if (equipment && view === "equipment") return <section className="page stock-page">
     <header className="page-head"><h1>Склад</h1></header>
@@ -90,14 +102,15 @@ export function WarehousePage({ admin = false, readOnly = false, finishedGoods =
   return <StockPage admin={admin} readOnly={readOnly} canEditReferences={canEditReferences} views={views} />;
 }
 
-type StockView = "stock" | "goods" | "equipment" | "owners";
+type StockView = "stock" | "goods" | "equipment" | "owners" | "work-materials";
 
-/** «Материалы и комплектующие» | «Готовая продукция» | «Оборудование» под заголовком склада. */
+/** Stock sub-views; each preserves its existing permission gate. Work material is readable with warehouse access. */
 function StockViews({ view, onChange, goods, equipment }: { view: StockView; onChange: (view: StockView) => void; goods: boolean; equipment: boolean }) {
   const tabs: [StockView, string][] = [["stock", "Материалы и комплектующие"]];
   if (goods) tabs.push(["goods", "Готовая продукция"]);
   if (equipment) tabs.push(["equipment", "Оборудование"]);
   tabs.push(["owners", "Владельцы материалов"]);
+  tabs.push(["work-materials", "Материал работ"]);
   return <div className="seg-tabs stock-views" role="tablist" aria-label="Разделы склада">
     {tabs.map(([key, label]) =>
       <button key={key} type="button" role="tab" aria-selected={view === key} className={view === key ? "on" : undefined} onClick={() => onChange(key)}>{label}</button>)}
@@ -107,6 +120,9 @@ function StockViews({ view, onChange, goods, equipment }: { view: StockView; onC
 function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boolean; readOnly: boolean; canEditReferences: boolean; views: ReactNode }) {
   const purposeText = usePurposeLabel();
   const [lots, setLots] = useState<WarehouseLot[]>([]);
+  // Keep the latest version of every lot loaded during this visit. Server search/pagination changes the rows,
+  // but must not remove columns whose values are merely outside the current search or page. No extra requests.
+  const [columnLots, setColumnLots] = useState<WarehouseLot[]>([]);
   const [busy, setBusy] = useState("");
   const [loading, setLoading] = useState(false);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -189,10 +205,13 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
   const kind: TableKind = flat ? "flat" : "grouped";
   const layout = layouts[kind];
   const groupColumn = !flat && (groupBy === "series" || groupBy === "type") ? groupBy : null;
-  const shownColumns = visibleColumns(layout, groupColumn);
+  const populatedColumns = useMemo(() => new Set(layout.order.filter((key) =>
+    REQUIRED_STOCK_COLUMNS.includes(key) || columnLots.some((lot) => hasColumnValue(key, lot)),
+  )), [layout.order, columnLots]);
+  const shownColumns = visibleColumns(layout, groupColumn).filter((key) => populatedColumns.has(key));
   // Document columns switched on widen the table (it scrolls in its frame) instead of squeezing the name.
   const docsLayout = documentsLayout(shownColumns);
-  const chooserKeys = chooserColumns(layout, groupColumn);
+  const chooserKeys = chooserColumns(layout, groupColumn).filter((key) => populatedColumns.has(key));
   // The leftmost column stays in view when the table is scrolled sideways.
   const pinned = shownColumns[0];
   const changeLayout = (change: (current: ColumnLayout) => ColumnLayout) => {
@@ -234,6 +253,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
       const page = await warehouseApi.list({ query, includeZero, warehouse, ...serverOrder() });
       if (version !== requestVersion.current) return;
       setLots(mergeLots([], [...page.lots, ...received]));
+      setColumnLots((current) => mergeLots(current, [...page.lots, ...received]));
       setTotal(page.total);
       setCursor(page.next_cursor);
     } catch (reason) {
@@ -258,6 +278,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
         if (version !== requestVersion.current) return;
         loaded = mergeLots(loaded, page.lots);
         setLots(loaded);
+        setColumnLots((current) => mergeLots(current, page.lots));
         setTotal(page.total);
         next = page.next_cursor;
         setCursor(next);
@@ -324,7 +345,15 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
       const result = await operation();
       // The server answers with the touched lot(s): only those rows change, nothing is re-read.
       const touched = touchedLots(result);
-      if (touched) { setLots((current) => replaceLots(current, touched)); setTotalsStamp((value) => value + 1); }
+      if (touched) {
+        setLots((current) => replaceLots(current, touched));
+        setColumnLots((current) => {
+          // Operation replies omit delivery metadata; preserve it just as the displayed rows do.
+          const known = new Set(current.map((lot) => lot.id));
+          return [...replaceLots(current, touched), ...touched.filter((lot) => !known.has(lot.id))];
+        });
+        setTotalsStamp((value) => value + 1);
+      }
       else await reload();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Складская операция не выполнена");
@@ -339,7 +368,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
     <section className="page stock-page">
       <header className="page-head">
         <h1>Склад</h1>
-        <span className="page-count">{total}</span>
+        <span className="page-count">{countLabel(total, ["партия", "партии", "партий"])}</span>
         {reserveTotal && <span className="page-sub" role="status">{reserveTotal}</span>}
         {/* The daily actions stay in sight; the reference tools sit behind «Ещё» (every one still one click away). */}
         <div className="page-actions">
@@ -420,6 +449,7 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
           receivedLots.current = mergeLots(receivedLots.current, [accepted]);
           requestVersion.current += 1;
           setLots((current) => mergeLots(current, [accepted]));
+          setColumnLots((current) => mergeLots(current, [accepted]));
           void reload();
         }}
       />}
@@ -550,6 +580,30 @@ function columnClass(key: ColumnKey) {
 
 function classes(...names: Array<string | false | undefined>) {
   return names.filter(Boolean).join(" ") || undefined;
+}
+
+/** Repeating our article adds no identifying information to a lot. */
+function makerArticle(lot: WarehouseLot): string {
+  const value = lot.maker_article?.trim() ?? "";
+  return value.toLocaleLowerCase("ru") === lot.article.trim().toLocaleLowerCase("ru") ? "" : value;
+}
+
+/** Values as displayed, including delivery fields. Numeric zero is data; whitespace and duplicate articles are not. */
+function hasColumnValue(key: ColumnKey, lot: WarehouseLot): boolean {
+  let value: string | null | undefined;
+  switch (key) {
+    case "lots": return true;
+    case "type": value = lot.item_type; break;
+    case "place": value = lot.storage_location; break;
+    case "maker": value = lot.manufacturer; break;
+    case "maker_article": value = makerArticle(lot); break;
+    case "grn": value = `${lot.grn}${lot.package}`; break;
+    case "invoice_number": case "invoice_date": case "upd_number": case "upd_date": case "prd_number": case "prd_date":
+      value = lot.receipt?.[key]; break;
+    case "upd_file": value = lot.receipt?.scan_file; break;
+    default: value = lot[key];
+  }
+  return Boolean(value?.trim());
 }
 
 /** «Ещё ▾»: the reference tools of the page behind one button; every item is a plain button of the menu. */
@@ -736,7 +790,7 @@ function flatCell(key: ColumnKey, lot: WarehouseLot, pinned: boolean, brief?: It
     case "series": return cutCell(key, lot.series || "—", pinned);
     case "type": return typeCell(key, lot.item_type, pinned);
     case "maker": return dimCell(key, lot.manufacturer ?? "", pinned);
-    case "maker_article": return cutCell(key, lot.maker_article || "", pinned);
+    case "maker_article": return dimCell(key, makerArticle(lot), pinned);
     case "supplier_article": return cutCell(key, lot.supplier_article || "", pinned);
     case "upd_name": return cutCell(key, lot.upd_name || "", pinned);
     case "invoice_name": return cutCell(key, lot.invoice_name || "", pinned);
@@ -796,7 +850,7 @@ function articleCell(key: ColumnKey, item: WarehouseArticle, open: boolean, togg
     case "series": return dimCell(key, distinct(item.lots, "series"), pinned);
     case "type": return typeCell(key, distinct(item.lots, "item_type"), pinned);
     case "maker": return agreeCell(key, item.lots.map((lot) => lot.manufacturer ?? ""), pinned);
-    case "maker_article": return agreeCell(key, item.lots.map((lot) => lot.maker_article ?? ""), pinned);
+    case "maker_article": return agreeCell(key, item.lots.map(makerArticle), pinned);
     case "supplier_article": return agreeCell(key, item.lots.map((lot) => lot.supplier_article ?? ""), pinned);
     case "purpose": return agreeCell(key, item.lots.map((lot) => purposeText(lot.purpose)), pinned);
     case "upd_name": return agreeCell(key, item.lots.map((lot) => lot.upd_name ?? ""), pinned);
@@ -825,10 +879,9 @@ function dimCell(key: ColumnKey, text: string, pinned: boolean) {
   return text ? cutCell(key, text, pinned) : <td key={key} className={classes("cut stock-dim", pinned && "stock-pin")}>—</td>;
 }
 
-/** «Тип» wraps to two lines («Коаксиальный / соединитель») instead of being cut to «Коаксиальный с…». */
+/** Short text stays on one line, with the full type available in its title. */
 function typeCell(key: ColumnKey, text: string, pinned: boolean) {
-  if (!text) return <td key={key} className={classes("stock-dim", pinned && "stock-pin")}>—</td>;
-  return <td key={key} className={classes("stock-wrap", pinned && "stock-pin")} title={text}><span className="stock-clamp">{text}</span></td>;
+  return dimCell(key, text, pinned);
 }
 
 /** A position's value from its lots: the one they agree on, else «N разн.» with every value in the tooltip. */
@@ -1065,9 +1118,9 @@ function MoveStockDialog({ preset, lots, busy, mutate, onClose }: {
   </div>;
 }
 
-type RowEditField = keyof WarehouseRowEdit;
+type RowEditField = Exclude<keyof WarehouseRowEdit, "inbound" | "written_off" | "reserved">;
 
-// SK-7 row edit (SUPPLYMAP Stock05.gs:982-993): reference and passport texts, then the quantities.
+// SK-7 row edit: reference and passport fields. Stock quantities are changed through warehouse operations.
 const ROW_EDIT_TEXT: Array<[RowEditField, string]> = [
   ["article", "Артикул номенклатуры"], ["maker_article", "Артикул производителя"], ["supplier_article", "Артикул поставщика"],
   ["series", "Серия"], ["name", "Наименование"], ["item_type", "Тип"], ["unit", "Ед. изм."],
@@ -1075,22 +1128,17 @@ const ROW_EDIT_TEXT: Array<[RowEditField, string]> = [
   ["expiry_date", "Срок годности"], ["manufacturer", "Производитель"], ["description", "Описание"],
   ["storage_conditions", "Условия хранения"], ["datasheet", "Datasheet"], ["certificate", "Сертификат"],
 ];
-const ROW_EDIT_NUMBERS: Array<[RowEditField, string]> = [["inbound", "Приход"], ["written_off", "Списано"], ["reserved", "Резерв"]];
 
 function rowValues(lot: WarehouseLot): Record<RowEditField, string> {
-  return Object.fromEntries([...ROW_EDIT_TEXT, ...ROW_EDIT_NUMBERS].map(([field]) => [field, String(lot[field] ?? "")])) as Record<RowEditField, string>;
+  return Object.fromEntries(ROW_EDIT_TEXT.map(([field]) => [field, String(lot[field] ?? "")])) as Record<RowEditField, string>;
 }
 
-/** Only what differs from the lot. An emptied number means «don't touch», as in SUPPLYMAP. */
+/** Only reference and passport fields that differ from the lot. */
 function rowChanges(lot: WarehouseLot, values: Record<RowEditField, string>): WarehouseRowEdit {
   const initial = rowValues(lot);
   const changes: WarehouseRowEdit = {};
   for (const [field] of ROW_EDIT_TEXT) {
     if (values[field].trim() !== initial[field].trim()) changes[field] = values[field].trim();
-  }
-  for (const [field] of ROW_EDIT_NUMBERS) {
-    const value = values[field].trim();
-    if (value && Number(value) !== Number(initial[field])) changes[field] = value;
   }
   return changes;
 }
@@ -1104,8 +1152,6 @@ function LotRowEditForm({ lot, disabled, mutate, onClose, onSaved }: {
 }) {
   const [values, setValues] = useState(() => rowValues(lot));
   const [notice, setNotice] = useState("");
-  const number = (field: RowEditField) => Number(values[field].trim() || lot[field] || 0);
-  const balance = Math.round((number("inbound") - number("written_off")) * 1_000_000) / 1_000_000;
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -1120,7 +1166,6 @@ function LotRowEditForm({ lot, disabled, mutate, onClose, onSaved }: {
   }
 
   return <form className="dialog-form" aria-label="Правка строки" onSubmit={submit}>
-    <p className="page-sub">ГРН {lot.grn}{lot.package ? ` · пакет ${lot.package}` : ""} · {lot.warehouse} — ключ строки, не правится. Пустое число — не трогать.</p>
     <div className="move-grid">
     {ROW_EDIT_TEXT.map(([field, label]) => <label key={field}>{label}<input
       type={field === "expiry_date" ? "date" : "text"}
@@ -1130,13 +1175,8 @@ function LotRowEditForm({ lot, disabled, mutate, onClose, onSaved }: {
       value={values[field]}
       onChange={(event) => { setNotice(""); setValues((current) => ({ ...current, [field]: event.target.value })); }}
     /></label>)}
-    {ROW_EDIT_NUMBERS.map(([field, label]) => <label key={field}>{label}<input
-      type="number" min="0" step="any" placeholder={String(lot[field] ?? "")}
-      value={values[field]}
-      onChange={(event) => { setNotice(""); setValues((current) => ({ ...current, [field]: event.target.value })); }}
-    /></label>)}
     </div>
-    <p className="page-sub" role="status">{notice || `Баланс станет: ${balance} ${lot.unit}`}</p>
+    {notice && <p className="page-sub" role="status">{notice}</p>}
     <div className="move-actions">
       <button type="button" className="secondary" onClick={onClose}>Назад</button>
       <button className="primary" disabled={disabled}>Сохранить строку</button>

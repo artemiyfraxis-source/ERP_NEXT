@@ -126,8 +126,12 @@ def _fill_order(metadata: MetaData) -> list[Table]:
         (lots, table) for table in metadata.tables.values()
         if lots is not None and table is not lots and "lot_id" in table.c and not table.c.lot_id.foreign_keys
     ]
+    # 0217 ties a measuring unit and its instrument binding both ways (deferred FKs); the seeder fills neither, so the
+    # reciprocal key is left out of the order instead of making SQLAlchemy drop the whole cycle with a warning.
     return sort_tables(metadata.tables.values(), extra_dependencies=extra, skip_fn=lambda fk:
-        fk.parent.table.name == "equipment_units" and fk.column.table.name != "equipment_models")
+        (fk.parent.table.name == "equipment_units" and fk.column.table.name != "equipment_models")
+        or (fk.parent.table.name == "equipment_measuring_units"
+            and fk.column.table.name == "equipment_instrument_bindings"))
 
 
 def _has_rows(connection: Connection, table: Table) -> bool:
@@ -277,6 +281,9 @@ _OVER_CHECK: dict[tuple[str, str], Any] = {
     ("production_instruments", "verification_number"): "TEST-PV",
     ("production_instruments", "verified_at"): datetime(2026, 9, 1, tzinfo=timezone.utc),
     ("production_instruments", "verification_due"): datetime(2027, 9, 1, tzinfo=timezone.utc),
+    # 0217: the single СИ registry's custom fields are a JSON object (CHECK json_type = 'object'), not the list the
+    # generic fill gives a plural-named JSON column.
+    ("production_instruments", "custom_fields"): {},
     # 0178_rf_interfaces: an unconfirmed «unknown» row needs no kit, points or source; interfaces stay unconfirmed.
     ("production_rf_details", "role"): "unknown",
     ("production_rf_details", "confirmed"): False,
@@ -316,6 +323,10 @@ _LABEL_FORMATS = ("58x30", "58x40", "100x50")
 _LABEL_SETTINGS = {"width_mm": 58, "height_mm": 30, "dpi": 300, "gap_mm": 2, "density": 12, "speed": 2,
                    "offset_x_mm": 0, "offset_y_mm": 0}
 _SHAPED_VALUES: dict[tuple[str, str], Any] = {
+    # 0218: generic registry rows are legacy ones (ck_grn_new_identity); source_kind must be exactly 'legacy'.
+    ("warehouse_grn_registry", "is_legacy"): lambda i: True,
+    ("warehouse_grn_registry", "source_kind"): lambda i: "legacy",
+    ("warehouse_grn_counters", "full_year"): lambda i: 2000 + i,  # 0218: CHECK full_year BETWEEN 2000 AND 9999.
     ("receiving_lines", "revision_root_id"): lambda i: None,  # No fabricated UUID lineage without a revision.
     # 0218 rejects the same raw GRN on unrelated receipts. Generic "grn-0" in each
     # table used to fabricate exactly that conflict; give independent fixtures distinct identities.

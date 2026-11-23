@@ -66,7 +66,7 @@ it("shows the shop sheet «ЗАГРУЗ» columns in the sheet order", async () 
   render(<ProductionPlanPage principal={principal} />);
 
   expect(await screen.findByRole("heading", { name: "Производственный план" })).toBeInTheDocument();
-  await screen.findByRole("button", { name: "708К.4" });
+  await screen.findByText("708К.4");
   const heads = Array.from(document.querySelectorAll(".zg-table thead th.zg-col-head")).map((item) => item.textContent);
   expect(heads).toEqual([
     "Проект", "Заказчик", "Статус", "Готовность, %", "В плане", "Давальческое", "Закуплено", "Приход комплектующих", "Комплект на складе", "Комплект проверен", "Техкарта выдана", "Комплект набран", "Тестовая сборка", "Дедлайн", "Рабочих дней до дедлайна", "Комментарий",
@@ -99,7 +99,7 @@ it("shows the shop sheet «ЗАГРУЗ» columns in the sheet order", async () 
 it("writes the sheet header in full words (no abbreviations) and keeps the meaning in tooltips", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => String(input) === "/api/production/calendar" ? json({ holidays: [], absences: [], shift: {} }) : json(plan));
   render(<ProductionPlanPage principal={principal} />);
-  await screen.findByRole("button", { name: "708К.4" });
+  await screen.findByText("708К.4");
 
   const heads = Array.from(document.querySelectorAll<HTMLElement>(".zg-table thead th.zg-col-head"));
   // Владелец 14.10: «без сокращений» — подпись в шапке и есть полное название колонки.
@@ -145,7 +145,7 @@ it("shows an empty plan as the calendar grid with one hint row, no sideways scro
 it("draws yes/no columns as narrow ✓ / — toggles with the full sheet name in the tooltip", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => json(plan));
   render(<ProductionPlanPage principal={principal} />);
-  await screen.findByRole("button", { name: "708К.4" });
+  await screen.findByText("708К.4");
   const row = sheetRow("708К.4");
 
   const flags = Array.from(row.querySelectorAll<HTMLButtonElement>("button.zg-flag"));
@@ -168,7 +168,7 @@ it("lets the viewer choose the sheet columns, keeps the sheet order and returns 
   window.localStorage.removeItem("erp-zg-columns");
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => json(plan));
   render(<ProductionPlanPage principal={principal} />);
-  await screen.findByRole("button", { name: "708К.4" });
+  await screen.findByText("708К.4");
   const labels = () => Array.from(document.querySelectorAll(".zg-col-head")).map((item) => item.textContent);
 
   fireEvent.click(screen.getByRole("button", { name: "Колонки" }));
@@ -292,7 +292,7 @@ it("edits sheet cells inline: a checkbox, back to the ERP value, a day note and 
     return json(plan);
   });
   render(<ProductionPlanPage principal={principal} />);
-  await screen.findByRole("button", { name: "708К.4" });
+  await screen.findByText("708К.4");
 
   fireEvent.click(screen.getByLabelText("Комплект проверен · 708К.4"));
   await waitFor(() => expect(payloads[0]).toMatchObject({ project: "708К.4", kind: "mark", field: "kit_checked", value: "да" }));
@@ -319,7 +319,7 @@ it("edits sheet cells inline: a checkbox, back to the ERP value, a day note and 
 it("draws the calendar: work days in the project colour, quantity on the first day, deadline and arrival marks", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => json(plan));
   render(<ProductionPlanPage principal={{ ...principal, roles: ["tech_lead"], access_level: "tech_lead", permissions: { production: "view" } }} />);
-  await screen.findByRole("button", { name: "708К.4" });
+  await screen.findByText("708К.4");
   const days = Array.from(sheetRow("708К.4").querySelectorAll(".zg-day"));
 
   expect(days[7].className).toContain("zg-work-start");
@@ -470,7 +470,7 @@ it("shows the project stage in the shared chip with the blocker beside it and si
   ] };
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => json(mixed));
   render(<ProductionPlanPage principal={principal} />);
-  await screen.findByRole("button", { name: "621К.2" });
+  await screen.findByText("621К.2");
 
   const chips = (project: string) => Array.from(sheetRow(project).querySelectorAll(".zg-col-status .status-chip"));
   expect(chips("621К.2").map((item) => item.textContent)).toEqual(["КБ на складе▾", "ОЖИД КОМПЛ"]);
@@ -506,7 +506,7 @@ it("changes the stage, blocks and closes a project without a card from the statu
     return json({ ...plan, rows: [bare] });
   });
   render(<ProductionPlanPage principal={principal} />);
-  await screen.findByRole("button", { name: "709К.1" });
+  await screen.findByText("709К.1");
   const menu = async () => { fireEvent.click(sheetRow("709К.1").querySelector(".proj-status-btn")!); return screen.findByRole("menu", { name: "Статус проекта 709К.1" }); };
 
   // Блокер — с причиной, записью «Блокер» плана.
@@ -529,42 +529,38 @@ it("changes the stage, blocks and closes a project without a card from the statu
   await waitFor(() => expect(payloads[2]).toMatchObject({ project: "709К.1", kind: "stage", item_index: "", value: "В работе" }));
 });
 
-it("opens the project in «Ресурсное планирование» from the number and from the customer, with no side drawer", async () => {
+it("opens the project card from the number and resource planning from the customer", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => json(plan));
   const places: string[] = [];
   const listener = () => places.push(window.location.search);
   window.addEventListener("popstate", listener);
   window.history.replaceState({}, "", "/?section=prodplan");
-  render(<ProductionPlanPage principal={principal} />);
-  const number = await screen.findByRole("button", { name: "708К.4" });
+  const opened: string[] = [];
+  render(<ProductionPlanPage principal={principal} openProjectCard={(project) => opened.push(project)} />);
+  const number = await screen.findByText("708К.4");
   fireEvent.click(number);
-  expect(places).toEqual(["?section=production&project=708%D0%9A.4"]);
+  expect(opened).toEqual(["708К.4"]);
+  expect(places).toEqual([]);
   fireEvent.click(sheetRow("708К.4").querySelector(".zg-link")!);
   window.removeEventListener("popstate", listener);
-  expect(places).toHaveLength(2);
-  expect(places[1]).toBe(places[0]);
+  expect(places).toEqual(["?section=production&project=708%D0%9A.4"]);
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(document.querySelector(".plan-drawer")).toBeNull();
 });
 
-it("falls back to the project card when the master board is closed to the viewer", async () => {
-  const opened: string[] = [];
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => String(input).startsWith("/api/techcards/kitsets")
-    ? json({ items: [{ project: "708К.4" }], statuses: [] }) : json(plan));
+it("shows the project number without a link when project access is unavailable", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json(plan));
   const limited: Principal = { ...principal, roles: ["viewer"], access_level: "viewer", permissions: { prodplan: "view" } };
-  render(<ProductionPlanPage principal={limited} openProjectCard={(project) => opened.push(project)} />);
-  const number = await screen.findByRole("button", { name: "708К.4" });
-  await waitFor(() => expect(window.location.search).toBe(""));
-  fireEvent.click(number);
-  expect(opened).toEqual(["708К.4"]);
-  expect(window.location.search).toBe("");
+  render(<ProductionPlanPage principal={limited} />);
+  expect(await screen.findByText("708К.4")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "708К.4" })).toBeNull();
 });
 
 it("hides the comment column first and shows a comment as a mark at the project number", async () => {
   window.localStorage.setItem("erp-zg-columns:user:1", JSON.stringify({ order: [], hidden: ["comment"], autoFit: false }));
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => json(plan));
   render(<ProductionPlanPage principal={principal} />);
-  const number = await screen.findByRole("button", { name: "708К.4" });
+  const number = await screen.findByText("708К.4");
   expect(number.querySelector(".zg-note-mark")).not.toBeNull();
   expect(number.getAttribute("title")).toContain("Комментарий: ждём разъёмы");
   expect(screen.getByText("комментарий", { selector: ".zg-legend span" })).toBeInTheDocument();
@@ -573,7 +569,7 @@ it("hides the comment column first and shows a comment as a mark at the project 
 it("switches the calendar to weeks: one column a week, bar, launch and deadline inside the week, choice remembered", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => json(plan));
   render(<ProductionPlanPage principal={principal} />);
-  await screen.findByRole("button", { name: "708К.4" });
+  await screen.findByText("708К.4");
   fireEvent.click(screen.getByRole("button", { name: "Недели" }));
 
   const heads = Array.from(document.querySelectorAll(".zg-table thead th.zg-week-head"));
@@ -597,7 +593,7 @@ it("opens a sheet cell editor from the keyboard and shows «—» in empty cells
   const bare = row({ project: "709К.1", deadline: null, days_left: null, group: "active", sheet: { ...sheet, ready: cell(""), kit_arrival: cell("") } });
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ ...plan, rows: [bare] }));
   render(<ProductionPlanPage principal={principal} />);
-  await screen.findByRole("button", { name: "709К.1" });
+  await screen.findByText("709К.1");
   const ready = sheetRow("709К.1").querySelector<HTMLElement>(".zg-col-ready")!;
   expect(ready.tabIndex).toBe(0);
   fireEvent.keyDown(ready, { key: "Enter" });

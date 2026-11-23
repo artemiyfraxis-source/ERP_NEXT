@@ -149,6 +149,8 @@ def _unit_plan(session: Session, entries: list[MappingEntry], supporting: bool, 
         if target:
             raise ValueError(f"Целевой номер {entry.after} уже занят в БД.ОБ")
         unit = source[0]
+        if unit.tab == "ob_measuring" or entry.type == "Средства измерений":
+            raise ValueError(f"СИ {unit.id} хранится в едином реестре; измените карточку СИ")
         explicit_ids.add(unit.id)
         if entry.after is not None:
             if not _TOKEN.fullmatch(field(unit.fields, INV_KEY, "inventoryNumber")):
@@ -215,7 +217,14 @@ def run(engine: Engine, mapping: object, *, apply: bool = False) -> Reclassifica
         if apply:
             apply_patches(patches)
             for instrument in registry_updates:
-                repo.save(instrument)
+                from app.workflows.instrument_catalog import ReferenceInstrumentCatalog
+                from app.modules.production.quality import UpdateInstrumentCommand
+                catalog = ReferenceInstrumentCatalog(session)
+                catalog.catalog.update(UpdateInstrumentCommand(
+                    instrument.id, instrument.version - 1, {"inventory_number": instrument.inventory_number},
+                    Actor(id=uuid5(NAMESPACE_URL, "erp-next:equipment-reclassify"),
+                          name="Переклассификация оборудования", department="ERP"), moscow_now(),
+                    "references", catalog.legacy_id(instrument.id)))
             audit = SqlAlchemyAuditRepository(session)
             for event in audit_events:
                 audit.add(event)

@@ -64,6 +64,9 @@ export interface MachineCommand {
   created_by: string;
   created_at: string;
   finished_at: string | null;
+  /** PLC-held length correction read around the measured-length pulse, in mm. */
+  length_correction_before?: string | null;
+  length_correction_after?: string | null;
 }
 
 export interface MachineOffset {
@@ -75,6 +78,7 @@ export interface MachineOffset {
   updated_at: string | null;
   /** Размер есть в ЭТК: наладчик может поправить и ЭТК. */
   etk: boolean;
+  legacy?: boolean;
 }
 
 export interface MachineControl {
@@ -84,6 +88,7 @@ export interface MachineControl {
   commands: MachineCommand[];
   offsets: MachineOffset[];
   can_edit: boolean;
+  length_correction?: { value: string | null; register: "D54"; legacy_offset: string };
   /** Право «Управление станками»: Сброс, Пуск, Сброс аварии. */
   can_control?: boolean;
   /** «Стоп» и любые команды станку: Производство или Задания; ОТК карточку только читает. */
@@ -151,6 +156,21 @@ export interface TransferPlan {
   blocking: string[];
   /** Маркировка из ЭТК; null — в ЭТК её нет (или провод выбран вручную), регистры маркировки не трогаются. */
   marking?: MarkingPlan | null;
+  /** Atomic load guards returned by the group preview; absent for a hand-picked wire. */
+  expected_source?: ExpectedSource;
+  expected_active_run_id?: string | null;
+}
+
+export interface ExpectedSource {
+  group_id: string;
+  version: number;
+  length_mm: string;
+  plan_hash: string;
+}
+
+export interface TransferConfirmation {
+  expected_source: ExpectedSource;
+  expected_active_run_id: string | null;
 }
 
 export type CorrectionCase = "machine" | "etk" | "both";
@@ -167,12 +187,14 @@ export interface CorrectionBody {
   note?: string;
 }
 
-/** Ответ на правку: поправка станка (сервер считает «на станке − получилось»), ревизии ЭТК, что было на станке. */
+/** Length correction queues a PLC command; strip corrections return the ERP offset and optional ETK revisions. */
 export interface CorrectionResult {
   offset: string | null;
   etk: { card_id: string; project: string; revision: number }[];
   written?: string | null;
   measured?: string | null;
+  /** Length correction is queued on the machine; success is established by the command result. */
+  command?: MachineCommand;
 }
 
 /** «Выполнение задания» (владелец 19.11.2026): одна передача задания на станок и её счёт по T.Finish (D649).
@@ -181,7 +203,8 @@ export type RunStage = "writing" | "failed" | "moved" | "ready" | "running" | "f
 
 export interface MachineRun {
   id: string;
-  kind: "cutting" | "manual";
+  kind: "cutting" | "manual" | "wire";
+  wire?: string | null;
   label: string;
   group_id: string | null;
   length_mm: string | null;
@@ -209,7 +232,8 @@ export interface MachineRun {
 
 export interface MachineRunState {
   run: MachineRun | null;
-  /** Ручная работа, которая сейчас идёт на этом станке. */
+  expected_active_run_id?: string | null;
+  /** Работа, которая сейчас идёт на этом станке. */
   manual: ManualJob | null;
   link_ok: boolean;
   /** Почему ERP не управляет станком сейчас (нет связи, открыт пульт на ПК); «» — управляет. */
@@ -220,7 +244,12 @@ export interface MachineRunState {
 
 export type RunRequest =
   | { kind: "cutting"; group_id: string; length_mm: string; values?: Record<string, string> }
+  | { kind: "wire"; wire: string; values?: Record<string, string> }
   | { kind: "manual"; job_id: string; values?: Record<string, string> };
+
+export type ConfirmedRunRequest =
+  | (Extract<RunRequest, { kind: "cutting" }> & TransferConfirmation)
+  | (Extract<RunRequest, { kind: "manual" | "wire" }> & { expected_active_run_id: string | null });
 
 export interface RunClose {
   run_id: string;
@@ -259,17 +288,19 @@ export const machineControlApi = {
     api<TransferPlan>(`${card(inventory)}/transfer?group_id=${encodeURIComponent(groupId)}&length_mm=${encodeURIComponent(lengthMm)}`),
   wirePlan: (inventory: string, wire: string, lengthMm: string) =>
     api<TransferPlan>(`${card(inventory)}/transfer?wire=${encodeURIComponent(wire)}&length_mm=${encodeURIComponent(lengthMm)}`),
-  transfer: (inventory: string, groupId: string, lengthMm: string, confirmState: number | null) =>
-    api<MachineCommand>(`${card(inventory)}/transfer`, post({ group_id: groupId, length_mm: lengthMm, confirm_state: confirmState })),
+  transfer: (inventory: string, groupId: string, lengthMm: string, confirmState: number | null, confirmation: TransferConfirmation) =>
+    api<MachineCommand>(`${card(inventory)}/transfer`, post({ group_id: groupId, length_mm: lengthMm, confirm_state: confirmState, ...confirmation })),
   command: (inventory: string, command: ControlCommand, confirmState?: number | null, force = false) =>
     api<MachineCommand>(`${card(inventory)}/command`, post(command === "stop" ? { command }
       : command === "hmi_close" || command === "hmi_open" ? { command, hands_clear: true, ...(force ? { force: true } : {}) }
       : { command, confirm_state: confirmState ?? null, hands_clear: true })),
   run: (inventory: string, signal?: AbortSignal) => api<MachineRunState>(`${card(inventory)}/run`, { signal }),
-  startRun: (inventory: string, body: RunRequest, confirmState: number | null) =>
+  startRun: (inventory: string, body: ConfirmedRunRequest, confirmState: number | null) =>
     api<MachineCommand>(`${card(inventory)}/run`, post({ ...body, confirm_state: confirmState })),
   closeRun: (inventory: string, body: RunClose) =>
     api<{ run: MachineRun; manual: ManualJob | null }>(`${card(inventory)}/run/close`, post(body)),
+  resetRun: (inventory: string, expectedActiveRunId: string | null, confirmState: number | null) =>
+    api<MachineCommand>(`${card(inventory)}/run/reset`, post({ expected_active_run_id: expectedActiveRunId, confirm_state: confirmState })),
   cuttingRuns: (groupId: string, signal?: AbortSignal) =>
     api<{ runs: CuttingMachineRun[] }>(`/api/production/machines/runs/cutting/${encodeURIComponent(groupId)}`, { signal }),
   correct: (inventory: string, body: CorrectionBody) => api<CorrectionResult>(`${card(inventory)}/correction`, post(body)),

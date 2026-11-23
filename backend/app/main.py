@@ -88,6 +88,7 @@ from .workflows import manual_job_stock
 from .workflows import machine_runs_api
 from .workflows import machine_speed_api
 from .workflows import etk_setup_units as etk_setup_units_api
+from .workflows import task_machine_actions as task_machine_actions_api
 from .modules.production import rf_interfaces_api
 from .modules.production import mating_api as production_mating_api
 from .modules.production import vna_check_api as production_vna_check_api
@@ -97,6 +98,7 @@ from .workflows import vna_bench_api, vna_measurement_api, vna_screens_api
 from .workflows import receiving_by_upd_api
 from .workflows import shipping_upd_scan_api
 from .workflows import scan_agent_install
+from .workflows.instrument_catalog_api import router as instrument_catalog_router
 from .modules.purchasing import api_upd as purchasing_upd_api
 
 app = FastAPI(
@@ -182,6 +184,7 @@ app.include_router(assembly_api.router)
 app.include_router(harness_api.router)
 app.include_router(shipping_api.router)
 app.include_router(references_api.router)
+app.include_router(instrument_catalog_router)
 app.include_router(references_wire_dia_api.router)
 app.include_router(references_import_api.router)
 app.include_router(operations_api.router)
@@ -217,6 +220,7 @@ app.include_router(manual_job_stock.router)
 app.include_router(machine_runs_api.router)
 app.include_router(machine_speed_api.router)
 app.include_router(etk_setup_units_api.router)
+app.include_router(task_machine_actions_api.router)
 app.include_router(machines_api.router)
 app.include_router(equipment_setup_model.router)
 

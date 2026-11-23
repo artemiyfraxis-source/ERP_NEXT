@@ -934,9 +934,41 @@ def quality_screen():
             "file_name": f"Изделие {position}.s2p", "file_base64": base64.b64encode(content).decode()})
 
 
+@step("11b. Canonical instrument legacy link (0217)")
+def instrument_catalog_link():
+    """Add one frozen legacy identity; the other demo instruments stay canonical-only."""
+    if not BASE.startswith(("http://127.0.0.1:", "http://localhost:")) or not DB_URL.startswith("sqlite"):
+        raise RuntimeError("Instrument fixtures require a local SQLite demo instance")
+    import sqlite3
+    from sqlalchemy.engine import make_url
+
+    instruments = S["adm"].ok("GET", "/api/references/instruments")["instruments"]
+    item = next((row for row in instruments if row["inventory_number"] == "СИ.002"), None)
+    if item is None:
+        raise RuntimeError("Run quality_screen before the instrument link fixture")
+    unit_id = uuid.uuid5(uuid.NAMESPACE_URL, "erp-demo/0217/legacy-unit").hex
+    model_id = uuid.uuid5(uuid.NAMESPACE_URL, "erp-demo/0217/model").hex
+    with sqlite3.connect(make_url(DB_URL).database) as db:
+        db.execute("PRAGMA foreign_keys = ON")
+        if db.execute("SELECT 1 FROM equipment_instrument_bindings WHERE unit_id = ?", (unit_id,)).fetchone():
+            return
+        db.execute("INSERT INTO equipment_models (id, name, article, maker, role, role_confirmed) "
+                   "VALUES (?, ?, '', 'Planar', 'operational', 1)", (model_id, "Анализатор цепей Planar"))
+        db.execute("INSERT INTO equipment_units (id, model_id, catalog, ob_measuring_id) VALUES (?, ?, 'ob_measuring', ?)",
+                   (unit_id, model_id, unit_id))
+        db.execute("INSERT INTO equipment_measuring_units "
+                   "(id, tab, equipment_model_id, display_text, normalized_search, source_sheet, sort_key, fields) "
+                   "VALUES (?, 'ob_measuring', ?, ?, ?, 'Демо', 'СИ.002', ?)",
+                   (unit_id, model_id, "Старый снимок Planar", "planar", json.dumps({"Наименование": "Старый снимок Planar"})))
+        db.execute("INSERT INTO equipment_instrument_bindings (unit_id, instrument_id) VALUES (?, ?)",
+                   (unit_id, uuid.UUID(item["id"]).hex))
+    bump("instrument_legacy_links")
+    print(f"  legacy equipment={uuid.UUID(unit_id)} -> instrument={item['id']}")
+
+
 def main():
     S["adm"] = Client()
-    for fn in (staff, requests_, handoff, procurement, rfq, receiving, stock, techcards, production, marking_pult, fulfillment, shipping, notifications, quality_screen):
+    for fn in (staff, requests_, handoff, procurement, rfq, receiving, stock, techcards, production, marking_pult, fulfillment, shipping, notifications, quality_screen, instrument_catalog_link):
         fn()
     print("\nCOUNTS:", json.dumps(COUNT, ensure_ascii=False))
     print(f"FAILURES ({len(FAILS)}):")

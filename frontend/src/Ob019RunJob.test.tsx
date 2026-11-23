@@ -44,7 +44,7 @@ function live(code: number, text: string, alarm = 0): Ob019Live {
 
 function server(state: Partial<MachineRunState> = {}) {
   const posts: { url: string; body: unknown }[] = [];
-  const run: MachineRunState = { run: null, manual: null, link_ok: true, problem: "", can_edit: true, can_control: true, ...state };
+  const run: MachineRunState = { run: null, expected_active_run_id: state.run?.id ?? null, manual: null, link_ok: true, problem: "", can_edit: true, can_control: true, ...state };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = decodeURIComponent(String(input));
     if (init?.method === "POST") {
@@ -79,7 +79,7 @@ it("pult open: the run block does not repeat the status banner; the empty «За
   expect(screen.queryByText(/PXS_HMI/)).toBeNull();
 });
 
-it("after a job is picked the run block says its write, not an instruction", async () => {
+it("while a job preview loads the run block reports calculation, never a write", async () => {
   server();
   let release: (value: Response) => void = () => undefined;
   const base = vi.mocked(globalThis.fetch).getMockImplementation()!;
@@ -92,30 +92,34 @@ it("after a job is picked the run block says its write, not an instruction", asy
   await waitFor(() => expect(within(pick).getByRole("option", { name: /ГР-0007/ })).toBeInTheDocument());
   fireEvent.change(pick, { target: { value: "g1:325" } });
   const block = await screen.findByRole("region", { name: "Выполнение задания" }, { timeout: 3000 });
-  expect(await within(block).findByText("записывается на станок…", {}, { timeout: 3000 })).toBeInTheDocument();
+  expect(await within(block).findByText("Расчёт параметров…", {}, { timeout: 3000 })).toBeInTheDocument();
   expect(screen.queryByText(/Значения задания уходят на станок сразу при выборе/)).toBeNull();
   release(json({ detail: "нет" }, 404));
 });
 
-it("transfers the running manual job at once when picked: the server writes its length, quantity and order number", async () => {
+it("transfers a manual job only after confirming its values and expected active run", async () => {
   const posts = server({ manual: MANUAL });
   render(<Ob019SettingsPanel inventory="ОБ.019" />);
   const pick = await screen.findByLabelText("Задание");
   await waitFor(() => expect(within(pick).getByRole("option", { name: /Р-000003/ })).toBeInTheDocument());
   await waitFor(() => expect(screen.getByLabelText("Длина провода")).toHaveValue("325,00"));
   fireEvent.change(pick, { target: { value: "manual:m1" } });
-  expect(screen.getByText("На станок: заказ R-000003")).toBeInTheDocument();
+  const dialog = await screen.findByRole("dialog", { name: "Загрузить в станок" }, { timeout: 3000 });
+  expect(within(dialog).getByText(/Р-000003 · ПВАМ 0,35 · 100 мм · 5 шт/)).toBeVisible();
+  expect(posts).toEqual([]);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Подтвердить загрузку" }));
   await waitFor(() => expect(posts).toHaveLength(1));
   expect(posts[0]).toEqual({ url: "/api/production/machines/card/ОБ.019/run",
-    body: { kind: "manual", job_id: "m1", confirm_state: 102 } });
+    body: { kind: "manual", job_id: "m1", expected_active_run_id: null, confirm_state: 102 } });
   expect(screen.queryByRole("alertdialog")).toBeNull();
 });
 
-it("offers a new manual job inline only while none runs on the machine", async () => {
+it("does not offer new manual jobs; existing work can still be completed", async () => {
   server({ manual: MANUAL });
   render(<Ob019SettingsPanel inventory="ОБ.019" />);
   const pick = await screen.findByLabelText("Задание");
-  await waitFor(() => expect(within(pick).getByRole("option", { name: /Новая ручная работа — сначала завершите/ })).toBeDisabled());
+  await waitFor(() => expect(within(pick).getByRole("option", { name: /Р-000003/ })).toBeInTheDocument());
+  expect(within(pick).queryByRole("option", { name: /Новая ручная работа/ })).toBeNull();
 });
 
 it("a verified job says ✓ on the machine; the run block keeps only «Завершить» (Стоп and Пуск are the command row's)", async () => {
@@ -195,7 +199,10 @@ it("writes a manual job again only for the rest and says how much is done", asyn
   await waitFor(() => expect(screen.getByLabelText("Длина провода")).toHaveValue("325,00"));
   fireEvent.change(pick, { target: { value: "manual:m1" } });
   // The server writes only the rest (production/machine_runs.py done_before); the card says how much is done.
-  expect(await screen.findByText("Уже сделано 4 из 10 — на станок уходит остаток", {}, { timeout: 3000 })).toBeInTheDocument();
+  const dialog = await screen.findByRole("dialog", { name: "Загрузить в станок" }, { timeout: 3000 });
+  expect(within(dialog).getByText("Уже сделано 4 из 10 — на станок уходит остаток")).toBeVisible();
+  expect(posts).toEqual([]);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Подтвердить загрузку" }));
   await waitFor(() => expect(posts).toHaveLength(1));
-  expect(posts[0].body).toEqual({ kind: "manual", job_id: "m1", confirm_state: 102 });
+  expect(posts[0].body).toEqual({ kind: "manual", job_id: "m1", expected_active_run_id: "w1", confirm_state: 102 });
 });

@@ -82,7 +82,7 @@ def test_cutover_preserves_payloads_uuids_and_every_relation(cutover_db, reclass
         source = {row[0]: row for row in connection.execute("SELECT id, fields, mirror_key, edited_in_erp, equipment_model_id FROM tech_operation_records WHERE tab='ob'")}
         relations = {table: _table(connection, table) for table in RELATION_TABLES}
         assert all(rows for _, rows in relations.values()), "Every relation kind must have real rows before cutover"
-    command.upgrade(config, "head")
+    command.upgrade(config, "0216_equipment_screen_group")
     with sqlite3.connect(path) as connection:
         seen = set()
         for tab, table in CATALOG_TABLES.items():
@@ -158,15 +158,12 @@ def test_cutover_downgrade_refuses_changed_live_data_without_any_mutation(cutove
                     connection.execute("INSERT INTO equipment_machines (" + ",".join(row) + ") VALUES (" +
                                        ",".join("?" for _ in row) + ")", tuple(row.values()))
         else:
-            with Session(engine) as session:
-                from app.modules.production.infrastructure import ProductionInstrumentRow
-                from app.modules.references.infrastructure import EquipmentInstrumentBindingRow
-
-                instrument = ProductionInstrumentRow(id=uuid4(), version=1, inventory_number="ОБ.002", name="Прибор",
-                    instrument_type="Вольтметр", kind="Средство измерений", status="Поверка не подтверждена")
-                session.add(instrument)
-                session.add(EquipmentInstrumentBindingRow(unit_id=ids[1], instrument_id=instrument.id))
-                session.commit()
+            with sqlite3.connect(path) as connection:
+                instrument_id = uuid4().hex
+                connection.execute("INSERT INTO production_instruments (id, version, inventory_number, name, instrument_type, "
+                    "kind, status) VALUES (?, 1, 'ОБ.002', 'Прибор', 'Вольтметр', 'Средство измерений', 'Поверка не подтверждена')",
+                    (instrument_id,))
+                connection.execute("INSERT INTO equipment_instrument_bindings VALUES (?, ?)", (ids[1].hex, instrument_id))
         before = evidence(engine)
         with pytest.raises(RuntimeError, match="cannot restore a stale archive"):
             command.downgrade(config, "0179_equipment_catalogs")
@@ -182,7 +179,7 @@ def test_additive_schema_can_be_removed_before_cutover(cutover_db):
     with sqlite3.connect(path) as connection:
         tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert not ({"equipment_units", "equipment_instrument_bindings", *CATALOG_TABLES.values()} & tables)
-    command.upgrade(config, "head")
+    command.upgrade(config, "0216_equipment_screen_group")
 
 
 def test_unknown_type_blocks_before_any_copy(cutover_db):
@@ -191,7 +188,7 @@ def test_unknown_type_blocks_before_any_copy(cutover_db):
         connection.execute("UPDATE tech_operation_records SET fields=? WHERE id=?",
                            (json.dumps({"Тип": "Непонятное", "Инв. номер": "ОБ.001"}), ids[0].hex))
     with pytest.raises(RuntimeError, match="unknown type") as error:
-        command.upgrade(config, "head")
+        command.upgrade(config, "0216_equipment_screen_group")
     assert ids[0].hex in str(error.value) or str(ids[0]) in str(error.value)
     with sqlite3.connect(path) as connection:
         assert connection.execute("SELECT count(*) FROM equipment_units").fetchone()[0] == 0
@@ -207,7 +204,7 @@ def test_reviewed_instruments_block_cutover_on_type_drift(cutover_db, kind):
             connection.execute("UPDATE tech_operation_records SET id=?, fields=? WHERE id=?", (
                 identifier.hex, json.dumps({"Тип": kind, "obType": "Средства измерений", "Инв. номер": f"СИ.{900 + index}"}), temporary.hex))
     with pytest.raises(RuntimeError, match="Перенос оборудования остановлен: средства измерений") as error:
-        command.upgrade(config, "head")
+        command.upgrade(config, "0216_equipment_screen_group")
     message = str(error.value)
     for index, identifier in enumerate(identifiers):
         assert identifier.hex in message or str(identifier) in message
@@ -230,7 +227,7 @@ def test_all_reviewed_instruments_keep_their_approved_catalog(cutover_db):
             temporary = _unit(connection, f"СИ.{900 + index}")
             connection.execute("UPDATE tech_operation_records SET id=?, fields=? WHERE id=?", (
                 identifier.hex, json.dumps({"Тип": kind, "Инв. номер": f"СИ.{900 + index}"}), temporary.hex))
-    command.upgrade(config, "head")
+    command.upgrade(config, "0216_equipment_screen_group")
     with sqlite3.connect(path) as connection:
         catalogs = dict(connection.execute("SELECT id, catalog FROM equipment_units"))
         assert all(catalogs[identifier.hex] == "ob_measuring" for identifier in expected)
@@ -241,7 +238,7 @@ def test_migrated_legacy_machine_stays_selectable_and_resolvable(cutover_db):
     from app.modules.references.equipment import physical_equipment
 
     path, config, ids = cutover_db
-    command.upgrade(config, "head")
+    command.upgrade(config, "0216_equipment_screen_group")
     engine = create_engine(f"sqlite:///{path}")
     try:
         with Session(engine) as session:
@@ -269,6 +266,15 @@ def test_equipment_catalogs_order_by_current_number_before_limit_and_search(refe
     numbers = [prefix + number for number in suffixes]
     with factory() as uow:
         for index, number in enumerate(reversed(numbers)):
+            if tab == "ob_measuring":
+                from app.modules.production.quality import RegisterInstrumentCommand
+                from app.modules.production.traceability import InstrumentStatus
+                from tests.references.test_instrument_catalog import ACTOR
+                uow.instrument_catalog.catalog.register(RegisterInstrumentCommand(
+                    inventory_number=number, name=f"Прибор {index}", instrument_type="Прибор",
+                    verification_number=None, verified_at=None, verification_due=None,
+                    status=InstrumentStatus.UNVERIFIED, actor=ACTOR, now=datetime(2026, 11, 23), source="references"))
+                continue
             uow.tech_operations.save(TechOperationRecord.create(
                 tab=TechOperationTab(tab), display_text=f"Прибор {index}", search_text="Прибор", source_sheet="",
                 sort_key=f"{index:03}", fields={"Тип": kind, "Наименование": "Прибор", "Инв. номер": number,
@@ -288,7 +294,7 @@ def test_equipment_catalogs_order_by_current_number_before_limit_and_search(refe
 
 def test_union_order_limit_move_identity_and_database_ownership(cutover_db):
     path, config, ids = cutover_db
-    command.upgrade(config, "head")
+    command.upgrade(config, "0216_equipment_screen_group")
     engine = create_engine(f"sqlite:///{path}")
     event.listen(engine, "connect", lambda connection, _: connection.execute("PRAGMA foreign_keys=ON"))
     with Session(engine) as session:
@@ -320,7 +326,7 @@ def test_union_order_limit_move_identity_and_database_ownership(cutover_db):
 
 def test_mirror_reload_keeps_uuid_and_erp_classification(cutover_db):
     path, config, ids = cutover_db
-    command.upgrade(config, "head")
+    command.upgrade(config, "0216_equipment_screen_group")
     engine = create_engine(f"sqlite:///{path}")
     with Session(engine) as session:
         repo = SqlAlchemyTechOperationRepository(session)
@@ -336,7 +342,7 @@ def test_mirror_reload_keeps_uuid_and_erp_classification(cutover_db):
 
 def test_confirmed_role_moves_units_and_new_units_join_the_catalog(cutover_db):
     path, config, ids = cutover_db
-    command.upgrade(config, "head")
+    command.upgrade(config, "0216_equipment_screen_group")
     engine = create_engine(f"sqlite:///{path}")
     event.listen(engine, "connect", lambda connection, _: connection.execute("PRAGMA foreign_keys=ON"))
     with Session(engine) as session, session.begin():
@@ -363,7 +369,7 @@ def test_cutover_uses_only_confirmed_supporting_role(cutover_db, confirmed):
     with sqlite3.connect(path) as connection:
         connection.execute("UPDATE equipment_models SET role='supporting', role_confirmed=? WHERE id="
                            "(SELECT equipment_model_id FROM tech_operation_records WHERE id=?)", (confirmed, ids[7].hex))
-    command.upgrade(config, "head")
+    command.upgrade(config, "0216_equipment_screen_group")
     with sqlite3.connect(path) as connection:
         assert connection.execute("SELECT catalog FROM equipment_units WHERE id=?", (ids[7].hex,)).fetchone()[0] == (
             "ob_support" if confirmed else "ob")
@@ -412,8 +418,8 @@ def test_advertised_inventory_key_is_repeatable_and_matches_own_schema(reference
     payload = {"rows": [{"fields": {"equipmentKey": "inventory:си.900", "Тип": "Средства измерений", "Наименование": "Прибор"}}]}
     first = references_api.post("/api/references/import/ob_measuring?dry_run=0", json=payload).json()
     second = references_api.post("/api/references/import/ob_measuring?dry_run=0", json=payload).json()
-    assert len(first["created"]) == 1 and first["refused"] == []
-    assert second["unchanged"] == 1 and second["created"] == [] and second["refused"] == []
+    assert first["created"] == second["created"] == []
+    assert len(first["refused"]) == len(second["refused"]) == 1
 
 
 def test_import_does_not_copy_another_catalogs_columns(references_api):
@@ -421,7 +427,7 @@ def test_import_does_not_copy_another_catalogs_columns(references_api):
 
     created = references_api.post("/api/references/import/ob_measuring?dry_run=0", json={"rows": [{"fields": {
         "equipmentKey": "inventory:си.900", "Тип": "Средства измерений", "Наименование": "Прибор"}}]})
-    assert created.status_code == 200 and len(created.json()["created"]) == 1
+    assert created.status_code == 200 and len(created.json()["refused"]) == 1
     column = references_api.post("/api/references/tech-operations/columns", json={"tab": "ob_measuring", "name": "Точность"})
     assert column.status_code == 201, column.text
     factory = references_api.app.state.references_uow_factory
@@ -504,7 +510,7 @@ def test_deleted_live_unit_does_not_leave_archive_only_models_in_live_reports(cu
     )
 
     path, config, ids = cutover_db
-    command.upgrade(config, "head")
+    command.upgrade(config, "0216_equipment_screen_group")
     engine = create_engine(f"sqlite:///{path}")
     event.listen(engine, "connect", lambda connection, _: connection.execute("PRAGMA foreign_keys=ON"))
     with Session(engine) as session:
@@ -564,7 +570,7 @@ def test_cutover_keeps_operation_machine_links_and_fakra_inventory_resolves_to_t
         links = sorted(connection.execute("SELECT * FROM equipment_operation_links").fetchall(), key=repr)
         tools = sorted(connection.execute("SELECT * FROM equipment_template_tools").fetchall(), key=repr)
         models = _table(connection, "equipment_models")
-    command.upgrade(config, "head")
+    command.upgrade(config, "0216_equipment_screen_group")
     with sqlite3.connect(path) as connection:
         assert sorted(connection.execute("SELECT * FROM equipment_operation_links").fetchall(), key=repr) == links
         assert sorted(connection.execute("SELECT * FROM equipment_template_tools").fetchall(), key=repr) == tools

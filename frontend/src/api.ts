@@ -1635,6 +1635,11 @@ export interface InstrumentFile {
 
 export interface ProductionInstrument {
   id: string;
+  legacy_unit_id?: string | null;
+  custom_fields?: Record<string, string>;
+  article?: string;
+  notes?: string;
+  measurement_category?: string;
   version: number;
   inventory_number: string;
   name: string;
@@ -1657,7 +1662,28 @@ export interface ProductionInstrument {
   files: InstrumentFile[];
 }
 
-export type InstrumentInput = Omit<ProductionInstrument, "id" | "version" | "files" | "warehouse_writeoff_id" | "suggested_serial_number">;
+export type InstrumentInput = Omit<ProductionInstrument, "id" | "version" | "files" | "warehouse_writeoff_id" | "suggested_serial_number" | "legacy_unit_id">;
+
+export interface ReferenceInstrumentsResult {
+  instruments: ProductionInstrument[];
+  count: number;
+  quantity: string | number;
+  custom_columns: string[];
+  can_edit_identity: boolean;
+  can_edit_custom: boolean;
+}
+
+export interface InstrumentHistory {
+  instrument_id: string;
+  events: Array<{
+    id: string;
+    aggregate_id: string;
+    event_type: string;
+    actor_name: string;
+    occurred_at: string;
+    details: Record<string, unknown>;
+  }>;
+}
 export interface RfInterface {
   series: string;
   body: string;
@@ -4100,6 +4126,25 @@ export const fulfillmentApi = {
     }),
 };
 
+/** Validated navigation context; each write endpoint rechecks its source and current readiness. */
+export type TaskMachineSource =
+  | { kind: "ob019"; group_id: string; version: number; length_mm: string;
+      members: { task_id: string; operation_id: string; item: string; quantity: string }[] }
+  | { kind: "marking"; source: { group_id: string; version: number } |
+      { task_id: string; operation_id: string; version: number }; selected: string[] }
+  | { kind: "generic"; task_id: string; operation_id: string; etk_position: number; queue_kind: "machine" | "cutting" };
+export type TaskMachineAction = {
+  etk_position: number; equipment_id: string | null; inventory_number: string | null;
+  display_name: string | null; model: string | null;
+  card_kind: "ob019" | "marking" | "generic" | "ob099" | "none";
+  connectivity: { state: string; fresh: boolean; last_seen: string | null };
+  open_permitted: boolean; load_permitted: boolean; can_open: boolean; can_load: boolean;
+  blocker: string | null; source: TaskMachineSource | null;
+};
+export type TaskMachineActions = {
+  task_id: string; operation_id: string; task_version: number; actions: TaskMachineAction[];
+};
+
 /** Set-up unit of a concrete machine for an ETK position of a task (ready setup, one per position). */
 export type EtkSetupUnit = { etk_position: number; unit_id: string; inventory_number: string; model: string | null;
   name: string | null; ready_at: string; task_number: string | null };
@@ -4364,6 +4409,8 @@ export const productionApi = {
   /** Налаженные станки по позициям ЭТК операции задания (подставляются вместо «любой свободный …»). */
   operationEtkUnits: (taskId: string, operationId: string) =>
     api<{ units: EtkSetupUnit[] }>(`/api/production/my/tasks/${taskId}/operations/${operationId}/etk/units`),
+  operationMachineActions: (taskId: string, operationId: string) =>
+    api<TaskMachineActions>(`/api/production/my/tasks/${taskId}/operations/${operationId}/etk/machine-actions`),
   /** Сохранённый чертёж жгута позиции задания — только чтение, без раздела «Проекты» (нет чертежа — `design: null`). */
   taskHarness: (taskId: string) => api<HarnessDrawing>(`/api/production/my/tasks/${taskId}/harness`),
   operationEtk: (taskId: string, operationId: string) =>
@@ -4626,6 +4673,14 @@ export const shippingApi = {
 };
 
 export const referencesApi = {
+  instruments: () => visitRead<ReferenceInstrumentsResult>("/api/references/instruments"),
+  instrument: (id: string) => api<{ instrument: ProductionInstrument }>(`/api/references/instruments/${encodeURIComponent(id)}`),
+  updateInstrument: (id: string, payload: Partial<InstrumentInput> & { version: number }) =>
+    api<{ instrument: ProductionInstrument }>(`/api/references/instruments/${encodeURIComponent(id)}`, {
+      method: "PATCH", body: JSON.stringify(payload),
+    }),
+  instrumentHistory: (id: string) => api<InstrumentHistory>(`/api/references/instruments/${encodeURIComponent(id)}/history`),
+  instrumentFileUrl: (id: string, fileId: string) => `/api/references/instruments/${encodeURIComponent(id)}/files/${encodeURIComponent(fileId)}`,
   // The lists of «База данных» are visit reads (`visitRead`): one download per visit, fresh after a write.
   bases: () => visitRead<BasesResult>("/api/references/bases"),
   cables: () => visitRead("/api/references/cables", () => api<CablesResult>("/api/references/cables").then(withConnectors)),
