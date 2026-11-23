@@ -268,6 +268,65 @@ const BASE = "/api/production/vna-bench";
 const post = <T>(path: string, body: unknown = {}) => api<T>(`${BASE}${path}`, { method: "POST", body: JSON.stringify(body) });
 const id = encodeURIComponent;
 
+// Protocol 3 has partial diagnostic traces, not Planar's ACM/acceptance DTO.
+export interface ArinstProfile { start_hz: number; stop_hz: number; points: number; if_bandwidth_hz: number }
+export interface ArinstStep {
+  op: string; human: boolean; label: string;
+  args: { standard?: "OPEN" | "SHORT" | "LOAD" | "THRU"; orientation?: "forward" | "reverse" };
+}
+export interface ArinstSession {
+  id: string; version: number; state: string; step: number; status: string; owned: boolean;
+  operator: string | null; error: string | null; steps: ArinstStep[];
+  command: { id: string; op: string; status: string } | null;
+  artifacts: { id: string; command_id: string; file_name: string; sha256: string }[];
+}
+export interface ArinstTrace {
+  command_id: string; artifact_id: string; sha256: string; profile: ArinstProfile; acceptance_eligible: false;
+  acquisition: {
+    schema: "arinst.partial.v1"; points: number; orientation: "forward" | "reverse";
+    measured_channels: ("S11" | "S21")[]; data: Partial<Record<"S11" | "S21", [number, number][]>>;
+    grid_confirmed: boolean; frequencies_hz: number[] | null; correction_origin: string;
+  };
+}
+export interface ArinstBenchState {
+  source: "arinst";
+  device: {
+    instrument_id: string; inventory_number: string; serial: string; printed_serial: string | null;
+    hardware_uid: string | null; firmware: string | null; machine_id: string | null;
+    control_ready: boolean; reason: string | null; supported_ops: string[];
+    license: { state: "TRIAL" | "LOCKED" | "ACTIVATED" | "UNKNOWN"; trial_remaining_seconds: number | null; message: string };
+  };
+  profile: ArinstProfile | null;
+  calibration: { valid: boolean; status: string; reason?: string | null };
+  acceptance: { eligible: boolean; code: string; message: string };
+  session: ArinstSession | null;
+  latest_trace: ArinstTrace | null;
+}
+
+const arinstPost = (path: string, body: unknown) => api<ArinstBenchState>(`${BASE}${path}`,
+  { method: "POST", body: JSON.stringify(body), timeoutMs: 20_000 });
+
+export const arinstBenchApi = {
+  state: (instrumentId: string, signal?: AbortSignal) =>
+    api<ArinstBenchState>(`${BASE}/state?instrument_id=${id(instrumentId)}`, { signal, timeoutMs: 15_000 }),
+  start: (instrumentId: string) => arinstPost("/sessions", { instrument_id: instrumentId }),
+  connect: (sessionId: string, version: number) =>
+    arinstPost(`/sessions/${id(sessionId)}/arinst/connect`, { version }),
+  profile: (sessionId: string, version: number, profile: ArinstProfile) =>
+    arinstPost(`/sessions/${id(sessionId)}/arinst/profile`, { version, profile }),
+  calibration: (sessionId: string, version: number, kitId: string, referencePlane: string, transmission: boolean) =>
+    arinstPost(`/sessions/${id(sessionId)}/arinst/calibration`,
+      { version, kit_id: kitId, reference_plane: referencePlane, transmission, orientation: "forward" }),
+  capture: (sessionId: string, version: number, orientation: "forward" | "reverse") =>
+    arinstPost(`/sessions/${id(sessionId)}/arinst/capture`, { version, orientation }),
+  confirm: (sessionId: string, version: number) =>
+    arinstPost(`/sessions/${id(sessionId)}/arinst/confirm`, { version }),
+  close: (sessionId: string, version: number) => arinstPost(`/sessions/${id(sessionId)}/close`, { version }),
+  abort: (sessionId: string, version: number) => arinstPost(`/sessions/${id(sessionId)}/abort`, { version }),
+  artifactUrl: (sessionId: string, artifactId: string) =>
+    `/api/production/vna-sessions/${id(sessionId)}/artifacts/${id(artifactId)}`,
+};
+
 export const vnaBenchApi = {
   /** Состояние рабочего места: прибор, калибровка, сроки проверок, открытый сеанс. */
   state: () => api<VnaBenchState>(`${BASE}/state`),

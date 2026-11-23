@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
-import { ApiError, failureText, productionApi, vnaCaptureApi, type ProductionInstrument, type VnaAgent } from "./api";
+import { ApiError, failureText, productionApi, rfInterfacesApi, vnaCaptureApi, type ProductionInstrument, type VnaAgent } from "./api";
 import { formatMoment, formatNumber, glueUnits, toNumber } from "./format";
 import { VswrChart } from "./VswrChart";
+import { ArinstPartialChart } from "./vnaCapture";
 import { ScreenSwitcher, VnaScreensEditor, lossTitle } from "./VnaScreensEditor";
 import {
   CALIBRATION_REFUSALS,
+  arinstBenchApi,
+  type ArinstBenchState,
+  type ArinstProfile,
   REFUSAL_FALLBACK,
   refusalText,
   vnaBenchApi,
@@ -129,6 +133,267 @@ type Act = (key: string, operation: () => Promise<VnaBenchState>) => Promise<voi
 type Tab = "measure" | "checks" | "screens";
 const TABS: { id: Tab; label: string }[] = [{ id: "measure", label: "Замер" }, { id: "checks", label: "Проверки" },
   { id: "screens", label: "Экраны" }];
+
+type ArinstAct = (key: string, operation: () => Promise<ArinstBenchState>) => Promise<void>;
+const ARINST_SAVE_REASON = "Сохранение в КБ/СИ — после ввода Arinst в эксплуатацию";
+const ARINST_STANDARDS = { OPEN: "открытый конец", SHORT: "короткое замыкание (КЗ)", LOAD: "согласованная нагрузка", THRU: "перемычка для S21" };
+const arinstProfileText = (profile: ArinstProfile | null) => profile
+  ? `${num(profile.start_hz / 1e6, 3)}–${num(profile.stop_hz / 1e6, 3)} МГц · ${formatNumber(profile.points)} точек · ПЧ ${formatNumber(profile.if_bandwidth_hz)} Гц`
+  : "Профиль ещё не прочитан — подключите прибор через ERP";
+
+/** Separate protocol-3 workplace: no ACM, automatic verdict or full two-port claims. */
+export function ArinstBench({ instrumentId, pc, agentOnline, lastSeen }: {
+  instrumentId: string; pc: string; agentOnline: boolean; lastSeen: string | null;
+}) {
+  const [state, setState] = useState<ArinstBenchState | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const [busy, setBusy] = useState("");
+  const [feedback, setFeedback] = useState<{ key: string; text: string; failed: boolean } | null>(null);
+  const [orientation, setOrientation] = useState<"forward" | "reverse">("forward");
+  const [retry, setRetry] = useState(0);
+  const [now, setNow] = useState(Date.now());
+  const licenseAt = useRef(Date.now());
+  const pending = useRef(false);
+  const generation = useRef(0);
+  const mounted = useRef(false);
+  const accept = (next: ArinstBenchState) => {
+    if (next.source !== "arinst" || next.device.instrument_id !== instrumentId) throw new Error("Ответ относится к другому прибору — обновите карточку");
+    return next;
+  };
+  useEffect(() => {
+    mounted.current = true;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    let controller: AbortController;
+    async function poll() {
+      if (pending.current) { if (active) timer = setTimeout(poll, POLL_MS); return; }
+      controller = new AbortController();
+      const stamp = generation.current;
+      const dispatchedAt = Date.now();
+      try {
+        const next = accept(await arinstBenchApi.state(instrumentId, controller.signal));
+        if (active && stamp === generation.current) { licenseAt.current = dispatchedAt; setNow(Date.now()); setState(next); setLoadError(""); }
+      } catch (reason) {
+        if (active && stamp === generation.current) setLoadError(failureText(reason, "Не удалось прочитать состояние Arinst — проверьте связь"));
+      } finally {
+        if (active) timer = setTimeout(poll, POLL_MS);
+      }
+    }
+    void poll();
+    return () => { active = false; mounted.current = false; clearTimeout(timer); controller?.abort(); };
+    // The instrument is keyed by its registry UUID in AnalyserCard.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instrumentId, retry]);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    if (feedback?.text === "Отправлено агенту — ожидается результат" && state && !state.session?.command) {
+      setFeedback({ ...feedback, text: state.session?.error ? `Отказ: ${state.session.error}` : !state.session
+        ? "Сеанс завершён; состояние обновлено" : "Команда завершена", failed: Boolean(state.session?.error) });
+    }
+  }, [state, feedback]);
+
+  const act: ArinstAct = async (key, operation) => {
+    if (pending.current) return;
+    pending.current = true; generation.current += 1;
+    const dispatchedAt = Date.now();
+    setBusy(key); setFeedback({ key, text: "Отправлено…", failed: false });
+    try {
+      const next = accept(await operation());
+      if (mounted.current) { licenseAt.current = dispatchedAt; setNow(Date.now()); setState(next); setLoadError(""); setFeedback({ key, text: next.session?.command ? "Отправлено агенту — ожидается результат" : "Принято сервером", failed: false }); }
+    } catch (reason) {
+      if (mounted.current) {
+        setFeedback({ key, text: `Отказ: ${failureText(reason, "Команда Arinst не выполнена")}`, failed: true });
+        setLoadError("Обновляем состояние после отказа — дождитесь связи с сервером");
+      }
+    } finally { pending.current = false; if (mounted.current) { setBusy(""); setRetry((value) => value + 1); } }
+  };
+  const result = (key: string) => feedback?.key === key
+    ? <span role="status" className={feedback.failed ? "tone-danger" : "machine-muted"}>{feedback.text}</span> : null;
+  if (!state) return <div className="vna-bench">{loadError
+    ? <p className="error-banner" role="alert">{loadError} <button type="button" className="secondary" onClick={() => setRetry((value) => value + 1)}>Повторить</button></p>
+    : <p className="empty" role="status">Загрузка состояния Arinst…</p>}</div>;
+
+  const { device, session, profile, calibration } = state;
+  const open = session?.status === "open";
+  const owned = open && session.owned === true;
+  const ready = owned && session.state === "ready" && !session.command;
+  const remaining = Math.max(0, (device.license.trial_remaining_seconds ?? 0) - Math.floor((now - licenseAt.current) / 1000));
+  const licensed = device.license.state === "ACTIVATED" || (device.license.state === "TRIAL" && remaining > 0);
+  const unavailable = loadError ? "Нет свежего состояния — проверьте связь" : !device.control_ready ? device.reason || "Прибор не готов к управлению через ERP"
+    : !licensed ? "Нужна действующая лицензия API" : !open ? "Сначала откройте сеанс" : !owned ? `Сеанс ведёт ${session.operator || "другой сотрудник"}`
+      : !ready ? "Завершите текущий шаг или прервите сеанс" : busy ? "Дождитесь ответа сервера" : "";
+  const operationReason = (op: string) => unavailable || (!device.supported_ops.includes(op) ? "Операция не подтверждена агентом для этого прибора" : "");
+  const current = session?.steps[session.step];
+  const awaiting = owned && (session.state === "awaiting_standard" || session.state === "awaiting_dut");
+  const standard = current?.args.standard;
+  const prompt = standard ? `Подключите ${ARINST_STANDARDS[standard]} в плоскости измерения и подтвердите.`
+    : current?.label || "Подключите изделие в выбранной ориентации и подтвердите.";
+  const appOpen = Boolean(device.reason?.includes("Закройте ArinstVL"));
+  const nextStep = loadError ? "Восстановите связь с ERP" : appOpen ? "Закройте ArinstVL на ПК прибора" : !licensed ? "Лицензия API недоступна — проверьте её состояние"
+    : !device.control_ready ? device.reason || "Проверьте подключение прибора" : !open ? "Откройте сеанс через ERP"
+      : awaiting ? `Подключите ${standard ? ARINST_STANDARDS[standard] : "изделие"} по инструкции ниже` : session.command ? "Дождитесь выполнения команды" : !profile ? "Переподключите прибор через ERP, чтобы прочитать профиль"
+        : "Выберите калибровку или снимите диагностические S11/S21";
+  const licenseMessage = device.license.state === "TRIAL" && remaining > 0 ? `Пробный режим API — осталось ${Math.ceil(remaining / 60)} мин`
+    : device.license.state === "ACTIVATED" ? "Лицензия активна" : device.license.state === "LOCKED" || device.license.state === "TRIAL"
+      ? "Время пробного режима вышло — переподключите прибор вручную или активируйте лицензию" : "Состояние лицензии API неизвестно";
+  return <div className="vna-bench" style={{ fontVariantNumeric: "tabular-nums" }}>
+    <section className="machine-facts" aria-label="Состояние Arinst">
+      <p className={`analyser-status ${loadError || !device.control_ready ? "tone-warn" : ""}`} role="status">{nextStep}</p>
+      <p className="machine-muted">ПК последнего обнаружения: {pc || "не подтверждён"} · Агент этого ПК: {agentOnline ? "на связи" : "связь не подтверждена"}
+        {lastSeen ? ` · сигнал ${formatMoment(lastSeen)}` : ""} · Прибор: {loadError ? "данные устарели" : device.control_ready ? "готов к управлению" : "не готов"}
+        {` · ArinstVL ${device.control_ready && !loadError ? "закрыт" : appOpen ? "открыт" : "— состояние не подтверждено"}`}</p>
+      <p>Для управления через ERP программа ArinstVL должна быть закрыта.</p>
+      <p role="status" className={device.license.state === "ACTIVATED" ? "" : "warning-inline"}>{licenseMessage}</p>
+      {loadError && <p role="alert" className="error-banner">{loadError}</p>}
+      <div className="analyser-command" aria-label="Сеанс Arinst">
+        {!open ? <button type="button" className="primary" disabled={Boolean(busy || loadError || !device.control_ready || !licensed || !device.supported_ops.includes("connect"))}
+          onClick={() => void act("session", () => arinstBenchApi.start(instrumentId))}>Открыть сеанс через ERP</button>
+          : <>
+            <span>Сеанс: {session.operator || "оператор не указан"}</span>
+            <button type="button" className="secondary" disabled={Boolean(operationReason("connect"))}
+              onClick={() => void act("session", () => arinstBenchApi.connect(session.id, session.version))}>Переподключить через ERP</button>
+            <button type="button" className="secondary" disabled={Boolean(!ready || busy || loadError || !device.supported_ops.includes("close"))}
+              onClick={() => void act("session", () => arinstBenchApi.close(session.id, session.version))}>Закрыть сеанс</button>
+            <button type="button" className="secondary" disabled={Boolean(!owned || busy || loadError || session.state === "releasing")}
+              onClick={() => void act("session", () => arinstBenchApi.abort(session.id, session.version))}>Прервать сеанс</button>
+          </>}
+        {result("session")}
+      </div>
+      {unavailable && <p className="machine-muted">{unavailable}</p>}
+      {session?.error && <p role="alert" className="error-banner">{session.error}</p>}
+      {session?.command && <p role="status">Команда выполняется агентом — дождитесь результата. Повторно отправлять её не нужно.</p>}
+      {awaiting && <div className="vna-bench-active-check">
+        <h3>Подключение: {standard ? ARINST_STANDARDS[standard] : "изделие"}</h3><p>{prompt}</p>
+        <div className="analyser-command"><button type="button" className="primary" disabled={Boolean(busy || loadError || !device.control_ready || !licensed || !current?.human || !device.supported_ops.includes(current.op === "measure_standard" ? "measure_standard" : "capture"))}
+          onClick={() => void act("confirm", () => arinstBenchApi.confirm(session.id, session.version))}>Подключено — измерить</button>{result("confirm")}</div>
+      </div>}
+    </section>
+    <ArinstProfileEditor profile={profile} reason={operationReason("apply_profile")} act={act} session={session} result={result("profile")} />
+    <ArinstCalibration reason={operationReason("measure_standard") || (!profile ? "Сначала прочитайте профиль прибора" : "")} session={session} act={act} result={result("calibration")} />
+    <section className="machine-facts" aria-label="Диагностический замер">
+      <h3>Диагностический замер S11 / S21</h3>
+      <p className={calibration.valid ? "" : "warning-inline"}>{calibration.valid ? "Калибровка подтверждена" : calibration.status === "blocked"
+        ? `Калибровка не подтверждена: ${calibration.reason || "нужна независимая проверка"}`
+        : calibration.status === "acquiring" ? "Снимаются меры — следуйте инструкции подключения выше" : calibration.reason || "Калибровка не выполнена"}</p>
+      <div className="analyser-command">
+        <label>Ориентация <select name="arinst-orientation" value={orientation} onChange={(event) => setOrientation(event.target.value as "forward" | "reverse")}>
+          <option value="forward">Прямая</option><option value="reverse">Обратная</option>
+        </select></label>
+        <button type="button" className="primary" disabled={Boolean(operationReason("capture") || !profile)}
+          onClick={() => session && void act("capture", () => arinstBenchApi.capture(session.id, session.version, orientation))}>Снять S11 / S21</button>{result("capture")}
+      </div>
+      {(operationReason("capture") || !profile) && <p className="machine-muted">{operationReason("capture") || "Сначала прочитайте профиль прибора"}</p>}
+      <div className="analyser-command"><button type="button" className="secondary" disabled>Сохранить в КБ/СИ</button>
+        <span>{state.acceptance.eligible ? "Диагностическая трасса не предназначена для записи в КБ/СИ" : ARINST_SAVE_REASON}</span></div>
+      {!state.acceptance.eligible && <p className="machine-muted">{state.acceptance.message}</p>}
+      {state.latest_trace ? <ArinstPartialChart trace={state.latest_trace} /> : <p className="machine-muted">Трасс ещё нет — подключите изделие и снимите S11/S21.</p>}
+    </section>
+    {session && session.artifacts.length > 0 && <details className="machine-facts"><summary>Квитанции прибора · {session.artifacts.length}</summary>
+      <ul>{session.artifacts.map((artifact, index) => <li key={artifact.id}><a href={arinstBenchApi.artifactUrl(session.id, artifact.id)} download>
+        Скачать квитанцию {index + 1}</a> <span className="machine-muted" style={{ overflowWrap: "anywhere" }}>SHA-256: {artifact.sha256}</span></li>)}</ul>
+    </details>}
+  </div>;
+}
+
+function ArinstProfileEditor({ profile, reason, act, session, result }: {
+  profile: ArinstProfile | null; reason: string; act: ArinstAct; session: ArinstBenchState["session"]; result: ReactNode;
+}) {
+  const [draft, setDraft] = useState(() => profile
+    ? { start: String(profile.start_hz / 1e6), stop: String(profile.stop_hz / 1e6), points: String(profile.points), ifbw: String(profile.if_bandwidth_hz) }
+    : { start: "", stop: "", points: "", ifbw: "" });
+  const [review, setReview] = useState<ArinstProfile | null>(null);
+  const [error, setError] = useState("");
+  const signature = JSON.stringify(profile);
+  const readback = useRef(signature);
+  useEffect(() => {
+    if (readback.current === signature) return;
+    readback.current = signature;
+    setDraft(profile ? { start: String(profile.start_hz / 1e6), stop: String(profile.stop_hz / 1e6), points: String(profile.points), ifbw: String(profile.if_bandwidth_hz) }
+      : { start: "", stop: "", points: "", ifbw: "" });
+    setReview(null);
+    setError("");
+    // Reset only on actual readback changes, not on each state poll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signature]);
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    const next = { start_hz: (toNumber(draft.start) ?? NaN) * 1e6, stop_hz: (toNumber(draft.stop) ?? NaN) * 1e6, points: Number(draft.points), if_bandwidth_hz: Number(draft.ifbw) };
+    if (![next.start_hz, next.stop_hz].every(Number.isFinite) || next.start_hz < 1e6 || next.stop_hz > 8.8e9 || next.stop_hz <= next.start_hz
+      || !Number.isInteger(next.points) || next.points < 2 || next.points > 1000 || ![20, 50, 100, 250, 500, 1000].includes(next.if_bandwidth_hz)) {
+      setError("Укажите возрастающий диапазон 1–8800 МГц, 2–1000 целых точек и полосу ПЧ из списка"); return;
+    }
+    setError(""); setReview(next);
+  }
+  return <details className="machine-facts"><summary>Профиль · {arinstProfileText(profile)}</summary>
+    <form onSubmit={submit}>
+      <p>На приборе: {arinstProfileText(profile)}</p>
+      <div className="form-grid">
+        {([['start', 'Начало, МГц'], ['stop', 'Конец, МГц'], ['points', 'Число точек']] as const).map(([key, label]) => <label key={key}>{label}
+          <input name={`arinst-${key}`} autoComplete="off" inputMode={key === "points" ? "numeric" : "decimal"} required value={draft[key]}
+            onChange={(event) => { setDraft({ ...draft, [key]: event.target.value }); setReview(null); }} /></label>)}
+        <label>Полоса ПЧ, Гц<select name="arinst-ifbw" required value={draft.ifbw} onChange={(event) => { setDraft({ ...draft, ifbw: event.target.value }); setReview(null); }}>
+          <option value="">Выберите полосу</option>{[20, 50, 100, 250, 500, 1000].map((value) => <option key={value} value={value}>{formatNumber(value)}</option>)}
+        </select></label>
+      </div>
+      {error && <p role="alert" className="error-banner">{error}</p>}
+      <div className="analyser-command"><button type="submit" className="secondary" disabled={Boolean(reason)}>Проверить изменения</button>{result}</div>
+      {reason && <p className="machine-muted">{reason}</p>}
+      {review && <div className="vna-bench-active-check"><p>На приборе: {arinstProfileText(profile)} → Записать: {arinstProfileText(review)}. Калибровка станет недействительной.</p>
+        <div className="analyser-command"><button type="button" className="primary" disabled={Boolean(reason)} onClick={() => {
+          if (session) { void act("profile", () => arinstBenchApi.profile(session.id, session.version, review)); setReview(null); }
+        }}>Подтвердить запись профиля</button><button type="button" className="secondary" onClick={() => setReview(null)}>Отменить изменения</button></div>
+      </div>}
+    </form>
+  </details>;
+}
+
+function ArinstCalibration({ reason, session, act, result }: { reason: string; session: ArinstBenchState["session"]; act: ArinstAct; result: ReactNode }) {
+  const [instruments, setInstruments] = useState<ProductionInstrument[] | null>(null);
+  const [opened, setOpened] = useState(false);
+  const [kit, setKit] = useState("");
+  const [kitReady, setKitReady] = useState(false);
+  const [kitReason, setKitReason] = useState("");
+  const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0);
+  const [plane, setPlane] = useState("");
+  const [transmission, setTransmission] = useState(true);
+  useEffect(() => {
+    if (!opened || instruments) return;
+    let active = true;
+    productionApi.instruments().then(({ instruments: rows }) => { if (active) { setInstruments(rows.filter((row) => row.status === "Действует")); setError(""); } })
+      .catch((reason) => { if (active) setError(failureText(reason, "Не удалось загрузить реестр мер")); });
+    return () => { active = false; };
+  }, [opened, attempt, instruments]);
+  useEffect(() => {
+    setKitReady(false);
+    if (!kit) { setKitReason("Выберите зарегистрированный калибровочный набор"); return; }
+    let active = true;
+    setKitReason("Проверяем роль набора…");
+    rfInterfacesApi.get(kit).then(({ rf }) => { if (active) { setKitReady(rf.role === "solt_kit"); setKitReason(rf.role === "solt_kit" ? "" : "Это не набор SOL: набор нагрузок SMA-MF06 не заменяет открытый конец и КЗ"); } })
+      .catch((reason) => { if (active) setKitReason(failureText(reason, "Не удалось проверить роль набора")); });
+    return () => { active = false; };
+  }, [kit]);
+  const disabledReason = reason || kitReason || (!kitReady ? "Выберите набор SOL" : !plane.trim() ? "Укажите плоскость измерения" : "");
+  return <details className="machine-facts" onToggle={(event) => setOpened(event.currentTarget.open)}><summary>Калибровка по мерам · открытый конец → КЗ → нагрузка → перемычка</summary>
+    <p>Меры SMA-MF06: открытый конец, КЗ и нагрузка; для S21 — перемычка. Используйте набор с зарегистрированной ролью SOL, а не только набор нагрузок.</p>
+    <p className="warning-inline">Снятие мер сохраняет исходные данные. Калибровка действует только после подтверждения сетки частот, коррекции и независимой проверки.</p>
+    {error && <p role="alert" className="error-banner">{error} <button type="button" className="secondary" onClick={() => setAttempt((value) => value + 1)}>Повторить загрузку мер</button></p>}
+    {!instruments && !error && <p role="status">Загрузка реестра мер…</p>}
+    {instruments?.length === 0 && <p className="machine-muted">В реестре нет действующих мер — добавьте калибровочный набор.</p>}
+    <div className="form-grid"><label>Калибровочный набор<select name="arinst-kit" value={kit} onChange={(event) => { setKitReady(false); setKit(event.target.value); }}>
+      <option value="">Выберите набор из реестра</option>{instruments?.map((row) => <option key={row.id} value={row.id}>{row.inventory_number} · {row.name}</option>)}
+    </select></label>
+      <label>Плоскость измерения<input name="arinst-plane" autoComplete="off" maxLength={300} value={plane} onChange={(event) => setPlane(event.target.value)} /></label>
+      <label><span>Передача S21</span><span style={{ display: "flex", alignItems: "center", gap: 8 }}><input type="checkbox" style={{ width: "auto" }} name="arinst-transmission" checked={transmission} onChange={(event) => setTransmission(event.target.checked)} /> С перемычкой</span></label>
+    </div>
+    <div className="analyser-command"><button type="button" className="secondary" disabled={Boolean(disabledReason)}
+      onClick={() => session && void act("calibration", () => arinstBenchApi.calibration(session.id, session.version, kit, plane.trim(), transmission))}>Начать калибровку по мерам</button>{result}</div>
+    {disabledReason && <p className="machine-muted">{disabledReason}</p>}
+  </details>;
+}
 
 export function VnaBench({ canEdit, connection }: { canEdit: boolean; connection?: (device: VnaBenchDevice) => ReactNode }) {
   const [state, setState] = useState<VnaBenchState | null>(null);
