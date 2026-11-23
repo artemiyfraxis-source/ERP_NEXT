@@ -17,6 +17,7 @@ from app.modules.production.rf_infrastructure import RfRepository
 from app.modules.production.rf_interfaces import RfDetails
 from app.modules.production.vna_session_infrastructure import VnaArtifactRow, VnaBenchItemRow, VnaSessionRow
 from app.modules.warehouse.devices import VnaBindingRow, VnaControlRow, VnaIdentityRow
+from app.modules.warehouse.scan_agents import ScanAgentRow
 from app.workflows.vna_capture_instrument import capture_instrument
 from tests.identity.test_api_tokens import _csrf, tokens_api  # noqa: F401
 from tests.production.test_arinst_session_protocol import PROFILE, SERIAL, receipt
@@ -184,6 +185,42 @@ def test_locked_connect_and_close_allowed_without_fresh_capability(env):
     close = poll(env)
     result = receipt("close"); result["license"] = dict(license_state="LOCKED", trial_remaining_seconds=None, message="Время вышло")
     send(env, close, result)
+
+
+@pytest.mark.parametrize("active_session", [False, True])
+def test_expired_observation_keeps_connection_available(env, active_session):
+    if active_session:
+        ready(env)
+    cached = reports(env[2])
+    env[2].now += timedelta(seconds=181)
+    assert beat(env, cached).status_code == 200
+    view = state(env)
+    assert view["device"]["connection_ready"] is True
+    assert view["device"]["control_ready"] is False
+    assert view["device"]["supported_ops"] == []
+    if active_session:
+        assert view["session"]["state"] == "ready"
+        action(env, view, "arinst/connect")
+    else:
+        open_session(env)
+    assert poll(env)["op"] == "connect"
+
+
+@pytest.mark.parametrize("missing", ["identity", "binding", "offline", "legacy"])
+def test_connection_requires_association_and_online_owning_agent(env, missing):
+    with env[3]() as session:
+        if missing == "identity":
+            session.delete(session.get(VnaIdentityRow, UUID(ARINST_INSTRUMENT)))
+        elif missing == "binding":
+            session.delete(session.get(VnaBindingRow, SERIAL))
+        else:
+            agent = session.get(ScanAgentRow, "pc-1")
+            if missing == "offline":
+                agent.last_seen = env[2].now - timedelta(seconds=181)
+            else:
+                agent.legacy = True
+        session.commit()
+    assert state(env)["device"]["connection_ready"] is False
 
 
 def test_profile_change_invalidates_and_readback_mismatch_keeps_command(env):

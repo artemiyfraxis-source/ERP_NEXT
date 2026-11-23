@@ -209,6 +209,10 @@ export function ArinstBench({ instrumentId, pc, agentOnline, lastSeen, connectio
   const open = session?.status === "open";
   const owned = open && session.owned === true;
   const ready = owned && session.state === "ready" && !session.command;
+  const connectionReason = loadError || (!device.connection_ready ? "Проверьте привязку прибора и связь с агентом закреплённого ПК" : "");
+  const sessionConnectionReason = connectionReason || (!ready ? "Завершите текущий шаг или прервите сеанс" : busy ? "Дождитесь ответа сервера" : "");
+  const reconnect = ready && !device.control_ready && device.connection_ready;
+  const refreshHint = !device.control_ready && device.connection_ready ? "Подключите прибор через ERP — обновите данные о нём" : "";
   const unavailable = loadError ? "Нет свежего состояния — проверьте связь" : !device.control_ready ? device.reason || "Прибор не готов к управлению через ERP"
     : !open ? "Сначала откройте сеанс" : !owned ? `Сеанс ведёт ${session.operator || "другой сотрудник"}`
       : !ready ? "Завершите текущий шаг или прервите сеанс" : busy ? "Дождитесь ответа сервера" : "";
@@ -220,19 +224,19 @@ export function ArinstBench({ instrumentId, pc, agentOnline, lastSeen, connectio
     : current?.label || "Подключите изделие в выбранной ориентации и подтвердите.";
   const appOpen = Boolean(device.reason?.includes("Закройте ArinstVL"));
   const nextStep = loadError ? "Восстановите связь с ERP" : appOpen ? "Закройте ArinstVL на ПК прибора"
-    : !device.control_ready ? device.reason || "Проверьте подключение прибора" : !open ? "Откройте сеанс через ERP"
+    : refreshHint || (!device.control_ready ? device.reason || "Проверьте подключение прибора" : !open ? "Откройте сеанс через ERP"
       : awaiting ? `Подключите ${standard ? ARINST_STANDARDS[standard] : "изделие"} по инструкции ниже` : session.command ? "Дождитесь выполнения команды" : !profile ? "Задайте профиль сеанса"
-        : "Выберите калибровку или снимите диагностические S11/S21";
-  const primaryLabel = !open ? "Открыть сеанс через ERP" : awaiting ? "Подключено — измерить"
+        : "Выберите калибровку или снимите диагностические S11/S21");
+  const primaryLabel = !open ? "Открыть сеанс через ERP" : reconnect ? "Переподключить через ERP" : awaiting ? "Подключено — измерить"
     : session.command || !ready ? "Выполняется…" : !calibration.valid ? "Калибровать" : "Замерить";
-  const primaryReason = !open ? loadError || (!device.control_ready ? nextStep
-    : !device.supported_ops.includes("connect") ? "Подключение не подтверждено агентом" : "")
+  const primaryReason = !open ? connectionReason : reconnect ? sessionConnectionReason
     : awaiting ? loadError || (!device.control_ready || !current?.human
       || !device.supported_ops.includes(current?.op === "measure_standard" ? "measure_standard" : "capture") ? nextStep : "")
       : operationReason(!calibration.valid ? "measure_standard" : "capture") || (!profile ? "Сначала задайте профиль сеанса" : "");
   function primaryAction() {
     if (busy || primaryReason) return;
     if (!open) void act("session", () => arinstBenchApi.start(instrumentId));
+    else if (reconnect) void act("session", () => arinstBenchApi.connect(session.id, session.version));
     else if (awaiting) void act("confirm", () => arinstBenchApi.confirm(session.id, session.version));
     else if (!calibration.valid && calibrationPanel.current) {
       calibrationPanel.current.open = true;
@@ -244,7 +248,7 @@ export function ArinstBench({ instrumentId, pc, agentOnline, lastSeen, connectio
     <section className="panel vna-bench-head" aria-label="Состояние Arinst">
       <div className="vna-bench-status-row">
         <div className="vna-bench-status-strip" role="status">
-          <strong className={loadError || !device.control_ready ? "tone-warn" : ""}>{loadError ? "Нет свежего состояния" : device.control_ready ? "ВАЦ готов" : "ВАЦ не готов"}</strong>
+          <strong className={loadError || !device.control_ready ? "tone-warn" : ""}>{loadError ? "Нет свежего состояния" : appOpen ? "Закройте ArinstVL на ПК прибора" : refreshHint || (device.control_ready ? "ВАЦ готов" : "ВАЦ не готов")}</strong>
           <span>{calibration.valid ? "Калибровка подтверждена" : "Нужна калибровка"}</span>
           <span>{open ? `Сеанс: ${session.operator || "оператор не указан"}` : "Сеанс не открыт"}</span>
         </div>
@@ -265,9 +269,9 @@ export function ArinstBench({ instrumentId, pc, agentOnline, lastSeen, connectio
       {loadError && <p role="alert" className="error-banner">{loadError}</p>}
       <div className="analyser-command" aria-label="Сеанс Arinst">
         {open && <>
-            <button type="button" className="secondary" disabled={Boolean(operationReason("connect"))}
-              onClick={() => void act("session", () => arinstBenchApi.connect(session.id, session.version))}>Переподключить через ERP</button>
-            <button type="button" className="secondary" disabled={Boolean(!ready || busy || loadError || !device.supported_ops.includes("close"))}
+            {!reconnect && <button type="button" className="secondary" disabled={Boolean(sessionConnectionReason)}
+              onClick={() => void act("session", () => arinstBenchApi.connect(session.id, session.version))}>Переподключить через ERP</button>}
+            <button type="button" className="secondary" disabled={Boolean(sessionConnectionReason)}
               onClick={() => void act("session", () => arinstBenchApi.close(session.id, session.version))}>Закрыть сеанс</button>
             <button type="button" className="secondary" disabled={Boolean(!owned || busy || loadError || session.state === "releasing")}
               onClick={() => void act("session", () => arinstBenchApi.abort(session.id, session.version))}>Прервать сеанс</button>

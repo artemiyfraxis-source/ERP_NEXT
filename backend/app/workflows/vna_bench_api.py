@@ -675,6 +675,11 @@ def _arinst_state(uow, principal, now, vna, row):
     identity = instrument_identity(uow.session, vna.id)
     serial = identity.serial if identity else ""
     binding = uow.session.get(VnaBindingRow, serial) if serial else None
+    pc = uow.session.get(ScanAgentRow, binding.machine_id) if binding else None
+    # Connecting/closing refreshes an expired observation; only the persisted owner must be online.
+    connection_ready = bool(identity and identity.source == "arinst" and pc and not pc.legacy
+                            and pc.last_seen is not None
+                            and as_utc(bench.aware(pc.last_seen, now)) >= as_utc(now) - LIVE_FOR)
     control = uow.session.get(VnaControlRow, (binding.machine_id, serial)) if binding else None
     license_view = bench.arinst_license(control.license_state if control else None,
         control.trial_remaining_seconds if control else None, control.reported_at if control else now, now)
@@ -697,7 +702,6 @@ def _arinst_state(uow, principal, now, vna, row):
             # Read-only state lookup: capability/presence, never the binding mutation lock.
             from app.modules.warehouse.devices import control_ops
             ops = control_ops(uow.session, binding.machine_id if binding else "", now, serial=serial, source="arinst")
-            pc = uow.session.get(ScanAgentRow, binding.machine_id) if binding else None
             device = uow.session.get(DeviceRow, (binding.machine_id, "arinst", serial)) if binding else None
             ready = bool(ops and pc and device and device.present and not pc.legacy
                          and as_utc(bench.aware(pc.last_seen, now)) >= as_utc(now) - LIVE_FOR
@@ -727,7 +731,8 @@ def _arinst_state(uow, principal, now, vna, row):
         serial=serial, printed_serial=vna.serial_number, hardware_uid=identity.hardware_uid if identity else None,
         firmware=row.snapshot.get("firmware") if row else identity.firmware if identity else None,
         options=row.snapshot.get("options") if row else None,
-        machine_id=binding.machine_id if binding else None, control_ready=ready, reason=readiness,
+        machine_id=binding.machine_id if binding else None, connection_ready=connection_ready,
+        control_ready=ready, reason=readiness,
         license=license_view, supported_ops=sorted(ops or ()), power_dbm=None, temperature_c=None, rf_stopped=None),
         calibration=row.snapshot.get("calibration") if row else dict(valid=False, status="required"),
         profile=row.snapshot.get("profile") if row else None, session=view,

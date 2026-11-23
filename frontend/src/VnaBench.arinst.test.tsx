@@ -9,7 +9,7 @@ const profile = { start_hz: 1e6, stop_hz: 8.8e9, points: 101, if_bandwidth_hz: 1
 function state(): ArinstBenchState {
   return {
     source: "arinst", device: { instrument_id: "si1", inventory_number: "СИ.001", serial: "arinst:1-2-3", printed_serial: "001",
-      hardware_uid: "1-2-3", firmware: "1", machine_id: "pc1", control_ready: true, reason: null,
+      hardware_uid: "1-2-3", firmware: "1", machine_id: "pc1", connection_ready: true, control_ready: true, reason: null,
       supported_ops: ["connect", "close", "apply_profile", "measure_standard", "capture"],
       license: { state: "not_required", trial_remaining_seconds: null, message: "Связь: протокол ArinstVL" },
       options: { scan_range_hz: [1e6, 9e9], bandwidths_hz: [20, 50, 100, 250, 500, 1000], max_slice_points: 255, raw: "" } },
@@ -56,6 +56,53 @@ it("uses server control readiness while leaving release available", async () => 
   await show(value);
   expect(screen.getByRole("button", { name: "Снять S11 / S21" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "Прервать сеанс" })).toBeEnabled();
+});
+
+it("opens a session to refresh an expired device observation", async () => {
+  const value = state(); value.session = null;
+  value.device.control_ready = false; value.device.supported_ops = [];
+  value.device.reason = "Прибор или агент недоступен; проверьте подключение";
+  const start = vi.spyOn(arinstBenchApi, "start").mockResolvedValue(value);
+  await show(value);
+  expect(screen.getByText("Подключите прибор через ERP — обновите данные о нём", { selector: "strong" })).toBeVisible();
+  const button = screen.getByRole("button", { name: "Открыть сеанс через ERP" });
+  expect(button).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Снять S11 / S21" })).toBeDisabled();
+  fireEvent.click(button);
+  await waitFor(() => expect(start).toHaveBeenCalledWith("si1"));
+});
+
+it("offers reconnect and close after a ready session's device observation expires", async () => {
+  vi.useFakeTimers();
+  const value = state(); value.calibration = { valid: true, status: "valid" };
+  const expired = structuredClone(value);
+  expired.device.control_ready = false; expired.device.supported_ops = [];
+  vi.spyOn(arinstBenchApi, "state").mockResolvedValueOnce(value).mockResolvedValue(expired);
+  const connect = vi.spyOn(arinstBenchApi, "connect").mockResolvedValue(expired);
+  const close = vi.spyOn(arinstBenchApi, "close").mockResolvedValue(expired);
+  render(<ArinstBench instrumentId="si1" pc="ПК" agentOnline lastSeen={null} />);
+  await act(async () => {});
+  expect(screen.getByRole("button", { name: "Замерить" })).toBeEnabled();
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+  expect(screen.getByRole("button", { name: "Снять S11 / S21" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Переподключить через ERP" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Закрыть сеанс" })).toBeEnabled();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Переподключить через ERP" })); });
+  expect(connect).toHaveBeenCalledWith("s1", 7);
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Закрыть сеанс" })); });
+  expect(close).toHaveBeenCalledWith("s1", 7);
+});
+
+it("keeps connection actions disabled when the owning agent is unavailable", async () => {
+  const value = state(); value.device.connection_ready = false; value.device.control_ready = false;
+  value.device.supported_ops = [];
+  const view = await show(value);
+  expect(screen.getByRole("button", { name: "Переподключить через ERP" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Закрыть сеанс" })).toBeDisabled();
+  view.unmount(); vi.restoreAllMocks();
+  value.session = null;
+  await show(value);
+  expect(screen.getByRole("button", { name: "Открыть сеанс через ERP" })).toBeDisabled();
 });
 
 it("keeps native acquisition available without a trial countdown", async () => {
