@@ -248,6 +248,15 @@ def _sources():
         with op.batch_alter_table(table) as batch:
             for column in _source_columns():
                 batch.add_column(column)
+            if table == "warehouse_lots":
+                batch.add_column(sa.Column("csm_project_id", sa.String(255)))
+                # production_plan_projects is a replace-all imported snapshot, not an FK target.
+                # Acceptance verifies its stable project key; historical CSM keeps NULL.
+                batch.create_index("ix_warehouse_lots_csm_project_id", ["csm_project_id"])
+                batch.create_check_constraint("ck_warehouse_lots_csm_project",
+                    "grn_contract_version IS NULL OR ((grn_category = 'CSM' AND csm_project_id IS NOT NULL "
+                    "AND trim(csm_project_id) <> '') "
+                    "OR (grn_category <> 'CSM' AND csm_project_id IS NULL))")
             batch.create_foreign_key(f"fk_{table}_grn", "warehouse_grn_registry", ["grn_id"], ["id"], ondelete="RESTRICT")
             batch.create_foreign_key(f"fk_{table}_grn_identity", "warehouse_grn_registry",
                                      ["grn_id", "grn_category", "grn"], ["id", "category", "number"], ondelete="RESTRICT")
@@ -374,6 +383,10 @@ def downgrade():
         batch.create_unique_constraint("uq_warehouse_label_templates_kind_format", ["kind", "format"])
     for table in reversed(SOURCES):
         with op.batch_alter_table(table) as batch:
+            if table == "warehouse_lots":
+                batch.drop_constraint("ck_warehouse_lots_csm_project", type_="check")
+                batch.drop_index("ix_warehouse_lots_csm_project_id")
+                batch.drop_column("csm_project_id")
             batch.drop_index(f"ix_{table}_grn_id")
             for suffix in ("grn", "grn_identity", "grn_owner", "material_owner"):
                 batch.drop_constraint(f"fk_{table}_{suffix}", type_="foreignkey")

@@ -14,6 +14,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.modules.warehouse.grn_registry import GrnCounterRow
+from app.modules.warehouse.grn import GrnCategory, GrnContext
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseRepository
 from app.workflows.grn_allocation import grn_allocator
 from tests.warehouse.test_grn_allocator import NOW, request
@@ -314,6 +315,38 @@ def test_source_quality_owner_and_identity_checks_allow_legacy_only_without_new_
         # Same identity may have multiple physical packages; no UNIQUE(grn) on warehouse stock.
         insert(db, "warehouse_lots", grn=identity.number, package="2", warehouse="ЦАР", version=1, inbound=1, **valid)
         assert db.execute("SELECT grn_id FROM warehouse_lots WHERE id=?", (first,)).fetchone()[0] == identity.id.hex
+
+
+def test_csm_project_constraint_preserves_history_and_requires_project_on_new_stock(database):
+    command.upgrade(config(database), REVISION)
+    owner = uuid4()
+    with sqlite3.connect(database) as db:
+        db.execute("INSERT INTO warehouse_material_owners (id, display_name, legal_identity) VALUES (?, ?, ?)",
+                   (owner.hex, "Заказчик", "ИНН:7707083893"))
+        historical = lot(db, "CSM.25.0000001")
+        assert db.execute("SELECT csm_project_id FROM warehouse_lots WHERE id=?", (historical,)).fetchone() == (None,)
+    engine = create_engine(f"sqlite+pysqlite:///{database.as_posix()}")
+    try:
+        with Session(engine) as session, session.begin():
+            context = GrnContext(owner_id=owner, customer_order="591К.3", transfer_document="Акт 1")
+            identity = grn_allocator(session).allocate(request(GrnCategory.CSM, context=context), registered_at=NOW)
+    finally:
+        engine.dispose()
+    with sqlite3.connect(database) as db:
+        db.execute("PRAGMA foreign_keys=ON")
+        fields = {"grn_id": identity.id.hex, "grn_category": "CSM", "grn_context": json.dumps(context.payload()),
+                  "grn_contract_version": 1, "material_owner_id": owner.hex, "quality_state": "IQH",
+                  "quality_version": 1, "expiry_required": 0}
+        for project in (None, "", " "):
+            with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+                lot(db, identity.number, **fields, csm_project_id=project)
+        with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+            lot(db, identity.number, **{**fields, "material_owner_id": None}, csm_project_id="591К.3")
+        saved = lot(db, identity.number, **fields, csm_project_id="591К.3")
+        # Snapshot refresh may delete/reinsert projects. Historical ownership does not depend on those rows.
+        db.execute("DELETE FROM production_plan_projects")
+        assert db.execute("SELECT csm_project_id FROM warehouse_lots WHERE id=?", (saved,)).fetchone() == ("591К.3",)
+        assert "ix_warehouse_lots_csm_project_id" in {row[1] for row in db.execute("PRAGMA index_list(warehouse_lots)")}
 
 
 def test_templates_keep_legacy_and_separate_categories_and_print_provenance(database):

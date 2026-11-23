@@ -19,6 +19,12 @@ from app.shared.persistence import AuditEventRow, create_schema
 from tests.factories import Actor
 
 
+def quick_payload(payload):
+    """Existing quick-entry scenarios explicitly opt into the new receipt contract."""
+    return {"operation_id": str(uuid4()), **payload,
+            "items": [{"grn_category": "PPM", **item} for item in payload["items"]]}
+
+
 @pytest.fixture()
 def warehouse_api():
     engine = create_engine(
@@ -202,14 +208,14 @@ def test_stock_searches_article_and_series(warehouse_api):
 
     response = client.post(
         "/api/stock/batches",
-        json={"items": [{
+        json=quick_payload({"items": [{
             "warehouse": "ЦАР",
             "article": "GHR-04V-S",
             "series": "LOT-2409",
             "name": "Разъём питания",
             "quantity": "2",
             "storage_location": "2A1",
-        }]},
+        }]}),
     )
 
     assert response.status_code == 200, response.text
@@ -225,12 +231,12 @@ def test_stock_searches_name_as_typed_in_google(warehouse_api):
 
     response = client.post(
         "/api/stock/batches",
-        json={"items": [
+        json=quick_payload({"items": [
             {"warehouse": "ЦАР", "article": "MGTF-035", "name": "Провод МГТФ 0,35\u00a0мм² белый",
              "quantity": "10", "unit": "м", "storage_location": "2A1"},
             {"warehouse": "ЦАР", "article": "SMA-J", "name": "Разъём SMA вилка, Cтяжка 200х3.6",
              "quantity": "2", "storage_location": "2A1"},
-        ]},
+        ]}),
     )
     assert response.status_code == 200, response.text
 
@@ -272,7 +278,7 @@ def test_receiver_can_add_manually_counted_stock(warehouse_api):
 
     response = client.post(
         "/api/stock/batches",
-        json={
+        json=quick_payload({
             "items": [{
                 "warehouse": "ЖУК",
                 "article": "CASE-01",
@@ -284,11 +290,11 @@ def test_receiver_can_add_manually_counted_stock(warehouse_api):
                 "quantity": "4",
                 "storage_location": "2A1",
             }],
-        },
+        }),
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["lots"][0]["grn"] == "OLD.26.0000001"
+    assert response.json()["lots"][0]["grn"] == "PPM.26.000001"
     assert response.json()["lots"][0]["balance"] == "4"
     assert response.json()["lots"][0]["article"] == "CASE-01"
     assert response.json()["lots"][0]["series"] == "BATCH-7"
@@ -454,9 +460,9 @@ def test_location_correction_needs_warehouse_edit(warehouse_api):
 def test_manual_stock_drops_leading_zeros_of_the_rack_address(warehouse_api):
     client, _ = warehouse_api
 
-    response = client.post("/api/stock/batches", json={"items": [{
+    response = client.post("/api/stock/batches", json=quick_payload({"items": [{
         "warehouse": "ЦАР", "article": "CON-001", "quantity": "1", "storage_location": "01a01",
-    }]})
+    }]}))
 
     assert response.status_code == 200, response.text
     assert response.json()["lots"][0]["storage_location"] == "1A1"

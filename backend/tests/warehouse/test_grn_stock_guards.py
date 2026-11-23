@@ -110,8 +110,8 @@ def test_incomplete_new_passport_is_never_issuable(fields):
 
 
 def customer_lot():
-    return released(grn="CSM.26.000001", grn_category="CSM", material_owner_id=OWNER,
-                    grn_context={"owner_id": str(OWNER), "customer_order": "order:1", "transfer_document": "Акт 1"})
+    return released(grn="CSM.26.000001", grn_category="CSM", material_owner_id=OWNER, csm_project_id="591К.3",
+                    grn_context={"owner_id": str(OWNER), "customer_order": "591К.3", "transfer_document": "Акт 1"})
 
 
 @pytest.mark.parametrize("action", ["reserve", "write_off", "issue_reserved"])
@@ -127,9 +127,9 @@ def test_customer_material_cannot_be_consumed_by_another_owner_or_order(action, 
 
 def test_customer_issue_return_and_transfer_keep_exact_identity_owner_and_quality():
     stock = customer_lot()
-    reserved = stock.reserve(Decimal("2"), owner_id=OWNER, customer_order="order:1", on_date=TODAY)
-    issued = reserved.issue_reserved(Decimal("2"), owner_id=OWNER, customer_order="order:1", on_date=TODAY)
-    returned = issued.return_writeoff(Decimal("1"))
+    reserved = stock.reserve(Decimal("2"), owner_id=OWNER, customer_order="591К.3", project_id="591К.3", on_date=TODAY)
+    issued = reserved.issue_reserved(Decimal("2"), owner_id=OWNER, customer_order="591К.3", project_id="591К.3", on_date=TODAY)
+    returned = issued.return_writeoff(Decimal("1"), owner_id=OWNER, customer_order="591К.3", project_id="591К.3")
     transferred = returned.transfer("ЖУК", "2A1")
     assert transferred.id == stock.id and transferred.grn_id == stock.grn_id
     assert transferred.material_owner_id == OWNER and transferred.grn_context == stock.grn_context

@@ -186,6 +186,7 @@ class StockLot:
     grn_context: dict | None = None
     grn_contract_version: int | None = None
     material_owner_id: UUID | None = None
+    csm_project_id: str | None = None
     quality_state: str | None = None
     quality_basis: str | None = None
     quality_decided_by: UUID | None = None
@@ -316,7 +317,8 @@ class StockLot:
         if self.expiry_date is not None and self.expiry_date < today:
             raise WarehouseValidationError("Срок годности партии истёк")
 
-    def assert_owner(self, *, owner_id: UUID | None = None, customer_order: str | None = None) -> None:
+    def assert_owner(self, *, owner_id: UUID | None = None, customer_order: str | None = None,
+                     project_id: str | None = None) -> None:
         """Commands consuming customer material must carry its exact owner/order pair."""
         if self.grn_contract_version is None:
             return
@@ -324,15 +326,18 @@ class StockLot:
             context = self.grn_context or {}
             if (self.material_owner_id is None or owner_id != self.material_owner_id
                     or str(context.get("owner_id")) != str(self.material_owner_id)
-                    or not customer_order or customer_order != context.get("customer_order")):
+                    or not customer_order or customer_order != context.get("customer_order")
+                    or context.get("customer_order") != self.csm_project_id
+                    or not self.csm_project_id or project_id != self.csm_project_id):
                 raise WarehouseValidationError("Давальческий материал: не совпадают владелец и заказ клиента")
         elif self.material_owner_id is not None or owner_id is not None:
             raise WarehouseValidationError("Владелец давальческого материала допустим только для CSM")
 
     def reserve(self, quantity: Decimal, *, owner_id: UUID | None = None,
-                customer_order: str | None = None, on_date: date | None = None) -> StockLot:
+                customer_order: str | None = None, project_id: str | None = None,
+                on_date: date | None = None) -> StockLot:
         self.assert_issuable(on_date=on_date)
-        self.assert_owner(owner_id=owner_id, customer_order=customer_order)
+        self.assert_owner(owner_id=owner_id, customer_order=customer_order, project_id=project_id)
         amount = _quantity(quantity, "Резерв")
         if amount > self.available:
             raise WarehouseValidationError("Недостаточно доступного остатка для резерва")
@@ -345,9 +350,10 @@ class StockLot:
         return replace(self, reserved=self.reserved - amount, version=self.version + 1)
 
     def write_off(self, quantity: Decimal, *, owner_id: UUID | None = None,
-                  customer_order: str | None = None, on_date: date | None = None) -> StockLot:
+                  customer_order: str | None = None, project_id: str | None = None,
+                  on_date: date | None = None) -> StockLot:
         self.assert_issuable(on_date=on_date)
-        self.assert_owner(owner_id=owner_id, customer_order=customer_order)
+        self.assert_owner(owner_id=owner_id, customer_order=customer_order, project_id=project_id)
         amount = _quantity(quantity, "Списание")
         if amount > self.balance:
             raise WarehouseValidationError("Недостаточно остатка для списания")
@@ -356,9 +362,10 @@ class StockLot:
         return replace(self, written_off=self.written_off + amount, version=self.version + 1)
 
     def issue_reserved(self, quantity: Decimal, *, owner_id: UUID | None = None,
-                       customer_order: str | None = None, on_date: date | None = None) -> StockLot:
+                       customer_order: str | None = None, project_id: str | None = None,
+                       on_date: date | None = None) -> StockLot:
         self.assert_issuable(on_date=on_date)
-        self.assert_owner(owner_id=owner_id, customer_order=customer_order)
+        self.assert_owner(owner_id=owner_id, customer_order=customer_order, project_id=project_id)
         amount = _quantity(quantity, "Выдача резерва")
         if amount > self.reserved:
             raise WarehouseValidationError("Нельзя выдать больше зарезервированного количества")
@@ -371,11 +378,30 @@ class StockLot:
             version=self.version + 1,
         )
 
-    def return_writeoff(self, quantity: Decimal) -> StockLot:
+    def return_writeoff(self, quantity: Decimal, *, owner_id: UUID | None = None,
+                        customer_order: str | None = None, project_id: str | None = None) -> StockLot:
+        self.assert_owner(owner_id=owner_id, customer_order=customer_order, project_id=project_id)
         amount = _quantity(quantity, "Возврат списания")
         if amount > self.written_off:
             raise WarehouseValidationError("Нельзя вернуть больше, чем было списано")
         return replace(self, written_off=self.written_off - amount, version=self.version + 1)
+
+    def decide_quality(self, state: str, basis: str, actor_id: UUID, now: datetime) -> StockLot:
+        """One recorded decision covers the entire physical place; never a quantity subset."""
+        if self.grn_contract_version != 1:
+            raise WarehouseValidationError("Решение ОТК доступно для партий нового контракта ГРН")
+        if state not in {"IQH", "QTN", "RELEASED", "REJECTED", "NOT_REQUIRED"}:
+            raise WarehouseValidationError("Неизвестное решение ОТК")
+        if not str(basis or "").strip():
+            raise WarehouseValidationError("Укажите основание решения ОТК по всему месту")
+        if state == "NOT_REQUIRED" and self.grn_category not in {"PAM", "GOS"}:
+            raise WarehouseValidationError("Для этой категории требуется решение ОТК")
+        updated = replace(self, quality_state=state, quality_basis=basis.strip(), quality_decided_by=actor_id,
+                          quality_decided_at=now, quality_version=(self.quality_version or 0) + 1,
+                          version=self.version + 1)
+        if state in {"RELEASED", "NOT_REQUIRED"}:
+            updated.assert_issuable(on_date=now.date())
+        return updated
 
     def move(self, storage_location: str) -> StockLot:
         # Keeping the current place is not a move, even when it is an old address.
@@ -489,6 +515,10 @@ class StockLot:
         updated = replace(self, **values)
         if updated == self:
             return self
+        if self.grn_category == "CSM" and self.grn_contract_version is not None and any(
+            getattr(updated, name) != getattr(self, name) for name in LOT_ROW_QUANTITIES
+        ):
+            self.assert_owner()
         if updated.reserved > self.reserved or updated.written_off > self.written_off:
             # A manual quantity edit must not bypass the same stock guards.
             self.assert_issuable()
@@ -541,6 +571,8 @@ class StockLot:
             raise WarehouseValidationError("Источник приёмки обязателен")
         if source in self.source_receiving_ids:
             return self
+        if self.grn_contract_version is not None:
+            raise WarehouseValidationError("Новая приёмка требует отдельного ГРН: пополнение принятого места запрещено")
         amount = _quantity(quantity, "Приход")
         place = str(storage_location or "").strip()
         return replace(

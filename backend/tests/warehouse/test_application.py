@@ -1,9 +1,14 @@
 from dataclasses import replace
 from datetime import date, datetime
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
+
+from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseUnitOfWork
+from app.shared.persistence import AuditEventRow, create_schema
 
 from app.modules.warehouse.application import (
     LOT_ARRIVED_TOPIC,
@@ -28,6 +33,14 @@ from app.modules.warehouse.domain import StockLot, WarehouseValidationError
 from app.shared.events import OutboxMessage
 from app.shared.warehouse_location import remap_storage_location
 from tests.factories import Actor
+
+
+@pytest.fixture
+def manual_sessions():
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    create_schema(engine)
+    yield sessionmaker(engine, expire_on_commit=False)
+    engine.dispose()
 
 
 class Lots:
@@ -209,14 +222,16 @@ def test_invalid_decimal_event_is_quarantined_instead_of_blocking_worker():
     assert uow.commits == 1
 
 
-def test_manual_stock_input_gets_old_grns_and_one_audit_event_per_lot():
-    uow = Uow(message())
+def test_manual_stock_input_gets_category_grns_and_one_audit_event_per_lot(manual_sessions):
+    uow = SqlAlchemyWarehouseUnitOfWork(manual_sessions)
     actor = Actor(name="Кладовщик", department="Склад")
 
     lots = add_manual_stock(
         AddManualStockCommand(
+            operation_id=uuid4(),
             items=(
                 ManualStockItem(
+                    grn_category="PPM",
                     warehouse="ЦАР",
                     name="Разъём",
                     item_type="Комплектующие",
@@ -226,6 +241,7 @@ def test_manual_stock_input_gets_old_grns_and_one_audit_event_per_lot():
                     storage_location="1F4",
                 ),
                 ManualStockItem(
+                    grn_category="PPM",
                     warehouse="ЖУК",
                     name="Корпус",
                     item_type="Материалы",
@@ -241,12 +257,11 @@ def test_manual_stock_input_gets_old_grns_and_one_audit_event_per_lot():
         uow,
     ).lots
 
-    assert [lot.grn for lot in lots] == ["OLD.26.0000001", "OLD.26.0000002"]
-    assert [event.event_type for event in uow.audit.items] == [
-        "warehouse.manually_received",
-        "warehouse.manually_received",
-    ]
-    assert uow.commits == 1
+    assert [lot.grn for lot in lots] == ["PPM.26.000001", "PPM.26.000002"]
+    with manual_sessions() as session:
+        assert len(session.scalars(select(AuditEventRow).where(
+            AuditEventRow.event_type == "warehouse.manually_received")).all()) == 2
+    assert uow.committed
 
 
 def test_whole_location_move_preserves_slots_and_skips_empty_lots():
@@ -490,11 +505,13 @@ def test_receipt_of_a_grn_that_sits_in_the_other_warehouse_opens_its_own_lot():
     ("", "укажи стеллаж, полку и № на полке"),
     ("A-01", "Место хранения должно иметь вид 1F4, 17C120 или 12C7B"),
 ])
-def test_manual_stock_still_needs_a_full_rack_address(location, error):
-    uow = Uow(message())
+def test_manual_stock_still_needs_a_full_rack_address(location, error, manual_sessions):
+    uow = SqlAlchemyWarehouseUnitOfWork(manual_sessions)
 
     result = add_manual_stock(AddManualStockCommand(
+        operation_id=uuid4(),
         items=(ManualStockItem(
+            grn_category="PPM",
             warehouse="ЦАР", name="Разъём", item_type="", purpose="Склад", unit="шт",
             quantity=Decimal("1"), storage_location=location,
         ),),
@@ -502,7 +519,7 @@ def test_manual_stock_still_needs_a_full_rack_address(location, error):
         now=datetime(2026, 9, 22, 12, 0),
     ), uow)
     assert [(row.i, row.error) for row in result.errors] == [(0, error)]
-    assert uow.commits == 0
+    assert uow.committed  # Only the immutable retry fingerprint; no stock or number.
 
 
 def _written_lot(uow, quantity="4"):
@@ -664,17 +681,19 @@ def test_whole_location_move_takes_stock_out_of_a_place_the_layout_lost_but_not_
     assert [item.storage_location for item in moved] == ["12C3A"]
 
 
-def test_quick_entry_refuses_a_place_the_rack_layout_does_not_have():
-    uow = Uow(message())
+def test_quick_entry_refuses_a_place_the_rack_layout_does_not_have(manual_sessions):
+    uow = SqlAlchemyWarehouseUnitOfWork(manual_sessions)
     result = add_manual_stock(AddManualStockCommand(
+        operation_id=uuid4(),
         items=(ManualStockItem(
+            grn_category="PPM",
             warehouse="ЦАР", name="Разъём", item_type="Комплектующие", purpose="Склад", unit="шт",
             quantity=Decimal("1"), storage_location="33A1",
         ),),
         actor=Actor(name="Кладовщик", department="Склад"), now=datetime(2026, 9, 22, 12, 0),
     ), uow)
     assert [row.error for row in result.errors] == ["Места 33A1 нет: проверь номер стеллажа и полку."]
-    assert uow.commits == 0
+    assert uow.committed
 
 
 def test_writeoff_and_its_return_are_rows_of_the_writeoff_journal():

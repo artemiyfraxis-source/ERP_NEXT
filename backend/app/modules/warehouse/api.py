@@ -19,17 +19,20 @@ from app.shared.http_auth import (
     warehouse_edit_principal,
     warehouse_journal_principal,
     warehouse_view_principal,
+    production_quality_principal,
 )
 from app.shared.events import AuditEvent
 from app.shared.warehouse_location import STORAGE_LOCATION_MAX_LENGTH, RackLayout, current_rack_layout, rack_layout_from_config
 from app.modules.references.domain import TERMINAL_TABS, TechOperationTab
 from app.workflows.stock_receipt import expected_in_receiving, procurement_line, purchasing_item
 from app.workflows.warehouse_article import infer_article_identity
+from app.workflows.warehouse_grn_context import validate_warehouse_grn_context
 
 from .application import (
     MANUAL_STOCK_LIMIT,
     AddManualStockCommand,
     ConcurrentWarehouseUpdate,
+    DecideQualityCommand,
     CorrectLotLocationCommand,
     EditLotIdentityCommand,
     EditLotRowCommand,
@@ -43,6 +46,7 @@ from .application import (
     WriteOffCommand,
     add_manual_stock,
     correct_lot_location,
+    decide_quality,
     edit_lot_identity,
     edit_lot_row,
     edited_unit_mass,
@@ -58,8 +62,10 @@ from .application import (
     write_off,
 )
 from .domain import LOT_DETAIL_LIMITS, LOT_ROW_FIELDS, StockLot, WarehouseReceipt, WarehouseValidationError
+from .grn import GrnCategory, GrnContext, GrnConflict, GrnCapacityExceeded
 from .item_types import ITEM_TYPE_MAX_LENGTH, ITEM_TYPES_MAX
 from .journal import warehouse_journal
+from .material_owners import create_owner, list_owners
 from .receipts_application import article_facts, lot_receipts
 from .reference_fields import (
     BULK_EDIT_FIELDS,
@@ -198,6 +204,9 @@ class StockItemInput(BaseModel):
     certificate: str = Field(default="", max_length=LOT_DETAIL_LIMITS["certificate"])
     maker_article: str = Field(default="", max_length=LOT_DETAIL_LIMITS["maker_article"])
     supplier_article: str = Field(default="", max_length=LOT_DETAIL_LIMITS["supplier_article"])
+    grn_category: GrnCategory
+    grn_context: GrnContext = Field(default_factory=GrnContext)
+    expiry_required: bool = False
 
     def manual_item(self, warehouse: str = "") -> ManualStockItem:
         return ManualStockItem(
@@ -221,6 +230,9 @@ class StockItemInput(BaseModel):
             certificate=self.certificate,
             maker_article=self.maker_article,
             supplier_article=self.supplier_article,
+            grn_category=self.grn_category.value,
+            grn_context=self.grn_context,
+            expiry_required=self.expiry_required,
         )
 
 
@@ -232,6 +244,7 @@ class ManualStockInput(StockItemInput):
 
 class ManualStockPayload(BaseModel):
     items: list[ManualStockInput] = Field(min_length=1, max_length=MANUAL_STOCK_LIMIT)
+    operation_id: UUID
 
 
 def warehouse_uow_factory(request: Request) -> Callable[[], UnitOfWork]:
@@ -276,6 +289,18 @@ def _result(lot: StockLot) -> dict:
         "certificate": lot.certificate,
         "upd_name": lot.upd_name,
         "invoice_name": lot.invoice_name,
+        "grn_id": str(lot.grn_id) if lot.grn_id else None,
+        "grn_category": lot.grn_category,
+        "grn_context": lot.grn_context,
+        "grn_contract_version": lot.grn_contract_version,
+        "material_owner_id": str(lot.material_owner_id) if lot.material_owner_id else None,
+        "csm_project_id": lot.csm_project_id,
+        "quality_state": lot.quality_state,
+        "quality_basis": lot.quality_basis,
+        "quality_decided_by": str(lot.quality_decided_by) if lot.quality_decided_by else None,
+        "quality_decided_at": lot.quality_decided_at.isoformat() if lot.quality_decided_at else None,
+        "quality_version": lot.quality_version,
+        "expiry_required": lot.expiry_required,
     }
 
 
@@ -299,9 +324,9 @@ def receipt_brief(receipt: WarehouseReceipt | None) -> dict | None:
 def _guarded(operation):
     try:
         return operation()
-    except WarehouseValidationError as error:
+    except (WarehouseValidationError, GrnCapacityExceeded) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    except ConcurrentWarehouseUpdate as error:
+    except (ConcurrentWarehouseUpdate, GrnConflict) as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
@@ -311,6 +336,51 @@ def _guarded(operation):
 
 def _run(operation) -> dict:
     return {"lot": _result(_guarded(operation))}
+
+
+class QualityDecisionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    version: int = Field(ge=1)
+    quality_version: int = Field(ge=1)
+    state: str
+    basis: str = Field(min_length=1, max_length=4096)
+
+
+class MaterialOwnerPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    display_name: str = Field(min_length=1, max_length=512)
+    legal_identity: str = Field(min_length=1, max_length=512)
+
+
+@router.get("/material-owners")
+def material_owners(
+    _principal: Annotated[Principal, Depends(warehouse_view_principal)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
+) -> dict:
+    return {"owners": list_owners(uow_factory())}
+
+
+@router.post("/material-owners")
+def add_material_owner(
+    payload: MaterialOwnerPayload,
+    principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
+) -> dict:
+    return {"owner": _guarded(lambda: create_owner(uow_factory(), payload.display_name, payload.legal_identity,
+                                                 principal.actor, now))}
+
+
+@router.post("/batches/{lot_id}/quality")
+def record_quality_decision(
+    lot_id: UUID, payload: QualityDecisionPayload,
+    principal: Annotated[Principal, Depends(production_quality_principal)],
+    now: Annotated[datetime, Depends(moscow_now)],
+    uow_factory: Annotated[Callable[[], UnitOfWork], Depends(warehouse_uow_factory)],
+) -> dict:
+    return _run(lambda: decide_quality(DecideQualityCommand(
+        lot_id=lot_id, expected_version=payload.version, expected_quality_version=payload.quality_version,
+        state=payload.state, basis=payload.basis, actor=principal.actor, now=now), uow_factory()))
 
 
 def _kitting_reserve(request: Request, lot_id: UUID) -> Decimal:
@@ -654,11 +724,15 @@ def add_batches(
                 items=tuple(item.manual_item(item.warehouse) for item in payload.items),
                 actor=principal.actor,
                 now=now,
+                operation_id=payload.operation_id,
             ),
             uow_factory(),
+            context_validator=validate_warehouse_grn_context,
         )
-    except WarehouseValidationError as error:
+    except (WarehouseValidationError, GrnCapacityExceeded) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+    except GrnConflict as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except (IntegrityError, StaleDataError) as error:
         raise HTTPException(status_code=409, detail="Конкурентное изменение: повторите ввод") from error
     # stock05Add_ answer: {added, errors:[{i, error}], assigned:[{i, grn, …}]}; i is the 0-based row index.

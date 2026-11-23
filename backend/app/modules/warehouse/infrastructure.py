@@ -236,6 +236,10 @@ class StockLotRow(Base):
         UniqueConstraint("warehouse", "grn", "package", name="uq_warehouse_lot_key"),
         Index("ix_warehouse_location", "warehouse", "storage_location"),
         Index("ix_warehouse_lots_grn_id", "grn_id"),
+        Index("ix_warehouse_lots_csm_project_id", "csm_project_id"),
+        CheckConstraint("grn_contract_version IS NULL OR ((grn_category = 'CSM' AND csm_project_id IS NOT NULL "
+                        "AND trim(csm_project_id) <> '') "
+                        "OR (grn_category <> 'CSM' AND csm_project_id IS NULL))", name="ck_warehouse_lots_csm_project"),
         ForeignKeyConstraint(["grn_id", "grn_category", "grn"],
                              ["warehouse_grn_registry.id", "warehouse_grn_registry.category", "warehouse_grn_registry.number"],
                              name="fk_warehouse_lots_grn_identity", ondelete="RESTRICT"),
@@ -303,6 +307,9 @@ class StockLotRow(Base):
     grn_contract_version: Mapped[int | None] = mapped_column(Integer)
     material_owner_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey(
         "warehouse_material_owners.id", name="fk_warehouse_lots_material_owner", ondelete="RESTRICT"))
+    # The production registry is a replace-all snapshot. Validate its stable key on acceptance;
+    # an FK would prevent every refresh after the first CSM receipt.
+    csm_project_id: Mapped[str | None] = mapped_column(String(255))
     quality_state: Mapped[str | None] = mapped_column(String(16))
     quality_basis: Mapped[str | None] = mapped_column(Text)
     quality_decided_by: Mapped[UUID | None] = mapped_column(Uuid)
@@ -531,6 +538,7 @@ def _row(lot: StockLot) -> StockLotRow:
         grn_context=dict(lot.grn_context) if lot.grn_context is not None else None,
         grn_contract_version=lot.grn_contract_version,
         material_owner_id=lot.material_owner_id,
+        csm_project_id=lot.csm_project_id,
         quality_state=lot.quality_state,
         quality_basis=lot.quality_basis,
         quality_decided_by=lot.quality_decided_by,
@@ -589,6 +597,7 @@ def _domain(row: StockLotRow) -> StockLot:
         grn_context=dict(row.grn_context) if row.grn_context is not None else None,
         grn_contract_version=row.grn_contract_version,
         material_owner_id=row.material_owner_id,
+        csm_project_id=row.csm_project_id,
         quality_state=row.quality_state,
         quality_basis=row.quality_basis,
         quality_decided_by=row.quality_decided_by,
