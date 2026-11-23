@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { failureText } from "./api";
+import { PageWindow } from "./PageWindow";
 import { equipmentSetupApi } from "./equipmentSetupApi";
 import { EMPTY, formatMoment, formatNumber } from "./format";
 import {
@@ -11,7 +12,7 @@ import { usePolled, type Ob019Live } from "./machinesApi";
 import type { ManualJob } from "./manualJobsApi";
 import { Ob019Correction } from "./Ob019Correction";
 import { JobSelect, NEW_MANUAL, Ob019RunJob, manualKey } from "./Ob019RunJob";
-import { MARK_KEYS, MarkText, latin, latinLength, markMode, modeValues, Ob019MarkingBlock, Ob019MarkingRow, planValues,
+import { MarkText, latin, latinLength, markMode, modeValues, Ob019MarkingBlock, Ob019MarkingRow, planValues,
   TEXT_CHARS } from "./Ob019MarkingBlock";
 import { markCount, Ob019WireDrawing } from "./Ob019WireDrawing";
 import { Ob019WirePicker } from "./Ob019WirePicker";
@@ -32,7 +33,7 @@ import { Ob019WirePicker } from "./Ob019WirePicker";
  *  D22 = счётчик D649 + (тираж − сделано)), без него — сколько станку осталось до цели; правка тиража при выбранном
  *  задании тоже идёт прогоном. Пока прогон открыт, «Провод вручную» закрыт: провод поверх задания станок посчитал бы в
  *  задание (сервер тоже не даст «Пуск»: machine_runs.start_blocker).
- *  «Остальные параметры» (владелец 20.11.2026: «можем сделать уже полноценную настройку»): каждая строка — «Задать»
+ *  «Все параметры» opens in a separate PageWindow: каждая строка — «Задать»
  *  (поле, пишется так же, как чертёж) рядом с «На станке»; отличие подсвечено. «только просмотр» — лишь у регистров,
  *  которые ERP не пишет (счётчики, программа, назначение не установлено). Без свежих данных станка таблицы нет — одна
  *  строка вместо столбца прочерков. */
@@ -40,13 +41,10 @@ import { Ob019WirePicker } from "./Ob019WirePicker";
 const MODES: [string, string][] = [["0", "Пошаговый"], ["1", "Один цикл"], ["2", "Автомат"]];
 /** Переключатель страницы пульта (бит 0 слова): сервер меняет только этот бит. */
 const SWITCH: [string, string][] = [["1", "Вкл"], ["0", "Выкл"]];
-/** Поля на чертеже и в строке задания; остальные — в «Остальных параметрах» (ролики — в строке команд). */
+/** Wire drawing fields; the full set is also available in the parameter window. */
 const DRAWN = ["length_mm", "strip_front_mm", "pull_front_mm", "strip_back_mm", "pull_back_mm", "diameter_mm", "knife_back_mm"];
-const JOB_ROW = ["total_set", "batch_set", "mode"];
-/** Стягивание на чертеже — переключатель режима; точное значение правится в «Остальных параметрах». */
+/** The drawing selects a pull-off mode; the parameter window also exposes its exact length. */
 const PULL_OF: Record<string, string> = { strip_front_mm: "pull_front_mm", strip_back_mm: "pull_back_mm" };
-/** Маркировка — свой блок и поля под проводом; шрифт, скорости, поворот и прочее — в «Остальных параметрах». */
-const ON_TOP = new Set([...DRAWN.filter((key) => !Object.values(PULL_OF).includes(key)), ...JOB_ROW, "feed_wheel", ...MARK_KEYS]);
 export type PullMode = "full" | "half" | "none";
 /** Режим по значениям станка; «own» — своё стягивание, не по правилу режима (правка зачистки его не трогает). */
 export type PullState = PullMode | "own";
@@ -65,7 +63,7 @@ export const SELECT_WAIT_MS = 800;
 const IN_FLIGHT_MAX_MS = 45000;
 /** Начало текста сервера «нельзя писать в этом состоянии» (machine_writes.idle_problem) — его заменяет одна причина. */
 const STATE_PROBLEM = "Записывать можно, когда";
-/** «Остальные параметры» без свежих данных станка: одна строка вместо таблицы прочерков. */
+/** Full parameters without fresh machine data: one status line instead of empty rows. */
 export const NO_DATA = "Нет связи со станком — параметры появятся, когда ERP получит данные";
 /** То же, когда порт держит открытый на ПК пульт станка. */
 export const PULT_NO_DATA = "Открыт пульт станка на ПК — параметры появятся, когда пульт закроют";
@@ -185,6 +183,8 @@ function CommandLine({ command }: { command: MachineCommand }) {
     <span className={`tone-${command.tone}`}>{command.status_text}</span>
     <span>{command.summary}</span>
     {(command.state_before || command.state_after) && <span>{command.state_before ?? EMPTY} → {command.state_after ?? EMPTY}</span>}
+    {command.length_correction_before != null && <span>Поправка длины: {command.length_correction_before}
+      {command.length_correction_after != null ? ` → ${command.length_correction_after} мм` : " мм; результат ещё не подтверждён"}</span>}
     <span className="machine-muted">{command.created_by} · {formatMoment(command.created_at)}</span>
     {command.error && <span className="tone-danger">{operatorText(command.error)}</span>}
   </li>;
@@ -202,16 +202,19 @@ function sameRun(run: MachineRun, job: RunRequest): boolean {
 
 /** `onRun` — прогон станка, как его видит эта панель (карточка показывает по нему строку состояния и «Пуск»); `pult` —
  *  порт держит открытый на ПК пульт станка. */
-export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = false, pult = false, onRun }: {
+export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = false, pult = false, onRun,
+  toolsWindow = null, closeTools = () => {} }: {
   inventory: string; equipmentId?: string; live?: Ob019Live | null; old?: boolean; pult?: boolean;
   onRun?: (state: MachineRunState | null) => void;
+  toolsWindow?: "journal" | "parameters" | null;
+  closeTools?: () => void;
 }) {
   const [fast, setFast] = useState(false);
   const period = fast ? FAST_MS : IDLE_MS;
   const loadWindow = useCallback((signal: AbortSignal) => machineControlApi.window(inventory, signal), [inventory]);
   const loadControl = useCallback((signal: AbortSignal) => machineControlApi.control(inventory, signal), [inventory]);
-  const { data: card, error: cardError } = usePolled<MachineWindow>(loadWindow, period, "Не удалось загрузить настройки станка");
-  const { data: control, error: controlError } = usePolled(loadControl, period, "Не удалось загрузить запись на станок");
+  const { data: card, error: cardError, reload: reloadWindow } = usePolled<MachineWindow>(loadWindow, period, "Не удалось загрузить настройки станка");
+  const { data: control, error: controlError, reload: reloadControl } = usePolled(loadControl, period, "Не удалось загрузить запись на станок");
   const loadRun = useCallback((signal: AbortSignal) => machineControlApi.run(inventory, signal), [inventory]);
   const [runFast, setRunFast] = useState(false);
   const { data: runData, reload: reloadRun } = usePolled(loadRun, runFast || fast ? FAST_MS : IDLE_MS, "Не удалось загрузить задание станка");
@@ -224,7 +227,6 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
   // An ETK job with a size missing in the ETK: what was typed for it, sent with the job once every size is there.
   const [held, setHeld] = useState<Record<string, string> | null>(null);
   const [group, setGroup] = useState(0);
-  const [more, setMore] = useState(false);
   const [choices, setChoices] = useState<TransferChoice[] | null>(null);
   const [wires, setWires] = useState<WireChoice[] | null>(null);
   const [choice, setChoice] = useState("");
@@ -741,6 +743,11 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
 
   /** После поправки: план задания или провода заново; новое значение этого параметра — сразу на станок. */
   async function afterCorrection(parameter: string): Promise<string> {
+    // Length correction is executed by the PLC. Never rewrite its D32 job setpoint here.
+    if (parameter === "length_mm") {
+      await Promise.all([reloadControl(), reloadWindow()]);
+      return "";
+    }
     const current = query.current;
     if (!current) return "выберите задание или провод — поправка войдёт в их значения";
     try {
@@ -858,8 +865,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
   };
 
   const error = cardError || controlError;
-  const groups = (card?.settings ?? []).map((item) => ({ ...item, fields: item.fields.filter((field) => !field.key || !ON_TOP.has(field.key)) }))
-    .filter((item) => item.fields.length > 0);
+  const groups = (card?.settings ?? []).filter((item) => item.fields.length > 0);
   const current = groups[Math.min(group, Math.max(groups.length - 1, 0))];
   // Fresh words from the machine: the link is up and the snapshot carries values (the panel on the PC sends none).
   const hasData = !old && (card?.settings ?? []).some((item) => item.fields.some((field) => field.value !== null && field.value !== undefined));
@@ -939,13 +945,13 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     {control && <Ob019Correction inventory={inventory} control={control} plan={plan} machine={machine} linkUp={linkUp}
       onSaved={afterCorrection} />}
 
-    {groups.length > 0 && <div className="machine-block machine-more">
-      <button type="button" className="machine-more-toggle" aria-expanded={more} onClick={() => setMore(!more)}>
-        <span aria-hidden="true">{more ? "▾" : "▸"}</span> Остальные параметры
-        <span className="machine-muted"> · {groups.map((item) => item.title).join(", ")}</span>
-      </button>
-      {more && !hasData && <p className="machine-muted machine-nodata" role="status">{pult ? PULT_NO_DATA : NO_DATA}</p>}
-      {more && hasData && <>
+    {toolsWindow === "parameters" && <PageWindow label="Все параметры" close={closeTools} width={1100}>
+      <section className="panel machine-card">
+      <header className="machine-card-head"><h2>Все параметры</h2><button type="button" className="secondary small" onClick={closeTools}>Закрыть</button></header>
+      {cardError && <p className="error-banner" role="alert">{cardError}</p>}
+      {!card && !cardError && <p className="empty">Загрузка…</p>}
+      {card && !hasData && <p className="machine-muted machine-nodata" role="status">{pult ? PULT_NO_DATA : NO_DATA}</p>}
+      {hasData && <>
         <div className="seg-tabs" role="tablist" aria-label="Страницы пульта">
           {groups.map((item, index) => <button key={item.title} role="tab" aria-selected={index === group}
             className={index === group ? "on" : undefined} onClick={() => setGroup(index)}>{item.title}</button>)}
@@ -991,13 +997,19 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
           })}</tbody>
         </table>}
       </>}
-    </div>}
+      </section>
+    </PageWindow>}
 
-    {commands.length > 0 && <details className="machine-fold machine-journal">
-      <summary>Журнал станка</summary>
+    {toolsWindow === "journal" && <PageWindow label="Журнал станка" close={closeTools} width={1000} dismissable>
+      <section className="panel machine-card">
+      <header className="machine-card-head"><h2>Журнал станка</h2><button type="button" className="secondary small" onClick={closeTools}>Закрыть</button></header>
+      {controlError && <p className="error-banner" role="alert">{controlError}</p>}
+      {!control && !controlError && <p className="empty">Загрузка…</p>}
+      {control && !commands.length && <p className="empty">Записей пока нет</p>}
       <ul className="machine-commands" aria-label="Последние записи">
         {commands.slice(0, 10).map((command) => <CommandLine key={command.id} command={command} />)}
       </ul>
-    </details>}
+      </section>
+    </PageWindow>}
   </section>;
 }
