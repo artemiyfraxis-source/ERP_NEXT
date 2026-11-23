@@ -226,9 +226,9 @@ def start_run(inventory: str, payload: RunPayload, principal: Writer, factory: F
             return _enqueue(uow, link, principal, "transfer", writes, transfer_summary(plan), now, run=run)
         job = session.get(manual.ManualJobRow, payload.job_id) if payload.job_id else None
         if job is None or job.equipment_id != link.equipment_id:
-            raise HTTPException(404, "Ручная работа этого станка не найдена")
+            raise HTTPException(404, "Работа этого станка не найдена")
         if job.status != "running":
-            raise HTTPException(409, f"Ручная работа {manual.number_text(job.number)} уже "
+            raise HTTPException(409, f"Работа {manual.number_text(job.number)} уже "
                                      f"{manual.STATUS_TEXTS[job.status][0].lower()}")
         values: dict[str, object] = dict(payload.values)
         if job.length_mm is not None:
@@ -247,7 +247,7 @@ def start_run(inventory: str, payload: RunPayload, principal: Writer, factory: F
                                              f"{format(job.length_mm.normalize(), 'f').replace('.', ',')} мм"
                                              if job.length_mm is not None else "") if part)
         run = {**runs.manual(job.id, label, _whole(values.get("total_set"))), "expect": runs.expect(values)}
-        return _enqueue(uow, link, principal, "transfer", writes, f"Передать на станок: ручная работа {label}", now,
+        return _enqueue(uow, link, principal, "transfer", writes, f"Передать на станок: работа {label}", now,
                         run=run)
 
 

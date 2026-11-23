@@ -7,10 +7,8 @@ import { EquipmentSetupPage } from "./EquipmentSetupPage";
 import { machinesApi, usePolled, type MachineRow, type MachineTaskContext, type Tone } from "./machinesApi";
 import { MachineSetupPart } from "./MachineSetup";
 import { MachineWorkCard } from "./MachineWorkCard";
-import { ManualJobWindow } from "./ManualJobWindow";
 import { WorkJournal } from "./ManualJobsPage";
 import { MarkingMachineCard } from "./MarkingMachineCard";
-import { manualJobsApi, type ManualJob } from "./manualJobsApi";
 import { Ob019Card } from "./Ob019Card";
 import { urlParam } from "./navigation";
 import { Ob019SetupPanel } from "./Ob019SetupPanel";
@@ -25,7 +23,7 @@ import "./machines.css";
  *  группам назначения (`family` строки: «Резка», «Опрессовка», «Принтеры и МФУ», …; порядок — `families` ответа API;
  *  владелец 20.11.2026: «почему тут по разным раскидано»). Связь — значок на плитке; фильтр «Только подключённые»
  *  оставляет станки и приборы, которыми ERP управляет через агента.
- *  На плитке — артикул, участок, «Ждёт наладки» по открытому заданию; в карточке станка — «Наладка» и «Ручная работа».
+ *  На плитке — артикул, участок, «Ждёт наладки» по открытому заданию; в карточке станка — «Наладка» и журнал работ.
  *  Анализатор цепей открывает свою карточку (`AnalyserCard`): Planar — рабочее место ВАЦ (бывшая вкладка ОТК, владелец
  *  20.11.2026; старая ссылка `?section=quality&tab=vna` ведёт сюда, `&tab=vna` открывает эту карточку), Arinst — замер файлом. */
 
@@ -85,8 +83,8 @@ function MachineTile({ row, open }: { row: MachineRow; open: (row: MachineRow) =
 }
 
 /** Карточка плитки без живой карточки: станок без управления (сведения + «Наладка»), принтер, прибор. */
-function MachineInfo({ row, close, manual, canWrite, saved, journal }: {
-  row: MachineRow; close: () => void; manual?: () => void; canWrite: boolean; saved: () => void; journal?: () => void;
+function MachineInfo({ row, close, canWrite, saved, journal }: {
+  row: MachineRow; close: () => void; canWrite: boolean; saved: () => void; journal?: () => void;
 }) {
   const title = titleOf(row);
   const facts: [string, string, Tone?][] = row.kind === "machine" && !row.controlled
@@ -99,7 +97,6 @@ function MachineInfo({ row, close, manual, canWrite, saved, journal }: {
       <header className="machine-card-head">
         <h2>{title}</h2>
         {journal && <button type="button" className="secondary small" onClick={journal}>Журнал</button>}
-        {manual && <button type="button" className="secondary small machine-manual" onClick={manual}>Ручная работа</button>}
         <button type="button" className="secondary small" onClick={close}>Закрыть</button>
       </header>
       {row.link.code === "not_installed" && row.kind === "machine"
@@ -160,12 +157,8 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
     return () => { live = false; };
   }, [canQuality]);
   const [setupOf, setSetupOf] = useState<MachineRow | null>(null);
-  const [manual, setManual] = useState<{ row: MachineRow; job: ManualJob | null } | null>(null);
   const [journalOf, setJournalOf] = useState<MachineRow | null>(null);
   const [route, setRoute] = useState(() => window.location.search);
-  const currentRoute = useRef(route);
-  currentRoute.current = route;
-  const manualAttempt = useRef(0);
   const params = useMemo(() => new URLSearchParams(route), [route]);
   const equipment = params.get("equipment");
   const hasSource = ["task", "operation", "etk_position", "load"].some((key) => params.has(key));
@@ -176,8 +169,7 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
     return () => window.removeEventListener("popstate", changed);
   }, []);
   useEffect(() => {
-    setJournalOf(null); setSetupOf(null); setManual(null);
-    return () => { manualAttempt.current += 1; };
+    setJournalOf(null); setSetupOf(null);
   }, [route]);
   useEffect(() => {
     let alive = true;
@@ -227,20 +219,6 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
     setRoute(url.search);
   };
   const [site, setSite] = useState<Site>("");
-  /** Идёт ручная работа на этом станке — открываем её (завершить / отменить), иначе — новую с этим станком. */
-  const openManual = useCallback(async (row: MachineRow) => {
-    const attempt = ++manualAttempt.current;
-    const requestedRoute = currentRoute.current;
-    let job: ManualJob | null = null;
-    if (row.equipment_id) {
-      const now = new Date();
-      const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-      try {
-        job = (await manualJobsApi.list(day, day, row.equipment_id)).rows.find((item) => item.status === "running") ?? null;
-      } catch { /* нет связи — окно новой работы скажет об этом само */ }
-    }
-    if (attempt === manualAttempt.current && requestedRoute === currentRoute.current) setManual({ row, job });
-  }, []);
   const [query, setQuery] = useState("");
   const rows = useMemo(() => data?.rows ?? [], [data]);
   const openMachine = (row: MachineRow) => {
@@ -337,7 +315,6 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
         actions={<>
           <button type="button" className="secondary small machine-manual" onClick={() => setSetupOf(opened)}>
             Наладка{opened.pending_setup ? " · ждёт" : ""}</button>
-          <button type="button" className="secondary small" onClick={() => void openManual(opened)}>Ручная работа</button>
         </>} />
       : opened?.marking && opened.equipment_id
         ? <MarkingMachineCard key={`${opened.equipment_id}:${route}`} incoming={incoming ?? undefined} row={opened} canWrite={canWrite} close={closeMachine} openJournal={() => setJournalOf(opened)} />
@@ -346,11 +323,8 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
           : opened?.station ? <WarehouseDeviceCard row={opened} station={opened.station} close={closeMachine} />
           : opened && hasWorkCard(opened)
             ? <MachineWorkCard key={`${opened.equipment_id}:${route}`} incoming={incoming ?? undefined} row={opened} canWrite={canWrite} close={closeMachine} openSetup={() => setSetupOf(opened)} openJournal={() => setJournalOf(opened)} />
-            : opened && <MachineInfo row={opened} close={closeMachine} canWrite={canWrite} saved={() => undefined} journal={opened.equipment_id ? () => setJournalOf(opened) : undefined}
-            manual={opened.kind === "machine" ? () => void openManual(opened) : undefined} />}
+            : opened && <MachineInfo row={opened} close={closeMachine} canWrite={canWrite} saved={() => undefined} journal={opened.equipment_id ? () => setJournalOf(opened) : undefined} />}
     {setupOf && <SetupWindow row={setupOf} canWrite={canWrite} setupViewer={setupViewer} close={() => setSetupOf(null)} saved={() => undefined} />}
-    {manual && <ManualJobWindow job={manual.job} equipmentId={manual.row.equipment_id} inventory={manual.row.inventory}
-      close={() => setManual(null)} />}
     {journalOf?.equipment_id && <PageWindow label={`Журнал · ${titleOf(journalOf)}`} close={() => setJournalOf(null)} width={1400} dismissable>
       <section className="panel machine-card">
       <header className="machine-card-head"><strong>{titleOf(journalOf)}</strong>

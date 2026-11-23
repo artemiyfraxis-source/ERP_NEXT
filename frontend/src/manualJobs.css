@@ -1,4 +1,4 @@
-/* «Ручная работа»: журнал за период (ManualJobsPage), окно работы (ManualJobWindow) и окно «Материал»
+/* «Работа»: журнал за период (ManualJobsPage), окно работы (ManualJobWindow) и окно «Материал»
    (ManualJobMaterial). Цвета — токены :root. */
 
 .mj-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }

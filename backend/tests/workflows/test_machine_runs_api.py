@@ -290,10 +290,10 @@ def test_a_manual_job_closed_in_its_own_window_closes_its_run_and_the_write_stay
     job = _post(admin, "/api/production/manual-jobs", {"equipment_id": str(ob019), "purpose": "Проба",
                                                        "quantity_planned": 4}).json()
     sent = _post(admin, RUN, {"kind": "manual", "job_id": job["id"]}).json()["id"]
-    # Cancelled in «Ручная работа» while the runner is still writing: the run closes in the same transaction…
+    # Cancelled in «Работа» while the runner is still writing: the run closes in the same transaction…
     cancelled = _post(admin, f"/api/production/manual-jobs/{job['id']}/cancel", {"version": 1, "reason": "не тот провод"})
     assert cancelled.status_code == 200, cancelled.text
-    assert admin.get(RUN).json()["run"]["closed_why"] == "Ручная работа отменена"
+    assert admin.get(RUN).json()["run"]["closed_why"] == "Работа отменена"
     # …and the runner's true answer is still recorded as written and checked.
     machine.written(sent)
     with sessions() as session:
@@ -309,7 +309,7 @@ def test_a_manual_job_closed_in_its_own_window_closes_its_run_and_the_write_stay
                  {"version": version, "good": 4, "material": "pending"})
     assert done.status_code == 200, done.text
     run = admin.get(RUN).json()["run"]
-    assert (run["stage"], run["closed_why"], run["machine_count"]) == ("closed", "Ручная работа завершена", 4)
+    assert (run["stage"], run["closed_why"], run["machine_count"]) == ("closed", "Работа завершена", 4)
 
 
 def test_the_hand_in_sums_every_run_of_a_length_not_handed_in_yet(machines_api):

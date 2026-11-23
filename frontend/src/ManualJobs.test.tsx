@@ -62,7 +62,7 @@ it("lists the jobs of the period and finishes a running one with the material de
   expect(calls[0].url).toMatch(/date_from=\d{4}-\d{2}-\d{2}&date_to=\d{4}-\d{2}-\d{2}$/);
   expect(screen.getAllByText("Не списывать").length).toBeGreaterThan(0);
   fireEvent.click(screen.getAllByText("Р-000001")[0]);
-  const dialog = await screen.findByRole("dialog", { name: "Ручная работа Р-000001" });
+  const dialog = await screen.findByRole("dialog", { name: "Работа Р-000001" });
   const finish = within(dialog).getByRole("button", { name: "Завершить работу" }) as HTMLButtonElement;
   expect(finish.disabled).toBe(true);
   const issue = within(dialog).getByRole("radio", { name: /Списать с партии/ }) as HTMLInputElement;
@@ -114,13 +114,13 @@ it("starts a job on the machine it was opened from, with an эталон filling
   await waitFor(() => expect(saved).toHaveBeenCalled());
   expect(calls.find((call) => call.url.endsWith("/manual-jobs"))?.body).toEqual({ equipment_id: "u19", purpose: "Образцы для ОТК",
     wire: "ПВАМ 0,5", contact: "", length_mm: "120", quantity_planned: null, reference_id: "r1" });
-  expect(await screen.findByRole("dialog", { name: "Ручная работа Р-000009" })).toBeTruthy();
+  expect(await screen.findByRole("dialog", { name: "Работа Р-000009" })).toBeTruthy();
 });
 
 it("refuses a second job on a busy machine before sending", async () => {
   serve([]);
   render(<ManualJobWindow inventory="ОБ.099" close={() => undefined} />);
-  expect(await screen.findByText(/На станке уже идёт ручная работа Р-000002/)).toBeTruthy();
+  expect(await screen.findByText(/На станке уже идёт работа Р-000002/)).toBeTruthy();
   fireEvent.change(screen.getByLabelText("Зачем"), { target: { value: "Проба" } });
   expect((screen.getByRole("button", { name: "Начать работу" }) as HTMLButtonElement).disabled).toBe(true);
 });
@@ -142,9 +142,8 @@ it("a machine without control starts work outside a task from its work card", as
   });
   render(<MachinesPage canWrite />);
   fireEvent.click(await screen.findByText("ОБ.037"));
-  // A machine without control opens its work card; work outside a task starts on «Вне задания».
+  // A machine without control opens its normal start form.
   const card = await screen.findByRole("dialog", { name: /ОБ\.037/ });
-  fireEvent.click(await within(card).findByRole("tab", { name: "Вне задания" }));
   expect((await within(card).findByRole("combobox", { name: "Станок" }) as HTMLInputElement).value).toBe("ОБ.037 · BZW-880");
 });
 
@@ -174,7 +173,7 @@ it("the work card shows the job already running on the machine", async () => {
   expect(calls.some((url) => url.includes("/manual-jobs?") && url.endsWith("equipment_id=u19"))).toBe(true);
 });
 
-it("removes «Ручная работа» from navigation for every journal reader", () => {
+it("removes «Работа» from navigation for every journal reader", () => {
   const user = { id: "1", email: "u@example.test", name: "Сотрудник", department: "Цех" };
   const as = (permissions: Record<string, AccessMode>): Principal => ({ user, roles: ["operator"], access_level: "operator", permissions });
   for (const permissions of [{ myops: "view" }, { production: "edit" }, { warehouse: "view" }] as Record<string, AccessMode>[]) {

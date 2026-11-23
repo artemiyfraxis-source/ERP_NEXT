@@ -43,7 +43,7 @@ it("shows unresolved material from any date to a warehouse reader without write 
   const dialog = await screen.findByRole("dialog", { name: "Материал Р-000003" });
   await within(dialog).findByText("Материал ждёт решения склада — у вас только просмотр");
   expect(within(dialog).queryByRole("button", { name: /Списать с партии|Не списывать/ })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Начать ручную работу" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Начать работу" })).toBeNull();
   expect(issue).not.toHaveBeenCalled();
   expect(notIssued).not.toHaveBeenCalled();
 });
@@ -79,7 +79,7 @@ it("keeps work editing closed for a warehouse editor reopening a running job", a
   render(<WarehousePage />);
   fireEvent.click(screen.getByRole("button", { name: /Ждёт решения склада/ }));
   fireEvent.click(await screen.findByText("Р-000003"));
-  const dialog = await screen.findByRole("dialog", { name: "Ручная работа Р-000003" });
+  const dialog = await screen.findByRole("dialog", { name: "Работа Р-000003" });
   expect(within(dialog).queryByRole("button", { name: /Завершить работу|Отменить работу/ })).toBeNull();
 });
 

@@ -6,11 +6,11 @@ import type { Ob019Live } from "./machinesApi";
 import type { ManualJob } from "./manualJobsApi";
 
 /** «Выполнение задания» вверху карточки ОБ.019 (владелец 19.11.2026): выбрать задание — резку провода из ЭТК, идущую
- *  ручную работу или новую ручную работу; выбор показывает параметры и требует подтверждения перед записью
+ *  работу или новую работу; выбор показывает параметры и требует подтверждения перед записью
  *  (Ob019SettingsPanel.tsx;
  *  список — `JobSelect`, на карточке он стоит в «Что режем»), после проверки записи — «Пуск»; пока станок режет —
  *  «сделано N из M» по счётчику станка; в конце число станка идёт в «Сдать группу» («Мои задания») или завершает
- *  ручную работу. Сброшенный счётчик — ввод вручную с пометкой. Стоп, Сброс и Пуск — одной строкой команд вверху
+ *  работу. Сброшенный счётчик — ввод вручную с пометкой. Стоп, Сброс и Пуск — одной строкой команд вверху
  *  карточки (Ob019Controls.tsx, навык erp-machine-hmi: каждая команда один раз); здесь — только «Завершить». */
 
 export const NEW_MANUAL = "new";
@@ -58,7 +58,7 @@ function Progress({ run }: { run: MachineRun }) {
   </div>;
 }
 
-/** Завершение: число станка (или вручную) — в «Сдать группу» для резки, в итоги ручной работы. */
+/** Завершение: число станка (или вручную) — в «Сдать группу» для резки, в итоги работы. */
 function Finish({ inventory, run, manual, onDone, onCancel }: {
   inventory: string; run: MachineRun; manual: ManualJob | null; onDone: (text: string) => void; onCancel: () => void;
 }) {
@@ -74,7 +74,7 @@ function Finish({ inventory, run, manual, onDone, onCancel }: {
   const goodValue = whole(good);
   const defectValue = defect.trim() ? whole(defect) : 0;
   const problem = !isManual ? ""
-    : !manual ? "Ручная работа не найдена — обновите карточку"
+    : !manual ? "Работа не найдена — обновите карточку"
       : goodValue === null ? "Укажите годные, шт"
         : defectValue === null ? "Брак — целое число"
           : defectValue > 0 && !reason.trim() ? "Укажите причину брака"
@@ -90,7 +90,7 @@ function Finish({ inventory, run, manual, onDone, onCancel }: {
         : { run_id: run.id });
       const total = answer.run.machine_count;
       onDone(isManual
-        ? `Ручная работа ${manual?.number ?? ""} завершена: годных ${goodValue}${total === null ? ", количество вручную" : ""}`
+        ? `Работа ${manual?.number ?? ""} завершена: годных ${goodValue}${total === null ? ", количество вручную" : ""}`
         : run.kind === "wire" ? `Тираж завершён: ${total ?? "количество не прочитано"}${total === null ? "" : " шт"}`
         : total === null
           ? `Задание завершено. Счётчик станка не прочитан — в «Мои задания» → «Сдать группу» введите количество вручную`
@@ -104,7 +104,7 @@ function Finish({ inventory, run, manual, onDone, onCancel }: {
 
   return <div className="machine-confirm machine-run-finish" role="group" aria-label="Завершение задания">
     <p>
-      <strong>{isManual ? "Завершить ручную работу" : "Завершить задание резки"}</strong>
+      <strong>{isManual ? "Завершить работу" : "Завершить задание резки"}</strong>
       <span>{counted ? `По станку: ${formatNumber(run.done ?? 0)} шт` : "Счётчик станка сброшен или не прочитан — количество вручную"}</span>
     </p>
     {isManual ? <div className="machine-form">
@@ -134,7 +134,7 @@ function Finish({ inventory, run, manual, onDone, onCancel }: {
   </div>;
 }
 
-/** Список заданий: резка провода из ЭТК, идущая ручная работа, новая ручная работа. `last` — последнее известное задание
+/** Список заданий: резка провода из ЭТК, идущая работа, новая работа. `last` — последнее известное задание
  *  станка (серым вместо «Выберите задание», например пока открыт пульт на ПК). */
 export function JobSelect({ choices, manual, open, choice, onPick, id, last = "", disabled = false }: {
   choices: TransferChoice[] | null; manual: ManualJob | null; open: boolean; choice: string; onPick: (key: string) => void; id?: string;
@@ -188,7 +188,7 @@ export function Ob019RunJob({ inventory, state, live, choices, choice, onPick, r
     </div>
     {/* No link / pult open: the status strip says it once for the whole card. */}
     {pickNote && <p className={`machine-run-line tone-${pickNote.tone}`} role="status">{pickNote.text}</p>}
-    {manualRunning && !choice && <p className="machine-muted">На станке идёт ручная работа {manualRunning.number} — выберите её,
+    {manualRunning && !choice && <p className="machine-muted">На станке идёт работа {manualRunning.number} — выберите её,
       чтобы передать на станок и считать по станку</p>}
 
     {run && <div className={`machine-run-now${open ? "" : " is-closed"}`} role="status" aria-label="Задание на станке">

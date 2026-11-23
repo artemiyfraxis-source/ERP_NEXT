@@ -608,7 +608,7 @@ def refuse_while_manual(session, equipment_id: UUID) -> None:
     """A cutting job is not written while a manual job runs on the machine: the counter would mix both (plan S2)."""
     job = manual.running(session, equipment_id)
     if job is not None:
-        raise HTTPException(409, f"На станке идёт ручная работа {manual.number_text(job.number)} — "
+        raise HTTPException(409, f"На станке идёт работа {manual.number_text(job.number)} — "
                                  "завершите или отмените её")
 
 

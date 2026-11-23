@@ -99,14 +99,11 @@ it("full journal is available under equipment and card journal is scoped in a wi
   expect(fetch).not.toHaveBeenCalled();
 });
 
-it("a pending outside-task lookup cannot reopen an old machine window after navigating to the journal", async () => {
-  let finish!: (result: Awaited<ReturnType<typeof manualJobsApi.list>>) => void;
-  vi.mocked(manualJobsApi.list).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+it("machine headers expose the journal and no separate work-start action", async () => {
   render(<MachinesPage />);
   const card = await screen.findByRole("dialog", { name: "Живая карточка" });
-  fireEvent.click(within(card).getByRole("button", { name: "Ручная работа" }));
+  expect(within(card).getAllByRole("button").map((button) => button.textContent)).toEqual(["Наладка", "Журнал", "Закрыть карточку"]);
   fireEvent.click(screen.getByRole("tab", { name: "Журнал работ" }));
-  await act(async () => { finish({ date_from: "", date_to: "", rows: [], can_edit: false }); });
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(screen.getAllByRole("region", { name: "Журнал работ" })[0]).toBeVisible();
 });

@@ -12,12 +12,12 @@ import "./machineWork.css";
 
 /** Рабочая карточка станка без управления («Оборудование», станок без связи с ERP; план T4, 21.11.2026): станок ничего не
  *  сообщает, оператор ведёт счёт сам. Сверху вниз: шапка с «Наладка» → строка состояния («Свободен» / «Работает» /
- *  «Простой») → «Что делаем» (очередь станка, очередь резки, «Вне задания») → «Режим по ЭТК» выбранной строки → главное
- *  действие («Начать», либо «Сделано» и «Готово») → свёрнутые «Журнал» и «Подключение».
- *  «Готово» завершает только ручную работу; сдать полуфабрикат — в «Заданиях». Больше плана — предупреждение, не отказ. */
+ *  «Простой») → «Что делаем» (очередь станка, очередь резки, параметры) → «Режим по ЭТК» выбранной строки → главное
+ *  действие («Начать работу», либо «Сделано» и «Готово») → свёрнутые «Журнал» и «Подключение».
+ *  «Готово» завершает только работу; сдать полуфабрикат — в «Заданиях». Больше плана — предупреждение, не отказ. */
 
 export const QUEUE_REFRESH_MS = 60_000;
-type Tab = "queue" | "cut" | "free";
+type Tab = "queue" | "cut";
 const CUT_FAMILIES = new Set(["Резка", "Резка и опрессовка", "Зачистка"]);
 const OTHER_REASON = "other";
 const SOURCE_MATERIAL = "Материал из задания";
@@ -27,9 +27,6 @@ const today = () => { const now = new Date(); return `${now.getFullYear()}-${pad
 const num = (value: string | number | null | undefined) => formatNumber(value, { digits: 2 });
 const whole = (value: string) => (/^\d+$/.test(value.trim()) ? Number(value.trim()) : null);
 const titleOf = (row: MachineRow) => [row.inventory, row.name, row.article, row.site].filter(Boolean).join(" · ");
-const leftOf = (row: MachineQueueRow) => Math.trunc(Number(row.left)) || 0;
-const sourceOf = (row: MachineQueueRow) => ({ task_id: row.task_id, operation_id: row.operation_id, etk_position: row.etk_position });
-const purposeOf = (row: MachineQueueRow) => [row.project, row.item, row.step].filter(Boolean).join(" · ");
 const clock = (value: string | null | undefined) => formatWallTime(value) || EMPTY;
 
 export function MachineWorkCard({ row, canWrite, close, openSetup, incoming, openJournal }: {
@@ -50,6 +47,7 @@ export function MachineWorkCard({ row, canWrite, close, openSetup, incoming, ope
   // Cutters and strippers work from the cutting queue: open it first.
   const [tab, setTab] = useState<Tab>(() => source ? source.queue_kind === "cutting" ? "cut" : "queue" : CUT_FAMILIES.has(row.family) ? "cut" : "queue");
   const [picked, setPicked] = useState("");
+  const [optionsError, setOptionsError] = useState("");
   const [options, setOptions] = useState<ManualJobOptions | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
@@ -82,9 +80,10 @@ export function MachineWorkCard({ row, canWrite, close, openSetup, incoming, ope
 
   const loadOptions = useCallback(() => {
     if (options) return;
-    manualJobsApi.options().then(setOptions).catch((reason) => setError(failureText(reason, "Не удалось загрузить справочники")));
+    setOptionsError("");
+    manualJobsApi.options().then(setOptions).catch((reason) => setOptionsError(failureText(reason, "Не удалось загрузить справочники")));
   }, [options]);
-  useEffect(() => { if (tab === "free") loadOptions(); }, [tab, loadOptions]);
+  useEffect(() => { if (canWrite) loadOptions(); }, [canWrite, loadOptions]);
 
   const job: ManualJob | null = list?.rows.find((item) => item.status === "running" && item.equipment_id === equipmentId) ?? null;
   const downtime = list?.downtimes?.find((item) => item.open && item.equipment_id === equipmentId) ?? null;
@@ -92,7 +91,7 @@ export function MachineWorkCard({ row, canWrite, close, openSetup, incoming, ope
   const rows = useMemo(() => queue?.rows ?? [], [queue]);
   const running = job ? rows.find((item) => item.job?.id === job.id) : undefined;
   const sourceRows = source ? rows.filter((item) => item.task_id === source.task_id && item.operation_id === source.operation_id && item.etk_position === source.etk_position) : [];
-  const selected = rows.find((item) => item.key === picked) ?? (incoming ? sourceRows.length === 1 ? sourceRows[0] : null : running ?? rows[0] ?? null);
+  const selected = picked === "parameters" ? null : rows.find((item) => item.key === picked) ?? (incoming ? sourceRows.length === 1 ? sourceRows[0] : null : running ?? rows[0] ?? null);
   const sourceCuts = source ? cutQueue?.rows.filter((item) => item.task_id === source.task_id && item.operation_id === source.operation_id) ?? [] : [];
   const selectedCut = sourceCuts.length === 1 ? sourceCuts[0] : null;
   const sourceMissing = incoming && (!source || (source.queue_kind === "cutting" ? cutQueue && !selectedCut : queue && sourceRows.length !== 1));
@@ -123,9 +122,6 @@ export function MachineWorkCard({ row, canWrite, close, openSetup, incoming, ope
     } finally { setBusy(false); }
   }
 
-  const begin = (item: MachineQueueRow) => act(() => manualJobsApi.start({
-    equipment_id: equipmentId, purpose: purposeOf(item), wire: "", contact: "", length_mm: "",
-    quantity_planned: leftOf(item) > 0 ? leftOf(item) : null, reference_id: null, source: sourceOf(item) }), "Работа начата", "Не удалось начать работу");
   const record = () => {
     if (!job || typed === null) { setError("Укажите целое число штук"); return; }
     void act(() => manualJobsApi.progress(job.id, job.version, typed), `Записано: сделано ${typed}`, "Не удалось записать «Сделано»");
@@ -150,8 +146,7 @@ export function MachineWorkCard({ row, canWrite, close, openSetup, incoming, ope
       ? { tone: "ok", text: `Работает: ${job.number} · ${job.source?.label || job.purpose} · с ${clock(job.started_at)} (${job.operator})` }
       : { tone: "neutral", text: "Свободен · без связи с ERP — счёт вручную" };
   const blockStart = job ? `Начать — сначала закончите ${job.number}` : "";
-  const tabs: [Tab, string][] = [["queue", `Очередь станка (${rows.length})`], ...(showCut ? [["cut", `Очередь резки (${cutRows})`] as [Tab, string]] : []),
-    ["free", "Вне задания"]];
+  const tabs: [Tab, string][] = [["queue", `Очередь станка (${rows.length})`], ...(showCut ? [["cut", `Очередь резки (${cutRows})`] as [Tab, string]] : [])];
 
   return <PageWindow label={titleOf(row)} close={close} width={CUT_FAMILIES.has(row.family) ? 1720 : 1200}>
     <section className="panel mw-card">
@@ -197,7 +192,7 @@ export function MachineWorkCard({ row, canWrite, close, openSetup, incoming, ope
                 <td className="mw-warn">{(item.warnings ?? []).map((text) => <div key={text}>{text}</div>)}</td>
                 <td className="mw-act">{item.job ? <span className="mw-badge">в работе {item.job.number}</span>
                   : editable && <button type="button" className="primary small" disabled={busy || Boolean(job)} title={blockStart || undefined}
-                    onClick={(event) => { event.stopPropagation(); void begin(item); }}>Начать</button>}</td>
+                    onClick={(event) => { event.stopPropagation(); setPicked(item.key); }}>Выбрать</button>}</td>
               </tr>)}</tbody>
             </table></div>}
         {editable && job && !running && rows.length > 0 && <p className="mw-hint">{blockStart}</p>}
@@ -218,10 +213,13 @@ export function MachineWorkCard({ row, canWrite, close, openSetup, incoming, ope
         </section>}
         <details className="mw-fold"><summary>Вся очередь резки</summary><CuttingQueue key={cutRefresh} equipmentId={equipmentId} readOnly={!canWrite} onChanged={() => void reload()} /></details>
       </> : <CuttingQueue equipmentId={equipmentId} readOnly={!canWrite} onChanged={() => void reload()} />)}
-      {tab === "free" && (!options ? <p className="empty">Загрузка…</p>
-        : editable ? (job ? <p className="mw-hint">{blockStart}</p>
-          : <StartForm options={options} equipmentId={equipmentId} inventory={row.inventory} onStarted={() => { setNotice("Работа начата"); setTab("queue"); void reload(); }} />)
-          : <p className="empty">Начинать работу вам не разрешено</p>)}
+      {editable && list && !job && !sourceMissing && <section aria-label="Начать работу">
+        <h3 className="mw-h">Начать работу</h3>
+        {!options ? optionsError ? <><p className="error-banner" role="alert">{optionsError}</p><button type="button" className="secondary small" onClick={loadOptions}>Повторить</button></> : <p className="empty">Загрузка…</p>
+          : <StartForm key={equipmentId} options={{ ...options, machines: options.machines.map((machine) => machine.id === equipmentId ? { ...machine, running: null } : machine) }} equipmentId={equipmentId} inventory={row.inventory}
+            tasks={rows} task={tab === "queue" ? selected : null} onTaskChange={(key) => { setPicked(key || "parameters"); setTab("queue"); }}
+            onStarted={() => { setNotice("Работа начата"); void reload(); }} />}
+      </section>}
 
       {tab === "queue" && selected && <section className="mw-etk" aria-label="Режим по ЭТК">
         <h3 className="mw-h">Режим по ЭТК <span className="mw-sub">{[selected.project, selected.item, selected.step].filter(Boolean).join(" · ")}</span></h3>

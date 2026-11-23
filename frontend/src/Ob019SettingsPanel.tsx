@@ -186,7 +186,7 @@ function CommandLine({ command }: { command: MachineCommand }) {
 const without = <T,>(values: Record<string, T>, keys: string[]) =>
   Object.fromEntries(Object.entries(values).filter(([key]) => !keys.includes(key)));
 
-/** Тот же прогон: резка — группа и длина, ручная работа — сама работа. */
+/** Тот же прогон: резка — группа и длина, работа — сама работа. */
 function sameRun(run: MachineRun, job: RunRequest): boolean {
   if (job.kind === "manual") return run.kind === "manual" && run.job_id === job.job_id;
   if (job.kind === "wire") return run.kind === "wire" && run.wire === job.wire;

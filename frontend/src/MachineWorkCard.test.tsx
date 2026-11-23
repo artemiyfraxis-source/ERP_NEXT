@@ -84,7 +84,7 @@ it("incoming operation/ETK position selects the exact non-first queue row; openi
   expect(screen.getByText("КБ другая").closest("tr")).not.toHaveAttribute("aria-current");
   fireEvent.click(screen.getByText("КБ3"));
   expect(posts).toEqual([]);
-  fireEvent.click(within(screen.getByText("КБ3").closest("tr")!).getByRole("button", { name: "Начать" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Начать работу" }));
   await waitFor(() => expect(posts).toHaveLength(1));
   expect(posts[0].body).toMatchObject({ source: { task_id: "t1", operation_id: "o1", etk_position: 4 } });
 });
@@ -134,7 +134,7 @@ it("«Начать» starts a manual job with the queue row as its source and pl
   const posts: Post[] = [];
   mock({ rows: [QROW] }, posts);
   open();
-  fireEvent.click(await screen.findByRole("button", { name: "Начать" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Начать работу" }));
   await waitFor(() => expect(posts).toHaveLength(1));
   expect(posts[0].url).toBe("/api/production/manual-jobs");
   expect(posts[0].body).toEqual({ equipment_id: "u71", purpose: "708К. · КБ3 · Пайка", wire: "", contact: "", length_mm: "", quantity_planned: 37,
@@ -220,4 +220,27 @@ it("shows the cutting-queue tab when the unit has cuts, or always for a cutting 
   mock({ cut: 0 });
   open(true, { ...ROW, family: "Резка" });
   expect(await screen.findByRole("tab", { name: "Очередь резки (0)" })).toBeTruthy();
+});
+
+it("one start form accepts typed parameters or an ETK task and keeps the card machine fixed", async () => {
+  const posts: Post[] = [];
+  mock({ rows: [QROW] }, posts);
+  open();
+  const form = await screen.findByRole("form", { name: "Новая работа" });
+  expect(within(form).getByRole("combobox", { name: "Станок" })).toBeDisabled();
+  expect(screen.queryByRole("tab", { name: /Вне задания/ })).not.toBeInTheDocument();
+  const task = within(form).getByRole("combobox", { name: "Задание" });
+  fireEvent.change(task, { target: { value: "" } });
+  fireEvent.change(within(form).getByLabelText("Зачем"), { target: { value: "Проверка образца" } });
+  fireEvent.change(within(form).getByLabelText("Провод"), { target: { value: "ПВАМ" } });
+  fireEvent.change(within(form).getByLabelText("Количество, шт"), { target: { value: "bad" } });
+  expect(within(form).getByRole("button", { name: "Начать работу" })).toBeDisabled();
+  fireEvent.change(task, { target: { value: "q1" } });
+  expect(within(form).getByRole("button", { name: "Начать работу" })).toBeEnabled();
+  fireEvent.change(task, { target: { value: "" } });
+  fireEvent.change(within(form).getByLabelText("Количество, шт"), { target: { value: "2" } });
+  fireEvent.click(within(form).getByRole("button", { name: "Начать работу" }));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0].body).toMatchObject({ equipment_id: "u71", purpose: "Проверка образца", wire: "ПВАМ", quantity_planned: 2 });
+  expect(posts[0].body).not.toHaveProperty("source");
 });

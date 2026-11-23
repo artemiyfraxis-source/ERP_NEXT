@@ -277,6 +277,7 @@ it("records the machine setup by the task from its card, by hand only with a rea
     if (url.includes("/setup-model/")) return json(SETUP);
     if (url.includes("/machine-queue")) return json({ equipment_id: "u05", inventory: "ОБ.005", version: "v", rows: [] });
     if (url.includes("/cutting-queue")) return json({ machine_id: null, version: "v", rows: [] });
+    if (url.includes("/manual-jobs/options")) return json({ machines: [{ id: "u05", inventory: "ОБ.005", name: "Станок", running: null }], wires: [], contacts: [], references: [], can_edit: true });
     if (url.includes("/manual-jobs")) return json({ date_from: "", date_to: "", rows: [], can_edit: true, downtimes: [] });
     return json({ now: "", rows: [TWISTER], families: FAMILIES });
   });
@@ -454,6 +455,7 @@ it("opens the work card only for a machine without control that is in БД.ОБ;
     const url = decodeURIComponent(String(input));
     if (url.includes("/machine-queue")) return json({ equipment_id: "u70", inventory: "ОБ.070.1", version: "v", rows: [] });
     if (url.includes("/cutting-queue")) return json({ machine_id: null, version: "v", rows: [] });
+    if (url.includes("/manual-jobs/options")) return json({ machines: [{ id: "u05", inventory: "ОБ.005", name: "Станок", running: null }], wires: [], contacts: [], references: [], can_edit: true });
     if (url.includes("/manual-jobs")) return json({ date_from: "", date_to: "", rows: [], can_edit: true, downtimes: [] });
     return json({ now: "", rows: [SOLDER, NOT_INSTALLED, TSC], families: FAMILIES });
   });

@@ -233,7 +233,7 @@ export interface MachineRun {
 export interface MachineRunState {
   run: MachineRun | null;
   expected_active_run_id?: string | null;
-  /** Ручная работа, которая сейчас идёт на этом станке. */
+  /** Работа, которая сейчас идёт на этом станке. */
   manual: ManualJob | null;
   link_ok: boolean;
   /** Почему ERP не управляет станком сейчас (нет связи, открыт пульт на ПК); «» — управляет. */
