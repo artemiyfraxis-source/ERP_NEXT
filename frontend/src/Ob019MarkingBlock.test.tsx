@@ -115,21 +115,23 @@ it("a mode writes all its registers and clears the other mode's texts; empty val
     { key: "mark_step_mm", label: "", value: "150" }] })).toBe("из ЭТК: По всей длине «W1» · шаг 150 мм");
 });
 
-it("shows the machine's mode with its fields on the drawing; marking registers left the «Остальные параметры» list", async () => {
+it("shows the machine's mode with its fields on the drawing and all marking registers in the parameters window", async () => {
   server();
-  render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  const { rerender } = render(<Ob019SettingsPanel inventory="ОБ.019" />);
   await waitFor(() => expect(within(modes()).getByRole("radio", { name: "По краям" })).toHaveAttribute("aria-checked", "true"));
   expect(screen.getByLabelText("Текст у начала")).toHaveValue("X1");
   expect(screen.getByLabelText("Текст у конца")).toHaveValue("X2");
   expect(screen.getByLabelText("Метка у начала")).toHaveValue("15,00");
   expect(screen.queryByLabelText("Текст в середине")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: /Остальные параметры/ }));
-  fireEvent.click(screen.getByRole("tab", { name: "Маркировка" }));
-  const table = screen.getByRole("table", { name: "Маркировка" });
+  // The card header opens the panel's controlled parameters window.
+  rerender(<Ob019SettingsPanel inventory="ОБ.019" toolsWindow="parameters" />);
+  const parameters = within(screen.getByRole("dialog", { name: "Все параметры" }));
+  fireEvent.click(parameters.getByRole("tab", { name: "Маркировка" }));
+  const table = parameters.getByRole("table", { name: "Маркировка" });
   expect(table).toHaveTextContent("Размер шрифта");
   expect(table).toHaveTextContent("Передача текста в маркиратор");
-  expect(table).not.toHaveTextContent("Текст у начала");
-  expect(table).not.toHaveTextContent("Шаг средних меток");
+  expect(within(table).getByLabelText("Текст у начала")).toHaveValue("X1");
+  expect(within(table).getByLabelText("Шаг средних меток")).toHaveValue("0,00");
 });
 
 it("a mode click writes one batch with every register of the mode, the clears included", async () => {

@@ -7,7 +7,7 @@ The machine card («Настройки» part):
   the card's writable fields (job, mode, quantities, wire and strip lengths, marking texts with zero-filled tails).
 - `GET  /api/production/machines/card/{ОБ}/transfer[?group_id=…&length_mm=…|?wire=…&length_mm=…]` (view) → the ETK
   cutting jobs of open groups and the hook-up wires `{label, conductor_mm, has_recipe}`; with a job: what «Передать на
-  станок» writes — ETK nominal + the machine's correction per parameter; with a wire and no job (`group_id: null`):
+  станок» writes — ETK nominal + ERP corrections except length; with a wire and no job (`group_id: null`):
   the wire's newest recipe, else the reference fallback + the correction. A recipe value is final (no offset on top).
 - `POST /api/production/machines/card/{ОБ}/transfer` (edit) `{group_id, length_mm, confirm_state, expected_source,
   expected_active_run_id}` → that write. The group preview supplies `expected_source` {group_id, version, length_mm,
@@ -19,7 +19,8 @@ The machine card («Настройки» part):
   notified (not asked); `both`. Each correction is journaled on the machine. `measured` without `offset` → the server
   computes the offset from the machine's live value (offset = на станке − получилось); `seen` — the live value the card
   showed: 409 when the machine holds another one now, 409 while a parameter write is open on the machine; response
-  `{offset, etk, written, measured}`.
+  `{offset, etk, written, measured}`. Length instead requires measured + seen and queues D658 / D600.6, returning
+  the queued `command`; signed D54 is exposed by control.length_correction and command read-back fields.
 `confirm_state` is the machine state the person confirmed in the dialog: a different state now → 409.
 
 The command runner on the machine PC (`tools/machine-agent/ob019-writer.ps1`, token `machine:report`, PC bound):
@@ -145,6 +146,7 @@ class AgentPayload(Payload):
 
 class ResultPayload(AgentPayload):
     ok: bool
+    correction_pulsed: bool = False
     readback: dict[str, int] = Field(default_factory=dict, max_length=200)
     error: str = Field(default="", max_length=500)
     # Machine commands only (kind "control").
@@ -236,7 +238,9 @@ def _closed(uow, rows: list[commands.MachineWriteRow], actor, now: datetime) -> 
             _journal(uow, row.equipment_id, "command_finished", actor, now, f"{row.summary}: {text} — {row.error}",
                      command_id=str(row.id), command=row.command or "", status=row.status)
         else:
-            _journal(uow, row.equipment_id, "write_failed", actor, now, f"Не записано: {row.summary} — {row.error}",
+            _journal(uow, row.equipment_id, "write_failed", actor, now,
+                     (f"Результат поправки неизвестен — проверьте станок: {row.summary} — {row.error}"
+                      if row.status == "unknown" else f"Не записано: {row.summary} — {row.error}"),
                      command_id=str(row.id))
 
 
@@ -287,6 +291,7 @@ def _offset_rows(session, equipment_id: UUID) -> list[dict]:
     for key in WIRE_KEYS:
         row = stored.get(key)
         rows.append({"key": key, "label": rules.OB019_FIELDS[key].label, "offset": _shown(commands.offset_value(row)),
+                     "legacy": key == "length_mm",
                      "reason": row.reason if row else "", "updated_by": row.updated_by_name if row else "",
                      "updated_at": commands.moment(row.updated_at) if row else None, "etk": key in ETK_SIDES})
     return rows
@@ -305,12 +310,24 @@ def control(inventory: str, principal: Reader, factory: Factory, now: Now) -> di
                     "state": None, "commands": [], "offsets": [], "can_edit": False}
         snapshot = session.get(rules.MachineSnapshotRow, link.equipment_id)
         rows = commands.latest(session, link.equipment_id, now)
+        correction_value = commands.length_correction_value(rules.snapshot_words(snapshot))
+        if rules.link_status(snapshot, now) != "ok":
+            correction_value = None
+        else:
+            confirmed = next((row for row in rows if row.payload.get(commands.LENGTH_CORRECTION)
+                              and row.status == "done" and row.finished_at is not None
+                              and rules.since(snapshot.reported_at, now) >= rules.since(row.finished_at, now)), None)
+            if confirmed is not None:
+                correction_value = commands.length_correction_value(confirmed.readback or {})
         settle_run(uow, link.equipment_id, now)
         result = {
             "problem": commands.idle_problem(link, snapshot, now),
             "state": rules.snapshot_words(snapshot).get(766),
             "commands": [commands.command_view(row) for row in rows],
             "offsets": _offset_rows(session, link.equipment_id),
+            "length_correction": {"register": "D54", "value": _shown(correction_value),
+                                  "legacy_offset": _shown(commands.offset_value(
+                                      commands.offsets(session, link.equipment_id).get("length_mm")))},
             "can_edit": _can_edit(principal),
             "can_control": can_control(principal) and can_stop(principal),
             # «Стоп» and every other command: Производство / Задания only (ОТК reads the card, never commands).
@@ -383,7 +400,7 @@ def _versions(session, link: rules.MachineLinkRow):
 
 def _plan_rows(session, link: rules.MachineLinkRow, nominal: EtkNominal, length: Decimal,
                recipe_keys: tuple[str, ...]) -> tuple[list[dict], list[str], list[str]]:
-    """Per parameter: the base value + this machine's offset. Keys of `recipe_keys` take the newest recipe of the wire;
+    """Base + ERP offset, except length (the PLC holds its correction in D54). Recipe keys take the newest recipe;
     a recipe value is final (what the machine held when it cut right — the offset is not added twice, owner 19.11);
     the offset goes only on top of the ETK nominal / reference fallback. → (rows, missing labels, blocking labels)."""
     etk = {item.key: item for item in ob019_proposal(None, nominal, length)}
@@ -395,7 +412,7 @@ def _plan_rows(session, link: rules.MachineLinkRow, nominal: EtkNominal, length:
     for key in WIRE_KEYS:
         base = reference[key] if key in recipe_keys else etk[key]
         final = key in recipe_keys and recipe_holds(recipe, key)
-        offset = None if final else commands.offset_value(stored.get(key))
+        offset = None if final else Decimal(0) if key == "length_mm" else commands.offset_value(stored.get(key))
         value = None if base.value is None else (base.value if final else max(base.value + offset, Decimal(0)))
         if value is None:
             missing.append(rules.OB019_FIELDS[key].label)
@@ -697,6 +714,25 @@ def correction(inventory: str, payload: CorrectionPayload, request: Request, pri
             if not card_ids:
                 raise HTTPException(409, "У задания нет выданной ЭТК")
         if payload.case in ("machine", "both"):
+            if payload.parameter == "length_mm":
+                if payload.offset not in (None, ""):
+                    raise HTTPException(422, "Для поправки длины введите измеренную длину, а не поправку ERP")
+                if got is None or payload.seen in (None, ""):
+                    raise HTTPException(422, "Укажите измеренную длину и показанную длину на станке")
+                try:
+                    row, expired = commands.enqueue_length_correction(
+                        session, equipment_id=equipment_id, measured=got, seen=_decimal(payload.seen, "На станке"),
+                        actor_id=principal.actor.id, actor_name=principal.actor.name, now=now)
+                except rules.MachineWriteInvalid as error:
+                    raise HTTPException(422, str(error)) from error
+                except commands.MachineCommandRefused as error:
+                    raise HTTPException(409, str(error)) from error
+                _closed(uow, expired, principal.actor, now)
+                _journal(uow, equipment_id, "write_queued", principal.actor, now, row.summary,
+                         command_id=str(row.id))
+                result["command"] = commands.command_view(row)
+                uow.commit()
+                return result
             if payload.offset not in (None, ""):
                 offset = _decimal(payload.offset, "Поправка станка")
                 reason = f"{CASES[payload.case]}{measured}" + (f"; {note}" if note else "")
@@ -802,6 +838,12 @@ def next_command(payload: AgentPayload, bridge: Bridge, factory: Factory, now: N
             return {"command": {"id": str(row.id), "kind": "control", "action": row.command,
                                 "deadline_ms": machine_control.deadline_ms(row, now),
                                 "force": bool(row.payload.get("force"))}}
+        if row.payload.get(commands.LENGTH_CORRECTION):
+            return {"command": {"id": str(row.id), "kind": "length_correction", "blocks": row.payload["blocks"],
+                                "bits": [], "seen": row.payload["seen"],
+                                "deadline_ms": max(0, int((commands.COMMAND_TTL - rules.since(row.created_at, now))
+                                                          .total_seconds() * 1000)),
+                                "states": list(commands.IDLE_STATES)}}
         return {"command": {"id": str(row.id), "kind": "write", "blocks": row.payload["blocks"],
                             "bits": commands.expected_bits(row), "states": list(commands.IDLE_STATES)}}
 
@@ -837,17 +879,27 @@ def command_result(command_id: UUID, payload: ResultPayload, bridge: Bridge, fac
         was_taken = before is not None and before.status == "taken"
         try:
             row = commands.finish(uow.session, equipment_id=link.equipment_id, command_id=command_id, ok=payload.ok,
-                                  readback=payload.readback, error=payload.error, now=now)
+                                  readback=payload.readback, error=payload.error, now=now,
+                                  correction_pulsed=payload.correction_pulsed, before=payload.before,
+                                  outcome=payload.outcome)
         except KeyError as error:
             raise HTTPException(404, str(error.args[0])) from error
         if was_taken:
             if row.status == "done":
+                if row.payload.get(commands.LENGTH_CORRECTION):
+                    old = commands.length_correction_value(row.payload["seen"])
+                    new = commands.length_correction_value(row.readback or {})
+                    _journal(uow, link.equipment_id, "length_corrected", bridge.actor, now,
+                             f"Поправка станка: D54 = {_shown(old)} → {_shown(new)} мм",
+                             command_id=str(row.id), before=_shown(old), after=_shown(new), register="D54")
                 _journal(uow, link.equipment_id, "write_done", bridge.actor, now,
                          f"Записано и проверено: {row.summary}", command_id=str(row.id))
                 _run_verified(uow, row, bridge.actor, now)
             else:
                 _journal(uow, link.equipment_id, "write_failed", bridge.actor, now,
-                         f"Не записано: {row.summary} — {row.error}", command_id=str(row.id))
+                         (f"Результат поправки неизвестен — проверьте станок: {row.summary} — {row.error}"
+                          if row.status == "unknown" else f"Не записано: {row.summary} — {row.error}"),
+                         command_id=str(row.id))
         uow.commit()
         return {"status": row.status, "error": row.error}
 

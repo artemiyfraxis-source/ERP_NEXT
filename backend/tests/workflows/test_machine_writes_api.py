@@ -152,7 +152,7 @@ def test_erp_the_runner_and_mbd_write_exactly_the_same_registers_and_bits():
     assert rules.OB019_WRITTEN_WORDS | {address for address, _bit in rules.OB019_WRITTEN_BITS} == {
         address for field in rules.OB019_FIELDS.values() for address in rules.field_words(field)}
     assert _runner_writable() == rules.OB019_WRITTEN_WORDS
-    assert _mbd_writable() == rules.OB019_WRITTEN_WORDS
+    assert _mbd_writable() == rules.OB019_WRITTEN_WORDS | {658, 659}  # dedicated measured-length command only
     assert rules.OB019_WRITTEN_BITS == {(132, 0), (400, 0), (604, 0), (422, 0), (434, 0), (435, 0), (436, 0)}
     assert _bits("ob019-writer.ps1", "$script:WritableBits") == rules.OB019_WRITTEN_BITS
     assert _bits("mbd.ps1", "$script:allowedBits") == rules.OB019_WRITTEN_BITS
@@ -438,15 +438,15 @@ def test_measured_correction_comes_from_the_live_value_not_the_nominal_and_needs
     texts = [text for kind, text in _events(sessions, ob019) if kind == "production.machine_offset_set"]
     assert ("Поправка станка «Зачистка начала»: 0,40 → 0,80 мм — станок режет не так, на станке 5,40, "
             "получилось 4,60 мм") in texts
-    # The length: D32 holds 325,00, the piece came out 326,50 → −1,50.
+    # Length uses the PLC command and requires an explicitly seen D32, never an ERP offset.
     length = _post(admin, CARD + "/correction", {"parameter": "length_mm", "case": "machine", "measured": "326,5"})
-    assert length.json()["offset"] == "-1,50" and length.json()["written"] == "325,00"
+    assert length.status_code == 422
     # An explicit offset still wins (manual entry); the bound of ±100 мм holds for the computed one too.
     manual = _post(admin, CARD + "/correction", {"parameter": "strip_front_mm", "case": "machine", "offset": "0,3",
                                                  "measured": "4,6"})
     assert manual.json()["offset"] == "0,30"
     far = _post(admin, CARD + "/correction", {"parameter": "length_mm", "case": "machine", "measured": "500"})
-    assert far.status_code == 422 and "100 мм" in far.json()["detail"]
+    assert far.status_code == 422
     for bad in ("4,605", "-1", "abc"):
         assert _post(admin, CARD + "/correction", {"parameter": "strip_front_mm", "case": "machine",
                                                    "measured": bad}).status_code == 422
@@ -522,6 +522,12 @@ def _set_offsets(admin, **offsets):
         assert _post(admin, CARD + "/correction", body).status_code == 200
 
 
+def _legacy_length_offset(sessions, equipment_id, now):
+    with sessions.begin() as session:
+        commands.set_offset(session, equipment_id=equipment_id, parameter="length_mm", offset=Decimal("0.5"),
+                            reason="Старая поправка", actor_name="Наладчик", now=now)
+
+
 def _rows(plan):
     return {row["key"]: (row["value"], row["offset"], row["source"]) for row in plan["rows"]}
 
@@ -530,13 +536,14 @@ def test_wire_plan_without_a_job_falls_back_to_the_reference_plus_the_offset(mac
     sessions, clock, admin, ob019, _ = machines_api
     _report(_bridge(admin))
     _wire_reference(sessions)
-    _set_offsets(admin, diameter_mm="-0,05", length_mm="0,5")
+    _set_offsets(admin, diameter_mm="-0,05")
+    _legacy_length_offset(sessions, ob019, clock.now)
     choices = admin.get(CARD + "/transfer").json()
     assert choices["wires"] == [{"label": "ПВАМ 0,35", "conductor_mm": "0,77", "has_recipe": False}]
     plan = admin.get(CARD + "/transfer", params={"wire": "ПВАМ 0,35 красный", "length_mm": "120"}).json()
     assert plan["group_id"] is None and plan["wire"] == "ПВАМ 0,35" and plan["length_mm"] == "120,00"
     rows = _rows(plan)
-    assert rows["length_mm"] == ("120,50", "0,50", "Задание")
+    assert rows["length_mm"] == ("120,00", "0,00", "Задание")
     assert rows["diameter_mm"] == ("0,87", "-0,05", "Ø жилы + 0,15")
     assert rows["strip_front_mm"][0] is None and rows["knife_back_mm"][0] is None
     assert plan["blocking"] == ["Зачистка начала", "Зачистка конца"]
@@ -548,7 +555,8 @@ def test_a_recipe_value_is_final_and_the_offset_is_not_counted_twice(machines_ap
     sessions, clock, admin, ob019, _ = machines_api
     _report(_bridge(admin))
     _wire_reference(sessions)
-    _set_offsets(admin, strip_front_mm="0,4", diameter_mm="-0,05", knife_back_mm="0,02", length_mm="0,5")
+    _set_offsets(admin, strip_front_mm="0,4", diameter_mm="-0,05", knife_back_mm="0,02")
+    _legacy_length_offset(sessions, ob019, clock.now)
     # A job with no recipe yet: the job's diameter is the fallback + the offset.
     group_id = _job(sessions)
     rows = _rows(admin.get(CARD + "/transfer", params={"group_id": str(group_id), "length_mm": "325"}).json())
@@ -562,10 +570,10 @@ def test_a_recipe_value_is_final_and_the_offset_is_not_counted_twice(machines_ap
     assert rows["pull_back_mm"] == ("6,50", None, "Рецепт, версия 1")
     assert rows["diameter_mm"] == ("0,80", None, "Рецепт, версия 1")
     assert rows["knife_back_mm"] == ("0,10", None, "Рецепт, версия 1")
-    assert rows["length_mm"] == ("120,50", "0,50", "Задание")
+    assert rows["length_mm"] == ("120,00", "0,00", "Задание")
     # The ETK job: length and strip = ETK + offset; diameter and knife back-off = the recipe, no offset on top.
     rows = _rows(admin.get(CARD + "/transfer", params={"group_id": str(group_id), "length_mm": "325"}).json())
-    assert rows["strip_front_mm"] == ("5,40", "0,40", "ЭТК") and rows["length_mm"] == ("325,50", "0,50", "Задание")
+    assert rows["strip_front_mm"] == ("5,40", "0,40", "ЭТК") and rows["length_mm"] == ("325,00", "0,00", "Задание")
     assert rows["diameter_mm"] == ("0,80", None, "Рецепт, версия 1")
     assert rows["knife_back_mm"] == ("0,10", None, "Рецепт, версия 1")
 

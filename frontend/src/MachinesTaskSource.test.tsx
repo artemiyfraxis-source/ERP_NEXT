@@ -7,8 +7,8 @@ import { MachinesPage } from "./MachinesPage";
 import type { ReactNode } from "react";
 
 // These tests cover the route boundary; each real card's source selection has its own suite.
-vi.mock("./Ob019Card", () => ({ Ob019Card: ({ incoming, actions, close }: { incoming?: MachineTaskContext; actions?: ReactNode; close: () => void }) =>
-  <div role="dialog" aria-label="Живая карточка"><span>{incoming?.action.card_kind}</span><span>{JSON.stringify(incoming)}</span>{actions}<button onClick={close}>Закрыть карточку</button></div> }));
+vi.mock("./Ob019Card", () => ({ Ob019Card: ({ incoming, actions, close, openJournal }: { incoming?: MachineTaskContext; actions?: ReactNode; close: () => void; openJournal: () => void }) =>
+  <div role="dialog" aria-label="Живая карточка"><span>{incoming?.action.card_kind}</span><span>{JSON.stringify(incoming)}</span>{actions}<button onClick={openJournal}>Журнал</button><button onClick={close}>Закрыть карточку</button></div> }));
 vi.mock("./MarkingMachineCard", () => ({ MarkingMachineCard: ({ incoming, openJournal }: { incoming?: MachineTaskContext; openJournal: () => void }) =>
   <div role="dialog" aria-label="Карточка маркировки">{JSON.stringify(incoming)}<button onClick={openJournal}>Журнал</button></div> }));
 vi.mock("./MachineWorkCard", () => ({ MachineWorkCard: ({ incoming, openJournal }: { incoming?: MachineTaskContext; openJournal: () => void }) =>

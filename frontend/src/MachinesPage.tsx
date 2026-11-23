@@ -333,9 +333,8 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
     {/* Карточка по признакам строки, без пересечений: живая ОБ.019 → станок маркировки → анализатор цепей → принтер или МФУ склада → паспорт. */}
     {opened?.card && opened.equipment_id
       ? <Ob019Card key={`${opened.equipment_id}:${route}`} incoming={incoming ?? undefined} equipmentId={opened.equipment_id} title={[titleOf(opened), opened.article].filter(Boolean).join(" · ")}
-        close={closeMachine}
+        close={closeMachine} openJournal={() => setJournalOf(opened)}
         actions={<>
-          <button type="button" className="secondary small" onClick={() => setJournalOf(opened)}>Журнал</button>
           <button type="button" className="secondary small machine-manual" onClick={() => setSetupOf(opened)}>
             Наладка{opened.pending_setup ? " · ждёт" : ""}</button>
           <button type="button" className="secondary small" onClick={() => void openManual(opened)}>Ручная работа</button>

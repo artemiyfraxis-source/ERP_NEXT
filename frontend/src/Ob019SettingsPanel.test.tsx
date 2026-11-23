@@ -71,7 +71,13 @@ function server({ control = CONTROL, plan = PLAN, wirePlan = WIRE_PLAN, refuse =
     if (init?.method === "POST") {
       const body = JSON.parse(String(init.body));
       posts.push({ url, body });
-      if (url.endsWith("/correction")) return json({ offset: "5,00", etk: [], written: "325,00", measured: "320,00" });
+      if (url.endsWith("/correction")) {
+        const command: MachineCommand = { id: "correction-1", status: "queued", status_text: "Ждёт агента станка", tone: "info",
+          purpose: "settings", summary: "Поправка длины", fields: [], error: "", created_by: "Слава",
+          created_at: "2026-11-23T10:00:00+03:00", finished_at: null };
+        commands.unshift(command);
+        return json({ offset: null, etk: [], written: "325,00", measured: "320,00", command });
+      }
       if (url.endsWith("/versions")) return json({ recipe_id: "r1", version: 3, title: "ПВАМ 0,35", created_at: "2026-11-19T14:05:00+01:00" });
       if (refuse) return json({ detail: refuse }, 409);
       if (refuseTransfer && url.endsWith("/run")) return json({ detail: refuseTransfer }, 409);
@@ -271,9 +277,9 @@ it("says where each planned value comes from", () => {
   expect(sourceText(row("ЭТК", "5,40", "5,00", "0,40"), null, null)).toBe("ЭТК 5,00 + поправка +0,40");
 });
 
-it("shows what is on the machine now in the drawing; rare HMI pages stay under «Остальные параметры»", async () => {
+it("keeps the drawing on the card and opens all parameter groups in a separate window", async () => {
   server();
-  render(<Ob019SettingsPanel inventory="ОБ.019" />);
+  const { rerender } = render(<Ob019SettingsPanel inventory="ОБ.019" />);
   const drawing = screen.getByRole("region", { name: "Провод: длина и зачистка" });
   await waitFor(() => expect(within(drawing).getByLabelText("Длина провода")).toHaveValue("325,00"));
   expect(within(drawing).getByLabelText("Диаметр провода")).toHaveValue("0,80");
@@ -282,13 +288,14 @@ it("shows what is on the machine now in the drawing; rare HMI pages stay under �
   expect(screen.queryByText(/счётчик станка|цель/)).toBeNull();  // no raw counter / target under «Тираж»
   expect(screen.queryByText(/на станке —/)).toBeNull();
   expect(screen.queryByRole("button", { name: /Записать на станок/ })).toBeNull();
-  const toggle = screen.getByRole("button", { name: /Остальные параметры/ });
-  fireEvent.click(toggle);
-  // The rollers are in the command row; the exact pull-off is fine-tuned here, the drawing has its mode.
-  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Провод и зачистка", "Скорости"]);
+  expect(screen.queryByText(/Остальные параметры/)).toBeNull();
+  rerender(<Ob019SettingsPanel inventory="ОБ.019" toolsWindow="parameters" />);
+  expect(screen.getByRole("dialog", { name: "Все параметры" })).toBeInTheDocument();
+  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Задание", "Провод и зачистка", "Скорости"]);
+  fireEvent.click(screen.getByRole("tab", { name: "Провод и зачистка" }));
   expect(screen.getAllByRole("table")[0]).toHaveTextContent("Стягивание начала");
   fireEvent.click(screen.getByRole("tab", { name: "Скорости" }));
-  expect(screen.queryByLabelText("Подъём подающих роликов")).toBeNull();
+  expect(screen.getByLabelText("Подъём подающих роликов")).toBeInTheDocument();
   expect(screen.getByText("только просмотр")).toBeInTheDocument();
 });
 
@@ -471,7 +478,7 @@ it("after a run of own edits saves the machine values as the wire's setting, onc
   expect(await screen.findByText(/Настройка провода ПВАМ 0,35 сохранена \d\d:\d\d/)).toBeInTheDocument();
 }, 15000);
 
-it("after a correction asks the plan again and writes the corrected length to the machine", async () => {
+it("queues machine length correction and never writes a recalculated D32 even if a stale plan has an ERP offset", async () => {
   const { posts, state } = server();
   render(<Ob019SettingsPanel inventory="ОБ.019" />);
   await pickJob();
@@ -479,10 +486,11 @@ it("after a correction asks the plan again and writes the corrected length to th
   state.plan = { ...PLAN, rows: PLAN.rows.map((row) => row.key === "length_mm" ? { ...row, offset: "5,00", value: "330,00" } : row) };
   fireEvent.change(await screen.findByLabelText("Получилось, мм"), { target: { value: "320" } });
   fireEvent.click(screen.getByRole("button", { name: "Записать поправку" }));
-  await waitFor(() => expect(posts.map((post) => post.url.split("/").pop())).toEqual(["run", "correction", "write"]));
+  await waitFor(() => expect(posts.map((post) => post.url.split("/").pop())).toEqual(["run", "correction"]));
   expect(posts[1].body).toEqual({ parameter: "length_mm", case: "machine", measured: "320", seen: "325,00" });
-  expect(posts[2].body).toEqual({ values: { length_mm: "330,00" }, confirm_state: 102 });
-  expect(await screen.findByText(/Длина провода 330,00 мм записывается на станок/)).toBeInTheDocument();
+  expect(await screen.findByText("Поправка длины: отправлено…")).toBeInTheDocument();
+  expect(screen.getByLabelText("Длина провода")).toHaveValue("325,00");
+  expect(posts.filter((post) => post.url.endsWith("/write"))).toHaveLength(0);
 });
 
 it("derives the pull-off mode from the machine values and gives the pull-off for a mode", () => {
@@ -819,19 +827,18 @@ it("a «Тираж» typed while the job waits for a missing size goes with the 
   expect((posts[0].body.values as Record<string, string>).total_set).toBe("20");
 });
 
-it("«Остальные параметры» without fresh machine data is one line, not a table of dashes", async () => {
+it("the parameters window without fresh data shows one line", async () => {
   server();
-  render(<Ob019SettingsPanel inventory="ОБ.019" old />);
-  fireEvent.click(await screen.findByRole("button", { name: /Остальные параметры/ }));
-  expect(screen.getByText(NO_DATA)).toBeInTheDocument();
+  render(<Ob019SettingsPanel inventory="ОБ.019" old toolsWindow="parameters" />);
+  expect(await screen.findByText(NO_DATA)).toBeInTheDocument();
   expect(screen.queryByRole("table")).toBeNull();
   expect(screen.queryByRole("tab")).toBeNull();
 });
 
 it("every writable parameter there has «Задать» next to «На станке»; an edit is written like the drawing", async () => {
   const { posts } = server();
-  render(<Ob019SettingsPanel inventory="ОБ.019" />);
-  fireEvent.click(await screen.findByRole("button", { name: /Остальные параметры/ }));
+  render(<Ob019SettingsPanel inventory="ОБ.019" toolsWindow="parameters" />);
+  fireEvent.click(await screen.findByRole("tab", { name: "Провод и зачистка" }));
   const table = await screen.findByRole("table", { name: "Провод и зачистка" });
   expect(within(table).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Параметр", "Задать", "На станке", ""]);
   const row = within(table).getByText("Стягивание начала").closest("tr")!;
@@ -846,10 +853,9 @@ it("every writable parameter there has «Задать» next to «На стан�
   expect(within(screen.getByRole("table", { name: "Скорости" })).getByText("только просмотр")).toBeInTheDocument();
 });
 
-it("with the operator panel open on the PC «Остальные параметры» says so instead of «нет связи»", async () => {
+it("the parameters window names the open operator panel", async () => {
   server();
-  render(<Ob019SettingsPanel inventory="ОБ.019" old pult />);
-  fireEvent.click(await screen.findByRole("button", { name: /Остальные параметры/ }));
-  expect(screen.getByText(PULT_NO_DATA)).toBeInTheDocument();
+  render(<Ob019SettingsPanel inventory="ОБ.019" old pult toolsWindow="parameters" />);
+  expect(await screen.findByText(PULT_NO_DATA)).toBeInTheDocument();
   expect(screen.queryByText(NO_DATA)).toBeNull();
 });
