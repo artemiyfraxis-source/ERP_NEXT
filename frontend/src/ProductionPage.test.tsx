@@ -2,7 +2,8 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, expect, it, vi } from "vitest";
 import { ProductionPage, clock, etkRevisionNotice, goodPrefill, workedSeconds } from "./ProductionPage";
 import { forgetOpenProject, removalChanges } from "./MasterBoard";
-import type { Principal, ProductionOperation, ProductionTask } from "./api";
+import type { Principal, ProductionOperation, ProductionTask, TaskMachineAction } from "./api";
+import { machineLink } from "./ProjectEtk";
 
 const principal: Principal = {
   user: {
@@ -53,6 +54,97 @@ function json(body: unknown) {
 }
 
 afterEach(() => { vi.restoreAllMocks(); forgetOpenProject(); });
+
+const connectedAction: TaskMachineAction = {
+  etk_position: 2, equipment_id: "equipment-uuid", inventory_number: "ОБ.019", display_name: "Резка кабеля", model: "Станок резки",
+  card_kind: "ob019", connectivity: { state: "ok", fresh: true, last_seen: null },
+  open_permitted: true, load_permitted: true, can_open: true, can_load: true, blocker: null,
+  source: { kind: "generic", task_id: task.id, operation_id: task.operations[0].id, etk_position: 2, queue_kind: "machine" },
+};
+
+it("exports the exact equipment URL contract and adds load only explicitly", () => {
+  const action = { ...connectedAction, task_id: "task + /", operation_id: "operation & =" };
+  const open = new URL(machineLink(action), "https://erp.test");
+  expect(Object.fromEntries(open.searchParams)).toEqual({ section: "machines", equipment: "equipment-uuid", task: action.task_id,
+    operation: action.operation_id, etk_position: "2" });
+  expect(new URL(machineLink(action, true), open).searchParams.get("load")).toBe("1");
+});
+
+it("discovers machines only after opening the instruction, maps duplicate codes by position and shows blockers inline", async () => {
+  const seen: { path: string; method: string }[] = [];
+  const operation = { ...task.operations[0], etk_ops: [{ position: 2, code: "SAME" }, { position: 1, code: "SAME" }] };
+  const card = { id: "issued-card", version: 1, revision: 1, status: "Выдана", project: task.project, item_index: "КБ1",
+    document: { operations: [{ position: 1, code: "SAME", title: "Проверить кабель" }, { position: 2, code: "SAME", title: "Нарезать кабель" }] } };
+  const actions = { task_id: task.id, operation_id: operation.id, task_version: task.version, actions: [connectedAction,
+    { ...connectedAction, etk_position: 1, equipment_id: "offline-unit", inventory_number: "ОБ.099", card_kind: "ob099", can_load: false,
+      connectivity: { state: "offline", fresh: false, last_seen: null }, blocker: "Станок не на связи" }] };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input); seen.push({ path, method: init?.method || "GET" });
+    if (path === "/api/production/my") return json({ tasks: [{ ...task, operations: [operation] }] });
+    if (path === "/api/production/my/execution") return json({ session: null, boxes: [] });
+    if (path.endsWith("/etk")) return json({ card, focus: { positions: [2, 1] } });
+    if (path.endsWith("/machine-actions")) return json(actions);
+    if (path.endsWith("/etk/units")) return json({ units: [] });
+    return json({ items: [], boxes: [] });
+  });
+  render(<ProductionPage principal={fitter} mine />);
+  await screen.findByRole("button", { name: "Инструкция" });
+  expect(seen.some(({ path }) => path.includes("/etk"))).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
+  const table = await within(await screen.findByRole("region", { name: "Список операций задания" })).findByRole("table");
+  await within(table).findByText("Станок не на связи");
+  expect(within(table).getAllByRole("columnheader").map((cell) => cell.textContent?.trim())).toEqual([
+    "№", "Операция", "Станок / модель", "Конкретный станок", "Связь", "Действие",
+  ]);
+  expect(within(table).getAllByRole("row").slice(1).map((row) => within(row).getAllByRole("cell")[0].textContent)).toEqual(["2", "1"]);
+  expect(within(table).getAllByRole("link", { name: "Открыть станок" })).toHaveLength(2);
+  expect(within(table).getAllByRole("link", { name: "Загрузить в станок" })).toHaveLength(1);
+  const load = new URL(within(table).getByRole("link", { name: "Загрузить в станок" }).getAttribute("href")!, "https://erp.test");
+  expect(Object.fromEntries(load.searchParams)).toEqual({ section: "machines", equipment: "equipment-uuid", task: task.id,
+    operation: operation.id, etk_position: "2", load: "1" });
+  fireEvent.click(within(table).getByRole("button", { name: "Проверить кабель" }));
+  expect(screen.getByRole("heading", { name: /Проверить кабель/ })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Править операцию" })).toBeNull();
+  expect(seen.filter(({ path }) => path.endsWith("/machine-actions"))).toHaveLength(1);
+  expect(seen.every(({ method }) => method === "GET")).toBe(true);
+});
+
+it("keeps the instruction readable when machine discovery fails", async () => {
+  fitterFetch(task, (path) => {
+    if (path.endsWith("/machine-actions")) return new Response(JSON.stringify({ detail: "Связь с оборудованием недоступна" }), { status: 503 });
+    if (path.endsWith("/etk")) return json({ card: { id: "issued", revision: 1, document: { operations: [{ position: 1, title: "Разделка кабеля" }] } }, focus: { position: 1 } });
+    return null;
+  });
+  render(<ProductionPage principal={fitter} mine />);
+  fireEvent.click(await screen.findByRole("button", { name: "ЭТК" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Связь с оборудованием недоступна");
+  expect(screen.getByRole("heading", { name: /Разделка кабеля/ })).toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: "Загрузить в станок" })).toBeNull();
+});
+
+it.each([["port_busy", "Порт занят"], ["no_plc", "Нет связи с контроллером"], ["no_service", "Служба связи недоступна"]])(
+  "shows %s and suppresses loading while viewing another employee read-only", async (state, label) => {
+    const viewer: Principal = { ...fitter, permissions: { myops: "edit", production: "view" } };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/production/operators") return json({ operators: [{ id: "employee", name: "Петров", site: "ЦАР" }] });
+      if (path.includes("/my/execution")) return json({ session: null, boxes: [] });
+      if (path.endsWith("/machine-actions")) return json({ task_id: task.id, operation_id: task.operations[0].id, actions: [
+        { ...connectedAction, etk_position: 1, connectivity: { state, fresh: true, last_seen: null } },
+      ] });
+      if (path.endsWith("/etk")) return json({ card: { id: "issued", revision: 1, document: { operations: [{ position: 1, title: "Разделка кабеля" }] } }, focus: { position: 1 } });
+      if (path.startsWith("/api/production/my") && !path.includes("/tasks/")) return json({ tasks: [task], can_act: false });
+      return json({ items: [], units: [] });
+    });
+    render(<ProductionPage principal={viewer} mine />);
+    fireEvent.change(await screen.findByRole("combobox", { name: "Сотрудник" }), { target: { value: "employee" } });
+    await screen.findByText("Вид сотрудника Петров — только просмотр");
+    fireEvent.click(screen.getByRole("button", { name: "ЭТК" }));
+    expect(await screen.findByText(label)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Открыть станок" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Загрузить в станок" })).toBeNull();
+  },
+);
 
 async function openBoardProject(project: string) {
   fireEvent.click(await screen.findByRole("button", { name: new RegExp(`^${project.replace(/\./g, "\\.")}`) }));
@@ -468,7 +560,7 @@ it("groups the operator queue by plan day and hides start for a completed operat
   expect(screen.getByText(/^Завтра · /).closest("details")).toBeNull();
 });
 
-it("shows a cut in «Задания» only in the cutting queue, not as a second card", async () => {
+it("shows each cutting assignment once as a card", async () => {
   const operatorPrincipal: Principal = {
     user: { id: "10000000-0000-0000-0000-000000000002", email: "operator@example.test", name: "Оператор", department: "Производство" },
     roles: ["operator"], access_level: "operator", permissions: { myops: "edit" },
@@ -489,8 +581,9 @@ it("shows a cut in «Задания» only in the cutting queue, not as a second
 
   render(<ProductionPage principal={operatorPrincipal} mine />);
 
-  await screen.findByText("Заправьте RG316");
-  await waitFor(() => expect(screen.getAllByRole("button", { name: "Начать" })).toHaveLength(1));
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "Начать" })).toHaveLength(2));
+  expect(document.querySelectorAll(".mo-card")).toHaveLength(2);
+  expect(document.querySelector(".cq")).toBeNull();
   expect(screen.queryByText("Операции вам пока не назначены", { exact: false })).toBeNull();
 });
 
@@ -1586,7 +1679,7 @@ function cutListTasks(): ProductionTask[] {
 }
 
 function mockCutQueue(tasks: ProductionTask[], session: unknown = null) {
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/production/my") return json({ tasks });
     if (path === "/api/production/my/execution") return json({ session, boxes: [] });
@@ -1596,52 +1689,24 @@ function mockCutQueue(tasks: ProductionTask[], session: unknown = null) {
   });
 }
 
-it("groups three PF assignments into one cutting list and restores their cards", async () => {
-  mockCutQueue(cutListTasks());
+it("shows every PF assignment as its own card without preloading instructions or machine actions", async () => {
+  const fetch = mockCutQueue(cutListTasks());
   render(<ProductionPage principal={pfPrincipal} mine />);
-  const group = await screen.findByRole("region", { name: "Резка списком · 708К. · ПФ-1 Заготовки · 3 КБ" });
-  const rows = within(group).getAllByRole("row").filter((row) => within(row).queryAllByRole("cell").length > 0);
-  expect(rows).toHaveLength(3);
-  expect(within(group).getAllByRole("button", { name: "Начать" })).toHaveLength(3);
-  expect(within(group).getAllByRole("button", { name: "Инструкция" })).toHaveLength(3);
-  expect(within(rows[0]).getByText("КБ1")).toBeInTheDocument();
-  fireEvent.click(within(rows[1]).getByRole("button", { name: "Начать" }));
-  expect(await within(rows[1]).findByRole("button", { name: "Начать работу" })).toBeInTheDocument();
-  expect(within(rows[0]).queryByRole("button", { name: "Начать работу" })).not.toBeInTheDocument();
-  fireEvent.click(within(group).getByRole("button", { name: "карточками" }));
-  expect(within(group).queryByRole("table")).not.toBeInTheDocument();
-  expect(within(group).getAllByText("ПФ-1 · Заготовки")).toHaveLength(3);
-  fireEvent.click(within(group).getByRole("button", { name: "списком" }));
-  expect(within(group).getByRole("table")).toBeInTheDocument();
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "Инструкция" })).toHaveLength(3));
+  expect(screen.getAllByRole("button", { name: "Начать" })).toHaveLength(3);
+  expect(document.querySelectorAll(".mo-card")).toHaveLength(3);
+  expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  expect(fetch.mock.calls.some(([url]) => String(url).includes("/etk"))).toBe(false);
 });
 
-it("separates cutting lists by project, PF position, stage and planned day", async () => {
-  const tasks = cutListTasks();
-  const others = [
-    { ...tasks[0], id: "other-project", project: "709К.", item: "709К.КБ1" },
-    { ...tasks[0], id: "other-position", operations: [{ ...tasks[0].operations[0], position: 2 }] },
-    { ...tasks[0], id: "other-stage", operations: [{ ...tasks[0].operations[0], stage: "Сборка" }] },
-    { ...tasks[0], id: "other-day", operations: [{ ...tasks[0].operations[0], planned_start: "2026-09-23T09:00:00+03:00" }] },
-  ];
-  mockCutQueue([...tasks, ...others]);
-  render(<ProductionPage principal={pfPrincipal} mine />);
-  const group = await screen.findByRole("region", { name: "Резка списком · 708К. · ПФ-1 Заготовки · 3 КБ" });
-  expect(within(group).getAllByRole("row").filter((row) => within(row).queryAllByRole("cell").length > 0)).toHaveLength(3);
-  expect(screen.getAllByRole("region", { name: /Резка списком/ })).toHaveLength(1);
-  expect(screen.getByText("709К. · КБ1")).toBeInTheDocument();
-});
-
-it("keeps the running KB timer and disables starting other KB rows", async () => {
+it("keeps the running PF card and prevents starting another assignment", async () => {
   const tasks = cutListTasks();
   mockCutQueue(tasks, { id: "cut-session", task_id: tasks[1].id, operation_id: tasks[1].operations[0].id,
     operator_id: pfPrincipal.user.id, status: "В работе", started_at: new Date().toISOString(), pause_seconds: 0, pause_started_at: null, input_limit: null });
   render(<ProductionPage principal={pfPrincipal} mine />);
-  const group = await screen.findByRole("region", { name: /Резка списком/ });
-  const running = within(group).getAllByRole("row").find((row) => within(row).queryByRole("button", { name: "Сдать…" }));
-  expect(running).toBeDefined();
-  expect(within(running!).getByText("КБ2")).toBeInTheDocument();
-  expect(within(running!).getByRole("status")).toHaveTextContent(/в работе с.*0:00/);
-  for (const button of within(group).getAllByRole("button", { name: "Начать" })) expect(button).toBeDisabled();
+  await screen.findByRole("button", { name: "Сдать…" });
+  expect(document.querySelectorAll(".mo-card")).toHaveLength(3);
+  for (const button of screen.getAllByRole("button", { name: "Начать" })) expect(button).toBeDisabled();
 });
 
 it("hides the norm and the fact/norm from the operator, but keeps the plan window", async () => {
@@ -1652,64 +1717,6 @@ it("hides the norm and the fact/norm from the operator, but keeps the plan windo
   expect(screen.getAllByText(/^план /).length).toBeGreaterThan(0);
   expect(screen.queryByText(/норма \d/)).not.toBeInTheDocument();
   expect(screen.queryByText(/факт .* норма/)).not.toBeInTheDocument();
-});
-
-it("puts the cutting queue above the cards and hides rows of any machine, whatever the picker shows", async () => {
-  const operatorPrincipal: Principal = {
-    user: { id: "10000000-0000-0000-0000-000000000002", email: "operator@example.test", name: "Оператор", department: "Производство" },
-    roles: ["operator"], access_level: "operator", permissions: { myops: "edit" },
-  };
-  const cut: ProductionTask = { ...task, id: "70000000-0000-0000-0000-0000000000d1", number: "ПЗ-0201", operations: [{ ...task.operations[0], id: "71000000-0000-0000-0000-0000000000d1", state: "не начата" }] };
-  const other: ProductionTask = { ...task, id: "70000000-0000-0000-0000-0000000000d2", number: "ПЗ-0202", operations: [{ ...task.operations[0], id: "71000000-0000-0000-0000-0000000000d2", state: "не начата" }] };
-  const row = (op: ProductionTask, text: string) => ({ key: op.id, task_id: op.id, operation_id: op.operations[0].id, task_number: op.number, project: "708К.", item: "КБ1", group_number: null,
-    wire: "RG316", wire_name: "RG316", length_mm: "100", planned: "10", done: "0", left: "10", strip_a: null, strip_a_mode: null, strip_b: null,
-    strip_b_mode: null, laser_mark: null, marking_mode: null, operator_names: [], warnings: [], blocked: null, setup_change: true, setup_text: text });
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    const path = String(input);
-    if (path === "/api/production/my") return json({ tasks: [cut, other] });
-    if (path === "/api/production/my/execution") return json({ session: null, boxes: [] });
-    if (path.includes("/cutting-queue/machines")) return json({ machines: [
-      { machine_id: "all", machine_name: "Все станки", rows: 2, left: "20", projects: 1 },
-      { machine_id: "ОБ.2", machine_name: "Станок 2", rows: 1, left: "10", projects: 1 }] });
-    if (path.includes("machine_id=all")) return json({ machine_id: "all", version: "v", rows: [row(cut, "Строка станка 1"), row(other, "Строка станка 2")] });
-    if (path.includes("/cutting-queue")) return json({ machine_id: "ОБ.2", version: "v", rows: [row(other, "Строка станка 2")] });
-    throw new Error(`Unexpected request: ${path}`);
-  });
-  const { container } = render(<ProductionPage principal={operatorPrincipal} mine />);
-  await screen.findByText("Строка станка 1");
-  expect(screen.getByRole("option", { name: /Все станки/ })).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Станок"), { target: { value: "ОБ.2" } });
-  await waitFor(() => expect(screen.queryByText("Строка станка 1")).toBeNull());
-  expect(screen.queryByRole("button", { name: "Начать" })).toBeNull();
-  expect(container.querySelector(".cq")!.compareDocumentPosition(container.querySelector(".my-queue")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-});
-
-it("draws no task cards until the first cutting-queue load settles, then hides only the queue rows", async () => {
-  const operatorPrincipal: Principal = {
-    user: { id: "10000000-0000-0000-0000-000000000002", email: "operator@example.test", name: "Оператор", department: "Производство" },
-    roles: ["operator"], access_level: "operator", permissions: { myops: "edit" },
-  };
-  const cut: ProductionTask = { ...task, id: "70000000-0000-0000-0000-0000000000e1", number: "ПЗ-0301", operations: [{ ...task.operations[0], id: "71000000-0000-0000-0000-0000000000e1", state: "не начата", mates: [] }] };
-  const other: ProductionTask = { ...task, id: "70000000-0000-0000-0000-0000000000e2", number: "ПЗ-0302", operations: [{ ...task.operations[0], id: "71000000-0000-0000-0000-0000000000e2", state: "не начата", mates: [] }] };
-  const row = { key: "k", task_id: cut.id, operation_id: cut.operations[0].id, task_number: "ПЗ-0301", project: "708К.", item: "КБ1", group_number: null,
-    wire: "RG316", wire_name: "RG316", length_mm: "100", planned: "10", done: "0", left: "10", strip_a: null, strip_a_mode: null, strip_b: null,
-    strip_b_mode: null, laser_mark: null, marking_mode: null, operator_names: [], warnings: [], blocked: null, setup_change: true, setup_text: "Заправьте RG316" };
-  let release: () => void = () => undefined;
-  const gate = new Promise<void>((resolve) => { release = resolve; });
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-    const path = String(input);
-    if (path === "/api/production/my") return json({ tasks: [cut, other] });
-    if (path === "/api/production/my/execution") return json({ session: null, boxes: [] });
-    if (path.includes("/cutting-queue/machines")) return json({ machines: [{ machine_id: "all", machine_name: "Все станки", rows: 1, left: "10", projects: 1 }] });
-    if (path.includes("machine_id=all")) { await gate; return json({ machine_id: "all", version: "v", rows: [row] }); }
-    return json({ machine_id: "all", version: "v", rows: [row] });
-  });
-  render(<ProductionPage principal={operatorPrincipal} mine />);
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  expect(screen.queryByRole("button", { name: "Начать" })).toBeNull();
-  release();
-  await screen.findByText("Заправьте RG316");
-  await waitFor(() => expect(screen.getAllByRole("button", { name: "Начать" })).toHaveLength(1));
 });
 
 function queueFixture() {
@@ -1726,45 +1733,37 @@ function queueFixture() {
   return { cut, other, row, principal };
 }
 
-it.each([403, 500])("shows both task cards and the error banner when the cutting queue answers %s", async (status) => {
+it("renders assigned cards without consulting the cutting queue or machine actions", async () => {
   const { cut, other, principal: operatorPrincipal } = queueFixture();
-  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path === "/api/production/my") return json({ tasks: [cut, other] });
     if (path === "/api/production/my/execution") return json({ session: null, boxes: [] });
-    if (path.includes("/cutting-queue")) return new Response(JSON.stringify({ detail: "Нет доступа" }), { status, headers: { "Content-Type": "application/json" } });
     throw new Error(`Unexpected request: ${path}`);
   });
   render(<ProductionPage principal={operatorPrincipal} mine />);
   await waitFor(() => expect(screen.getAllByRole("button", { name: "Начать" })).toHaveLength(2));
-  expect(screen.getByRole("alert")).toBeInTheDocument();
+  expect(document.querySelectorAll(".mo-card")).toHaveLength(2);
+  expect(fetch.mock.calls.some(([url]) => /cutting-queue|machine-actions|\/etk/.test(String(url)))).toBe(false);
 });
 
-it("waits for the queue again after returning from an employee's view", async () => {
-  const { cut, other, row, principal: base } = queueFixture();
+it("restores own assignment cards after viewing another employee", async () => {
+  const { cut, other, principal: base } = queueFixture();
   const fitterId = "10000000-0000-0000-0000-000000000009";
   const master: Principal = { ...base, roles: ["foreman"], access_level: "foreman", permissions: { production: "view", myops: "edit" } };
-  let allCalls = 0;
-  let release: () => void = () => undefined;
-  const gate = new Promise<void>((resolve) => { release = resolve; });
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     if (path.startsWith("/api/production/my/execution")) return json({ session: null, boxes: [] });
     if (path.startsWith("/api/production/my")) return json({ tasks: path.includes("operator_id") ? [other] : [cut, other] });
     if (path === "/api/production/operators") return json({ viewer_site: "ЦАР", operators: [{ id: fitterId, name: "Монтажник", site: "ЦАР" }] });
-    if (path.includes("/cutting-queue/machines")) return json({ machines: [{ machine_id: "all", machine_name: "Все станки", rows: 1, left: "10", projects: 1 }] });
-    if (path.includes("/cutting-queue")) { allCalls += 1; if (allCalls > 2) await gate; return json({ machine_id: "all", version: "v", rows: [row] }); }
     throw new Error(`Unexpected request: ${path}`);
   });
   render(<ProductionPage principal={master} mine />);
-  await screen.findByText("Заправьте RG316");
-  await waitFor(() => expect(screen.getAllByRole("button", { name: "Начать" })).toHaveLength(1));
-  fireEvent.change(await screen.findByRole("combobox", { name: "Сотрудник" }), { target: { value: fitterId } });
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "Начать" })).toHaveLength(2));
+  fireEvent.change(screen.getByRole("combobox", { name: "Сотрудник" }), { target: { value: fitterId } });
   await screen.findByText("Вид сотрудника Монтажник — только просмотр");
-  fireEvent.click(screen.getByRole("button", { name: "Вернуться к моим заданиям" }));
-  await waitFor(() => expect(screen.queryByText("Вид сотрудника Монтажник — только просмотр")).toBeNull());
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await waitFor(() => expect(document.querySelectorAll(".mo-card")).toHaveLength(1));
   expect(screen.queryByRole("button", { name: "Начать" })).toBeNull();
-  release();
-  await waitFor(() => expect(screen.getAllByRole("button", { name: "Начать" })).toHaveLength(1));
+  fireEvent.click(screen.getByRole("button", { name: "Вернуться к моим заданиям" }));
+  await waitFor(() => expect(screen.getAllByRole("button", { name: "Начать" })).toHaveLength(2));
 });
