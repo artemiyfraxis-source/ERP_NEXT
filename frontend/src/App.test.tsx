@@ -4,6 +4,7 @@ import { App } from "./App";
 import { AUTH_REQUIRED_EVENT, type Principal } from "./api";
 import { forgetPersonalViews, loadPersonalViews, SAVE_DELAY, savePersonalView } from "./personalViews";
 import { forgetScanDevice, loadScanDevice } from "./ScanAgent";
+import { openPlace } from "./navigation";
 
 const principal: Principal = {
   user: {
@@ -34,6 +35,98 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   window.history.replaceState({}, "", "/");
+});
+
+const journalGrants = [undefined, "view", "edit"] as const;
+it.each(journalGrants.flatMap(production => journalGrants.flatMap(myops => journalGrants.map(warehouse => ({ production, myops, warehouse })))))
+  ("replaces the authenticated legacy journal route for grants %j", async grants => {
+    const person = as("operator", Object.fromEntries(Object.entries(grants).filter(([, mode]) => mode)) as Principal["permissions"]);
+    const calls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+      const path = String(input); calls.push(path);
+      if (path === "/api/auth/me") return json(person);
+      if (path.includes("/manual-jobs?")) return json({ rows: [], can_edit: false, can_issue: false, can_decide: false, waiting_count: 0 });
+      if (path === "/api/production/machines") return json({ rows: [], now: "2026-11-23T10:00:00+03:00" });
+      return json({}, 404);
+    });
+    window.history.replaceState({}, "", "/?section=manualjobs&equipment_id=u19&date_from=2026-10-01&date_to=2026-10-31&waiting=false&q=Проба");
+    const replace = vi.spyOn(window.history, "replaceState");
+    const push = vi.spyOn(window.history, "pushState");
+    render(<App />);
+    const destination = grants.production || grants.myops ? "machines" : grants.warehouse ? "stock" : null;
+    if (!destination) {
+      expect(await screen.findByRole("alert")).toHaveTextContent("Журнал работ вам не открыт.");
+      expect(new URLSearchParams(window.location.search).get("section")).toBe("manualjobs");
+      expect(calls.some(path => path.includes("/manual-jobs"))).toBe(false);
+      expect(replace).not.toHaveBeenCalled();
+    } else {
+      await screen.findByRole("heading", { name: destination === "machines" ? "Оборудование" : "Материал работ" });
+      const params = new URLSearchParams(window.location.search);
+      expect(params.get("section")).toBe(destination);
+      expect(params.get("view")).toBe(destination === "machines" ? "journal" : "work-materials");
+      expect(params.get("equipment_id")).toBe("u19");
+      expect(params.get("date_from")).toBe("2026-10-01");
+      expect(params.get("date_to")).toBe("2026-10-31");
+      expect(params.get("waiting")).toBe("false");
+      expect(params.get("q")).toBe("Проба");
+      expect(replace).toHaveBeenCalled();
+    }
+    expect(push).not.toHaveBeenCalled();
+    expect(vi.mocked(globalThis.fetch).mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+    expect(screen.queryByRole("button", { name: "Ручная работа" })).not.toBeInTheDocument();
+  });
+
+it.each(["admin", "superadmin"])("replaces legacy journal links for full access %s", async level => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async input => String(input) === "/api/auth/me"
+    ? json(as(level, {})) : json({}, 404));
+  window.history.replaceState({}, "", "/?section=manualjobs");
+  render(<App />);
+  await screen.findByRole("heading", { name: "Оборудование" });
+  expect(new URLSearchParams(window.location.search).get("view")).toBe("journal");
+});
+
+it("waits for authentication before resolving a legacy journal link", async () => {
+  let authenticate!: (response: Response) => void;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async input => String(input) === "/api/auth/me"
+    ? new Promise<Response>(resolve => { authenticate = resolve; }) : json({}, 404));
+  window.history.replaceState({}, "", "/?section=manualjobs");
+  render(<App />);
+  expect(new URLSearchParams(window.location.search).get("section")).toBe("manualjobs");
+  await act(async () => authenticate(json(as("operator", { myops: "view" }))));
+  await screen.findByRole("heading", { name: "Оборудование" });
+  expect(new URLSearchParams(window.location.search).get("view")).toBe("journal");
+});
+
+it("resolves a legacy link reached through Back without pushing a new history entry", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async input => String(input) === "/api/auth/me"
+    ? json(as("operator", { warehouse: "view" }))
+    : String(input).includes("/manual-jobs?") ? json({ rows: [], can_edit: false }) : json({}, 404));
+  render(<App />);
+  await screen.findByText("Добрый день, Сотрудник");
+  window.history.replaceState({}, "", "/?section=manualjobs");
+  const push = vi.spyOn(window.history, "pushState");
+  fireEvent(window, new PopStateEvent("popstate"));
+  await screen.findByRole("heading", { name: "Материал работ" });
+  expect(new URLSearchParams(window.location.search).get("view")).toBe("work-materials");
+  expect(push).not.toHaveBeenCalled();
+});
+
+it("preserves exact equipment source parameters on reload and popstate, and clears them on menu navigation", async () => {
+  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+    if (String(input) === "/api/auth/me") return json(as("operator", { myops: "view" }));
+    if (String(input) === "/api/production/machines") return json({ rows: [], now: "2026-11-23T10:00:00+03:00" });
+    return json({}, 404);
+  });
+  window.history.replaceState({}, "", "/?section=machines&equipment_id=u19&task_id=t1&operation_id=o1&etk_position=2");
+  render(<App />);
+  await screen.findByRole("heading", { name: "Оборудование" });
+  expect(new URLSearchParams(window.location.search).get("etk_position")).toBe("2");
+  const source = { equipment_id: "u99", task_id: "t2", operation_id: "o2", etk_position: "7", group_id: "g2", member_id: "m2" };
+  act(() => openPlace("machines", source));
+  for (const [key, value] of Object.entries(source)) expect(new URLSearchParams(window.location.search).get(key)).toBe(value);
+  expect(fetch.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Главная" }));
+  for (const key of Object.keys(source)) expect(new URLSearchParams(window.location.search).has(key)).toBe(false);
 });
 
 it.each([404, 403, 503])("explains unavailable setup deep links (%s) without fetching task data", async (status) => {

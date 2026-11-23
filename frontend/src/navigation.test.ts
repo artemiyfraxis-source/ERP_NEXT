@@ -1,11 +1,29 @@
 import { expect, it } from "vitest";
 import { ACCESS_LEVEL_LABELS, accessLevelLabel, type AccessMode, type Principal } from "./api";
 import {
-  BLOCKS, MOVED_TABS, NAV, canAct, canSee, hasFullAccess, isViewOnly, procurementMenuTab, runsTheSystem, sectionOfTab,
+  BLOCKS, MOVED_TABS, NAV, canAct, canSee, hasFullAccess, isSection, isViewOnly, manualJobsDestination, procurementMenuTab, runsTheSystem, sectionOfTab,
   visibleBlocks, visibleNav,
 } from "./navigation";
 
 const user = { id: "1", email: "u@example.test", name: "Сотрудник", department: "КБ" };
+
+const journalGrants = [undefined, "view", "edit"] as const;
+it.each(journalGrants.flatMap(production => journalGrants.flatMap(myops => journalGrants.map(warehouse => ({ production, myops, warehouse })))))
+  ("resolves legacy journal grants %j and never restores its menu item", grants => {
+    const permissions = Object.fromEntries(Object.entries(grants).filter(([, mode]) => mode)) as Principal["permissions"];
+    const person = as("operator", permissions);
+    expect(manualJobsDestination(person)).toBe(grants.production || grants.myops ? "machines" : grants.warehouse ? "stock" : null);
+    expect(visibleNav(person).some(item => item.id === "manualjobs")).toBe(false);
+    expect(isSection("manualjobs")).toBe(true);
+  });
+
+it.each(["admin", "superadmin"])("opens the legacy equipment journal for full access %s", level => {
+  expect(manualJobsDestination(as(level, {}))).toBe("machines");
+});
+
+it("does not send a quality-only reader to the work journal", () => {
+  expect(manualJobsDestination(as("operator", { quality: "edit" }))).toBeNull();
+});
 
 it("shows equipment setup only after server discovery, without inferring it from a role or matrix", () => {
   for (const person of [as("admin", {}), as("operator", {}), as("buyer", { production: "edit" })]) {
@@ -44,7 +62,7 @@ const BUYER_MENU = ["Сегодня", "Заявки", "Запросы КП", "З
 const READER_MENU = BUYER_MENU.filter((label) => label !== "Сегодня");
 
 const EVERYTHING = {
-  "Производство": ["Проекты", "Ресурсное планирование", "Оборудование", "Ручная работа", "Задания", "ОТК"],
+  "Производство": ["Проекты", "Ресурсное планирование", "Оборудование", "Задания", "ОТК"],
   // «Мои заявки» and «Заявки» are no menu items (Витя's edits 2–3): the card and «Снабжение → Заявки» open them.
   "Снабжение": ["Оформить заявку", ...BUYER_MENU],
   "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства"],
@@ -85,7 +103,7 @@ const COMMERCIAL = {
 
 it("gives the operator the request form, own rows, own tasks and read-only stock", () => {
   expect(layout(as("operator", OPERATOR))).toEqual({
-    "Производство": ["Оборудование", "Ручная работа", "Задания"],
+    "Производство": ["Оборудование", "Задания"],
     "Снабжение": ["Оформить заявку"],
     "Склад": ["Приёмка", "Склад"],
     "Справочники": ["База данных"],
@@ -94,7 +112,7 @@ it("gives the operator the request form, own rows, own tasks and read-only stock
 
 it("gives the foreman the shop, the stock and the storekeeper's shipping, of the reference books only purchasing's", () => {
   expect(layout(as("foreman", FOREMAN))).toEqual({
-    "Производство": ["Ресурсное планирование", "Оборудование", "Ручная работа", "Задания", "ОТК"],
+    "Производство": ["Ресурсное планирование", "Оборудование", "Задания", "ОТК"],
     "Снабжение": ["Оформить заявку", ...READER_MENU],
     "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства"],
     "Менеджмент": ["Производственный план"],
@@ -106,7 +124,7 @@ it("gives the foreman the shop, the stock and the storekeeper's shipping, of the
 
 it("gives the technical lead projects, planning, the whole supply block and the reference book", () => {
   expect(layout(as("tech_lead", TECH_LEAD))).toEqual({
-    "Производство": ["Проекты", "Ресурсное планирование", "Оборудование", "Ручная работа", "ОТК"],
+    "Производство": ["Проекты", "Ресурсное планирование", "Оборудование", "ОТК"],
     "Снабжение": ["Оформить заявку", ...BUYER_MENU],
     "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства"],
     "Менеджмент": ["Производственный план"],
@@ -117,7 +135,7 @@ it("gives the technical lead projects, planning, the whole supply block and the 
 
 it("gives the commercial lead projects, the supply sheets and shipping for reading", () => {
   expect(layout(as("commercial", COMMERCIAL))).toEqual({
-    "Производство": ["Проекты", "Ресурсное планирование", "Оборудование", "Ручная работа"],
+    "Производство": ["Проекты", "Ресурсное планирование", "Оборудование"],
     "Снабжение": ["Оформить заявку", ...READER_MENU],
     "Склад": ["Склад", "Приёмка с производства"],
     "Менеджмент": ["Производственный план"],
@@ -140,9 +158,9 @@ it("opens «Задания» by myops alone, for any level", () => {
 });
 
 it("opens «Ресурсное планирование» and «Производственный план» by production, not by myops", () => {
-  expect(section(as("operator", { myops: "edit" }), "Производство")).toEqual(["Оборудование", "Ручная работа", "Задания"]);
+  expect(section(as("operator", { myops: "edit" }), "Производство")).toEqual(["Оборудование", "Задания"]);
   expect(section(as("operator", { myops: "edit" }), "Менеджмент")).toEqual([]);
-  expect(section(as("foreman", { production: "view" }), "Производство")).toEqual(["Ресурсное планирование", "Оборудование", "Ручная работа"]);
+  expect(section(as("foreman", { production: "view" }), "Производство")).toEqual(["Ресурсное планирование", "Оборудование"]);
   expect(section(as("foreman", { production: "view" }), "Менеджмент")).toEqual(["Производственный план"]);
 });
 
@@ -158,7 +176,7 @@ it("opens «ОТК» by the quality key, not by production", () => {
 });
 
 it("keeps «Ресурсное планирование» in the production block next to «ОТК»", () => {
-  expect(section(as("foreman", { production: "edit", quality: "edit" }), "Производство")).toEqual(["Ресурсное планирование", "Оборудование", "Ручная работа", "ОТК"]);
+  expect(section(as("foreman", { production: "edit", quality: "edit" }), "Производство")).toEqual(["Ресурсное планирование", "Оборудование", "ОТК"]);
 });
 
 it("opens «Приёмка с производства» by either shipping key; «Отгрузка» is no menu item since 29.10", () => {
@@ -215,8 +233,7 @@ it("sends the old «ОТК → ВАЦ — рабочее место» link to th
   expect(isViewOnly(as("operator", { quality: "edit", production: "view" }), machines)).toBe(true);
   expect(isViewOnly(as("operator", { quality: "edit", myops: "edit" }), machines)).toBe(false);
   expect(visibleNav(as("operator", { quality: "view" })).some(({ id }) => id === "machines")).toBe(true);
-  // «Ручная работа» keeps its own rule: «Склад» on edit is no reader there.
-  expect(isViewOnly(as("operator", { warehouse: "edit" }), NAV.find(({ id }) => id === "manualjobs")!)).toBe(false);
+  expect(manualJobsDestination(as("operator", { warehouse: "edit" }))).toBe("stock");
 });
 
 it("NAV-SECTIONS: picking and handout open by their own keys", () => {

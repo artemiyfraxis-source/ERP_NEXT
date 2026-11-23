@@ -26,7 +26,7 @@ export interface NavItem {
   /** Opens when any of these keys is granted (a section made of tabs with their own keys). */
   anyPermission?: string[];
   /** Also opens for these keys, which do not own the screen: «Доступы» neither names the screen under them nor
-   *  moves their row («Ручная работа» for «Склад», S3: the warehouse decides the material of finished jobs). */
+   *  moves their row. */
   alsoPermission?: string[];
   /** The `alsoPermission` keys open the screen for reading only, whatever their mode: «ОТК» on edit reads «Оборудование»
    *  (its analyser cards) but never edits or commands a machine (review of #999, 20.11.2026). */
@@ -109,8 +109,6 @@ export const NAV: NavItem[] = [
   // приборы агентов; читают мастер и монтажник.
   // ОТК (`quality`) открывает его тоже: рабочее место ВАЦ — в карточке анализатора цепей (владелец 20.11.2026).
   { id: "machines", label: "Оборудование", sub: "станки цеха · приборы · наладка · состояние на станке", anyPermission: ["production", "myops"], alsoPermission: ["quality"], alsoReadOnly: true, block: "prod" },
-  // «Ручная работа» (план «Станки вне проекта», 19.11.2026): журнал работ на любом станке вне проекта; те же ключи, что у «Станков».
-  { id: "manualjobs", label: "Ручная работа", sub: "работа на станке вне проекта · журнал за период", anyPermission: ["production", "myops"], alsoPermission: ["warehouse"], block: "prod" },
   // «Задания» (`myops`) и «ОТК» (`quality`) — разделы матрицы со своими ключами (owner 04.10.2026), не часть `production`.
   // «ОТК»: очередь на проверку, брак цеха и ОТК, средства измерения; приёмку и реестр ведёт правка `quality`, решение по
   // браку — правка `production` (экран сам прячет то, что не открыто).
@@ -204,6 +202,12 @@ export function canSee(principal: Principal, section: string, minimum: AccessMod
   return hasFullAccess(principal) || hasAccess(principal.permissions, section, minimum);
 }
 
+/** Legacy journal links are resolved only after authentication. Warehouse readers need no machine access. */
+export function manualJobsDestination(principal: Principal): "machines" | "stock" | null {
+  if (canSee(principal, "production") || canSee(principal, "myops")) return "machines";
+  return canSee(principal, "warehouse") ? "stock" : null;
+}
+
 /** «Режим просмотра» (ID-6): edit controls only when the backend would pass the write too — the section is on edit
  *  (`minimum` can ask for less), or the level is a full-access one. */
 export function canAct(principal: Principal, section: string, minimum: AccessMode = "edit"): boolean {
@@ -269,7 +273,7 @@ export function urlParam(name: string): string {
 }
 
 export function isSection(value: string | null): value is Section {
-  return NAV.some(({ id }) => id === value);
+  return value === "manualjobs" || NAV.some(({ id }) => id === value);
 }
 
 export function isBlock(value: string | null): value is BlockId {

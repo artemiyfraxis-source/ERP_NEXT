@@ -20,6 +20,7 @@ import {
   isBlock,
   isViewOnly,
   isSection,
+  manualJobsDestination,
   navKey,
   procurementMenuTab,
   runsTheSystem,
@@ -42,7 +43,6 @@ import { PrimaryDocsPage } from "./PrimaryDocsPage";
 import { ProductionPage } from "./ProductionPage";
 import { equipmentSetupApi } from "./equipmentSetupApi";
 const MachinesPage = lazy(() => import("./MachinesPage").then(module => ({ default: module.MachinesPage })));
-const ManualJobsPage = lazy(() => import("./ManualJobsPage").then(module => ({ default: module.ManualJobsPage })));
 const EquipmentSetupPage = lazy(() => import("./EquipmentSetupPage").then(module => ({ default: module.EquipmentSetupPage })));
 import { ProductionPlanPage } from "./ProductionPlanPage";
 import { QualityPage } from "./QualityPage";
@@ -143,6 +143,20 @@ export function App() {
   useEffect(loadPrincipal, []);
 
   useEffect(() => {
+    if (!principal || place.section !== "manualjobs") return;
+    const destination = manualJobsDestination(principal);
+    if (!destination) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("section", destination);
+    url.searchParams.set("view", destination === "machines" ? "journal" : "work-materials");
+    url.searchParams.delete("block");
+    url.searchParams.delete("tab");
+    window.history.replaceState(window.history.state, "", url);
+    setPlace(placeFromUrl());
+    setVisit(count => count + 1);
+  }, [principal, place.section]);
+
+  useEffect(() => {
     const listener = () => { setPlace(placeFromUrl()); setVisit((count) => count + 1); setNavOpen(false); };
     window.addEventListener("popstate", listener);
     return () => window.removeEventListener("popstate", listener);
@@ -186,6 +200,10 @@ export function App() {
     url.searchParams.delete("q");
     url.searchParams.delete("harness");
     url.searchParams.delete("library");
+    // Equipment source and journal filters belong to the opened page, not the next menu destination.
+    for (const key of ["view", "equipment_id", "task_id", "operation_id", "etk_position", "group_id", "member_id", "date_from", "date_to", "waiting"]) {
+      url.searchParams.delete(key);
+    }
     if (next.section !== "cabinet") url.searchParams.set("section", next.section);
     else if (next.block) url.searchParams.set("block", next.block);
     if (next.user) url.searchParams.set("user", next.user);
@@ -312,7 +330,8 @@ export function App() {
   // «Наладка оборудования» — вкладка «Запросы на наладку» «Оборудования» (владелец 19.11.2026): её старая ссылка
   // открывает «Оборудование» на этой вкладке (там же окно задания со всеми шагами наладки).
   const seesMachines = visibleNav.some(({ id }) => id === "machines");
-  const activeSection = place.section === "equipmentsetup" && seesMachines ? "machines"
+  const activeSection = place.section === "manualjobs" ? "manualjobs"
+    : place.section === "equipmentsetup" && seesMachines ? "machines"
     : place.section === "equipmentsetup" || visibleNav.some(({ id }) => id === place.section) ? place.section : "cabinet";
   const activeWithin = visibleNav.find(({ id }) => id === activeSection)?.within;
   const activeBlock = activeSection === "cabinet" ? blocks.find((block) => block.id === place.block) ?? null : null;
@@ -425,7 +444,10 @@ export function App() {
         {activeSection === "machines" && <Suspense fallback={<p className="empty">Загрузка…</p>}><MachinesPage key={visit} setupViewer={setupAvailable}
           initialView={place.section === "equipmentsetup" ? "setup" : undefined}
           canWrite={canAct(principal, "production") || canAct(principal, "myops")} canQuality={canAct(principal, "quality")} /></Suspense>}
-        {activeSection === "manualjobs" && <Suspense fallback={<p className="empty">Загрузка…</p>}><ManualJobsPage /></Suspense>}
+        {activeSection === "manualjobs" && <section className="page"><h1>Журнал работ</h1>
+          {manualJobsDestination(principal) ? <p className="empty">Загрузка…</p>
+            : <p className="error-banner" role="alert">Журнал работ вам не открыт.</p>}
+        </section>}
         {activeSection === "myops" && <ProductionPage principal={principal} mine />}
         {activeSection === "quality" && <QualityPage principal={principal} />}
         {activeSection === "references" && <ReferencesPage key={visit} principal={principal} />}
