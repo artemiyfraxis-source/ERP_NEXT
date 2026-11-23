@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { MachineQueueRow } from "./machineQueueApi";
-import type { MachineRow } from "./machinesApi";
+import type { MachineRow, MachineTaskContext } from "./machinesApi";
 import { MachineWorkCard } from "./MachineWorkCard";
 import type { MachineDowntime, ManualJob } from "./manualJobsApi";
 
@@ -69,7 +69,49 @@ function mock(setup: Setup = {}, posts: Post[] = []) {
   });
 }
 const open = (canWrite = true, row = ROW) => render(<MachineWorkCard row={row} canWrite={canWrite} close={() => undefined} openSetup={() => undefined} />);
+const incoming: MachineTaskContext = { taskId: "t1", operationId: "o1", loadRequested: true, action: {
+  etk_position: 4, equipment_id: "u71", inventory_number: "ОБ.071.1", display_name: "Пайка", model: null, card_kind: "generic",
+  connectivity: { state: "unsupported", fresh: false, last_seen: null }, open_permitted: true, load_permitted: false, can_open: true, can_load: false, blocker: null,
+  source: { kind: "generic", task_id: "t1", operation_id: "o1", etk_position: 4, queue_kind: "machine" } } };
 const status = () => screen.getByRole("status", { name: "Состояние станка" });
+
+it("incoming operation/ETK position selects the exact non-first queue row; opening and selection never start work", async () => {
+  const posts: Post[] = [];
+  mock({ rows: [{ ...QROW, key: "q2", etk_position: 3, item: "КБ другая" }, QROW] }, posts);
+  render(<MachineWorkCard row={ROW} canWrite close={() => undefined} openSetup={() => undefined} incoming={incoming} />);
+  await screen.findByText("КБ3");
+  expect(screen.getByText("КБ3").closest("tr")).toHaveAttribute("aria-current", "true");
+  expect(screen.getByText("КБ другая").closest("tr")).not.toHaveAttribute("aria-current");
+  fireEvent.click(screen.getByText("КБ3"));
+  expect(posts).toEqual([]);
+  fireEvent.click(within(screen.getByText("КБ3").closest("tr")!).getByRole("button", { name: "Начать" }));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0].body).toMatchObject({ source: { task_id: "t1", operation_id: "o1", etk_position: 4 } });
+});
+
+it("missing incoming queue source shows an error without selecting the first or running row", async () => {
+  const posts: Post[] = [];
+  mock({ rows: [{ ...QROW, etk_position: 3, job: { id: "j1", number: "Р-1", progress_quantity: 0 } }] }, posts);
+  render(<MachineWorkCard row={ROW} canWrite close={() => undefined} openSetup={() => undefined} incoming={incoming} />);
+  expect(await screen.findByText(/Задание из инструкции больше не найдено/)).toBeVisible();
+  expect(screen.getByText("КБ3").closest("tr")).not.toHaveAttribute("aria-current");
+  expect(screen.queryByRole("region", { name: "Режим по ЭТК" })).not.toBeInTheDocument();
+  expect(posts).toEqual([]);
+});
+
+it("incoming cutting work has an exact focused row and only explicit «Готово» records it on this unit", async () => {
+  const posts: Post[] = [];
+  mock({ cut: 1 }, posts);
+  render(<MachineWorkCard row={ROW} canWrite close={() => undefined} openSetup={() => undefined} incoming={{ ...incoming,
+    action: { ...incoming.action, source: { kind: "generic", task_id: "t", operation_id: "o", etk_position: 1, queue_kind: "cutting" } } }} />);
+  const selected = await screen.findByRole("region", { name: "Выбранная резка из инструкции" });
+  expect(screen.getByRole("tab", { name: /Очередь резки/ })).toHaveAttribute("aria-selected", "true");
+  expect(posts).toEqual([]);
+  fireEvent.change(within(selected).getByRole("spinbutton", { name: "Сколько готово" }), { target: { value: "4" } });
+  fireEvent.click(within(selected).getByRole("button", { name: "Готово" }));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0]).toEqual({ url: "/api/production/cutting-queue/done", body: { task_id: "t", operation_id: "o", quantity: 4, equipment_id: "u71" } });
+});
 
 it("free machine: «Свободен», the queue with warnings and the amber «не задано» ETK chip", async () => {
   mock({ rows: [QROW] });

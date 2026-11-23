@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { failureText } from "./api";
 import { CuttingQueue } from "./CuttingQueue";
-import { cuttingQueueApi } from "./cuttingQueueApi";
+import { cuttingQueueApi, type CuttingQueue as CuttingQueueData } from "./cuttingQueueApi";
 import { EMPTY, formatNumber, formatWallMoment, formatWallTime } from "./format";
 import { machineQueueApi, type MachineQueue, type MachineQueueRow } from "./machineQueueApi";
-import type { MachineRow } from "./machinesApi";
+import type { MachineRow, MachineTaskContext } from "./machinesApi";
 import { StartForm } from "./ManualJobWindow";
 import { manualJobsApi, type DowntimeReasonOption, type ManualJob, type ManualJobOptions, type ManualJobsList } from "./manualJobsApi";
 import { PageWindow } from "./PageWindow";
@@ -32,17 +32,23 @@ const sourceOf = (row: MachineQueueRow) => ({ task_id: row.task_id, operation_id
 const purposeOf = (row: MachineQueueRow) => [row.project, row.item, row.step].filter(Boolean).join(" · ");
 const clock = (value: string | null | undefined) => formatWallTime(value) || EMPTY;
 
-export function MachineWorkCard({ row, canWrite, close, openSetup }: {
-  row: MachineRow; canWrite: boolean; close: () => void; openSetup: () => void;
+export function MachineWorkCard({ row, canWrite, close, openSetup, incoming, openJournal }: {
+  row: MachineRow; canWrite: boolean; close: () => void; openSetup: () => void; incoming?: MachineTaskContext; openJournal?: () => void;
 }) {
+  const source = incoming?.action.source?.kind === "generic" ? incoming.action.source : null;
   const equipmentId = row.equipment_id ?? "";
   const [queue, setQueue] = useState<MachineQueue | null>(null);
   const [queueError, setQueueError] = useState("");
   const [list, setList] = useState<ManualJobsList | null>(null);
   const [error, setError] = useState("");
   const [cutRows, setCutRows] = useState(0);
+  const [cutQueue, setCutQueue] = useState<CuttingQueueData | null>(null);
+  const [cutError, setCutError] = useState("");
+  const [cutQuantity, setCutQuantity] = useState<string | null>(null);
+  const cutRetry = useRef<{ payload: string; key: string } | null>(null);
+  const [cutRefresh, setCutRefresh] = useState(0);
   // Cutters and strippers work from the cutting queue: open it first.
-  const [tab, setTab] = useState<Tab>(() => CUT_FAMILIES.has(row.family) ? "cut" : "queue");
+  const [tab, setTab] = useState<Tab>(() => source ? source.queue_kind === "cutting" ? "cut" : "queue" : CUT_FAMILIES.has(row.family) ? "cut" : "queue");
   const [picked, setPicked] = useState("");
   const [options, setOptions] = useState<ManualJobOptions | null>(null);
   const [busy, setBusy] = useState(false);
@@ -64,7 +70,8 @@ export function MachineWorkCard({ row, canWrite, close, openSetup }: {
     else setError(failureText(jobs.reason, "Нет связи с ERP"));
     if (rows.status === "fulfilled") { setQueue(rows.value); setQueueError(""); }
     else setQueueError(failureText(rows.reason, "«Очередь станка» не загрузилась"));
-    if (cut.status === "fulfilled") setCutRows(cut.value.rows.length);
+    if (cut.status === "fulfilled") { setCutRows(cut.value.rows.length); setCutQueue(cut.value); setCutError(""); }
+    else setCutError(failureText(cut.reason, "«Очередь резки» не загрузилась"));
   }, [equipmentId]);
 
   useEffect(() => {
@@ -84,8 +91,12 @@ export function MachineWorkCard({ row, canWrite, close, openSetup }: {
   const editable = canWrite && list?.can_edit !== false;
   const rows = useMemo(() => queue?.rows ?? [], [queue]);
   const running = job ? rows.find((item) => item.job?.id === job.id) : undefined;
-  const selected = running ?? rows.find((item) => item.key === picked) ?? rows[0] ?? null;
-  const showCut = cutRows > 0 || CUT_FAMILIES.has(row.family);
+  const sourceRows = source ? rows.filter((item) => item.task_id === source.task_id && item.operation_id === source.operation_id && item.etk_position === source.etk_position) : [];
+  const selected = rows.find((item) => item.key === picked) ?? (incoming ? sourceRows.length === 1 ? sourceRows[0] : null : running ?? rows[0] ?? null);
+  const sourceCuts = source ? cutQueue?.rows.filter((item) => item.task_id === source.task_id && item.operation_id === source.operation_id) ?? [] : [];
+  const selectedCut = sourceCuts.length === 1 ? sourceCuts[0] : null;
+  const sourceMissing = incoming && (!source || (source.queue_kind === "cutting" ? cutQueue && !selectedCut : queue && sourceRows.length !== 1));
+  const showCut = cutRows > 0 || CUT_FAMILIES.has(row.family) || source?.queue_kind === "cutting";
   const planned = job?.quantity_planned ?? null;
   const progress = job?.progress_quantity ?? 0;
   // Набранное значение живёт, пока не сменилась версия работы; иначе показываем записанное.
@@ -119,6 +130,19 @@ export function MachineWorkCard({ row, canWrite, close, openSetup }: {
     if (!job || typed === null) { setError("Укажите целое число штук"); return; }
     void act(() => manualJobsApi.progress(job.id, job.version, typed), `Записано: сделано ${typed}`, "Не удалось записать «Сделано»");
   };
+  async function finishCut() {
+    if (!selectedCut || selectedCut.blocked || busy || !editable) return;
+    const quantity = whole(cutQuantity ?? String(Math.trunc(Number(selectedCut.left))));
+    if (quantity === null || quantity < 1) { setError("Укажите целое число штук больше нуля"); return; }
+    const payload = `${selectedCut.task_id}:${selectedCut.operation_id}:${quantity}`;
+    if (cutRetry.current?.payload !== payload) cutRetry.current = { payload, key: crypto.randomUUID() };
+    await act(async () => {
+      await cuttingQueueApi.done(selectedCut.task_id, selectedCut.operation_id, quantity, cutRetry.current!.key, "", equipmentId);
+      cutRetry.current = null;
+      setCutQuantity(null);
+      setCutRefresh((value) => value + 1);
+    }, `Готово: ${selectedCut.project} · ${selectedCut.item} · ${quantity} шт`, "Не удалось записать готовое");
+  }
 
   const status = downtime
     ? { tone: "warn", text: `Простой: ${downtime.reason_name}${downtime.comment ? ` · ${downtime.comment}` : ""} с ${clock(downtime.started_at)}` }
@@ -133,10 +157,13 @@ export function MachineWorkCard({ row, canWrite, close, openSetup }: {
     <section className="panel mw-card">
       <header className="mw-head">
         <h2>{titleOf(row)}</h2>
+        {openJournal && <button type="button" className="secondary small" onClick={openJournal}>Журнал</button>}
         <button type="button" className="secondary small" onClick={openSetup}>Наладка{row.pending_setup ? " · ждёт" : ""}</button>
         <button type="button" className="secondary small" onClick={close}>Закрыть</button>
       </header>
       {error && <p className="error-banner" role="alert">{error}</p>}
+      {incoming && <p className={sourceMissing ? "error-banner" : "mw-hint"} role={sourceMissing ? "alert" : "status"}>
+        {sourceMissing ? "Задание из инструкции больше не найдено в очереди — откройте инструкцию заново" : `Операция ЭТК ${incoming.action.etk_position} · из задания`}</p>}
       <div className={`mw-status tone-bar-${status.tone}`} role="status" aria-label="Состояние станка">
         <strong>{status.text}</strong>
         {downtime && job && <span className="mw-sub">Работа {job.number} идёт</span>}
@@ -175,7 +202,22 @@ export function MachineWorkCard({ row, canWrite, close, openSetup }: {
             </table></div>}
         {editable && job && !running && rows.length > 0 && <p className="mw-hint">{blockStart}</p>}
       </>}
-      {tab === "cut" && <CuttingQueue equipmentId={equipmentId} readOnly={!canWrite} onChanged={() => void reload()} />}
+      {tab === "cut" && (source?.queue_kind === "cutting" ? <>
+        {cutError && <p className="error-banner" role="alert">{cutError}</p>}
+        {!cutQueue && !cutError && <p className="empty">Загрузка…</p>}
+        {selectedCut && <section className="mw-etk" aria-label="Выбранная резка из инструкции">
+          <h3>{selectedCut.project} · {selectedCut.item} · {selectedCut.wire_name || selectedCut.wire}</h3>
+          <p>Длина {selectedCut.length_mm ?? EMPTY} мм · осталось {num(selectedCut.left)} шт</p>
+          {selectedCut.blocked && <p className="warning-inline">{selectedCut.blocked}</p>}
+          {selectedCut.warnings.map((warning) => <p key={warning} className="warning-inline">{warning}</p>)}
+          {editable && <div className="machine-actions">
+            <label>Сколько готово<input type="number" name="cut-quantity" autoComplete="off" min={1} step={1} inputMode="numeric" value={cutQuantity ?? String(Math.trunc(Number(selectedCut.left)))}
+              onChange={(event) => setCutQuantity(event.target.value)} /></label>
+            <button type="button" className="primary" disabled={busy || Boolean(selectedCut.blocked)} onClick={() => void finishCut()}>Готово</button>
+          </div>}
+        </section>}
+        <details className="mw-fold"><summary>Вся очередь резки</summary><CuttingQueue key={cutRefresh} equipmentId={equipmentId} readOnly={!canWrite} onChanged={() => void reload()} /></details>
+      </> : <CuttingQueue equipmentId={equipmentId} readOnly={!canWrite} onChanged={() => void reload()} />)}
       {tab === "free" && (!options ? <p className="empty">Загрузка…</p>
         : editable ? (job ? <p className="mw-hint">{blockStart}</p>
           : <StartForm options={options} equipmentId={equipmentId} inventory={row.inventory} onStarted={() => { setNotice("Работа начата"); setTab("queue"); void reload(); }} />)

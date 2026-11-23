@@ -49,7 +49,7 @@ function card(overrides: Partial<MachineCard> = {}): MachineCard {
   };
 }
 
-afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); window.history.replaceState({}, "", "/"); });
 
 const NOT_INSTALLED: MachineRow = {
   key: "machine:u37", kind: "machine", equipment_id: null, inventory: "ОБ.037", name: "Автомат резки BZW-880", pc: "", ip: "",
@@ -153,7 +153,8 @@ it("shows one list grouped by purpose; the link is a badge; «Только по�
   machines(calls);
   render(<MachinesPage />);
   expect(await screen.findByRole("region", { name: "Резка" })).toBeTruthy();
-  expect(screen.queryByRole("tab")).toBeNull();  // наладка этому сотруднику закрыта, других вкладок нет
+  expect(screen.queryByRole("tab", { name: "Запросы на наладку" })).toBeNull();
+  expect(screen.getByRole("tab", { name: "Журнал работ" })).toBeVisible();
   expect(screen.queryByText(/С управлением|Без управления/)).toBeNull();
   // Groups follow the order of the API's families; an empty group is not drawn.
   expect(screen.getAllByRole("region").map((region) => region.getAttribute("aria-label"))).toEqual(

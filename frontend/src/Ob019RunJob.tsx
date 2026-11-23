@@ -134,12 +134,13 @@ function Finish({ inventory, run, manual, onDone, onCancel }: {
 
 /** Список заданий: резка провода из ЭТК, идущая ручная работа, новая ручная работа. `last` — последнее известное задание
  *  станка (серым вместо «Выберите задание», например пока открыт пульт на ПК). */
-export function JobSelect({ choices, manual, open, choice, onPick, id, last = "" }: {
+export function JobSelect({ choices, manual, open, choice, onPick, id, last = "", disabled = false }: {
   choices: TransferChoice[] | null; manual: ManualJob | null; open: boolean; choice: string; onPick: (key: string) => void; id?: string;
   last?: string;
+  disabled?: boolean;
 }) {
   const greyed = !choice && !open && !!last && choices !== null;
-  return <select id={id} aria-label="Задание" value={choice} className={greyed ? "is-last" : undefined}
+  return <select id={id} aria-label="Задание" value={choice} disabled={disabled} className={greyed ? "is-last" : undefined}
     onChange={(event) => onPick(event.target.value)}>
     <option value="">{choices === null ? "Загрузка…" : open ? "Сменить задание…" : last ? `последнее: ${last}` : "Выберите задание"}</option>
     <optgroup label="Резка провода из ЭТК">

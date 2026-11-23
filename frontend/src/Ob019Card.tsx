@@ -95,7 +95,7 @@ function plain(value: string | null | undefined): string {
 }
 
 /** `controls` — строка команд (Ob019Controls.tsx) под строкой состояния. */
-export function Ob019CardView({ card, controls = false }: { card: MachineCard; controls?: boolean }) {
+export function Ob019CardView({ card, controls = false, incoming }: { card: MachineCard; controls?: boolean; incoming?: import("./machinesApi").MachineTaskContext }) {
   const old = card.link.code !== "ok";
   // The run «Выполнение задания» polls (Ob019SettingsPanel) and why «Пуск» would not go (Ob019Controls): the status
   // strip and the command row say the same.
@@ -123,7 +123,7 @@ export function Ob019CardView({ card, controls = false }: { card: MachineCard; c
       {facts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
     </dl>}
     {controls && <Ob019Controls card={card} run={runState ? runState.run : undefined} onStartWhy={setStartWhy} onControl={setControl} />}
-    <Ob019SettingsPanel inventory={card.inventory} equipmentId={card.equipment_id} live={card.live} old={old}
+    <Ob019SettingsPanel incoming={incoming} inventory={card.inventory} equipmentId={card.equipment_id} live={card.live} old={old}
       pult={card.link.code === "port_busy"} onRun={setRunState} />
     <details className="machine-fold machine-connection">
       <summary>Подключение</summary>
@@ -136,7 +136,7 @@ export function Ob019CardView({ card, controls = false }: { card: MachineCard; c
   </>;
 }
 
-export function Ob019Card({ equipmentId, title, close, actions }: { equipmentId: string; title: string; close: () => void; actions?: ReactNode }) {
+export function Ob019Card({ equipmentId, title, close, actions, incoming }: { equipmentId: string; title: string; close: () => void; actions?: ReactNode; incoming?: import("./machinesApi").MachineTaskContext }) {
   const load = useCallback((signal: AbortSignal) => machinesApi.card(equipmentId, signal), [equipmentId]);
   const { data, error } = usePolled(load, undefined, "Не удалось загрузить станок");
   return <PageWindow label={title} close={close} width={1100} dismissable>
@@ -148,8 +148,8 @@ export function Ob019Card({ equipmentId, title, close, actions }: { equipmentId:
       </header>
       {error && <div className="error-banner" role="alert">{error}</div>}
       {!data && !error && <p className="empty">Загрузка…</p>}
-      {data && (data.kind === "ob099_fins" ? <Ob099CardView card={data} />
-        : <Ob019CardView card={data} controls />)}
+      {data && (data.kind === "ob099_fins" ? <Ob099CardView card={data} incoming={incoming} />
+        : <Ob019CardView card={data} controls incoming={incoming} />)}
     </section>
   </PageWindow>;
 }
