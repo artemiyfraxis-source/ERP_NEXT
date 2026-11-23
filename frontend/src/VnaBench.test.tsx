@@ -124,19 +124,39 @@ it("uses the existing transfer API only on an explicit click and refreshes state
   expect(load).toHaveBeenCalledTimes(2);
 });
 
-it("refreshes a disconnected station until the new PC reports the VNA", async () => {
+it("refreshes a healthy station through disconnection and an offer to transfer", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const disconnected = state({ session: null, device: { ...state().device,
     refusal: { code: "vna_not_connected", message: "Подключите ВАЦ" }, transfer: null,
   } });
-  const load = vi.spyOn(vnaBenchApi, "state").mockResolvedValue(disconnected);
-  render(<VnaBench canEdit />);
-  await screen.findByRole("alert");
+  const load = vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state({ session: null }));
+  const { unmount } = render(<VnaBench canEdit />);
+  await screen.findByText("Агент на связи");
+  load.mockResolvedValue(disconnected);
+  await act(async () => { await vi.advanceTimersByTimeAsync(10_100); });
+  expect(screen.getByRole("alert")).toHaveTextContent("Подключите ВАЦ");
   load.mockResolvedValue({ ...disconnected, device: { ...disconnected.device,
     transfer: { serial: "26030095", owner_id: "pc-1", agents: [{ id: "pc-2", pc: "НОВЫЙ-ПК", version: "2.12.0", vna: null }] },
   } });
   await act(async () => { await vi.advanceTimersByTimeAsync(10_100); });
   expect(screen.getByRole("button", { name: "Перенести ВАЦ на НОВЫЙ-ПК" })).toBeInTheDocument();
+  unmount();
+  await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+  expect(load).toHaveBeenCalledTimes(3);
+});
+
+it("waits for a slow state request before scheduling another poll", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  let resolve!: (value: VnaBenchState) => void;
+  const load = vi.spyOn(vnaBenchApi, "state").mockReturnValueOnce(new Promise((done) => { resolve = done; }))
+    .mockResolvedValue(state({ session: null }));
+  const { unmount } = render(<VnaBench canEdit />);
+  await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+  expect(load).toHaveBeenCalledTimes(1);
+  await act(async () => { resolve(state({ session: null })); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+  expect(load).toHaveBeenCalledTimes(2);
+  unmount();
 });
 
 it("shows the transfer refusal beside the action and refreshes a stale offer", async () => {

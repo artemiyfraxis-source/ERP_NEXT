@@ -138,22 +138,30 @@ export function VnaBench({ canEdit, connection }: { canEdit: boolean; connection
   const [tab, setTab] = useState<Tab>("measure");
   const [attempt, setAttempt] = useState(0);
   const [notice, setNotice] = useState("");
+  const stateRequest = useRef<Promise<VnaBenchState> | null>(null);
 
   useEffect(() => {
     let active = true;
-    vnaBenchApi.state().then((next) => { if (active) { setState(next); setLoadError(""); } })
-      .catch((reason) => { if (active) setLoadError(failureText(reason, "Не удалось прочитать состояние ВАЦ")); });
+    const request = stateRequest.current ?? vnaBenchApi.state();
+    stateRequest.current = request;
+    request.then((next) => { if (active) { setState(next); setLoadError(""); } })
+      .catch((reason) => { if (active) setLoadError(failureText(reason, "Не удалось прочитать состояние ВАЦ")); })
+      .finally(() => { if (stateRequest.current === request) stateRequest.current = null; });
     return () => { active = false; };
   }, [attempt]);
 
-  // При отказе ждём подключения прибора: новый отчёт другого ПК должен открыть явный перенос.
   const commandBusy = sessionBusy(state);
-  const polling = commandBusy || Boolean(state?.device.refusal);
   useEffect(() => {
-    if (!polling) return;
-    const timer = window.setTimeout(() => setAttempt((value) => value + 1), commandBusy ? POLL_MS : 10_000);
-    return () => window.clearTimeout(timer);
-  }, [polling, commandBusy, state, attempt]);
+    let timer: number | undefined;
+    let active = true;
+    const schedule = () => {
+      if (active) timer = window.setTimeout(() => setAttempt((value) => value + 1), commandBusy ? POLL_MS : 10_000);
+    };
+    const request = stateRequest.current;
+    if (request) void request.then(schedule, schedule);
+    else schedule();
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [commandBusy, attempt]);
 
   const refusalOf = (reason: unknown): string => {
     if (reason instanceof ApiError && reason.status === 409) setAttempt((value) => value + 1);
