@@ -79,7 +79,7 @@ const SETUP: UnitSetup = {
     { id: "t2", version: 2, status: "В работе", operation: "П-105 · Жгут · Свивка · ЭТК 1", planned_start: null, planned_finish: null, mine: false, can_confirm: false }],
 };
 
-function machines(calls: string[] = []) {
+function machines(calls: string[] = [], rows = [OB019, NOT_INSTALLED, TWISTER, SOLDER, TSC, PLANAR]) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = decodeURIComponent(String(input));
     calls.push(url);
@@ -89,7 +89,7 @@ function machines(calls: string[] = []) {
     if (url.endsWith("/card/ОБ.019")) return json({ inventory: "ОБ.019", settings: [{ title: "Провод и зачистка", fields: [
       { label: "Длина провода", value: 325, unit: "мм", read: true, key: "length_mm", kind: "u32" }] }] });
     if (url.includes("/setup-model/")) return json(SETUP);
-    return json({ now: "2026-11-18T10:00:02+03:00", rows: [OB019, NOT_INSTALLED, TWISTER, SOLDER, TSC, PLANAR], families: FAMILIES });
+    return json({ now: "2026-11-18T10:00:02+03:00", rows, families: FAMILIES });
   });
 }
 
@@ -181,13 +181,28 @@ it("a row whose group the API does not list stands in its own group before «П�
   expect(within(screen.getByRole("region", { name: "Плазма" })).getByText("ОБ.012")).toBeTruthy();
 });
 
+it("hides site switch when machines are on one site and shows devices", async () => {
+  machines([], [OB019, NOT_INSTALLED, TSC, PLANAR]);
+  render(<MachinesPage />);
+  expect(await screen.findByText("ОБ.019")).toBeTruthy();
+  expect(screen.queryByRole("radiogroup", { name: "Участок" })).toBeNull();
+  expect(screen.getByRole("region", { name: "Принтеры и МФУ" })).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Анализаторы цепей" })).toBeTruthy();
+});
+
 it("filters by site and searches by number, name, article, PC or IP", async () => {
   machines();
   render(<MachinesPage />);
-  fireEvent.click(await screen.findByRole("radio", { name: /ЖУК/ }));
+  const zhuk = await screen.findByRole("radio", { name: /ЖУК/ });
+  expect(zhuk.textContent).toBe("ЖУК1");
+  fireEvent.click(zhuk);
   expect(screen.getByText("ОБ.005")).toBeTruthy();
   expect(screen.queryByText("ОБ.037")).toBeNull();
+  expect(screen.queryByRole("region", { name: "Принтеры и МФУ" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Анализаторы цепей" })).toBeNull();
   fireEvent.click(screen.getByRole("radio", { name: /Все участки/ }));
+  expect(screen.getByRole("region", { name: "Принтеры и МФУ" })).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Анализаторы цепей" })).toBeTruthy();
   const search = screen.getByRole("searchbox", { name: "Поиск оборудования" });
   fireEvent.change(search, { target: { value: "8620dx" } });
   expect(screen.getByText("ОБ.070.1")).toBeTruthy();
