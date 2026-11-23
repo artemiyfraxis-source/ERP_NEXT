@@ -147,11 +147,13 @@ it("prints own text: count on the button, preview of the first labels, trial of 
   render(<MarkingMachineCard row={ROW} canWrite close={() => undefined} />);
   await screen.findByText("Готов");
   fireEvent.click(screen.getByRole("tab", { name: "Свой текст" }));
-  fireEvent.change(screen.getByLabelText(/одна строка = одна этикетка/), { target: { value: "ПИТАНИЕ +24В × 4\nX1-{№}" } });
+  fireEvent.click(screen.getByRole("button", { name: "Вставить список" }));
+  fireEvent.change(screen.getByLabelText("Список надписей"), { target: { value: "ПИТАНИЕ +24В × 4\nX1-{№}" } });
+  fireEvent.click(screen.getByRole("button", { name: "Добавить из списка" }));
   fireEvent.change(await screen.findByLabelText("{№} с"), { target: { value: "1" } });
   fireEvent.change(screen.getByLabelText("по"), { target: { value: "2" } });
-  fireEvent.click(screen.getByRole("radio", { name: "по № провода" }));
-  expect(screen.getByText("Номера изделий не выдаются · печать записывается в журнал")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "По № провода" }));
+  expect(screen.getByRole("button", { name: "По № провода" })).toHaveAttribute("aria-pressed", "true");
   expect(await screen.findByAltText("Этикетка: X1-2")).toBeVisible();
   const print = await screen.findByRole("button", { name: "Печатать 6 этикеток" });
   await waitFor(() => expect(print).toBeEnabled());
@@ -162,7 +164,7 @@ it("prints own text: count on the button, preview of the first labels, trial of 
     lines: [{ text: "ПИТАНИЕ +24В", quantity: 4 }, { text: "X1-{№}", quantity: 1 }],
   });
   expect(await screen.findByText("Поставлено в очередь: 6 этикеток")).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Пробная (1 этикетка)" }));
+  fireEvent.click(screen.getByRole("button", { name: "Пробная" }));
   await waitFor(() => expect(markingApi.manualEnqueue).toHaveBeenCalledTimes(2));
   expect(vi.mocked(markingApi.manualEnqueue).mock.calls[1][0]).toMatchObject({ trial: true });
 });
@@ -171,7 +173,9 @@ it("says why it cannot print when the printer is offline", async () => {
   vi.spyOn(markingApi, "machines").mockResolvedValue({ ...structuredClone(CATALOG), printers: [{ ...CATALOG.printers[0], online: false }] });
   render(<MarkingMachineCard row={ROW} canWrite close={() => undefined} />);
   fireEvent.click(await screen.findByRole("tab", { name: "Свой текст" }));
-  expect(await screen.findByText("Принтер не на связи")).toBeVisible();
+  expect(await screen.findByText(/Принтер не на связи — проверьте питание, кабель и агент/)).toBeVisible();
+  expect(screen.getByRole("button", { name: /^Печатать/ })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Пробная" })).toBeDisabled();
 });
 
 const shownPreview = (hash: string, total = 1): MarkingPreview => ({ manifest_hash: hash.repeat(64).slice(0, 64), profile_id: "flag", profile_version: 3,
@@ -189,7 +193,7 @@ it("aborts the stale preview when the text changes, and prints with the hash of 
   render(<MarkingMachineCard row={ROW} canWrite close={() => undefined} />);
   await screen.findByText("Готов");
   fireEvent.click(screen.getByRole("tab", { name: "Свой текст" }));
-  const field = screen.getByLabelText(/одна строка = одна этикетка/);
+  const field = screen.getByRole("textbox", { name: "Надпись 1" });
   fireEvent.change(field, { target: { value: "A" } });
   await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
   fireEvent.change(field, { target: { value: "B" } });
@@ -203,7 +207,7 @@ it("aborts the stale preview when the text changes, and prints with the hash of 
   expect(spy).toHaveBeenCalledTimes(2);
 });
 
-it("does not enqueue on a preview older than the request: refreshes it and asks for one more click", async () => {
+it("disables printing until the current preview is ready", async () => {
   let release: (value: MarkingPreview) => void = () => undefined;
   const spy = vi.spyOn(markingApi, "manualPreview").mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }))
     .mockResolvedValue(shownPreview("c"));
@@ -211,12 +215,13 @@ it("does not enqueue on a preview older than the request: refreshes it and asks 
   render(<MarkingMachineCard row={ROW} canWrite close={() => undefined} />);
   await screen.findByText("Готов");
   fireEvent.click(screen.getByRole("tab", { name: "Свой текст" }));
-  fireEvent.change(screen.getByLabelText(/одна строка = одна этикетка/), { target: { value: "A" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Надпись 1" }), { target: { value: "A" } });
   await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
-  fireEvent.click(screen.getByRole("button", { name: /^Печатать/ }));
+  expect(screen.getByRole("button", { name: /^Печатать/ })).toBeDisabled();
   expect(markingApi.manualEnqueue).not.toHaveBeenCalled();
-  expect(await screen.findByText(/нажмите «Печатать» ещё раз/)).toBeVisible();
-  release(shownPreview("a"));
+  expect(screen.getByText("Обновляем предпросмотр…", { selector: "#marking-text-blocker" })).toBeVisible();
+  await act(async () => { release(shownPreview("a")); });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Печатать 1 этикетку" })).toBeEnabled());
 });
 
 it("rejects « × 0» and copies over the cap with a Russian message instead of silently printing one", async () => {
@@ -229,7 +234,7 @@ it("rejects « × 0» and copies over the cap with a Russian message instead of 
   render(<MarkingMachineCard row={ROW} canWrite close={() => undefined} />);
   await screen.findByText("Готов");
   fireEvent.click(screen.getByRole("tab", { name: "Свой текст" }));
-  fireEvent.change(screen.getByLabelText(/одна строка = одна этикетка/), { target: { value: "ПИТАНИЕ × 0" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Надпись 1" }), { target: { value: "ПИТАНИЕ × 0" } });
   expect(await screen.findByRole("alert", { name: "" })).toHaveTextContent(/× 0 не печатает/);
   await new Promise((resolve) => setTimeout(resolve, 700));
   expect(spy).not.toHaveBeenCalled();
@@ -241,6 +246,159 @@ it("turns a Pydantic 422 into readable Russian", () => {
   const order = new ApiError("HTTP 422", 422, [{ loc: ["body", "numbering"], type: "value_error", msg: "Value error, Номера: «с» не больше «по»" }]);
   expect(markingProblem(order, "?")).toBe("Номера: «с» не больше «по»");
   expect(markingProblem(new ApiError("За один раз — не более 500 этикеток", 422, "За один раз — не более 500 этикеток"), "?")).toBe("За один раз — не более 500 этикеток");
+});
+
+it("imports a list once, preserves literal suffixes and recalculates each edited row", async () => {
+  const spy = vi.spyOn(markingApi, "manualPreview").mockResolvedValue(shownPreview("i", 5));
+  render(<MarkingMachineCard row={ROW} canWrite close={() => undefined} />);
+  await screen.findByText("Готов");
+  fireEvent.click(screen.getByRole("tab", { name: "Свой текст" }));
+  fireEvent.click(screen.getByRole("button", { name: "Вставить список" }));
+  fireEvent.change(screen.getByLabelText("Список надписей"), { target: { value: "\nКАБЕЛЬ 2 × 4 × 2\r\nX1-{№:3} * 3\n" } });
+  fireEvent.click(screen.getByRole("button", { name: "Добавить из списка" }));
+  const literal = screen.getByRole("textbox", { name: "Надпись 1" });
+  expect(literal).toHaveValue("КАБЕЛЬ 2 × 4");
+  fireEvent.blur(literal);
+  fireEvent.blur(literal);
+  expect(literal).toHaveValue("КАБЕЛЬ 2 × 4");
+  fireEvent.change(screen.getByLabelText("по"), { target: { value: "2" } });
+  expect(screen.getByLabelText("Итого в строке 1")).toHaveTextContent("2");
+  expect(screen.getByLabelText("Итого в строке 2")).toHaveTextContent("6");
+  expect(screen.getByText("{№:3} → 1…2")).toBeVisible();
+  await waitFor(() => expect(spy).toHaveBeenLastCalledWith(expect.objectContaining({ lines: [
+    { text: "КАБЕЛЬ 2 × 4", quantity: 2 }, { text: "X1-{№:3}", quantity: 3 },
+  ] }), expect.anything()));
+  fireEvent.change(screen.getByLabelText("Копий в строке 1"), { target: { value: "5" } });
+  expect(screen.getByLabelText("Итого в строке 1")).toHaveTextContent("5");
+  fireEvent.click(screen.getByRole("button", { name: "Удалить строку 2" }));
+  await waitFor(() => expect(spy).toHaveBeenLastCalledWith(expect.objectContaining({ lines: [{ text: "КАБЕЛЬ 2 × 4", quantity: 5 }], numbering: null }), expect.anything()));
+  fireEvent.click(screen.getByRole("button", { name: "Добавить строку" }));
+  expect(screen.getByRole("textbox", { name: "Надпись 2" })).toHaveValue("");
+  fireEvent.change(literal, { target: { value: "НОВЫЙ КАБЕЛЬ 2 × 4" } });
+  fireEvent.blur(literal);
+  expect(screen.getByLabelText("Копий в строке 1")).toHaveValue(5);
+  await waitFor(() => expect(spy).toHaveBeenLastCalledWith(expect.objectContaining({ lines: [{ text: "НОВЫЙ КАБЕЛЬ 2 × 4", quantity: 5 }] }), expect.anything()));
+  fireEvent.click(screen.getByRole("button", { name: "Удалить строку 2" }));
+  fireEvent.click(screen.getByRole("button", { name: "Удалить строку 1" }));
+  fireEvent.change(screen.getByLabelText("Надпись 1"), { target: { value: "GND × 4" } });
+  fireEvent.blur(screen.getByLabelText("Надпись 1"));
+  expect(screen.getByLabelText("Надпись 1")).toHaveValue("GND");
+  expect(screen.getByLabelText("Копий в строке 1")).toHaveValue(4);
+});
+
+it.each(["", "0", "1.5", "501"])("rejects invalid per-row copies %j before preview or printing", async (copies) => {
+  const spy = vi.spyOn(markingApi, "manualPreview").mockResolvedValue(shownPreview("v"));
+  render(<MarkingMachineCard row={ROW} canWrite close={() => undefined} />);
+  await screen.findByText("Готов");
+  fireEvent.click(screen.getByRole("tab", { name: "Свой текст" }));
+  fireEvent.change(screen.getByLabelText("Надпись 1"), { target: { value: "X1" } });
+  fireEvent.change(screen.getByLabelText("Копий в строке 1"), { target: { value: copies } });
+  expect(screen.getByRole("alert")).toHaveTextContent(/Копий/);
+  expect(screen.getByRole("button", { name: /^Печатать/ })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Пробная" })).toBeDisabled();
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  expect(spy).not.toHaveBeenCalled();
+});
+
+it("blocks oversized and invalid numbered ranges without showing NaN totals", async () => {
+  const spy = vi.spyOn(markingApi, "manualPreview").mockResolvedValue(shownPreview("r"));
+  render(<MarkingMachineCard row={ROW} canWrite close={() => undefined} />);
+  await screen.findByText("Готов");
+  fireEvent.click(screen.getByRole("tab", { name: "Свой текст" }));
+  fireEvent.change(screen.getByLabelText("Надпись 1"), { target: { value: "X1-{№}" } });
+  fireEvent.change(screen.getByLabelText("по"), { target: { value: "501" } });
+  expect(screen.getByRole("alert")).toHaveTextContent("За один раз — не более 500 этикеток");
+  fireEvent.change(screen.getByLabelText("по"), { target: { value: "0" } });
+  expect(screen.getByRole("alert")).toHaveTextContent("Номера: «с» не больше «по»");
+  expect(screen.getByRole("button", { name: /^Печатать/ })).toBeDisabled();
+  expect(document.body).not.toHaveTextContent("NaN");
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  expect(spy).not.toHaveBeenCalled();
+});
+
+it("shows calibration state in the picker and blocks an uncalibrated profile", async () => {
+  const catalog = structuredClone(CATALOG);
+  catalog.machines[0].profiles[0].calibrated = false;
+  vi.mocked(markingApi.machines).mockResolvedValue(catalog);
+  vi.spyOn(markingApi, "manualPreview").mockResolvedValue(shownPreview("c"));
+  render(<MarkingMachineCard row={ROW} canWrite close={() => undefined} />);
+  await screen.findByText("Готов");
+  fireEvent.click(screen.getByRole("tab", { name: "Свой текст" }));
+  expect(screen.getByRole("option", { name: "Флажок 30×12 · нужна калибровка" })).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Профиль этикетки"), { target: { value: "flag" } });
+  fireEvent.change(screen.getByLabelText("Надпись 1"), { target: { value: "A" } });
+  expect(screen.getByText("Профиль не откалиброван — «Наладка» → «Профили и принтер»")).toBeVisible();
+  expect(screen.getByRole("button", { name: /^Печатать/ })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Пробная" })).toBeDisabled();
+});
+
+it("uses server raster dimensions for preview and waits for the new profile's preview", async () => {
+  vi.mocked(markingApi.machines).mockResolvedValue(TWO_PROFILES());
+  vi.spyOn(markingApi, "manualPreview").mockImplementation((body) => Promise.resolve({ ...shownPreview("d"),
+    profile_id: body.profile_id, width_mm: body.profile_id === "small" ? 9 : 30, height_mm: body.profile_id === "small" ? 25 : 12 }));
+  render(<MarkingMachineCard row={ROW} canWrite close={() => undefined} />);
+  await screen.findByText("Готов");
+  fireEvent.click(screen.getByRole("tab", { name: "Свой текст" }));
+  fireEvent.change(screen.getByLabelText("Надпись 1"), { target: { value: "A" } });
+  await screen.findByAltText("Этикетка: A");
+  fireEvent.change(screen.getByLabelText("Профиль этикетки"), { target: { value: "small" } });
+  expect(screen.getByRole("button", { name: /^Печатать/ })).toBeDisabled();
+  const image = await screen.findByAltText("Этикетка: A");
+  expect(image).toHaveAttribute("width", String(Math.round(9 * 203 / 25.4)));
+  expect(image).toHaveAttribute("height", String(Math.round(25 * 203 / 25.4)));
+  expect(screen.getByRole("button", { name: "Печатать 1 этикетку" })).toBeEnabled();
+  expect(screen.getByText("1 этикетка")).toBeVisible();
+});
+
+it("offers retry after a preview error and never prints while the preview is missing", async () => {
+  const spy = vi.spyOn(markingApi, "manualPreview").mockRejectedValueOnce(new ApiError("Надпись не помещается", 422, "Надпись не помещается"))
+    .mockResolvedValue(shownPreview("s"));
+  render(<MarkingMachineCard row={ROW} canWrite close={() => undefined} />);
+  await screen.findByText("Готов");
+  fireEvent.click(screen.getByRole("tab", { name: "Свой текст" }));
+  fireEvent.change(screen.getByLabelText("Надпись 1"), { target: { value: "A" } });
+  const retry = await screen.findByRole("button", { name: "Повторить предпросмотр" });
+  expect(screen.getByText("Надпись не помещается")).toBeVisible();
+  expect(screen.getByRole("button", { name: /^Печатать/ })).toBeDisabled();
+  fireEvent.click(retry);
+  await waitFor(() => expect(spy).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Печатать 1 этикетку" })).toBeEnabled());
+  expect(screen.queryByText("Надпись не помещается")).not.toBeInTheDocument();
+});
+
+it("closing own-text during trial validation cannot enqueue after unmount", async () => {
+  let release: (value: MarkingPreview) => void = () => undefined;
+  const spy = vi.spyOn(markingApi, "manualPreview").mockImplementation((body) => body.trial
+    ? new Promise((resolve) => { release = resolve; }) : Promise.resolve(shownPreview("u")));
+  const enqueue = vi.spyOn(markingApi, "manualEnqueue");
+  const view = render(<MarkingMachineCard row={ROW} canWrite close={() => undefined} />);
+  await screen.findByText("Готов");
+  fireEvent.click(screen.getByRole("tab", { name: "Свой текст" }));
+  fireEvent.change(screen.getByLabelText("Надпись 1"), { target: { value: "A" } });
+  await screen.findByAltText("Этикетка: A");
+  fireEvent.click(screen.getByRole("button", { name: "Пробная" }));
+  expect(spy).toHaveBeenLastCalledWith(expect.objectContaining({ trial: true }));
+  view.unmount();
+  await act(async () => { release(shownPreview("t")); });
+  expect(enqueue).not.toHaveBeenCalled();
+});
+
+it("disables own-text printing when polled printer presence changes, despite an online catalog", async () => {
+  vi.spyOn(markingApi, "manualPreview").mockResolvedValue(shownPreview("p"));
+  render(<MarkingMachineCard row={ROW} canWrite close={() => undefined} />);
+  await screen.findByText("Готов");
+  fireEvent.click(screen.getByRole("tab", { name: "Свой текст" }));
+  fireEvent.change(screen.getByLabelText("Надпись 1"), { target: { value: "A" } });
+  const print = screen.getByRole("button", { name: "Печатать 1 этикетку" });
+  await waitFor(() => expect(print).toBeEnabled());
+  vi.mocked(markingApi.machineState).mockResolvedValue({ ...structuredClone(STATE), marking: { ...STATE.marking!, present: false } });
+  fireEvent(document, new Event("visibilitychange"));
+  expect(await screen.findByText("Принтер не найден — проверьте питание и кабель принтера")).toBeVisible();
+  expect(print).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Пробная" })).toBeDisabled();
+  vi.mocked(markingApi.machineState).mockResolvedValue(structuredClone(STATE));
+  fireEvent(document, new Event("visibilitychange"));
+  await waitFor(() => expect(print).toBeEnabled());
 });
 
 const TWO_PROFILES = (): MarkingCatalog => ({ ...structuredClone(CATALOG), machines: [{ ...structuredClone(CATALOG.machines[0]), profiles: [
@@ -354,11 +512,11 @@ it("sends the wire Ø of own text to the journal and refuses a wrong one", async
   render(<MarkingMachineCard row={ROW} canWrite close={() => undefined} />);
   await screen.findByText("Готов");
   fireEvent.click(screen.getByRole("tab", { name: "Свой текст" }));
-  fireEvent.change(screen.getByLabelText(/одна строка = одна этикетка/), { target: { value: "A" } });
+  fireEvent.change(screen.getByRole("textbox", { name: "Надпись 1" }), { target: { value: "A" } });
   fireEvent.change(screen.getByLabelText("Ø провода, мм"), { target: { value: "1,6" } });
   await waitFor(() => expect(spy).toHaveBeenLastCalledWith(expect.objectContaining({ wire_mm: 1.6 }), expect.anything()));
   fireEvent.change(screen.getByLabelText("Ø провода, мм"), { target: { value: "75" } });
-  expect(await screen.findByText("Ø провода — число от 0,1 до 60 мм")).toBeVisible();
+  expect(await screen.findByRole("alert")).toHaveTextContent("Ø провода — число от 0,1 до 60 мм");
   expect(screen.getByRole("button", { name: /^Печатать/ })).toBeDisabled();
   fireEvent.change(screen.getByLabelText("Ø провода, мм"), { target: { value: "" } });
   await waitFor(() => expect(spy.mock.calls.at(-1)?.[0]).not.toHaveProperty("wire_mm"));
