@@ -526,6 +526,17 @@ def _row(lot: StockLot) -> StockLotRow:
         invoice_name=lot.invoice_name,
         maker_article=lot.maker_article,
         supplier_article=lot.supplier_article,
+        grn_id=lot.grn_id,
+        grn_category=lot.grn_category,
+        grn_context=dict(lot.grn_context) if lot.grn_context is not None else None,
+        grn_contract_version=lot.grn_contract_version,
+        material_owner_id=lot.material_owner_id,
+        quality_state=lot.quality_state,
+        quality_basis=lot.quality_basis,
+        quality_decided_by=lot.quality_decided_by,
+        quality_decided_at=lot.quality_decided_at,
+        quality_version=lot.quality_version,
+        expiry_required=lot.expiry_required,
     )
 
 
@@ -573,6 +584,17 @@ def _domain(row: StockLotRow) -> StockLot:
         invoice_name=row.invoice_name,
         maker_article=row.maker_article,
         supplier_article=row.supplier_article,
+        grn_id=row.grn_id,
+        grn_category=row.grn_category,
+        grn_context=dict(row.grn_context) if row.grn_context is not None else None,
+        grn_contract_version=row.grn_contract_version,
+        material_owner_id=row.material_owner_id,
+        quality_state=row.quality_state,
+        quality_basis=row.quality_basis,
+        quality_decided_by=row.quality_decided_by,
+        quality_decided_at=row.quality_decided_at,
+        quality_version=row.quality_version,
+        expiry_required=row.expiry_required,
     )
 
 

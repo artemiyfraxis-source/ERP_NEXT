@@ -8,6 +8,9 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
+
+from .grn import GrnCategory, GrnContext
 
 from app.shared.warehouse_location import (
     existing_storage_location,
@@ -177,6 +180,19 @@ class StockLot:
     maker_article: str = ""
     supplier_article: str = ""
 
+    # Contract 0218. NULL is historical stock, not an inferred quality release.
+    grn_id: UUID | None = None
+    grn_category: str | None = None
+    grn_context: dict | None = None
+    grn_contract_version: int | None = None
+    material_owner_id: UUID | None = None
+    quality_state: str | None = None
+    quality_basis: str | None = None
+    quality_decided_by: UUID | None = None
+    quality_decided_at: datetime | None = None
+    quality_version: int | None = None
+    expiry_required: bool | None = None
+
     @classmethod
     def create(
         cls,
@@ -267,7 +283,56 @@ class StockLot:
     def available(self) -> Decimal:
         return self.balance - self.reserved
 
-    def reserve(self, quantity: Decimal) -> StockLot:
+    def assert_issuable(self, *, on_date: date | None = None) -> None:
+        """Recheck the whole place on every reserve/issue, including an earlier reservation.
+
+        Historical stock keeps its existing policy. A new-contract place fails closed
+        unless a recorded decision permits use; missing shipping papers are irrelevant.
+        """
+        if self.grn_contract_version is None:
+            return
+        if self.grn_contract_version != 1 or self.grn_id is None:
+            raise WarehouseValidationError("Нет подтверждённой идентичности ГРН")
+        try:
+            category = GrnCategory(self.grn_category)
+            context = dict(self.grn_context or {})
+            if context.get("owner_id") is not None:
+                context["owner_id"] = UUID(str(context["owner_id"]))
+            GrnContext(**context).validate(category)
+        except (TypeError, ValueError) as error:
+            raise WarehouseValidationError("Не заполнены категория или контекст ГРН") from error
+        if self.grn_context is None or self.expiry_required is None:
+            raise WarehouseValidationError("Не заполнен паспорт нового прихода")
+        if self.quality_state not in {"RELEASED", "NOT_REQUIRED"}:
+            raise WarehouseValidationError(f"Партия {self.grn} заблокирована: требуется решение ОТК")
+        if self.quality_state == "NOT_REQUIRED" and category not in {GrnCategory.GOS, GrnCategory.PAM}:
+            raise WarehouseValidationError("Для этой категории требуется решение ОТК")
+        if (not str(self.quality_basis or "").strip() or self.quality_decided_by is None
+                or self.quality_decided_at is None or (self.quality_version or 0) < 1):
+            raise WarehouseValidationError("Не записаны основание, автор или дата решения ОТК")
+        if self.expiry_required and self.expiry_date is None:
+            raise WarehouseValidationError("Не указан обязательный срок годности")
+        today = on_date if on_date is not None else datetime.now(ZoneInfo("Europe/Moscow")).date()
+        if self.expiry_date is not None and self.expiry_date < today:
+            raise WarehouseValidationError("Срок годности партии истёк")
+
+    def assert_owner(self, *, owner_id: UUID | None = None, customer_order: str | None = None) -> None:
+        """Commands consuming customer material must carry its exact owner/order pair."""
+        if self.grn_contract_version is None:
+            return
+        if self.grn_category == GrnCategory.CSM:
+            context = self.grn_context or {}
+            if (self.material_owner_id is None or owner_id != self.material_owner_id
+                    or str(context.get("owner_id")) != str(self.material_owner_id)
+                    or not customer_order or customer_order != context.get("customer_order")):
+                raise WarehouseValidationError("Давальческий материал: не совпадают владелец и заказ клиента")
+        elif self.material_owner_id is not None or owner_id is not None:
+            raise WarehouseValidationError("Владелец давальческого материала допустим только для CSM")
+
+    def reserve(self, quantity: Decimal, *, owner_id: UUID | None = None,
+                customer_order: str | None = None, on_date: date | None = None) -> StockLot:
+        self.assert_issuable(on_date=on_date)
+        self.assert_owner(owner_id=owner_id, customer_order=customer_order)
         amount = _quantity(quantity, "Резерв")
         if amount > self.available:
             raise WarehouseValidationError("Недостаточно доступного остатка для резерва")
@@ -279,7 +344,10 @@ class StockLot:
             raise WarehouseValidationError("Нельзя снять больше существующего резерва")
         return replace(self, reserved=self.reserved - amount, version=self.version + 1)
 
-    def write_off(self, quantity: Decimal) -> StockLot:
+    def write_off(self, quantity: Decimal, *, owner_id: UUID | None = None,
+                  customer_order: str | None = None, on_date: date | None = None) -> StockLot:
+        self.assert_issuable(on_date=on_date)
+        self.assert_owner(owner_id=owner_id, customer_order=customer_order)
         amount = _quantity(quantity, "Списание")
         if amount > self.balance:
             raise WarehouseValidationError("Недостаточно остатка для списания")
@@ -287,7 +355,10 @@ class StockLot:
             raise WarehouseValidationError("Списание затрагивает зарезервированный остаток")
         return replace(self, written_off=self.written_off + amount, version=self.version + 1)
 
-    def issue_reserved(self, quantity: Decimal) -> StockLot:
+    def issue_reserved(self, quantity: Decimal, *, owner_id: UUID | None = None,
+                       customer_order: str | None = None, on_date: date | None = None) -> StockLot:
+        self.assert_issuable(on_date=on_date)
+        self.assert_owner(owner_id=owner_id, customer_order=customer_order)
         amount = _quantity(quantity, "Выдача резерва")
         if amount > self.reserved:
             raise WarehouseValidationError("Нельзя выдать больше зарезервированного количества")
@@ -418,6 +489,11 @@ class StockLot:
         updated = replace(self, **values)
         if updated == self:
             return self
+        if updated.reserved > self.reserved or updated.written_off > self.written_off:
+            # A manual quantity edit must not bypass the same stock guards.
+            self.assert_issuable()
+            updated.assert_issuable()
+            self.assert_owner()
         unit = f" {self.unit}" if self.unit else ""
         if updated.balance < 0:
             raise WarehouseValidationError(
