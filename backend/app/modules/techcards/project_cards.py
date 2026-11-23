@@ -113,12 +113,15 @@ def _positional_operation(op: Mapping[str, Any]) -> bool:
     return str(op.get("connector") or "").split(" · ")[-1].isdigit()
 
 
-def _identity_layout(document: Mapping[str, Any]) -> list[Any]:
+def _operation_layout(op: Mapping[str, Any]) -> dict[str, Any]:
     # Without a recipe even result names can be the only evidence of a piece's length.
     # Ignore instruction/timing updates, but require the rest of the saved layout to match.
-    return [{key: value for key, value in op.items()
-             if key not in {"card", "time", "times", "title", "edited", "operation_fingerprint"}}
-            for op in document.get("operations") or []]
+    return {key: value for key, value in op.items()
+            if key not in {"card", "time", "times", "title", "edited", "operation_fingerprint"}}
+
+
+def _identity_layout(document: Mapping[str, Any]) -> list[Any]:
+    return [_operation_layout(op) for op in document.get("operations") or []]
 
 
 def _ambiguous_operation(op: Mapping[str, Any]) -> TechcardValidationError:
@@ -138,6 +141,7 @@ def operation_aliases(previous: Mapping[str, Any] | None, document: Mapping[str,
     raw_ops = config.get("ops") or []
     targets = {operation_key(op) for op in document.get("operations") or []}
     target_ops = {operation_key(op): op for op in document.get("operations") or []}
+    manual_target = (document.get("build_config") or {}).get("mode") == "manual"
     source_counts = Counter(op.get("operation_fingerprint") for op in old_ops)
     by_fingerprint: dict[str, list[str]] = {}
     for op in document.get("operations") or []:
@@ -171,7 +175,17 @@ def operation_aliases(previous: Mapping[str, Any] | None, document: Mapping[str,
                 # Require a unique source and destination before transferring any content.
                 if matches and (source_counts[fingerprint] > 1 or len(matches) > 1):
                     raise _ambiguous_operation(old)
-                if key in targets:
+                if key in targets and manual_target and not matches and not target_ops[key].get("operation_fingerprint"):
+                    # The card was switched to «Ручная сборка», which has no recipe identity: a positional
+                    # key holds only if it is unique and names exactly the same saved work. A misaligned
+                    # generated recipe is not this case — it stays a conflict below.
+                    if _positional_operation(old) and (
+                            sum((op.get("code"), op.get("side")) == (old.get("code"), old.get("side"))
+                                for op in old_ops) > 1
+                            or _operation_layout(old) != _operation_layout(target_ops[key])):
+                        raise _ambiguous_operation(old)
+                    target = key
+                elif key in targets:
                     if fingerprint != target_ops[key].get("operation_fingerprint"):
                         raise _ambiguous_operation(old)
                     target = key
@@ -227,8 +241,18 @@ def with_override_fingerprints(overrides: Mapping[str, Any] | None,
     if overrides is None:
         return None
     result = deepcopy(dict(overrides))
-    operations = {operation_key(op): op for op in (document or {}).get("operations") or []}
-    for key, edit in (result.get("operations") or {}).items():
+    edits = result.get("operations")
+    if not isinstance(edits, Mapping) or not edits:
+        return result
+    operations = {}
+    for op in (document or {}).get("operations") or []:
+        # Read path: a stored row must stay readable even if an old snapshot holds an operation
+        # without a code; such an operation has no key, so no saved edit can point at it.
+        try:
+            operations[operation_key(op)] = op
+        except TechcardValidationError:
+            continue
+    for key, edit in edits.items():
         op = edit.get("operation") if isinstance(edit, Mapping) else None
         fingerprint = operations.get(key, {}).get("operation_fingerprint")
         if isinstance(op, dict) and fingerprint:
