@@ -1,7 +1,7 @@
 """ОБ.019: a job run from the machine card — «Выполнение задания» (owner 19.11.2026, plan «Станки вне проекта», S2).
 
-A run is one «Передать на станок» of a job: a cutting-group job (group + cut length, the ETK path) or a «Ручная работа»
-(production/manual_jobs.py). No table of its own: the run rides its write command (`production_machine_writes`,
+A run is one confirmed batch: a cutting-group job (group + cut length, the ETK path), a standalone wire batch,
+or a legacy «Ручная работа» (production/manual_jobs.py). No table of its own: the run rides its write command (`production_machine_writes`,
 purpose `transfer`) as `payload["run"]`; the words the command writes (`blocks`, `bits`) are not touched by it.
 - Tagged when queued: `{kind, group_id, length_mm | job_id, label}` plus the quantity it was written with: `counter`
   (D649 the target was computed from), `target` (D22 = counter + pieces), `pieces`, `counter_start` (= counter, or the
@@ -38,7 +38,7 @@ from . import machine_writes as queue
 from . import machines as rules
 
 KEY = "run"
-KINDS = ("cutting", "manual")
+KINDS = ("cutting", "manual", "wire")
 FINISHED_STATE = 107  # «Тираж готов»
 FINISHED_ALARM = 5  # «Тираж готов» in the alarm word: normal, not a fault
 RUNNING_STATES = (103, 104, 106)
@@ -70,6 +70,13 @@ def cutting(group_id: UUID, length_mm: object, label: str, quantity: int | None)
 
 def manual(job_id: UUID, label: str, quantity: int | None) -> dict:
     return {"kind": "manual", "job_id": str(job_id), "label": label, "quantity": quantity}
+
+
+def wire(wire: str, length_mm: object, quantity: int | None) -> dict:
+    """A batch entered at the machine, with no cutting group or manual-work document."""
+    length = length_key(length_mm)
+    return {"kind": "wire", "wire": wire, "length_mm": length, "quantity": quantity,
+            "label": f"{wire} · {length.replace('.', ',')} мм"}
 
 
 def info(row: queue.MachineWriteRow | None) -> dict | None:
@@ -105,6 +112,8 @@ def same_job(a: dict, b: dict) -> bool:
         return False
     if a["kind"] == "manual":
         return a.get("job_id") == b.get("job_id")
+    if a["kind"] == "wire":
+        return str(a.get("wire", "")).casefold() == str(b.get("wire", "")).casefold()
     return a.get("group_id") == b.get("group_id") and a.get("length_mm") == b.get("length_mm")
 
 
@@ -198,7 +207,8 @@ def progress(row: queue.MachineWriteRow, words: dict[int, int], link_ok: bool) -
         stage = "reset"
     elif not link_ok or start is None:
         stage = "nolink"
-    elif done and (state == FINISHED_STATE or alarm == FINISHED_ALARM):
+    elif done and (state == FINISHED_STATE or alarm == FINISHED_ALARM
+                   or (run.get("quantity") is not None and done >= run["quantity"])):
         stage = "finished"
     elif state in RUNNING_STATES or done:
         stage = "running"
@@ -302,7 +312,8 @@ def view(row: queue.MachineWriteRow, words: dict[int, int], link_ok: bool) -> di
     if run.get("check") == "pending":
         text, tone = "Проверяется по счётчику станка", "info"
     return {"id": str(row.id), "kind": run.get("kind"), "label": run.get("label", ""), "group_id": run.get("group_id"),
-            "length_mm": run.get("length_mm"), "job_id": run.get("job_id"), "quantity": run.get("quantity"),
+            "length_mm": run.get("length_mm"), "job_id": run.get("job_id"), "wire": run.get("wire"),
+            "quantity": run.get("quantity"),
             "write": {"status": row.status, "status_text": text, "tone": tone, "error": row.error},
             "verified_at": run.get("verified_at"), "closed_at": run.get("closed_at"),
             "closed_why": run.get("closed_why", ""), "machine_count": run.get("machine_count"),
@@ -326,7 +337,7 @@ def done_before(session: Session, equipment_id: UUID, new: dict, now: datetime) 
     return seen["done"] or 0 if seen["stage"] not in ("reset", "nolink") else 0
 
 
-NO_JOB = "Нет открытого задания — Пуск из ERP только по заданию: передайте задание на станок"
+NO_JOB = "Нет подготовленного тиража — выберите провод или задание и подтвердите загрузку на станок"
 WRITING = "Задание ещё записывается на станок — дождитесь результата"
 CHECKING = "Запись задания проверяется по счётчику станка — повторите «Пуск» через секунду"
 NOT_FRESH = "Нет свежих данных станка после записи задания — проверьте связь и повторите Пуск через секунду"

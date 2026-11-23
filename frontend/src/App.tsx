@@ -10,6 +10,7 @@ import {
 } from "./api";
 import { DraftProvider, DraftStore } from "./formDrafts";
 import { setPersonalViewsUser } from "./personalViews";
+import { useCollapsedGroups } from "./useCollapsedGroups";
 import { setScanDeviceUser } from "./ScanAgent";
 import {
   accessLevelOf,
@@ -20,6 +21,7 @@ import {
   isBlock,
   isViewOnly,
   isSection,
+  manualJobsDestination,
   navKey,
   procurementMenuTab,
   runsTheSystem,
@@ -42,7 +44,6 @@ import { PrimaryDocsPage } from "./PrimaryDocsPage";
 import { ProductionPage } from "./ProductionPage";
 import { equipmentSetupApi } from "./equipmentSetupApi";
 const MachinesPage = lazy(() => import("./MachinesPage").then(module => ({ default: module.MachinesPage })));
-const ManualJobsPage = lazy(() => import("./ManualJobsPage").then(module => ({ default: module.ManualJobsPage })));
 const EquipmentSetupPage = lazy(() => import("./EquipmentSetupPage").then(module => ({ default: module.EquipmentSetupPage })));
 import { ProductionPlanPage } from "./ProductionPlanPage";
 import { QualityPage } from "./QualityPage";
@@ -105,6 +106,8 @@ function bindPersonalState(userId: string | null) {
 
 export function App() {
   const [principal, setPrincipal] = useState<Principal | null>(null);
+  const viewerId = principal?.viewing?.viewer.id ?? principal?.user.id;
+  const sidebarGroups = useCollapsedGroups(viewerId ? `erp-sidebar-collapsed:${viewerId}` : null);
   function acceptPrincipal(next: Principal | null) {
     bindPersonalState(next?.user.id ?? null);
     setPrincipal(next);
@@ -141,6 +144,20 @@ export function App() {
   }
 
   useEffect(loadPrincipal, []);
+
+  useEffect(() => {
+    if (!principal || place.section !== "manualjobs") return;
+    const destination = manualJobsDestination(principal);
+    if (!destination) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("section", destination);
+    url.searchParams.set("view", destination === "machines" ? "journal" : "work-materials");
+    url.searchParams.delete("block");
+    url.searchParams.delete("tab");
+    window.history.replaceState(window.history.state, "", url);
+    setPlace(placeFromUrl());
+    setVisit(count => count + 1);
+  }, [principal, place.section]);
 
   useEffect(() => {
     const listener = () => { setPlace(placeFromUrl()); setVisit((count) => count + 1); setNavOpen(false); };
@@ -186,6 +203,10 @@ export function App() {
     url.searchParams.delete("q");
     url.searchParams.delete("harness");
     url.searchParams.delete("library");
+    // Equipment source and journal filters belong to the opened page, not the next menu destination.
+    for (const key of ["view", "equipment", "task", "operation", "load", "equipment_id", "task_id", "operation_id", "etk_position", "group_id", "member_id", "date_from", "date_to", "waiting"]) {
+      url.searchParams.delete(key);
+    }
     if (next.section !== "cabinet") url.searchParams.set("section", next.section);
     else if (next.block) url.searchParams.set("block", next.block);
     if (next.user) url.searchParams.set("user", next.user);
@@ -312,10 +333,12 @@ export function App() {
   // «Наладка оборудования» — вкладка «Запросы на наладку» «Оборудования» (владелец 19.11.2026): её старая ссылка
   // открывает «Оборудование» на этой вкладке (там же окно задания со всеми шагами наладки).
   const seesMachines = visibleNav.some(({ id }) => id === "machines");
-  const activeSection = place.section === "equipmentsetup" && seesMachines ? "machines"
+  const activeSection = place.section === "manualjobs" ? "manualjobs"
+    : place.section === "equipmentsetup" && seesMachines ? "machines"
     : place.section === "equipmentsetup" || visibleNav.some(({ id }) => id === place.section) ? place.section : "cabinet";
   const activeWithin = visibleNav.find(({ id }) => id === activeSection)?.within;
   const activeBlock = activeSection === "cabinet" ? blocks.find((block) => block.id === place.block) ?? null : null;
+  const currentBlock = activeBlock?.id ?? visibleNav.find(({ id }) => id === activeSection)?.block;
   // «Снабжение» is menu items per tab: the lit one follows `?tab=`; the «Заявки» register lights the «Заявки» tab.
   const procurementTab = procurementMenuTab(place.tab, !canAct(principal, "procurement"));
   const isActive = (item: NavItem) => item.tab
@@ -357,12 +380,18 @@ export function App() {
         <SearchEntry />
         <nav aria-label="Основная навигация">
           {visibleNav.filter((item) => !item.block).map((item) => <NavButton key={navKey(item)} item={item} active={activeSection === item.id && !activeBlock} open={openItem} />)}
-          {blocks.map((block) => (
-            <div className="nav-group" key={block.id}>
-              <h4>{block.title}</h4>
-              {block.items.map((item) => <NavButton key={navKey(item)} item={item} active={isActive(item)} open={openItem} />)}
-            </div>
-          ))}
+          {blocks.map((block) => {
+            const expanded = currentBlock === block.id || !sidebarGroups.collapsed.has(block.id);
+            return <div className="nav-group" key={block.id}>
+              <h4><button type="button" className="nav-group-toggle" aria-expanded={expanded} aria-disabled={currentBlock === block.id}
+                aria-controls={`nav-block-${block.id}`} onClick={() => { if (currentBlock !== block.id) sidebarGroups.toggle(block.id); }}>
+                <span className="caret" aria-hidden="true">{expanded ? "▾" : "▸"}</span>{block.title}
+              </button></h4>
+              <div id={`nav-block-${block.id}`} hidden={!expanded}>
+                {block.items.map((item) => <NavButton key={navKey(item)} item={item} active={isActive(item)} open={openItem} />)}
+              </div>
+            </div>;
+          })}
         </nav>
         <div className="profile side-foot">
           <strong>{principal.user.name}</strong>
@@ -425,7 +454,10 @@ export function App() {
         {activeSection === "machines" && <Suspense fallback={<p className="empty">Загрузка…</p>}><MachinesPage key={visit} setupViewer={setupAvailable}
           initialView={place.section === "equipmentsetup" ? "setup" : undefined}
           canWrite={canAct(principal, "production") || canAct(principal, "myops")} canQuality={canAct(principal, "quality")} /></Suspense>}
-        {activeSection === "manualjobs" && <Suspense fallback={<p className="empty">Загрузка…</p>}><ManualJobsPage /></Suspense>}
+        {activeSection === "manualjobs" && <section className="page"><h1>Журнал работ</h1>
+          {manualJobsDestination(principal) ? <p className="empty">Загрузка…</p>
+            : <p className="error-banner" role="alert">Журнал работ вам не открыт.</p>}
+        </section>}
         {activeSection === "myops" && <ProductionPage principal={principal} mine />}
         {activeSection === "quality" && <QualityPage principal={principal} />}
         {activeSection === "references" && <ReferencesPage key={visit} principal={principal} />}
@@ -443,7 +475,7 @@ export function App() {
           openStaff={() => navigate("staff")}
           startViewAs={startViewAs}
         />}
-        {activeSection === "access" && <AccessPage />}
+        {activeSection === "access" && <AccessPage viewerId={viewerId ?? principal.user.id} />}
       </main>
     </div>
     {relogin}

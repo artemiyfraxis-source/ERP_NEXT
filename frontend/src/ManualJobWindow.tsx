@@ -4,10 +4,11 @@ import { ComboBox, type ComboOption } from "./ComboBox";
 import { EMPTY, formatWallMoment } from "./format";
 import { ManualJobMaterial } from "./ManualJobMaterial";
 import { manualJobsApi, type ManualJob, type ManualJobOptions } from "./manualJobsApi";
+import type { MachineQueueRow } from "./machineQueueApi";
 import { PageWindow } from "./PageWindow";
 import "./manualJobs.css";
 
-/** Окно «Ручная работа»: новая работа на станке (станок, эталон, провод / контакт из справочников или свои, длина,
+/** Окно «Работа»: новая работа на станке (станок, эталон, провод / контакт из справочников или свои, длина,
  *  количество, «Зачем»), завершение (годные, брак с причиной, что делать с материалом) и отмена с причиной.
  *  «Списать с партии» (срез S3) — у кого правка «Склада»: работа завершается с «Ждёт решения склада» и сразу
  *  открывается окно «Материал» (`ManualJobMaterial`); там же решают по уже завершённой работе. */
@@ -38,8 +39,9 @@ function Facts({ job }: { job: ManualJob }) {
   </div>)}</dl>;
 }
 
-export function StartForm({ options, equipmentId, inventory, onStarted }: {
+export function StartForm({ options, equipmentId, inventory, onStarted, tasks, task, onTaskChange }: {
   options: ManualJobOptions; equipmentId?: string; inventory?: string; onStarted: (job: ManualJob) => void;
+  tasks?: MachineQueueRow[]; task?: MachineQueueRow | null; onTaskChange?: (key: string) => void;
 }) {
   const initial = options.machines.find((item) => item.id === equipmentId || (inventory && item.inventory === inventory));
   const [machine, setMachine] = useState(initial?.id ?? "");
@@ -59,8 +61,9 @@ export function StartForm({ options, equipmentId, inventory, onStarted }: {
   const chosen = options.machines.find((item) => item.id === machine);
   const references = options.references.filter((item) => item.equipment_id === machine);
   const quantityValue = quantity.trim() ? whole(quantity) : null;
-  const quantityBad = Boolean(quantity.trim()) && !quantityValue;
-  const ready = Boolean(chosen && !chosen.running && purpose.trim() && !quantityBad && !busy);
+  const quantityBad = !task && Boolean(quantity.trim()) && !quantityValue;
+  const taskPurpose = task ? [task.project, task.item, task.step].filter(Boolean).join(" · ") : "";
+  const ready = Boolean(chosen && !chosen.running && (taskPurpose || purpose.trim()) && !quantityBad && !busy);
 
   const pickReference = (id: string) => {
     setReference(id);
@@ -73,18 +76,23 @@ export function StartForm({ options, equipmentId, inventory, onStarted }: {
     setBusy(true);
     setError("");
     try {
-      onStarted(await manualJobsApi.start({ equipment_id: machine, purpose, wire, contact, length_mm: length,
-        quantity_planned: quantityValue, reference_id: reference || null }));
+      onStarted(await manualJobsApi.start({ equipment_id: machine, purpose: taskPurpose || purpose, wire, contact, length_mm: length,
+        quantity_planned: task ? Math.max(0, Math.trunc(Number(task.left))) || null : quantityValue, reference_id: reference || null,
+        ...(task ? { source: { task_id: task.task_id, operation_id: task.operation_id, etk_position: task.etk_position } } : {}) }));
     } catch (reason) {
-      setError(failureText(reason, "Ручная работа не начата"));
+      setError(failureText(reason, "Работа не начата"));
     } finally {
       setBusy(false);
     }
   };
-  return <form className="mj-form" onSubmit={submit} aria-label="Новая ручная работа">
+  return <form className="mj-form" onSubmit={submit} aria-label="Новая работа">
     {error && <div className="error-banner" role="alert">{error}</div>}
     <div className="form-grid mj-grid">
-      <label className="half">Станок<ComboBox strict options={machines} value={machine} aria-label="Станок" placeholder="№ или название станка…"
+      {tasks && <label className="wide">Задание<select name="task" autoComplete="off" value={task?.key ?? ""} onChange={(event) => onTaskChange?.(event.target.value)}>
+        <option value="">Ввести параметры</option>
+        {tasks.map((item) => <option key={item.key} value={item.key}>{[item.project, item.item, item.step].filter(Boolean).join(" · ")}</option>)}
+      </select></label>}
+      <label className="half">Станок<ComboBox strict disabled={Boolean(equipmentId)} options={machines} value={machine} aria-label="Станок" placeholder="№ или название станка…"
         onChange={(value) => { setMachine(value); setReference(""); }} onClear={() => { setMachine(""); setReference(""); }} /></label>
       <label className="half">Эталон наладки<select value={reference} disabled={!references.length} onChange={(event) => pickReference(event.target.value)}>
         <option value="">{references.length ? "Без эталона" : "У станка нет эталонов"}</option>
@@ -94,11 +102,11 @@ export function StartForm({ options, equipmentId, inventory, onStarted }: {
       <label className="half">Контакт<ComboBox options={contacts} value={contact} onChange={setContact} aria-label="Контакт" name="contact" placeholder="Из справочника или свой…" /></label>
       <label>Длина, мм<input name="length_mm" inputMode="decimal" autoComplete="off" value={length} onChange={(event) => setLength(event.target.value)} /></label>
       <label>Количество, шт<input name="quantity_planned" inputMode="numeric" autoComplete="off" placeholder="Не обязательно…" aria-invalid={quantityBad || undefined}
-        value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
-      <label className="half">Зачем<input name="purpose" required autoComplete="off" placeholder="Например: проба на образцах для ОТК…" value={purpose}
+        value={task ? String(Math.max(0, Math.trunc(Number(task.left)))) : quantity} disabled={Boolean(task)} onChange={(event) => setQuantity(event.target.value)} /></label>
+      <label className="half">Зачем<input name="purpose" required={!task} readOnly={Boolean(task)} autoComplete="off" placeholder="Например: проба на образцах для ОТК…" value={taskPurpose || purpose}
         onChange={(event) => setPurpose(event.target.value)} /></label>
     </div>
-    {chosen?.running && <p className="warning-inline">На станке уже идёт ручная работа {chosen.running} — сначала завершите или отмените её</p>}
+    {chosen?.running && <p className="warning-inline">На станке уже идёт работа {chosen.running} — сначала завершите или отмените её</p>}
     {quantityBad && <p className="warning-inline">Количество — целое число больше нуля</p>}
     <div className="mj-actions">
       <button type="submit" className="primary" disabled={!ready}>{busy ? "Начинаю…" : "Начать работу"}</button>
@@ -143,7 +151,7 @@ function FinishForm({ job, canIssue, onSaved, onIssue }: {
     // «Списать с партии»: the job finishes waiting for the warehouse, the lots are picked in the next window.
     void run(() => manualJobsApi.finish(job.id, { version: job.version, good: goodValue ?? 0, defect: defectValue ?? 0,
       defect_reason: reason, material: material === "issue" ? "pending" : material, material_note: note }),
-    "Ручная работа не завершена", material === "issue" ? onIssue : onSaved);
+    "Работа не завершена", material === "issue" ? onIssue : onSaved);
   };
   return <>
     <form className="mj-form" onSubmit={submit} aria-label="Завершить работу">
@@ -177,7 +185,7 @@ function FinishForm({ job, canIssue, onSaved, onIssue }: {
     </form>
     {cancelOpen && <form className="mj-cancel" aria-label="Отменить работу" onSubmit={(event) => {
       event.preventDefault();
-      if (cancelReason.trim() && !busy) void run(() => manualJobsApi.cancel(job.id, job.version, cancelReason), "Ручная работа не отменена");
+      if (cancelReason.trim() && !busy) void run(() => manualJobsApi.cancel(job.id, job.version, cancelReason), "Работа не отменена");
     }}>
       <label>Причина отмены<input name="cancel_reason" autoComplete="off" required value={cancelReason} onChange={(event) => setCancelReason(event.target.value)} /></label>
       <button type="submit" className="secondary" disabled={!cancelReason.trim() || busy}>Отменить работу</button>
@@ -203,7 +211,7 @@ export function ManualJobWindow({ job, equipmentId, inventory, canEdit, canIssue
   }, [current]);
   const saved = (next: ManualJob) => { setCurrent(next); onSaved?.(next); };
   if (current && materialOpen) return <ManualJobMaterial job={current} close={() => setMaterialOpen(false)} onSaved={saved} />;
-  const title = current ? `Ручная работа ${current.number}` : "Новая ручная работа";
+  const title = current ? `Работа ${current.number}` : "Новая работа";
   return <PageWindow label={title} close={close} width={920}>
     <section className="panel mj-window">
       <header className="mj-window-head">
@@ -222,7 +230,7 @@ export function ManualJobWindow({ job, equipmentId, inventory, canEdit, canIssue
       {!current && !error && !options && <p className="empty">Загрузка…</p>}
       {!current && options && ((canEdit ?? options.can_edit)
         ? <StartForm options={options} equipmentId={equipmentId ?? undefined} inventory={inventory} onStarted={saved} />
-        : <p className="empty">Начинать ручную работу вам не разрешено</p>)}
+        : <p className="empty">Начинать работу вам не разрешено</p>)}
     </section>
   </PageWindow>;
 }

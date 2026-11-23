@@ -98,12 +98,13 @@ function todayBlocks(today: Ob099Today): Fact[][] {
   ];
 }
 
-export function Ob099CardView({ card }: { card: Ob099MachineCard }) {
+export function Ob099CardView({ card, incoming }: { card: Ob099MachineCard; incoming?: import("./machinesApi").MachineTaskContext }) {
   const old = card.link.code !== "ok";
   const blocks = card.live ? liveBlocks(card.live) : null;
   const day = formatDay(card.today.day).slice(0, 5);
   const [summary, reasons, alarms] = todayBlocks(card.today);
   return <>
+    {incoming && <p className="warning-inline" role="status">Операция ЭТК {incoming.action.etk_position} · из задания. {incoming.action.blocker || "Пресс доступен для наблюдения; загрузка задания не поддерживается"}</p>}
     <p className={`machine-link ${toneClass(card.link.tone)}`} role="status">
       {card.live && !old && <strong className={`machine-state ${toneClass(card.live.state.tone)}`}>{card.live.state.text}</strong>}
       <strong>{card.link.text}</strong>

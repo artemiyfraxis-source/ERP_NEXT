@@ -28,10 +28,10 @@ const toneClass = (tone?: Tone) => (tone && tone !== "neutral" ? `tone-${tone}` 
  *  открытому, записанному и проверенному прогону. `run` undefined — прогон ещё не загружен (причины нет). */
 export function runBlocker(run: MachineRun | null | undefined): string {
   if (run === undefined) return "";
-  if (!run || run.stage === "closed" || run.stage === "failed") return "выберите задание";
+  if (!run || run.stage === "closed" || run.stage === "failed") return "выберите провод или задание";
   if (run.stage === "writing") return "ждём записи задания";
   if (run.stage === "moved" || run.stage === "reset") return "передайте задание заново";
-  if (run.stage === "finished") return "тираж готов — завершите задание";
+  if (run.stage === "finished") return "тираж готов — подготовьте новый";
   if (run.stage === "nolink") return "нет свежих данных станка";
   return "";
 }

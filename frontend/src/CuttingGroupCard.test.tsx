@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { CuttingGroupCard } from "./CuttingGroupCard";
-import { ProductionPage, cutGroupInQueue } from "./ProductionPage";
+import { ProductionPage } from "./ProductionPage";
 import { cuttingLabels, cuttingLabelsPage, cuttingLabelsTitle, cuttingRows, type CuttingGroup } from "./cuttingGroups";
 import type { Principal, ProductionTask } from "./api";
 import { buildPrintDocumentHtml, openPrintDocument } from "./print";
@@ -35,6 +35,7 @@ const working: CuttingGroup = { ...group, version: 2, state: "frozen", session: 
 it("starts one group and renders a working timer with separate PF and blank quantities", async () => {
   const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ group: working, outputs: [] }));
   render(<CuttingGroupCard group={group} readOnly={false} renderInstruction={() => null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
   expect(screen.getByRole("heading", { name: "Резка · 708К. · ПФ-1 Заготовки · 4 КБ" })).toBeTruthy();
   expect(screen.getByText("РЗ-0001 · ЦАР")).toBeTruthy();
   expect(screen.getAllByRole("button", { name: "Начать" })).toHaveLength(1);
@@ -196,6 +197,38 @@ it("uses real groups instead of duplicate child cards in MyQueue and counts a gr
   expect(screen.queryByText(/Операции вам пока не назначены/)).toBeNull();
 });
 
+it("loads only the chosen group member instruction and machine actions, and keeps completed groups accessible", async () => {
+  const principal: Principal = { user: { id: "operator", name: "Монтажник", email: "fitter@example.test", department: "Производство" }, roles: [], permissions: { myops: "edit" } };
+  const finished = { ...group, id: "finished-group", number: "РЗ-0002", project: "709К.", kind: "cut" as const,
+    rows: group.rows.map((row) => ({ ...row, labels: [], id: `finished-${row.id}`, task_id: `finished-${row.task_id}`, state: "done", good: "15" })) };
+  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/production/my") return json({ tasks: [], cutting_groups: [{ ...group, kind: "cut", rows: group.rows.map((row) => ({ ...row, labels: [] })) }, finished] });
+    if (path.endsWith("/execution")) return json({ session: null, boxes: [] });
+    if (path.endsWith("/etk")) return json({ card: { id: "issued", revision: 1, document: { operations: [{ position: 1, title: "Нарезать кабель" }] } }, focus: { position: 1 } });
+    if (path.endsWith("/machine-actions")) return json({ task_id: path.split("/")[5], operation_id: path.split("/")[7], actions: [] });
+    return json({ items: [], units: [] });
+  });
+  const { container } = render(<ProductionPage principal={principal} mine />);
+  await screen.findByText("Выполнено · 1");
+  expect(container.querySelectorAll(".mo-card")).toHaveLength(2);
+  expect(container.querySelector(".page-count")).toHaveTextContent("1");
+  expect(container.querySelector(".mo-finished")).not.toHaveAttribute("open");
+  expect(fetch.mock.calls.some(([path]) => String(path).includes("/etk"))).toBe(false);
+  fireEvent.click(within(screen.getByRole("region", { name: "Резка кабеля · 708К. · 4 КБ" })).getByRole("button", { name: "Инструкция" }));
+  await screen.findByRole("heading", { name: /Нарезать кабель/ });
+  expect(fetch.mock.calls.filter(([path]) => String(path).endsWith("/machine-actions")).map(([path]) => String(path)))
+    .toEqual(["/api/production/my/tasks/task-0/operations/op-0/etk/machine-actions"]);
+  const dialog = screen.getByRole("dialog", { name: "Инструкция группы резки" });
+  fireEvent.change(within(dialog).getByRole("combobox"), { target: { value: "member-2" } });
+  await waitFor(() => expect(fetch.mock.calls.filter(([path]) => String(path).endsWith("/machine-actions")).map(([path]) => String(path)))
+    .toEqual(["/api/production/my/tasks/task-0/operations/op-0/etk/machine-actions", "/api/production/my/tasks/task-2/operations/op-2/etk/machine-actions"]));
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  fireEvent.click(screen.getByText("Выполнено · 1"));
+  expect(container.querySelector(".mo-finished")).toHaveAttribute("open");
+  expect(screen.getByRole("region", { name: "Резка кабеля · 709К. · 4 КБ" })).toBeInTheDocument();
+});
+
 it("shows «Обновить из ЭТК» only for a stale open group and re-pins it", async () => {
   const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ group: { ...group, version: 5 } }));
   const stale = { ...group, etk_stale: true };
@@ -214,8 +247,17 @@ it("shows «Обновить из ЭТК» only for a stale open group and re-pi
 
 const plain = (rows: CuttingGroup["rows"]) => rows.map((row) => ({ ...row, labels: [] }));
 
+it("shows label progress failures inside the group instruction", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ detail: "Прогресс печати недоступен" }, 503));
+  render(<CuttingGroupCard group={{ ...group, kind: "labels" }} readOnly={false} renderInstruction={() => null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
+  expect(await within(screen.getByRole("dialog", { name: "Инструкция группы резки" })).findByRole("alert"))
+    .toHaveTextContent("Прогресс печати недоступен");
+});
+
 it("cut group: «Резка кабеля» with КБ, length and pieces only, no label block", () => {
   render(<CuttingGroupCard group={{ ...group, kind: "cut", kind_name: "Резка кабеля", rows: plain(group.rows) }} readOnly={false} renderInstruction={() => null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
   expect(screen.getByRole("heading", { name: "Резка кабеля · 708К. · 4 КБ" })).toBeTruthy();
   expect(screen.getAllByRole("columnheader").map((cell) => cell.textContent?.trim())).toEqual(["КБ", "Длина, мм", "Шт.", "Осталось, шт", "Готово, шт", ""]);
   expect(screen.queryByRole("button", { name: "Этикетки группы" })).toBeNull();
@@ -228,6 +270,7 @@ it("labels group: printed / remaining per КБ and «Печатать остав
     remaining_labels: index === 0 ? labels : 0 })), printed: 0, remaining, remaining_labels: labels });
   const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(json(answer(5)));
   const { unmount } = render(<CuttingGroupCard group={{ ...group, kind: "labels" }} readOnly={false} renderInstruction={() => null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
   expect(screen.getByRole("heading", { name: "Печать этикеток · 708К. · 4 КБ" })).toBeTruthy();
   await waitFor(() => expect(screen.getByRole("button", { name: "Печатать оставшиеся" })).toBeEnabled());
   expect(String(fetch.mock.calls[0][0])).toBe("/api/production/marking/progress?group_id=group-1");
@@ -236,12 +279,14 @@ it("labels group: printed / remaining per КБ and «Печатать остав
   unmount();
   fetch.mockResolvedValue(json(answer(0)));
   const second = render(<CuttingGroupCard group={{ ...group, kind: "labels" }} readOnly={false} renderInstruction={() => null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
   await waitFor(() => expect(screen.getAllByText("15").length).toBeGreaterThan(0));
   expect(screen.getByRole("button", { name: "Печатать оставшиеся" })).toBeDisabled();
   second.unmount();
   // Every item's numbered labels printed, fixed ones left: no item remains, the button stays enabled.
   fetch.mockResolvedValue(json(answer(0, 30)));
   render(<CuttingGroupCard group={{ ...group, kind: "labels" }} readOnly={false} renderInstruction={() => null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Печатать оставшиеся" })).toBeEnabled());
 });
 
@@ -249,6 +294,7 @@ it("tubes group: material, length and pieces, one value per column", () => {
   const rows = plain(group.rows).map((row, index) => ({ ...row, tubes: [
     { material: "ТУТ 2:1 Ø3", length_mm: 35, quantity: 30 + index }, { material: "ТУТ 2:1 Ø3", length_mm: 55, quantity: 15 }] }));
   render(<CuttingGroupCard group={{ ...group, kind: "tubes", rows }} readOnly={false} renderInstruction={() => null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
   expect(screen.getByRole("heading", { name: "Резка трубок · 708К. · 4 КБ" })).toBeTruthy();
   expect(screen.getAllByRole("columnheader").map((cell) => cell.textContent?.trim())).toEqual(["КБ", "Материал", "Длина, мм", "Шт."]);
   expect(screen.getAllByRole("row")).toHaveLength(9);
@@ -256,6 +302,7 @@ it("tubes group: material, length and pieces, one value per column", () => {
 
 it("old mixed group (no kind) keeps the wide table and the label block", () => {
   render(<CuttingGroupCard group={group} readOnly={false} renderInstruction={() => null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
   expect(screen.getByRole("heading", { name: "Резка · 708К. · ПФ-1 Заготовки · 4 КБ" })).toBeTruthy();
   expect(screen.getByText("Длина реза, мм")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Этикетки группы" })).toBeTruthy();
@@ -266,9 +313,11 @@ it("«Готово» on a KB row posts a one-row group submit; the input is lock
     String(input).includes("/machines/runs/") ? json({ runs: [] }) : json({ group: working, outputs: [] }));
   const cut = { ...group, kind: "cut" as const, rows: plain(group.rows) };
   const { rerender } = render(<CuttingGroupCard group={cut} readOnly={false} renderInstruction={() => null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
   expect(screen.getByLabelText("Сколько готово КБ2")).toBeDisabled();
   expect(screen.getByRole("button", { name: "Готово КБ2" })).toBeDisabled();
   rerender(<CuttingGroupCard group={{ ...cut, session: working.session }} readOnly={false} renderInstruction={() => null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
   expect(screen.getByLabelText("Сколько готово КБ2")).toHaveValue(15);
   fireEvent.change(screen.getByLabelText("Сколько готово КБ2"), { target: { value: "6" } });
   fireEvent.click(screen.getByRole("button", { name: "Готово КБ2" }));
@@ -282,6 +331,7 @@ it("«Готово» on a KB row posts a one-row group submit; the input is lock
 it("row «Готово» takes whole pieces only", () => {
   const cut = { ...group, kind: "cut" as const, rows: plain(group.rows), session: working.session };
   render(<CuttingGroupCard group={cut} readOnly={false} renderInstruction={() => null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
   const input = screen.getByLabelText("Сколько готово КБ2");
   expect(input).toHaveAttribute("step", "1");
   fireEvent.change(input, { target: { value: "2.5" } });
@@ -294,17 +344,22 @@ it("row «Готово» says why it waits: not started, on downtime, or run by 
   const cut = { ...group, kind: "cut" as const, rows: plain(group.rows) };
   const hint = () => screen.getByRole("button", { name: "Готово КБ2" }).getAttribute("title");
   const { rerender } = render(<CuttingGroupCard group={cut} readOnly={false} renderInstruction={() => null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
   expect(hint()).toBe("Сначала нажмите «Начать»");
   const paused = { ...working.session!, status: "Пауза", pause_started_at: new Date().toISOString() };
   rerender(<CuttingGroupCard group={{ ...cut, session: paused }} readOnly={false} renderInstruction={() => null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
   expect(hint()).toBe("Сначала закончите простой");
   const other = { ...working.session!, operator_id: "someone", operator_name: "Петров" };
   rerender(<CuttingGroupCard group={{ ...cut, session: other }} readOnly={false} performerId="operator" renderInstruction={() => null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
   expect(hint()).toBe("Группу ведёт Петров");
   // The viewer runs the session but sees only part of the group: not «Начать» — it is submitted on the full card.
   rerender(<CuttingGroupCard group={{ ...cut, session: working.session, partial_view: true }} readOnly={false} renderInstruction={() => null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
   expect(hint()).toBe("Видна не вся группа — сдают на полной карточке группы");
   rerender(<CuttingGroupCard group={{ ...cut, session: working.session }} readOnly={false} renderInstruction={() => null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
   expect(hint()).toBeNull();
 });
 
@@ -315,14 +370,6 @@ it("shows the group norm to the master only", () => {
   expect(screen.getByText(/норма 240 мин/)).toBeTruthy();
 });
 
-it("hides a «Резка кабеля» group that is wholly in the cutting queue, unless it was started", () => {
-  const cut: CuttingGroup = { ...group, kind: "cut", rows: plain(group.rows) };
-  const ops = new Set(cut.rows.map((row) => row.operation_id));
-  expect(cutGroupInQueue(cut, ops)).toBe(true);
-  expect(cutGroupInQueue(cut, new Set())).toBe(false);
-  expect(cutGroupInQueue({ ...cut, session: working.session }, ops)).toBe(false);
-  expect(cutGroupInQueue({ ...group, kind: "labels" }, ops)).toBe(false);
-});
 
 it("labels group: «Отметить напечатанные вне ERP» opens its window and a mark reloads «Напечатано / Осталось»", async () => {
   const progress = (printed: number) => ({ rows: group.rows.map((row) => ({ task_id: row.task_id, task_number: row.task_number,
@@ -339,10 +386,15 @@ it("labels group: «Отметить напечатанные вне ERP» opens
       task_number: row.task_number, serial: 1, text: `FRX.${row.item}.1`, quantity: 1, state: "new" })) });
   });
   render(<CuttingGroupCard group={{ ...group, kind: "labels" }} readOnly={false} renderInstruction={() => null} />);
+  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
   await waitFor(() => expect(screen.getAllByText("0")).toHaveLength(4));
+  fireEvent.keyDown(screen.getByRole("dialog", { name: "Инструкция группы резки" }), { key: "Escape" });
   fireEvent.click(screen.getByRole("button", { name: "Отметить напечатанные вне ERP" }));
   const dialog = screen.getByRole("dialog", { name: "Отметить напечатанные вне ERP" });
   fireEvent.click(await within(dialog).findByRole("button", { name: /^Отметить 4\sэтикетки$/ }));
+  await waitFor(() => expect(fetch.mock.calls.filter(([url]) => String(url).startsWith("/api/production/marking/progress"))).toHaveLength(2));
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
   await waitFor(() => expect(screen.getAllByText("14").length).toBeGreaterThanOrEqual(4));
   expect(fetch.mock.calls.filter(([url]) => String(url).startsWith("/api/production/marking/progress"))).toHaveLength(2);
 });

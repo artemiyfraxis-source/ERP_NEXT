@@ -1,4 +1,4 @@
-"""«Ручная работа», slice S3: the material of a finished job — «Списать с партии» through the warehouse's own write-off
+"""«Работа», slice S3: the material of a finished job — «Списать с партии» through the warehouse's own write-off
 (one transaction with the job's compare-and-swap, source key «manual-job:{job}:{lot}», once), «Не списывать» with a
 reason, rights (only «Склад» on edit writes off), the «Ждёт решения склада» queue of the journal."""
 
@@ -113,8 +113,8 @@ def test_issue_writes_each_lot_off_once_through_the_warehouse(machines_api):
     assert _balance(sessions, car) == (Decimal("93.5"), 2) and _balance(sessions, zhuk) == (Decimal("46"), 2)
     rows = _writeoffs(sessions)
     assert {row.source_key for row in rows} == {f"manual-job:{job['id']}:{car}", f"manual-job:{job['id']}:{zhuk}"}
-    assert {(row.kind, row.purpose) for row in rows} == {("writeoff", "Ручная работа Р-000001")}
-    assert rows[0].reason == "Ручная работа Р-000001, ОБ.019: Проба на образцах"
+    assert {(row.kind, row.purpose) for row in rows} == {("writeoff", "Работа Р-000001")}
+    assert rows[0].reason == "Работа Р-000001, ОБ.019: Проба на образцах"
     with sessions() as session:
         issues = session.scalars(select(jobs.ManualJobIssueRow)).all()
         assert {issue.writeoff_id for issue in issues} == {row.id for row in rows}
@@ -207,7 +207,7 @@ def test_a_source_key_already_journalled_refuses_the_write_off(machines_api):
     def run(version):
         with sessions.begin() as session:
             write_off(WriteOffCommand(lot_id=lot, expected_version=version, quantity=Decimal("3"),
-                                      purpose="Ручная работа Р-000009", reason="",
+                                      purpose="Работа Р-000009", reason="",
                                       actor=Actor(name="Тест", department="Склад"),
                                       now=clock.now, source_key="manual-job:x:y"), _StockUnitOfWork(session))
 

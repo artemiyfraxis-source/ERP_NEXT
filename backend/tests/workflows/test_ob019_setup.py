@@ -17,6 +17,8 @@ from app.shared.persistence import AuditEventRow, create_schema
 from app.workflows.equipment_setup_context import equipment_setup_uow_factory
 from app.workflows.ob019_setup import group_choices, group_nominal, router, seed, wire_label
 from tests.workflows.test_equipment_setup_context import _record
+from tests.identity.test_api_tokens import tokens_api  # noqa: F401
+from tests.workflows.test_machines_api import machines_api  # noqa: F401
 
 NOW = datetime(2026, 11, 18, 12, tzinfo=UTC)
 ROOT = "/api/production/equipment-setup/ob019"
@@ -80,7 +82,9 @@ def test_context_lists_reference_wires_and_marks_the_recorded_one(world):
     _seed(world, apply=True)
     body = world.client.get(f"{ROOT}/{world.machine}/context").json()
     assert body["machine"]["inventory_number"] == "ОБ.019"
-    assert [item["register"] for item in body["parameters"]] == ["D32", "D34", "D36", "D38", "D40", "D42", "D43"]
+    assert [item["register"] for item in body["parameters"]] == [
+        "D32", "D34", "D36", "D38", "D40", "D42", "D43", "D100", "D101", "D102", "D103", "D104",
+        "D120", "D121", "D122", "D123"]
     assert body["wires"] == [{"label": "ПВАМ 0,35", "conductor_mm": "0.770", "has_recipe": True}]
     assert body["groups"] == []
 
@@ -106,6 +110,59 @@ def test_proposal_takes_the_seeded_recipe_and_a_saved_version_is_picked_next_tim
         **first["publish"], "wire": "ПВАМ 0,35", "values": {"strip_front_mm": "6", "pull_front_mm": "6",
         "strip_back_mm": "5", "pull_back_mm": "5", "diameter_mm": "0,78", "knife_back_mm": "0,10"}})
     assert stale.status_code == 409
+
+
+def test_saved_wire_speed_is_returned_with_source_and_missing_speeds_stay_unknown(world):
+    first = world.client.get(f"{ROOT}/{world.machine}/proposal", params={"wire": "ПВАМ 0,35"}).json()
+    saved = world.client.post(f"{ROOT}/{world.machine}/versions", json={
+        **first["publish"], "wire": "ПВАМ 0,35", "values": {
+            "strip_front_mm": "5", "pull_front_mm": "7", "strip_back_mm": "5", "pull_back_mm": "7",
+            "diameter_mm": "0.8", "knife_back_mm": "0.1", "speed_feed": "35", "speed_clamp_front": "42"}})
+    assert saved.status_code == 200, saved.text
+    after = world.client.get(f"{ROOT}/{world.machine}/proposal", params={"wire": "ПВАМ 0,35"}).json()
+    values = {item["key"]: item for item in after["values"]}
+    assert values["speed_feed"] == {"key": "speed_feed", "label": "Подача провода", "unit": "",
+                                     "register": "D100", "value": "35", "source": "Рецепт, версия 1"}
+    assert values["speed_clamp_front"]["value"] == "42"
+    assert values["speed_pipe"]["value"] is None and values["speed_pipe"]["source"] == "Нет данных"
+    invalid = world.client.post(f"{ROOT}/{world.machine}/versions", json={
+        **after["publish"], "wire": "ПВАМ 0,35", "values": {
+            "strip_front_mm": "5", "pull_front_mm": "7", "strip_back_mm": "5", "pull_back_mm": "7",
+            "diameter_mm": "0.8", "knife_back_mm": "0.1", "speed_feed": "100"}})
+    assert invalid.status_code == 422 and "0 до 99" in invalid.json()["detail"]
+
+
+def test_wire_preset_speeds_reach_wire_and_etk_plans_and_machine_payload(machines_api):
+    from app.modules.equipment_setup.recipe_infrastructure import SqlAlchemyRecipes
+    from app.modules.equipment_setup.recipes import ManualRecipeVersion, ob019_recipe_fields
+    from tests.workflows.test_machine_writes_api import (
+        CARD, _bridge, _claimed_writes, _job, _report, _transfer, _wire_reference, machine_writes_api_now,
+    )
+
+    sessions, _clock, admin, ob019, _ = machines_api
+    bridge = _bridge(admin)
+    _report(bridge)
+    _wire_reference(sessions)
+    geometry, panel = ob019_recipe_fields("ПВАМ 0,35", {
+        "strip_front_mm": "5", "pull_front_mm": "7", "strip_back_mm": "5", "pull_back_mm": "7",
+        "diameter_mm": "0.8", "knife_back_mm": "0.1", "speed_feed": "35", "speed_clamp_front": "42"}, {})
+    with sessions.begin() as session:
+        SqlAlchemyRecipes(session).append(ManualRecipeVersion(
+            uuid4(), 1, ob019, "ПВАМ 0,35 · ОБ.019", geometry, panel, "Проба", uuid4(), machine_writes_api_now()),
+            expected_version=0)
+    group = _job(sessions)
+    for query in ({"wire": "ПВАМ 0,35", "length_mm": "120"}, {"group_id": str(group), "length_mm": "325"}):
+        plan = admin.get(CARD + "/transfer", params=query).json()
+        speeds = {row["key"]: row for row in plan["rows"] if row["key"].startswith("speed_")}
+        assert set(speeds) == {"speed_feed", "speed_clamp_front"}
+        assert speeds["speed_feed"]["value"] == "35,00" and speeds["speed_feed"]["unit"] == ""
+        assert speeds["speed_feed"]["offset"] is None and speeds["speed_feed"]["source"] == "Рецепт, версия 1"
+        assert not any(row["key"] == "coil_speed" for row in plan["rows"])
+    sent = _transfer(admin, group)
+    assert sent.status_code == 200, sent.text
+    _claimed, words, _bits = _claimed_writes(bridge)
+    assert words[100] == 35 and words[103] == 42
+    assert 101 not in words and 102 not in words  # No speeds invented for absent recipe fields.
 
 
 def test_each_correction_is_journaled_by_the_site_operator(world):

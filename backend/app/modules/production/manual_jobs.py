@@ -1,4 +1,4 @@
-"""«Ручная работа» (plan «Станки вне проекта», slice S1; 19.11.2026): work on any machine outside a project, counted by
+"""«Работа» (plan «Станки вне проекта», slice S1; 19.11.2026): work on any machine outside a project, counted by
 hand. Migration 0202_manual_jobs; HTTP in app/workflows/manual_jobs_api.py.
 
 A job is started on one machine (`equipment_units`) with a required «Зачем», the wire and / or contact (from the
@@ -244,7 +244,7 @@ def running(session: Session, equipment_id: UUID) -> ManualJobRow | None:
 
 
 def _busy(row: ManualJobRow) -> ManualJobConflict:
-    return ManualJobConflict(f"На станке уже идёт ручная работа {number_text(row.number)} — завершите или отмените её")
+    return ManualJobConflict(f"На станке уже идёт работа {number_text(row.number)} — завершите или отмените её")
 
 
 def next_number(session: Session) -> int:
@@ -277,12 +277,12 @@ def start(session: Session, job: NewJob, *, actor_id: UUID, actor_name: str, now
             if kind == "running":
                 current = running(session, job.equipment_id)
                 raise (_busy(current) if current is not None else ManualJobConflict(
-                    "На станке уже идёт ручная работа — обновите список")) from None
+                    "На станке уже идёт работа — обновите список")) from None
             if kind == "foreign":
                 raise ManualJobInvalid("Станок или эталон не найден — обновите окно") from None
             raise
         return row
-    raise ManualJobConflict("Номер ручной работы заняли одновременно — повторите")
+    raise ManualJobConflict("Номер работы заняли одновременно — повторите")
 
 
 def integrity_kind(error: IntegrityError) -> str:
@@ -304,7 +304,7 @@ def _changed(session: Session, row: ManualJobRow, version: int, values: dict) ->
                                                        ManualJobRow.status == "running")
                             .values(**values, version=version + 1)).rowcount
     if count != 1:
-        raise ManualJobConflict("Ручную работу уже изменили — обновите и проверьте ещё раз")
+        raise ManualJobConflict("Работу уже изменили — обновите и проверьте ещё раз")
     session.expire(row)
     session.refresh(row)
     return row
@@ -313,11 +313,11 @@ def _changed(session: Session, row: ManualJobRow, version: int, values: dict) ->
 def _open(session: Session, job_id: UUID, version: int) -> ManualJobRow:
     row = session.get(ManualJobRow, job_id)
     if row is None:
-        raise KeyError("Ручная работа не найдена")
+        raise KeyError("Работа не найдена")
     if row.status != "running":
-        raise ManualJobConflict(f"Ручная работа {number_text(row.number)} уже {STATUS_TEXTS[row.status][0].lower()}")
+        raise ManualJobConflict(f"Работа {number_text(row.number)} уже {STATUS_TEXTS[row.status][0].lower()}")
     if row.version != version:
-        raise ManualJobConflict("Ручную работу уже изменили — обновите и проверьте ещё раз")
+        raise ManualJobConflict("Работу уже изменили — обновите и проверьте ещё раз")
     return row
 
 
@@ -392,21 +392,21 @@ def decide_material(session: Session, job_id: UUID, version: int, material: str,
         raise ManualJobInvalid("Укажите, почему материал не списывается")
     row = session.get(ManualJobRow, job_id)
     if row is None:
-        raise KeyError("Ручная работа не найдена")
+        raise KeyError("Работа не найдена")
     if row.status == "running":
-        raise ManualJobConflict(f"Ручная работа {number_text(row.number)} ещё идёт — сначала завершите её")
+        raise ManualJobConflict(f"Работа {number_text(row.number)} ещё идёт — сначала завершите её")
     if row.status != "done":
-        raise ManualJobConflict(f"Ручная работа {number_text(row.number)} отменена — материал по ней не списывают")
+        raise ManualJobConflict(f"Работа {number_text(row.number)} отменена — материал по ней не списывают")
     if row.material != "pending":
         raise ManualJobConflict(f"Материал по {number_text(row.number)} уже решён: {MATERIAL_TEXTS[row.material][0]}")
     if row.version != version:
-        raise ManualJobConflict("Ручную работу уже изменили — обновите и проверьте ещё раз")
+        raise ManualJobConflict("Работу уже изменили — обновите и проверьте ещё раз")
     count = session.execute(update(ManualJobRow).where(
         ManualJobRow.id == row.id, ManualJobRow.version == version, ManualJobRow.status == "done",
         ManualJobRow.material == "pending",
     ).values(material=material, material_note=note if material == "not_issued" else "", version=version + 1)).rowcount
     if count != 1:
-        raise ManualJobConflict("Ручную работу уже изменили — обновите и проверьте ещё раз")
+        raise ManualJobConflict("Работу уже изменили — обновите и проверьте ещё раз")
     session.expire(row)
     session.refresh(row)
     return row
