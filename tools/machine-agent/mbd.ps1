@@ -14,16 +14,17 @@ $script:sp = $null
 # 1.2.0 (19.11.2026): 'version' (no bus) and 'setbit'; 'write' limited to ERP's writable words.
 # 1.3.0 (19.11.2026): 'setbit' also for the feed-roller lift D604.0 (the runner asks 1.3.0 for that bit only).
 # 1.4.0 (20.11.2026): 'write' also for the inner layer D44..D53 (the runner asks 1.4.0 for those words only).
-# Registers a 'write' request may set: exactly ERP's writable numbers and texts - ob019-writer.ps1 $script:Writable and
-# OB019_WRITTEN_WORDS of backend production/machines.py (a backend test compares the three). Switch words are never
+# 1.5.0: measured length D658..659 and pulse D600.6, used only by the dedicated correction runner path.
+# Registers a 'write' request may set: ERP's writable numbers/texts plus D658..659. Switch words are never
 # written whole: 'setbit' reads the word and writes it back with one bit of $script:allowedBits changed, in the same
 # request (one request = one COM8 session, requests are served one at a time). The command bits D599/D600, the HMI
 # page D730 and the date D1087..D1089 are written only by 'pulse' / Write-HmiContext below, never on request;
 # passwords D1682..D1687 and the SHA-256 handshake D1203..D1211 never.
-$script:MbdVersion = '1.4.0'
-$script:allowedWrite = @(@(20, 20), @(22, 28), @(32, 53), @(67, 72), @(74, 74), @(100, 104), @(120, 123), @(197, 197), @(199, 199), @(391, 395), @(401, 402), @(404, 415), @(423, 423), @(430, 432), @(440, 484), @(940, 969), @(1703, 1705), @(1722, 1723), @(1750, 1753))
+# 1.5.1: verified fresh pulses and D600.6 recovery before accepting requests after restart.
+$script:MbdVersion = '1.5.1'
+$script:allowedWrite = @(@(20, 20), @(22, 28), @(32, 53), @(67, 72), @(74, 74), @(100, 104), @(120, 123), @(197, 197), @(199, 199), @(391, 395), @(401, 402), @(404, 415), @(423, 423), @(430, 432), @(440, 484), @(658, 659), @(940, 969), @(1703, 1705), @(1722, 1723), @(1750, 1753))
 $script:allowedBits = @{ 132 = @(0); 400 = @(0); 604 = @(0); 422 = @(0); 434 = @(0); 435 = @(0); 436 = @(0) }
-$script:allowedPulse = @{ 599 = @(0, 2); 600 = @(1, 4) }
+$script:allowedPulse = @{ 599 = @(0, 2); 600 = @(1, 4, 6) }
 
 # Log rotation (PowerShell 2.0): when the log reaches $MaxBytes it becomes .1, .1 becomes .2 and so on; the oldest
 # (.$Keep) is dropped. Same function in mbd.ps1, ob019-bridge.ps1 (also used by ob019-writer.ps1) and ob099-agent.ps1.
@@ -176,19 +177,44 @@ function Invoke-Pulse([int]$a, [int]$bit, [int]$hold) {
     if ($hold -gt 3000) { $hold = 3000 }
     $mask = [int][Math]::Pow(2, $bit)
     $orig = (Read-Regs $a 1)[0]
+    if (($orig -band $mask) -ne 0) { throw ('pulse bit already high: D' + $a + '.' + $bit) }
     $set = $false; $cleared = $false
+    $high = $null; $after = $null
     try {
-        Write-Regs $a @($orig -bor $mask); $set = $true
+        Write-Regs $a @($orig -bor $mask)
+        $high = (Read-Regs $a 1)[0]
+        $set = (($high -band $mask) -ne 0)
+        if (-not $set) { throw 'pulse high readback not confirmed' }
         $sw = [Diagnostics.Stopwatch]::StartNew(); $lastCtx = 0
         while ($sw.ElapsedMilliseconds -lt $hold) {
             if ($sw.ElapsedMilliseconds - $lastCtx -ge 700) { try { Write-HmiContext } catch { }; $lastCtx = $sw.ElapsedMilliseconds }
             Start-Sleep -Milliseconds 50
         }
     } finally {
-        for ($t = 1; $t -le 3 -and -not $cleared; $t++) { try { Write-Regs $a @($orig -band (65535 - $mask)); $cleared = $true } catch { Start-Sleep -Milliseconds 100 } }
+        for ($t = 1; $t -le 3 -and -not $cleared; $t++) {
+            try {
+                $current = (Read-Regs $a 1)[0]
+                Write-Regs $a @($current -band (65535 - $mask))
+                $after = (Read-Regs $a 1)[0]
+                $cleared = (($after -band $mask) -eq 0)
+            } catch { Start-Sleep -Milliseconds 100 }
+        }
     }
-    $after = (Read-Regs $a 1)[0]
-    return @{ addr = $a; bit = $bit; hold_ms = $hold; before = $orig; set = $set; cleared = $cleared; after = $after }
+    if (-not $cleared) { throw 'pulse clear readback not confirmed' }
+    return @{ addr = $a; bit = $bit; hold_ms = $hold; before = $orig; high = $high; set = $set; cleared = $cleared; after = $after }
+}
+
+# Recovery may only lower D600.6; it does not expose command words through setbit/write.
+function Clear-LengthCorrectionBit {
+    $before = (Read-Regs 600 1)[0]
+    if (($before -band 64) -ne 0) {
+        Write-MbLog 'RECOVERY D600.6 left high; clearing'
+        Write-Regs 600 @($before -band (65535 - 64))
+        $after = (Read-Regs 600 1)[0]
+        if (($after -band 64) -ne 0) { throw 'D600.6 recovery clear not confirmed' }
+        Write-MbLog 'RECOVERY D600.6 confirmed low'
+    } else { $after = $before }
+    return @{ before = $before; after = $after }
 }
 
 function Test-BitAllowed([int]$a, [int]$bit) {
@@ -207,7 +233,7 @@ function Invoke-SetBit([int]$a, [int]$bit, [int]$value) {
 
 function Invoke-Request($req) {
     $cmd = [string]$req['cmd']
-    if (@('read', 'write', 'pulse', 'status', 'setbit', 'version') -notcontains $cmd) { throw ('unknown cmd ' + $cmd) }
+    if (@('read', 'write', 'pulse', 'status', 'setbit', 'version', 'recover_correction') -notcontains $cmd) { throw ('unknown cmd ' + $cmd) }
     if ($cmd -eq 'version') { return @{ version = $script:MbdVersion } }
     if ($cmd -eq 'write') {
         $a = [int]$req['addr']; $vals = [int[]]@($req['values'] | ForEach-Object { [int]$_ })
@@ -227,6 +253,7 @@ function Invoke-Request($req) {
     }
     try {
         switch ($cmd) {
+            'recover_correction' { return (Clear-LengthCorrectionBit) }
             'read' { return @{ addr = [int]$req['addr']; values = [int[]](Read-Regs ([int]$req['addr']) ([int]$req['count'])) } }
             'status' { Write-HmiContext; return (Get-Status) }
             'write' {
@@ -276,6 +303,9 @@ function ConvertTo-JsonLite($v) {
 }
 
 function Start-Service2 {
+    # Refuse to serve requests until restart recovery has a confirmed low command bit.
+    # Invoke-Request retains the HMI/COM8 ownership guard and closes the port on failure.
+    [void](Invoke-Request @{ cmd = 'recover_correction' })
     $bind = [System.Net.IPAddress]::Any
     $allowed = @($Allow -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     if ($LocalOnly) { $bind = [System.Net.IPAddress]::Loopback; $allowed = @('127.0.0.1') }

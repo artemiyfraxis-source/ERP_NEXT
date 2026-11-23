@@ -49,31 +49,36 @@ function searchText(row: MachineRow): string {
 
 function MachineTile({ row, open }: { row: MachineRow; open: (row: MachineRow) => void }) {
   const absent = row.link.code === "not_installed" || row.link.code === "not_connected";
-  const place = [row.pc, row.ip].filter(Boolean).join(" · ");
-  const model = [row.article, row.site].filter(Boolean).join(" · ");
+  const seen = row.pc && row.last_seen ? formatMoment(row.last_seen) : "";
+  const place = row.pc ? [row.pc, row.ip].filter(Boolean).join(" · ") : "ПК не известен";
+  const model = [row.article || (row.kind !== "machine" ? row.device : ""), row.site].filter(Boolean).join(" · ");
+  const operations = (row.operations ?? []).join(", ");
   const pending = row.pending_setup ?? 0;
   const setup = row.setup?.code ? row.setup : null;
-  // Принтер или МФУ склада без номера ОБ называется тем, что он есть («МФУ Pantum BM2300»), а не «Без номера».
-  const named = !row.inventory && Boolean(row.station);
+  const kind = row.station?.kind === "labels" ? "Принтер этикеток"
+    : row.station?.kind === "mfp" ? (row.station.scanners.length ? (row.station.printers.length ? "МФУ" : "Сканер") : "Принтер документов")
+      : row.kind === "printer" ? "Принтер" : row.kind === "device" ? "Прибор" : "Станок";
   return <button type="button" className={`machine-tile${absent ? " is-absent" : ""}${row.card ? " has-card" : ""}`}
     onClick={() => open(row)} title={row.card ? "Открыть карточку станка" : row.vna || row.station ? "Открыть карточку прибора" : "Сведения и наладка"}>
     <span className="machine-tile-head">
-      <strong className={`machine-tile-no${named ? " is-named" : row.inventory ? "" : " is-none"}`}>{row.inventory || (named ? row.name : "Без номера")}</strong>
-      <span className={`machine-tile-link ${toneClass(row.link.tone)}`}>{row.link.text}</span>
+      <strong className="machine-tile-no">{row.inventory || kind}</strong>
+      <span className={`machine-tile-link ${toneClass(row.link.tone)}`}>{row.link.code === "not_installed" ? "Нет агента" : row.link.text}</span>
     </span>
-    {!named && <span className="machine-tile-name" title={row.name}>{text(row.name)}</span>}
-    {model && <span className="machine-tile-article machine-mono" title={model}>{model}</span>}
-    {row.operations?.length > 0 && <span className="machine-tile-ops" title={row.operations.join(", ")}>{row.operations.join(", ")}</span>}
-    {known(row.state.text) && <span className={`machine-tile-state ${toneClass(row.state.tone)}`}>{row.state.text}</span>}
-    {row.device && <span className="machine-tile-device" title={row.device}>{row.device}</span>}
-    {(pending > 0 || setup) && <span className="machine-tile-badges">
-      {pending > 0 && <span className="machine-badge tone-warn">Ждёт наладки{pending > 1 ? ` · ${pending}` : ""}</span>}
-      {setup && <span className="machine-badge">{setup.code === "none" ? "Без наладки" : `Наладка: ${setup.label}`}</span>}
-    </span>}
-    {(place || row.last_seen || row.link.code === "not_installed") && <span className="machine-tile-foot">
-      <span className="machine-mono" title={place}>{place || "ПК не известен"}</span>
-      <span className="machine-mono">{row.last_seen ? formatMoment(row.last_seen) : EMPTY}</span>
-    </span>}
+    <span className="machine-tile-name" title={row.name}>{text(row.name)}</span>
+    <span className="machine-tile-article machine-mono" title={model}>{model}</span>
+    <span className="machine-tile-ops" title={operations}>{operations}</span>
+    <span className="machine-tile-device" title={[known(row.state.text) ? row.state.text : "", row.device].filter(Boolean).join(" · ")}>
+      {known(row.state.text) && <span className={`machine-tile-state ${toneClass(row.state.tone)}`}>{row.state.text}</span>}
+    </span>
+    <span className="machine-tile-badges">
+      {pending > 0 && <span className="machine-badge tone-warn" title={`Ждёт наладки${pending > 1 ? ` · ${pending}` : ""}`}>
+        Ждёт наладки{pending > 1 ? ` · ${pending}` : ""}</span>}
+      {setup && <span className="machine-badge" title={`Наладка: ${setup.label}`}>Наладка: {setup.label}</span>}
+    </span>
+    <span className="machine-tile-foot">
+      <span className="machine-mono" title={place}>{place}</span>
+      {seen && <span className="machine-tile-seen machine-mono">{seen}</span>}
+    </span>
   </button>;
 }
 
