@@ -105,7 +105,7 @@ function server({ control = CONTROL, plan = PLAN, wirePlan = WIRE_PLAN, refuse =
       wire: "ПВАМ 0,35", length_mm: "325", quantity: "12" }], wires: WIRES });
     return json(window);
   });
-  return { posts, gets, state };
+  return { posts, gets, state, window };
 }
 
 async function confirmLoad() {
@@ -770,10 +770,13 @@ it.each([true, false])("a different active run blocks confirmation and offers it
   expect(screen.getByRole("button", { name: "Завершить" })).toBeVisible();
 });
 
-it("incoming same-job quantity sends the remaining pieces and keeps raw staged edits", async () => {
+it.each([false, true])("incoming same-job quantity sends the remaining pieces and keeps raw staged edits (marking: %s)", async (withMarking) => {
   const run = { ...OPEN_RUN, group_id: "g1", length_mm: "325" };
   const confirmation = { ...CONFIRMATION, expected_active_run_id: run.id };
-  const { posts } = server({ run, plan: { ...PLAN, ...confirmation } });
+  const plan: TransferPlan = { ...PLAN, ...confirmation, marking: withMarking ? { mode: "none", mode_label: "Без",
+    source: "ЭТК", rows: [{ key: "marking", label: "Маркировка", value: "Выкл" }], warnings: [], blocking: [] } : null };
+  const { posts, window } = server({ run, plan, live: { length_mm: 326 } });
+  if (withMarking) window.settings.push({ title: "Маркировка", fields: [field("Маркировка", "marking", true, "", "bit0")] });
   vi.spyOn(productionApi, "operationMachineActions").mockResolvedValue(incomingActions());
   render(<Ob019SettingsPanel inventory="ОБ.019" equipmentId="u19" incoming={incoming} />);
   const initial = await screen.findByRole("dialog", { name: "Загрузить в станок" });
@@ -782,6 +785,8 @@ it("incoming same-job quantity sends the remaining pieces and keeps raw staged e
   fireEvent.change(total, { target: { value: "150" } });
   fireEvent.keyDown(total, { key: "Enter" });
   const preview = await screen.findByRole("dialog", { name: "Загрузить в станок" });
+  expect(within(preview).queryByRole("rowheader", { name: "Длина провода" })).toBeNull();
+  expect(within(preview).queryByRole("rowheader", { name: "Зачистка начала" })).toBeNull();
   fireEvent.click(within(preview).getByRole("button", { name: "Отмена" }));
   const back = screen.getByLabelText("Зачистка конца");
   fireEvent.change(back, { target: { value: "6" } });
@@ -791,6 +796,36 @@ it("incoming same-job quantity sends the remaining pieces and keeps raw staged e
   await waitFor(() => expect(posts).toHaveLength(1));
   expect(posts[0].body).toMatchObject({ kind: "cutting", group_id: "g1", length_mm: "325",
     values: { total_set: "103", strip_back_mm: "6" }, ...confirmation });
+  expect(posts[0].body.values).toEqual({ total_set: "103", strip_back_mm: "6", pull_back_mm: "8,00",
+    ...(withMarking ? { marking: "0" } : {}) });
+});
+
+it.each([
+  { label: "Тираж", staged: "150", restored: "120", values: { total_set: "73" } },
+  { label: "Длина провода", staged: "330", restored: "326", values: { length_mm: "326" } },
+  { label: "Зачистка начала", staged: "6", restored: "5", values: { strip_front_mm: "5", pull_front_mm: "7,00" } },
+])("restoring staged $label to its live value rebuilds the pending same-job request", async ({ label, staged, restored, values }) => {
+  const run = { ...OPEN_RUN, group_id: "g1", length_mm: "325" };
+  const confirmation = { ...CONFIRMATION, expected_active_run_id: run.id };
+  const { posts } = server({ run, plan: { ...PLAN, ...confirmation }, live: { length_mm: 326, pull_front_mm: 7 } });
+  vi.spyOn(productionApi, "operationMachineActions").mockResolvedValue(incomingActions());
+  render(<Ob019SettingsPanel inventory="ОБ.019" equipmentId="u19" incoming={incoming} />);
+  const initial = await screen.findByRole("dialog", { name: "Загрузить в станок" });
+  fireEvent.click(within(initial).getByRole("button", { name: "Отмена" }));
+  const input = screen.getByLabelText(label);
+  fireEvent.change(input, { target: { value: staged } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  const preview = await screen.findByRole("dialog", { name: "Загрузить в станок" });
+  fireEvent.click(within(preview).getByRole("button", { name: "Отмена" }));
+  fireEvent.change(input, { target: { value: restored } });
+  fireEvent.keyDown(input, { key: "Enter" });
+  await screen.findByRole("dialog", { name: "Загрузить в станок" });
+  expect(input).toHaveValue(restored);
+  expect(posts).toEqual([]);
+  await confirmLoad();
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0].body).toEqual({ kind: "cutting", group_id: "g1", length_mm: "325", values,
+    ...confirmation, confirm_state: 102 });
 });
 
 it("with a job open «Тираж» requires confirmation of the pieces left and the active run", async () => {

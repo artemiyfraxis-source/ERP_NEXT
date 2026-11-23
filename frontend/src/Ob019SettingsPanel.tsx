@@ -508,6 +508,13 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
   /** Отличается ли значение от станка; «Тираж» — от того, сколько станку осталось до цели. */
   const differs = (key: string, value: string) => key === "total_set"
     ? !!value.trim() && (tirazh === null || decimal(value) !== tirazh) : enteredDiffers(fields.get(key), value);
+  /** A revert must replace the held value even when it already matches the machine. */
+  const stagedDiffers = (key: string, value: string) => {
+    const staged = held?.[key];
+    if (staged === undefined) return differs(key, value);
+    const field = fields.get(key);
+    return field && numeric(field) ? decimal(value) !== decimal(staged) : value !== staged;
+  };
   /** «Тираж» задания при открытом прогоне этого задания → штук станку: тираж − уже сделано (сервер пишет цель от счётчика).
    *  null — сделано неизвестно (счётчик не прочитан): не писать. */
   const pieces = (values: Record<string, string>, job: RunRequest | null): Record<string, string> | null => {
@@ -526,7 +533,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     const field = fields.get(key);
     const value = text.trim();
     const missingSize = plan?.group_id && blockingKeys(plan).includes(key);
-    if (!field || !value || (!missingSize && !differs(key, value))) return;
+    if (!field || !value || (!missingSize && !stagedDiffers(key, value))) return;
     if (numeric(field) && typeof field.value !== "string" && decimal(value) === null) {
       setStatus((current) => ({ ...current, [key]: { kind: "failed", value, text: "нужно число" } }));
       return;
@@ -544,7 +551,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     if (pullKey && fields.has(pullKey) && strip !== null) {
       const mode = pullMode(decimal(settledOf(key)), decimal(settledOf(pullKey)));
       const pull = mode && mode !== "own" ? mm(pullFor(mode, strip)) : "";
-      if (pull && enteredDiffers(fields.get(pullKey), pull)) values[pullKey] = pull;
+      if (pull && stagedDiffers(pullKey, pull)) values[pullKey] = pull;
     }
     const keys = Object.keys(values);
     const wire = plan?.wire;
@@ -687,9 +694,13 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
       setMessage({ tone: "warn", text: "Счётчик станка не прочитан — повторите, когда станок на связи" });
       return;
     }
-    const all: Record<string, string> = { ...planDiff(next), ...remaining };
-    // The job's own quantity, unless the operator typed «Тираж» meanwhile.
-    if (fields.has("total_set") && next.quantity !== null && !("total_set" in typed)) all.total_set = String(next.quantity);
+    // A partial resend of the open job preserves its adjusted settings; only ETK marking is automatic.
+    const sameOpenJob = !!runOpen && sameRun(runOpen, body);
+    const markingKeys = new Set(Object.keys(next.marking ? planValues(next.marking) : {}));
+    const automatic = Object.fromEntries(Object.entries(planDiff(next)).filter(([key]) => !sameOpenJob || markingKeys.has(key)));
+    const all: Record<string, string> = { ...automatic, ...remaining };
+    // A new job supplies its quantity unless the operator typed «Тираж» meanwhile.
+    if (!sameOpenJob && fields.has("total_set") && next.quantity !== null && !("total_set" in typed)) all.total_set = String(next.quantity);
     void runJob({ ...body, values: all }, all, next.wire, next);
   }
 
