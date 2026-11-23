@@ -132,7 +132,7 @@ def test_a_reset_counter_or_a_failed_write_never_gives_a_machine_count(machines_
     assert admin.get(f"/api/production/machines/runs/cutting/{group_id}").json()["runs"][0]["count"] is None
 
 
-def test_the_same_job_written_again_keeps_its_start_another_job_closes_the_first(machines_api):
+def test_the_same_job_keeps_its_start_and_another_length_requires_closing_it_first(machines_api):
     sessions, clock, admin, ob019, _ = machines_api
     machine = Machine(admin, clock)
     group_id = _job(sessions)
@@ -148,10 +148,13 @@ def test_the_same_job_written_again_keeps_its_start_another_job_closes_the_first
     machine.written(again.json()["id"])
     run = admin.get(RUN).json()["run"]
     assert (run["counter_start"], run["done"], run["quantity"]) == (START, 2, 12)
-    other = _post(admin, RUN, {**body, "length_mm": "150"}).json()["id"]
+    blocked = _post(admin, RUN, {**body, "length_mm": "150"})
+    assert blocked.status_code == 409 and "сначала завершите или прервите его" in blocked.json()["detail"]
+    assert _post(admin, RUN + "/close", {"run_id": run["id"]}).status_code == 200
     with sessions() as session:
         old = runs.info(session.get(MachineWriteRow, UUID(run["id"])))
-    assert (old["closed_why"], old["machine_count"]) == ("Передано другое задание", 2)
+    assert old["machine_count"] == 2 and old["closed_at"]
+    other = _post(admin, RUN, {**body, "length_mm": "150"}).json()["id"]
     assert admin.get(RUN).json()["run"]["id"] == other
 
 

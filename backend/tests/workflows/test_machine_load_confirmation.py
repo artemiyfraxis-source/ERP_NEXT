@@ -3,7 +3,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from threading import Barrier
-from uuid import UUID
 
 import pytest
 from fastapi import HTTPException
@@ -130,7 +129,7 @@ def test_confirmation_is_bound_to_the_selected_source(machines_api, endpoint, ch
 
 
 @pytest.mark.parametrize("endpoint", ["/run", "/transfer"])
-def test_another_run_is_never_superseded_without_its_explicit_id(machines_api, endpoint):
+def test_another_job_cannot_replace_an_open_run_even_with_its_explicit_id(machines_api, endpoint):
     sessions, clock, admin, _, _ = machines_api
     machine = Machine(admin, clock)
     first_plan = _preview(admin, _job(sessions))
@@ -147,9 +146,24 @@ def test_another_run_is_never_superseded_without_its_explicit_id(machines_api, e
     fresh = _preview(admin, stale["group_id"])
     assert fresh["expected_active_run_id"] == first
     sent = _load(admin, endpoint, _body(fresh))
-    assert sent.status_code == 200, sent.text
-    with sessions() as session:
-        assert runs.info(session.get(MachineWriteRow, UUID(first)))["closed_why"] == "Передано другое задание"
+    assert sent.status_code == 409, sent.text
+    assert "На станке идёт задание ГР-0007" in sent.json()["detail"]
+    assert "сначала завершите или прервите его" in sent.json()["detail"]
+    [row] = _writes(sessions)
+    assert str(row.id) == first and not runs.info(row).get("closed_at")
+
+
+@pytest.mark.parametrize("endpoint", ["/run", "/transfer"])
+def test_the_same_job_can_be_reloaded_with_the_confirmed_active_id(machines_api, endpoint):
+    sessions, clock, admin, _, _ = machines_api
+    machine = Machine(admin, clock)
+    group_id = _job(sessions)
+    first = _load(admin, "/run", _body(_preview(admin, group_id))).json()["id"]
+    machine.written(first)
+    fresh = _preview(admin, group_id)
+    response = _load(admin, endpoint, {**_body(fresh), "length_mm": "325.000"})
+    assert response.status_code == 200, response.text
+    assert len(_writes(sessions)) == 2
 
 
 def test_a_closed_run_invalidates_the_confirmed_active_id(machines_api):
@@ -183,14 +197,18 @@ def test_live_comparison_values_do_not_invalidate_the_plan_but_remaining_quantit
     assert len(_writes(sessions)) == 1
 
 
-def test_manual_run_cannot_replace_a_cutting_run_without_confirmation(machines_api):
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_manual_run_cannot_replace_an_open_cutting_run(machines_api, confirmed):
     sessions, clock, admin, ob019, _ = machines_api
     machine = Machine(admin, clock)
     first = _load(admin, "/run", _body(_preview(admin, _job(sessions)))).json()["id"]
     machine.written(first)
     job = admin.post("/api/production/manual-jobs", headers=_csrf(admin), json={"equipment_id": str(ob019),
                      "purpose": "Проба", "length_mm": "100", "quantity_planned": 3}).json()
-    response = admin.post(CARD + "/run", headers=_csrf(admin), json={"kind": "manual", "job_id": job["id"]})
+    body = {"kind": "manual", "job_id": job["id"]}
+    if confirmed:
+        body["expected_active_run_id"] = first
+    response = admin.post(CARD + "/run", headers=_csrf(admin), json=body)
     assert response.status_code == 409
     [row] = _writes(sessions)
     assert not runs.info(row).get("closed_at")
@@ -213,7 +231,7 @@ def test_enqueue_failure_rolls_back_superseding_the_confirmed_run(machines_api):
     machine = Machine(admin, clock)
     first = _load(admin, "/run", _body(_preview(admin, _job(sessions)))).json()["id"]
     machine.written(first)
-    plan = _preview(admin, _job(sessions, number="ГР-0008"))
+    plan = _preview(admin, runs.info(_writes(sessions)[0])["group_id"])
     queued = admin.post(CARD + "/write", json={"values": {"strip_front_mm": "6"}}, headers=_csrf(admin))
     assert queued.status_code == 200, queued.text
     response = _load(admin, "/run", _body(plan))

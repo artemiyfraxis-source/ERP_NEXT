@@ -204,7 +204,7 @@ export function App() {
     url.searchParams.delete("harness");
     url.searchParams.delete("library");
     // Equipment source and journal filters belong to the opened page, not the next menu destination.
-    for (const key of ["view", "equipment_id", "task_id", "operation_id", "etk_position", "group_id", "member_id", "date_from", "date_to", "waiting"]) {
+    for (const key of ["view", "equipment", "task", "operation", "load", "equipment_id", "task_id", "operation_id", "etk_position", "group_id", "member_id", "date_from", "date_to", "waiting"]) {
       url.searchParams.delete(key);
     }
     if (next.section !== "cabinet") url.searchParams.set("section", next.section);

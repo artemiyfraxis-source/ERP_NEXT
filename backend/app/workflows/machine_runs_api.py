@@ -124,7 +124,9 @@ def start_run(inventory: str, payload: RunPayload, principal: Writer, factory: F
         session = uow.session
         link = locked_link(session, inventory)
         _confirm(session, link, payload.confirm_state)
-        confirm_active_run(session, link.equipment_id, payload.expected_active_run_id)
+        job = (runs.cutting(payload.group_id, payload.length_mm, "", None) if payload.kind == "cutting"
+               else runs.manual(payload.job_id, "", None))
+        confirm_active_run(session, link.equipment_id, payload.expected_active_run_id, job)
         if payload.kind == "cutting":
             if payload.group_id is None or not payload.length_mm.strip():
                 raise HTTPException(422, "Выберите задание резки")

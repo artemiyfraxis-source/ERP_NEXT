@@ -153,6 +153,45 @@ it("incoming group/length only preview; load=1 requires confirmation with change
   expect(productionApi.operationMachineActions).toHaveBeenCalledWith("t1", "o1");
 });
 
+it.each([
+  { value: "6", blocker: "В ЭТК не задано: Зачистка конца", permitted: true, sends: true },
+  { value: "5", blocker: "В ЭТК не задано: Зачистка конца", permitted: true, sends: true },
+  { value: "6", blocker: "Нет связи", permitted: true, sends: false },
+  { value: "6", blocker: "Нет права загрузки задания в станок", permitted: false, sends: false },
+])("stages an incoming missing strip size ($value); readiness: $blocker", async ({ value, blocker, permitted, sends }) => {
+  const plan: TransferPlan = { ...PLAN, rows: [...PLAN.rows, { key: "strip_back_mm", label: "Зачистка конца", unit: "мм",
+    nominal: null, source: "Нет данных", offset: "0,00", value: null, live: "5,00" }], blocking: ["Зачистка конца"] };
+  const { posts } = server({ plan });
+  vi.spyOn(productionApi, "operationMachineActions").mockResolvedValue({ ...incomingActions(), actions: [
+    { ...incoming.action, can_load: false, load_permitted: permitted, blocker }] });
+  render(<Ob019SettingsPanel inventory="ОБ.019" equipmentId="u19" incoming={incoming} />);
+  const initial = await screen.findByRole("dialog", { name: "Загрузить в станок" });
+  expect(within(initial).getByRole("button", { name: "Подтвердить загрузку" })).toBeDisabled();
+  fireEvent.click(within(initial).getByRole("button", { name: "Отмена" }));
+  const back = screen.getByLabelText("Зачистка конца");
+  fireEvent.change(back, { target: { value } });
+  fireEvent.keyDown(back, { key: "Enter" });
+  const dialog = await screen.findByRole("dialog", { name: "Загрузить в станок" });
+  const row = within(dialog).getByRole("rowheader", { name: "Зачистка конца" }).closest("tr")!;
+  expect(within(row).getAllByRole("cell")[1]).toHaveTextContent(`${value} мм`);
+  expect(posts).toEqual([]);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Отмена" }));
+  expect(posts).toEqual([]);
+  fireEvent.click(screen.getByRole("button", { name: "Загрузить в станок" }));
+  const reopened = await screen.findByRole("dialog", { name: "Загрузить в станок" });
+  const stagedRow = within(reopened).getByRole("rowheader", { name: "Зачистка конца" }).closest("tr")!;
+  expect(within(stagedRow).getAllByRole("cell")[1]).toHaveTextContent(`${value} мм`);
+  await confirmLoad();
+  if (sends) {
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]).toMatchObject({ url: "/api/production/machines/card/ОБ.019/run", body: {
+      kind: "cutting", group_id: "g1", length_mm: "325", values: { strip_back_mm: value, total_set: "12" }, ...CONFIRMATION } });
+  } else {
+    expect(await within(reopened).findByText(blocker)).toBeVisible();
+    expect(posts).toEqual([]);
+  }
+});
+
 it("incoming selection, cancellation and reopening never write; missing group never selects a different job", async () => {
   const { posts } = server();
   const first = render(<Ob019SettingsPanel inventory="ОБ.019" equipmentId="u19" incoming={incoming} />);
@@ -713,13 +752,45 @@ const OPEN_RUN: MachineRun = { id: "w1", kind: "cutting", label: "ГР-0007 · �
   created_by: "Слава", created_at: "2026-11-20T01:30:00+01:00", stage: "ready", counter_start: 523, counter: 570, done: 47,
   reset: false, state: 102, alarm: 0, total_set: 643 };
 
-it("incoming load refuses a different active run before confirmation can send anything", async () => {
+it.each([true, false])("a different active run blocks confirmation and offers its card (incoming: %s)", async (fromInstruction) => {
   const { posts } = server({ run: OPEN_RUN });
-  render(<Ob019SettingsPanel inventory="ОБ.019" equipmentId="u19" incoming={incoming} />);
+  render(<Ob019SettingsPanel inventory="ОБ.019" equipmentId="u19" incoming={fromInstruction ? incoming : undefined} />);
+  if (!fromInstruction) {
+    const picker = await screen.findByLabelText("Задание");
+    picker.focus();
+    await pickJob(false);
+  }
   const dialog = await screen.findByRole("dialog", { name: "Загрузить в станок" });
-  expect(within(dialog).getByText("На станке другое задание — сначала завершите его")).toBeVisible();
+  expect(within(dialog).getByText(`На станке идёт задание ${OPEN_RUN.label} — сначала завершите или прервите его`)).toBeVisible();
   expect(within(dialog).getByRole("button", { name: "Подтвердить загрузку" })).toBeDisabled();
   expect(posts).toEqual([]);
+  fireEvent.click(within(dialog).getByRole("button", { name: "К заданию на станке" }));
+  expect(screen.queryByRole("dialog", { name: "Загрузить в станок" })).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Текущее задание")).toHaveFocus();
+  expect(screen.getByRole("button", { name: "Завершить" })).toBeVisible();
+});
+
+it("incoming same-job quantity sends the remaining pieces and keeps raw staged edits", async () => {
+  const run = { ...OPEN_RUN, group_id: "g1", length_mm: "325" };
+  const confirmation = { ...CONFIRMATION, expected_active_run_id: run.id };
+  const { posts } = server({ run, plan: { ...PLAN, ...confirmation } });
+  vi.spyOn(productionApi, "operationMachineActions").mockResolvedValue(incomingActions());
+  render(<Ob019SettingsPanel inventory="ОБ.019" equipmentId="u19" incoming={incoming} />);
+  const initial = await screen.findByRole("dialog", { name: "Загрузить в станок" });
+  fireEvent.click(within(initial).getByRole("button", { name: "Отмена" }));
+  const total = screen.getByLabelText("Тираж");
+  fireEvent.change(total, { target: { value: "150" } });
+  fireEvent.keyDown(total, { key: "Enter" });
+  const preview = await screen.findByRole("dialog", { name: "Загрузить в станок" });
+  fireEvent.click(within(preview).getByRole("button", { name: "Отмена" }));
+  const back = screen.getByLabelText("Зачистка конца");
+  fireEvent.change(back, { target: { value: "6" } });
+  fireEvent.keyDown(back, { key: "Enter" });
+  expect(posts).toEqual([]);
+  await confirmLoad();
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0].body).toMatchObject({ kind: "cutting", group_id: "g1", length_mm: "325",
+    values: { total_set: "103", strip_back_mm: "6" }, ...confirmation });
 });
 
 it("with a job open «Тираж» requires confirmation of the pieces left and the active run", async () => {

@@ -216,6 +216,11 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
   const [confirmLoad, setConfirmLoad] = useState(incoming?.loadRequested ?? false);
   const [checkingLoad, setCheckingLoad] = useState(false);
   const loadLock = useRef(false);
+  const runPanel = useRef<HTMLDivElement>(null);
+  const focusRun = useRef(false);
+  useEffect(() => {
+    if (!confirmLoad && focusRun.current) { focusRun.current = false; runPanel.current?.focus(); }
+  }, [confirmLoad]);
   const postingLoad = useRef(false);
   const loadAttempt = useRef(0);
   const active = useRef(true);
@@ -224,7 +229,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     if (postingLoad.current) return;
     loadAttempt.current += 1;
     setConfirmLoad(false);
-    setDue(null);
+    if (!incoming) setDue(null);
   };
   const [sourceProblem, setSourceProblem] = useState("");
   const [fast, setFast] = useState(false);
@@ -429,6 +434,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
         [key, { kind: "writing", value: values[key], id: command.id, wire, plan: true }])) }));
       reloadRun();
       setConfirmLoad(false);
+      setHeld(null);
       setDue(null);
     } catch (reason) {
       if (!active.current || attempt !== loadAttempt.current) return;
@@ -440,6 +446,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
         // Refresh only the preview. A second POST always requires another operator click.
         setDue(null);
         setPlan(null);
+        setHeld(null);
         try {
           if (body.kind === "cutting") {
             const fresh = await machineControlApi.plan(inventory, body.group_id, body.length_mm);
@@ -518,7 +525,8 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     setDrafts((current) => without(current, [key]));
     const field = fields.get(key);
     const value = text.trim();
-    if (!field || !value || !differs(key, value)) return;
+    const missingSize = plan?.group_id && blockingKeys(plan).includes(key);
+    if (!field || !value || (!missingSize && !differs(key, value))) return;
     if (numeric(field) && typeof field.value !== "string" && decimal(value) === null) {
       setStatus((current) => ({ ...current, [key]: { kind: "failed", value, text: "нужно число" } }));
       return;
@@ -540,7 +548,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     }
     const keys = Object.keys(values);
     const wire = plan?.wire;
-    if (held && plan?.group_id) {
+    if ((held || incoming) && plan?.group_id) {
       holdForJob(plan, values);
       return;
     }
@@ -669,17 +677,20 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
   function holdForJob(next: TransferPlan, values: Record<string, string>) {
     if (markingRefused(next)) return;
     const typed = { ...(held ?? {}), ...values };
+    setHeld(typed);
+    setStatus((current) => ({ ...current, ...Object.fromEntries(Object.keys(values).map((key) => [key, { kind: "held", value: values[key] }])) }));
     const missing = blockingKeys(next).filter((key) => !(key in typed));
-    if (missing.length) {
-      setHeld(typed);
-      setStatus((current) => ({ ...current, ...Object.fromEntries(Object.keys(values).map((key) => [key, { kind: "held", value: values[key] }])) }));
+    if (missing.length) return;
+    const body: RunRequest = { kind: "cutting", group_id: next.group_id!, length_mm: query.current?.length ?? next.length_mm };
+    const remaining = pieces(typed, body);
+    if (remaining === null) {
+      setMessage({ tone: "warn", text: "Счётчик станка не прочитан — повторите, когда станок на связи" });
       return;
     }
-    setHeld(null);
-    const all: Record<string, string> = { ...planDiff(next), ...typed };
+    const all: Record<string, string> = { ...planDiff(next), ...remaining };
     // The job's own quantity, unless the operator typed «Тираж» meanwhile.
     if (fields.has("total_set") && next.quantity !== null && !("total_set" in typed)) all.total_set = String(next.quantity);
-    void runJob({ kind: "cutting", group_id: next.group_id!, length_mm: query.current?.length ?? next.length_mm, values: all }, all, next.wire, next);
+    void runJob({ ...body, values: all }, all, next.wire, next);
   }
 
   /** A cutting job opens confirmation; a wire writes its settings. The confirmed run carries the source guards.
@@ -731,6 +742,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
       const answer = await loadPlan(next);
       if (query.current !== next) return;
       setPlan(answer);
+      if (incoming && blockingKeys(answer).length) setHeld({});
       // The latest render's writePlan: open/inFlight/queue as they are now, not as they were when the pick started.
       if (!incoming) await writePlanRef.current(answer);
     } catch (reason) {
@@ -847,7 +859,8 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     const st = status[key];
     if (!st) return null;
     if (st.kind === "failed") return { tone: "danger", text: `отказ: ${st.text}` };
-    if (st.kind === "held") return { tone: "warn", text: "уйдёт с заданием, когда введены все размеры" };
+    if (st.kind === "held") return { tone: "warn", text: plan && blockingKeys(plan).some((key) => !(key in (held ?? {})))
+      ? "уйдёт с заданием, когда введены все размеры" : "уйдёт с заданием после подтверждения" };
     if (st.kind === "done") {
       // «Тираж» without the live counter cannot be compared: written is written.
       if ((key !== "total_set" || tirazh !== null) && differs(key, st.value)) return { tone: "info", text: "записывается…" };
@@ -937,6 +950,13 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     : runningText || (control.problem ? `Изменения не записываются: ${operatorText(control.problem)}` : "")) : "";
   const picked = choices?.find((item) => item.key === choice) ?? null;
   const shownPlan = due ? due.preview : plan;
+  const selectedJob = due?.body ?? jobRequest();
+  const differentJob = !!runOpen && !!selectedJob && !sameRun(runOpen, selectedJob);
+  const openRunProblem = differentJob ? `На станке идёт задание ${runOpen.label} — сначала завершите или прервите его` : "";
+  const openRunningJob = () => {
+    if (confirmLoad) { focusRun.current = true; dismissLoad(); }
+    else runPanel.current?.focus();
+  };
   const shownValues = due?.body.values ?? {};
   const repeatsOpenRun = !!runOpen && shownPlan?.expected_active_run_id === runOpen.id
     && !!due?.body.values && Object.keys(due.body.values).length > 0 && sameRun(runOpen, due.body);
@@ -948,8 +968,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     || (shownPlan?.marking?.blocking.length ? "Маркировка из ЭТК с ошибкой — исправьте ЭТК" : "")
     || (shownPlan?.group_id && (!shownPlan.expected_source || shownPlan.expected_active_run_id === undefined)
       ? "Обновите план и подтвердите загрузку ещё раз" : "")
-    || (runOpen && source && !sameRun(runOpen, { kind: "cutting", group_id: source.group_id, length_mm: source.length_mm })
-      ? "На станке другое задание — сначала завершите его" : "");
+    || openRunProblem;
   const planChanges = shownPlan ? planDiff(shownPlan) : {};
   // Partial resends keep the open run's dimensions and identity; the backend still adds ETK marking.
   const automaticKeys = new Set([...(repeatsOpenRun ? [] : ["length_mm", "order_number", "product"]),
@@ -978,15 +997,23 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
           setSourceProblem(current?.blocker || "Задание изменилось — откройте инструкцию заново");
           return;
         }
-        if (!current.can_load) { setMessage({ tone: "warn", text: current.blocker || "Станок сейчас не готов к загрузке" }); return; }
         const fresh = await loadPlan({ group_id: source.group_id, length: source.length_mm });
         if (!active.current || attempt !== loadAttempt.current) return;
+        // Discovery still sees the issued ETK; only its missing-input blocker can be resolved by staged values.
+        const suppliedSizes = fresh.blocking.length > 0
+          && blockingKeys(fresh).length === fresh.blocking.length
+          && blockingKeys(fresh).every((key) => key in shownValues)
+          && current.load_permitted && current.blocker === `В ЭТК не задано: ${fresh.blocking.join(", ")}`;
+        if (!current.can_load && !suppliedSizes) {
+          setMessage({ tone: "warn", text: current.blocker || "Станок сейчас не готов к загрузке" }); return;
+        }
         // Include the source and active-run guards: identical values can still come from a newer source.
         if (JSON.stringify([fresh.rows, fresh.job, fresh.quantity, fresh.marking, fresh.blocking, fresh.expected_source, fresh.expected_active_run_id])
           !== JSON.stringify([shownPlan?.rows, shownPlan?.job, shownPlan?.quantity, shownPlan?.marking, shownPlan?.blocking,
             shownPlan?.expected_source, shownPlan?.expected_active_run_id])) {
           setPlan(fresh);
           setDue(null);
+          setHeld(null);
           setMessage({ tone: "warn", text: "Параметры задания изменились — проверьте значения и подтвердите ещё раз" });
           return;
         }
@@ -1034,6 +1061,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
         {source && <ul>{source.members.map((member) => <li key={`${member.task_id}:${member.operation_id}`}>{member.item} · {member.quantity} шт</li>)}</ul>}
         <button type="button" className="primary" disabled={Boolean(loadProblem) || !free || checkingLoad} onClick={() => setConfirmLoad(true)}>Загрузить в станок</button>
         {loadProblem && !sourceProblem && <p className="warning-inline">{loadProblem}</p>}
+        {differentJob && <button type="button" className="secondary" onClick={openRunningJob}>К заданию на станке</button>}
       </>}
     </section>}
     {confirmLoad && (shownPlan || due?.body.kind === "manual") && !sourceProblem && <PageWindow label="Загрузить в станок" close={dismissLoad} width={760}>
@@ -1051,6 +1079,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
       {loadProblem && <p className="warning-inline">{loadProblem}</p>}
       {message && <p className={`tone-${message.tone}`} role="status">{message.text}</p>}
       <div className="machine-actions">
+        {differentJob && <button type="button" className="secondary" disabled={sending} onClick={openRunningJob}>К заданию на станке</button>}
         <button type="button" className="secondary" disabled={sending} onClick={dismissLoad}>Отмена</button>
         <button type="button" className="primary" disabled={Boolean(loadProblem) || !free || checkingLoad} onClick={() => void confirmJobLoad()}>
           {checkingLoad ? "Проверка…" : "Подтвердить загрузку"}</button>
@@ -1058,10 +1087,10 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
       </section>
     </PageWindow>}
     {error && <div className="error-banner" role="alert">{error}</div>}
-    <Ob019RunJob inventory={inventory} equipmentId={equipmentId} picker={false} live={live} state={runState} choices={choices}
+    <div ref={runPanel} tabIndex={-1} aria-label="Текущее задание"><Ob019RunJob inventory={inventory} equipmentId={equipmentId} picker={false} live={live} state={runState} choices={choices}
       choice={choice} onPick={pickJob} reload={reloadRun} pickNote={pickNote}
       onStarted={(job) => { clearTimeout(pickTimer.current); setStarted(job); setChoice(manualKey(job.id)); setWire(""); query.current = null;
-        setPlan(null); pickManual(job); }} />
+        setPlan(null); pickManual(job); }} /></div>
     <section className="machine-block machine-what" aria-label="Что режем">
       <h3>Что режем</h3>
       <div className="machine-ways">
@@ -1089,7 +1118,7 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
         {input("mode", "Режим")}
       </div>
       {planLoading && !choice && <p className="machine-muted">Считаю значения…</p>}
-      {plan && plan.blocking.length > 0 && held !== null && <p className="warning-inline" role="status">
+      {plan && blockingKeys(plan).some((key) => !(key in (held ?? {}))) && held !== null && <p className="warning-inline" role="status">
         В ЭТК не задано: {plan.blocking.join(", ")} — введите на чертеже и подтвердите загрузку
       </p>}
       {message && !refusedPick && <p className={`machine-message tone-${message.tone}`} role="status">{message.text}</p>}

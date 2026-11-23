@@ -213,9 +213,13 @@ def active_run_id(session, equipment_id: UUID, *, lock: bool = False) -> str | N
     return str(row.id) if runs.is_open(row) else None
 
 
-def confirm_active_run(session, equipment_id: UUID, expected: UUID | None) -> None:
-    if active_run_id(session, equipment_id, lock=True) != (str(expected) if expected is not None else None):
+def confirm_active_run(session, equipment_id: UUID, expected: UUID | None, job: dict) -> None:
+    row = runs.current(session, equipment_id, for_update=True)
+    active = str(row.id) if runs.is_open(row) else None
+    if active != (str(expected) if expected is not None else None):
         raise HTTPException(409, "Задание на станке изменилось — обновите карточку и подтвердите загрузку ещё раз")
+    if active is not None and not runs.same_job(runs.info(row), job):
+        raise HTTPException(409, f"На станке идёт задание {runs.info(row)['label']} — сначала завершите или прервите его")
 
 
 def _confirm(session, link: rules.MachineLinkRow, state: int | None) -> None:
@@ -549,7 +553,8 @@ def transfer(inventory: str, payload: TransferPayload, principal: Writer, factor
         session = uow.session
         link = locked_link(session, inventory)
         _confirm(session, link, payload.confirm_state)
-        confirm_active_run(session, link.equipment_id, payload.expected_active_run_id)
+        confirm_active_run(session, link.equipment_id, payload.expected_active_run_id,
+                           runs.cutting(payload.group_id, payload.length_mm, "", None))
         refuse_while_manual(session, link.equipment_id)
         plan = confirmed_transfer_plan(session, link, payload.group_id, payload.length_mm, payload.expected_source, now)
         if plan["blocking"]:

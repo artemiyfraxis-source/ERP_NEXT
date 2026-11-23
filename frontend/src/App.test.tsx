@@ -5,6 +5,7 @@ import { AUTH_REQUIRED_EVENT, type Principal } from "./api";
 import { forgetPersonalViews, loadPersonalViews, SAVE_DELAY, savePersonalView } from "./personalViews";
 import { forgetScanDevice, loadScanDevice } from "./ScanAgent";
 import { openPlace } from "./navigation";
+import { machineLink } from "./ProjectEtk";
 
 const principal: Principal = {
   user: {
@@ -181,15 +182,25 @@ it("preserves exact equipment source parameters on reload and popstate, and clea
     if (String(input) === "/api/production/machines") return json({ rows: [], now: "2026-11-23T10:00:00+03:00" });
     return json({}, 404);
   });
-  window.history.replaceState({}, "", "/?section=machines&equipment_id=u19&task_id=t1&operation_id=o1&etk_position=2");
+  const action: Parameters<typeof machineLink>[0] = { equipment_id: "u19", task_id: "t1", operation_id: "o1", etk_position: 2,
+    inventory_number: "ОБ.019", display_name: "Резка", model: null, card_kind: "ob019", source: null,
+    connectivity: { state: "ok", fresh: true, last_seen: null }, open_permitted: true, load_permitted: true,
+    can_open: true, can_load: true, blocker: null };
+  window.history.replaceState({}, "", machineLink(action, true));
   render(<App />);
   await screen.findByRole("heading", { name: "Оборудование" });
   expect(new URLSearchParams(window.location.search).get("etk_position")).toBe("2");
-  const source = { equipment_id: "u99", task_id: "t2", operation_id: "o2", etk_position: "7", group_id: "g2", member_id: "m2" };
+  const params = new URLSearchParams(machineLink({ ...action, equipment_id: "u99", task_id: "t2", operation_id: "o2", etk_position: 7 }, true));
+  params.delete("section");
+  const source = { ...Object.fromEntries(params), group_id: "g2", member_id: "m2" };
   act(() => openPlace("machines", source));
   for (const [key, value] of Object.entries(source)) expect(new URLSearchParams(window.location.search).get(key)).toBe(value);
   expect(fetch.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
   fireEvent.click(screen.getByRole("button", { name: "Главная" }));
+  for (const key of Object.keys(source)) expect(new URLSearchParams(window.location.search).has(key)).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Оборудование" }));
+  await screen.findByRole("heading", { name: "Оборудование" });
+  expect(screen.queryByText("Ссылка на задание неполная — откройте станок из инструкции заново")).not.toBeInTheDocument();
   for (const key of Object.keys(source)) expect(new URLSearchParams(window.location.search).has(key)).toBe(false);
 });
 

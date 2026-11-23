@@ -662,16 +662,16 @@ def test_a_job_run_from_the_card_writes_the_etk_marking_too_and_a_blocked_one_is
     sessions, clock, admin, ob019, _ = machines_api
     bridge = _bridge(admin)
     _report(bridge)
+    blocked = _job(sessions, laser={"mode": "ends", "front": "SN {№}"}, number="ГР-0200")
+    refused = _post(admin, CARD + "/run", {"kind": "cutting", "group_id": str(blocked), "length_mm": "325",
+                                           "confirm_state": 102})
+    assert refused.status_code == 422 and "Серийные номера на лазер" in refused.json()["detail"]
     group_id = _job(sessions, laser={"mode": "ends", "front": "C1.5 to XS17.7", "back": "XS17.7", "middle": ""})
     sent = _post(admin, CARD + "/run", {"kind": "cutting", "group_id": str(group_id), "length_mm": "325", "confirm_state": 102})
     assert sent.status_code == 200, sent.text
     claimed, words, bits = _claimed_writes(bridge)
     assert bits == {400: 1, 422: 0}
     assert _text_at(words, 440) == "C1.5 to XS17.7" and _text_at(words, 470) == "XS17.7"
-    blocked = _job(sessions, laser={"mode": "ends", "front": "SN {№}"}, number="ГР-0200")
-    refused = _post(admin, CARD + "/run", {"kind": "cutting", "group_id": str(blocked), "length_mm": "325",
-                                           "confirm_state": 102})
-    assert refused.status_code == 422 and "Серийные номера на лазер" in refused.json()["detail"]
 
 
 def test_none_mode_writes_only_the_marking_switch(machines_api):
