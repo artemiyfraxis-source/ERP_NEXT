@@ -1,6 +1,6 @@
 import { useState, type DragEvent } from "react";
 import { techcardsApi, failureText, type ProjectTechcard } from "./api";
-import { etkPfGroups, etkPfOutName, etkRouteOf, formatMinutes, opNumber, type EtkPfGroup, type EtkPfOperation, type EtkPfRow } from "./etkRoute";
+import { etkPfGroups, etkPfOutName, etkRouteOf, formatTimeTotal, opNumber, type EtkPfGroup, type EtkPfOperation, type EtkPfRow } from "./etkRoute";
 import { formatQty } from "./format";
 import { proposePf } from "./pfPropose";
 import { mergeBlocks, placeOp, routePayload, routeProblem, type Route, type RouteOp } from "./routeLogic";
@@ -189,7 +189,7 @@ function PfGroup<T extends EtkPfListOperation>({ group, list, selected, onPick, 
     <header className="etk-pf-head">
       <span className="etk-pf-name" title={heading}><b>{label}</b>{heading ? ` · ${heading}` : ""}</span>
       {group.final && <em className="etk-pf-final">изделие</em>}
-      {group.minutes > 0 && <span className="etk-pf-norm" title="Норма ПФ на партию">{formatMinutes(group.minutes)} мин</span>}
+      <span className="etk-pf-norm" title="Норма ПФ на партию">{formatTimeTotal(group.minutes, group.unknownOperations)}</span>
     </header>
     {group.inputs.length > 0 && <div className="etk-pf-feed" aria-label={`Вход ${label}`}
       title={group.inputs.map((input) => `ПФ ${input.label}${input.name ? ` ${input.name}` : ""}${input.times ? ` ${input.times}` : ""}`).join("\n")}>

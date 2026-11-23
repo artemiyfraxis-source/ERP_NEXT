@@ -11,6 +11,20 @@ const cut = { position: 1, type: "cutWire", code: "CUT_WIRE_auto", fields: { wir
 const semis = [{ name: "Провода нарезаны: ПВАМ 0,5 черный — 1 шт по 1000 мм; ПВАМ 0,5 красный — 1 шт по 980 мм", norm: "10", unit: "шт" }];
 
 describe("etkPfArt — эскиз полуфабриката в схеме ПФ", () => {
+  it.each([false, true])("draws printed labels detached from cable, also for a final printing-only PF (%s)", (final) => {
+    const operation = { position: 1, type: "coaxCutTut", code: "PRINT_MARK_LABEL", fields: { coaxMarks: [
+      { text: "Этикетка А", qty: 2 }, { text: "Этикетка В", qty: 3 }, { text: "Этикетка С", qty: 1 }, { text: "Этикетка D", qty: 1 },
+    ] } };
+    const art = etkPfArt({ group: group({ final }), operations: [operation], document: { build_config: { mode: "coax", coax: { cableArt: "RTK 031" } } } })!;
+    const drawing = art.main && "svg" in art.main ? art.main.svg : "";
+    expect(art.layers).toBe("");
+    expect(drawing.match(/data-mark-label=/g)).toHaveLength(4);
+    expect(drawing).toContain(">×2<");
+    expect(drawing).not.toMatch(/RTK 031|#6b7c86/);
+    const mounted = etkPfArt({ group: group(), operations: [{ ...operation, type: "coaxInsTut", code: "INS_MARK_LABEL", fields: { marks: [{ text: "Этикетка А", qty: "2" }] } }], document: {} })!;
+    expect(mounted.layers).toContain("#6b7c86");
+  });
+
   it("draws the cut wires of a cutting ПФ with the drawing of the operation", () => {
     const art = etkPfArt({ group: group(), operations: [cut], document: {} })!;
     expect(art.main && "svg" in art.main ? art.main.svg : "").toContain("ПВАМ 0,5 черный × 2");

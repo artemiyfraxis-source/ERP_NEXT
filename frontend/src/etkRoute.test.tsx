@@ -100,7 +100,7 @@ describe("etkRouteChips", () => {
 
   it("shows no time when the scheme has none and never an empty name", () => {
     const [chip] = etkRouteChips({ ...linear, blocks: [block("b1", " ", [1]), ...linear.blocks.slice(1)] });
-    expect(chip).toMatchObject({ name: "Блок 1", perUnit: "" });
+    expect(chip).toMatchObject({ name: "Блок 1", perUnit: "0 мин/шт" });
   });
 });
 

@@ -1068,6 +1068,7 @@ export interface WorkloadKb {
   remaining: number;
   hours: number;
   unit_hours: number;
+  unknown_operations?: number;
   site: string;
   site_note: string;
   by_kind: Record<string, number>;
@@ -1078,6 +1079,7 @@ export interface WorkloadProject {
   customer: string;
   deadline: string | null;
   hours: number;
+  unknown_operations?: number;
   by_site: Record<string, number>;
   by_kind: Record<string, number>;
   ready: string | null;
@@ -2425,6 +2427,9 @@ export interface EtkRouteBlock {
   unit_minutes: number;
   rolled_minutes: number;
   rolled_ops: number;
+  /** Numeric times are lower bounds when an operation has no norm. */
+  unknown_operations?: number;
+  rolled_unknown_operations?: number;
   /** ПФ-комплект («Сложная сборка», 16.10): резка, трубки, оплётка, маркировка для нескольких ПФ — один на изделие. */
   kit?: boolean;
   /** Уровень на схеме: «2» — один блок на уровне, «2.1» — первый из нескольких (считает сервер). */

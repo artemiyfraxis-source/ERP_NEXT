@@ -17,7 +17,7 @@ from typing import Any
 from app.modules.techcards.etk_builder import _chain_results, _time, build_etk
 from app.modules.techcards.etk_marking import mark_kind
 from app.modules.techcards.operation_cards import parse_operation_library
-from app.modules.techcards.project_cards import ProjectTechcard
+from app.modules.techcards.project_cards import ProjectTechcard, operation_key
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -174,7 +174,7 @@ def test_ultrasonic_splices_take_the_weld_card_and_no_sleeves():
 
 def test_the_card_is_accepted_with_unique_etk_keys():
     document = build()
-    keys = [(op["code"], op["connector"], op["side"]) for op in document["operations"]]
+    keys = [operation_key(op) for op in document["operations"]]
     assert len(keys) == len(set(keys))
     now = datetime.now(timezone.utc)
     card = ProjectTechcard.create(project="713", item_index="К.4 КБ1", product_name="Жгут НВ4", source_calculation="",

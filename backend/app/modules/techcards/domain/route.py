@@ -21,7 +21,7 @@ from collections import deque
 from copy import deepcopy
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
-from typing import Any, Mapping, Sequence
+from typing import Any, Collection, Mapping, Sequence
 
 
 PREFIX = "Схема полуфабрикатов"
@@ -84,6 +84,7 @@ class RouteOp:
     minutes: Decimal = Decimal(0)
     side: str = ""  # «A» / «B» — the harness side the generator put the operation on, "" — none
     key: str = ""   # the generator's opKey (shieldA1, insSpl…), "" — unknown
+    unknown_time: bool = False
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,8 @@ class BlockTotals:
     rolled_minutes: Decimal   # per one piece, with every input: unit + Σ per_unit × input's rolled time
     inputs: Decimal           # input semi-finished pieces per one piece (Σ per_unit of incoming edges)
     rolled_ops: int           # operations in the block and in every block feeding it
+    unknown_operations: int = 0
+    rolled_unknown_operations: int = 0
 
 
 def _label(block: Block) -> str:
@@ -365,8 +368,10 @@ def validate_route(route: Route, positions: Sequence[int]) -> None:
                          else f"блоки {names} не доходят до итогового блока")
 
 
-def route_totals(route: Route, minutes: Mapping[int, Decimal], quantity: Decimal) -> dict[str, BlockTotals]:
-    """Per block: its time, time per piece, rolled-up time per piece and input pieces; output is one piece."""
+def route_totals(
+    route: Route, minutes: Mapping[int, Decimal], quantity: Decimal, *, unknown_positions: Collection[int] = (),
+) -> dict[str, BlockTotals]:
+    """Numeric times remain lower bounds when operations have unknown norms; counts retain that distinction."""
     quantity = quantity if quantity > 0 else Decimal(1)
     by_key = {block.key: block for block in route.blocks}
     incoming: dict[str, list[Edge]] = {block.key: [] for block in route.blocks}
@@ -374,6 +379,7 @@ def route_totals(route: Route, minutes: Mapping[int, Decimal], quantity: Decimal
         incoming[edge.target].append(edge)
     totals: dict[str, BlockTotals] = {}
     upstream: dict[str, set[int]] = {}
+    unknown = set(unknown_positions)
     for key in _topological(route):
         block = by_key[key]
         own = sum((minutes.get(position, Decimal(0)) for position in block.ops), Decimal(0))
@@ -386,6 +392,8 @@ def route_totals(route: Route, minutes: Mapping[int, Decimal], quantity: Decimal
             rolled_minutes=unit + sum((edge.per_unit * totals[edge.source].rolled_minutes for edge in edges), Decimal(0)),
             inputs=sum((edge.per_unit for edge in edges), Decimal(0)),
             rolled_ops=len(upstream[key]),
+            unknown_operations=len(set(block.ops) & unknown),
+            rolled_unknown_operations=len(upstream[key] & unknown),
         )
     return totals
 
@@ -434,6 +442,10 @@ def route_json(route: Route, totals: Mapping[str, BlockTotals]) -> dict[str, Any
             "unit_minutes": _number(totals[block.key].unit_minutes),
             "rolled_minutes": _number(totals[block.key].rolled_minutes),
             "rolled_ops": totals[block.key].rolled_ops,
+            **({"unknown_operations": totals[block.key].unknown_operations}
+               if totals[block.key].unknown_operations else {}),
+            **({"rolled_unknown_operations": totals[block.key].rolled_unknown_operations}
+               if totals[block.key].rolled_unknown_operations else {}),
             "label": labels[block.key],
         } for block in route.blocks],
         "edges": [{"from": edge.source, "to": edge.target, "per_unit": _number(edge.per_unit),
@@ -530,5 +542,6 @@ def pf_documents(document: Mapping[str, Any] | None) -> list[dict[str, Any]]:
             "components": components, "inputs": inputs,
             "output": [deepcopy(dict(row)) for row in last.get("result") or [] if isinstance(row, Mapping)],
             "minutes": block.get("minutes", 0), "unit_minutes": block.get("unit_minutes", 0),
+            **({"unknown_operations": block["unknown_operations"]} if block.get("unknown_operations") else {}),
         })
     return result

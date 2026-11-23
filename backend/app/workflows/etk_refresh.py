@@ -9,8 +9,8 @@ every card that has `inputs`, and compares with the stored document:
 
     different  → issued card: revision N+1 (`source='auto'`, `diff`, journal reason); draft: refreshed in place
     same       → nothing (the hash is stamped when it was missing)
-    conflicts  → `missing_operation` / `route_not_applied`: the revision is still issued, the overrides kept, the card
-                 gets `review_note` «нужна проверка технолога: …»; `template_changed` is a journal note only
+    conflicts  → saved operations, routes or sketches cannot be mapped: keep the previous document and revision;
+                 set `review_note` «нужна проверка технолога: …». `template_changed` is a journal note only.
 
 One runner at a time (a Postgres advisory lock; a process lock on SQLite). A card whose `version` moved under the job
 (an edit form saved meanwhile) is skipped and its requests stay pending for the next run. Production tasks keep the
@@ -25,7 +25,7 @@ step run it live only when `ETK_AUTO_REVISION=1`; otherwise the deploy step is a
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -45,7 +45,7 @@ from app.modules.techcards import etk_derive
 from app.modules.techcards.etk_builder import EQUIPMENT_ID
 from app.modules.techcards.etk_derive import BUILD_FAILED, MISSING_OPERATION, NO_INPUTS, ROUTE_NOT_APPLIED, TEMPLATE_CHANGED
 from app.modules.techcards.infrastructure import ProjectTechcardRow, RefreshRequestRow, SqlAlchemyTechcardsUnitOfWork
-from app.modules.techcards.project_cards import ProjectTechcard, TechcardRevision, TechcardStatus, operation_key
+from app.modules.techcards.project_cards import ProjectTechcard, TechcardRevision, TechcardStatus, TechcardValidationError, operation_key
 from app.shared.clock import moscow_now
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
@@ -187,8 +187,13 @@ def _effective_overrides(card: ProjectTechcard) -> dict[str, Any]:
                           "base_template_version": versions.get(str(by_key[key].get("template_id") or "").strip(), "")}
     if edits:
         overrides["operations"] = edits
-    if "route" not in overrides and (route := etk_derive.route_override(document)) is not None:
-        overrides["route"] = route
+    if "route" not in overrides:
+        route = etk_derive.route_override(document)
+        if route is not None:
+            overrides["route"] = route
+        elif isinstance(document.get("route"), Mapping) and document["route"].get("source") == "manual":
+            # An invalid saved membership must not quietly give way to a generated route.
+            overrides["route"] = {"blocks": [{"key": "unmapped", "ops": ["unmapped-saved-route"]}], "edges": []}
     return overrides
 
 
@@ -215,6 +220,7 @@ def _journal_reason(ctx: Context, changes: list[dict[str, str]], soft: list[dict
 
 def evaluate(
     card: ProjectTechcard, ctx: Context, *, rename_reason: str | None = None,
+    saved_sketch_keys: Sequence[str] = (),
 ) -> tuple[ProjectTechcard | None, TechcardRevision | None, CardResult]:
     """(the card to save or None, the revision to add or None, the result). Pure: nothing is written here.
     `rename_reason` — a deliberate rename of operations: when the document differs only in operation titles (which
@@ -223,7 +229,7 @@ def evaluate(
     overrides = _effective_overrides(card)
     document, conflicts = etk_derive.derive(
         card.inputs, overrides, lambda config: with_technology(config, refs=ctx.refs)[0], ctx.templates,
-        operation_library_commit=ctx.commit, technology_source=ctx.snapshot)
+        operation_library_commit=ctx.commit, technology_source=ctx.snapshot, previous_document=card.document)
     if document is None:
         kinds = {item["kind"] for item in conflicts}
         if NO_INPUTS in kinds:
@@ -234,6 +240,32 @@ def evaluate(
             return None, None, result
         return replace(card, review_note=note, version=card.version + 1, updated_at=ctx.now), None, result
     hard = [item for item in conflicts if item["kind"] in (MISSING_OPERATION, ROUTE_NOT_APPLIED, etk_derive.THERMAL_OVERRIDE)]
+    for key in (*card.manual_operation_keys, *saved_sketch_keys):
+        if etk_derive.resolved_operation_key(key, document) is None:
+            hard.append({"kind": MISSING_OPERATION, "operation_key": key,
+                         "message": "сохранённая правка или эскиз не сопоставлены с операцией — требуется проверка технолога"})
+    sketch_targets = [etk_derive.resolved_operation_key(key, document) for key in saved_sketch_keys]
+    if len(set(sketch_targets)) != len(sketch_targets):
+        hard.append({"kind": MISSING_OPERATION, "operation_key": "",
+                     "message": "несколько эскизов сопоставлены с одной операцией — требуется проверка технолога"})
+    if any(item["kind"] in (MISSING_OPERATION, ROUTE_NOT_APPLIED) for item in hard):
+        note = NOTE_PREFIX + "; ".join(dict.fromkeys(item["message"] for item in hard))
+        result = CardResult(card.id, label, "conflict", conflicts=tuple(hard))
+        if card.review_note == note:
+            return None, None, result
+        return replace(card, review_note=note, version=card.version + 1, updated_at=ctx.now), None, result
+    try:
+        overrides = etk_derive.migrated_overrides(overrides, document)
+    except TechcardValidationError as error:
+        note = NOTE_PREFIX + str(error)
+        result = CardResult(card.id, label, "conflict", conflicts=({"kind": MISSING_OPERATION,
+                            "operation_key": "", "message": str(error)},))
+        if card.review_note == note:
+            return None, None, result
+        return replace(card, review_note=note, version=card.version + 1, updated_at=ctx.now), None, result
+    card = replace(card, overrides=overrides,
+                   manual_operation_keys=tuple(etk_derive.resolved_operation_key(key, document)
+                                               for key in card.manual_operation_keys))
     soft = [item for item in conflicts if item["kind"] == TEMPLATE_CHANGED]
     versions = (document.get("source") or {}).get("templates") or {}
     new_hash = etk_derive.derived_hash(card.inputs, overrides, ctx.refs.stamp, versions, ctx.builder)
@@ -365,7 +397,8 @@ def _refresh_one(sessions: sessionmaker[Session], card_id: UUID, ctx: Context, d
             card = uow.techcards.get(card_id)
             if card is None or not card.inputs or card.document is None:
                 return CardResult(card_id, str(card_id), "unchanged")
-            updated, revision, result = evaluate(card, ctx)
+            updated, revision, result = evaluate(
+                card, ctx, saved_sketch_keys=tuple(sketch.operation_key for sketch in uow.techcards.sketches(card.id)))
             if dry_run:
                 return replace(result, revision=None)
             if updated is None:

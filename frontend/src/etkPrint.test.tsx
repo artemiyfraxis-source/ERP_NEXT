@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { Principal, ProjectTechcard } from "./api";
 import { EtkSheet } from "./ProjectEtk";
 import { buildPrintDocumentHtml } from "./print";
-import { etkPrintPages } from "./etkPrint";
+import { etkPrintPages, operationKeyOf } from "./etkPrint";
 import { shrinkRequirementLines } from "./etkOperation";
 
 /* Порядок блоков операции ЭТК (erp-screens §6, аудит дизайна 10.10 ЭТК-1/ЭТК-2): Вход → Оснастка (Инструмент ·
@@ -34,6 +34,60 @@ function techcard(operation: Record<string, unknown>): ProjectTechcard {
 }
 
 afterEach(() => vi.restoreAllMocks());
+
+it("uses stable identity for uploaded sketches after moving an operation", () => {
+  const key = "INS_MARK_LABEL::op:coaxInsLabel::";
+  const operation = { code: "INS_MARK_LABEL", connector: "17", side: "", operation_key: key };
+  expect(operationKeyOf(operation)).toBe(key);
+  expect(operationKeyOf({ ...operation, connector: "7", position: 7 })).toBe(key);
+  const html = buildPrintDocumentHtml("ТК", etkPrintPages(techcard(operation), [], { [key]: "/saved-label.png" }));
+  expect(html).toContain("/saved-label.png");
+});
+
+it.each([0, 2])("prints incomplete PF totals including a %s minute lower bound and preserves explicit zero", (known) => {
+  const card = techcard({ time: [{ name: "Печать", norm: String(known) }, { name: "Нарезка", norm: "" }] });
+  const document = card.document as { operations: Record<string, unknown>[]; route?: unknown };
+  document.operations.push({ ...document.operations[0], position: 2, code: "ZERO", time: [{ name: "Контроль", norm: "0" }] });
+  document.route = {
+    source: "manual", final: "done", blocks: [
+      { key: "prep", name: "Заготовка", ops: [1], final: false },
+      { key: "done", name: "Изделие", ops: [2], final: true },
+    ], edges: [{ from: "prep", to: "done", per_unit: 1 }],
+  };
+  const html = buildPrintDocumentHtml("ТК", etkPrintPages(card, []));
+  expect(html).toContain(`≥ ${known} мин, не задано у 1 операции на партию`);
+  expect(html).toContain("0 мин на партию");
+});
+
+it.each(["", "0"])("shows legacy label-print time %s with blank source as unknown on screen and print", async (norm) => {
+  stubFetch();
+  const card = techcard({
+    code: "PRINT_MARK_LABEL", type: "coaxCutTut", title: "Печать этикеток",
+    times: { operation_seconds: "", machine_seconds: "0" },
+    time: [{ name: "Этикетки", norm }],
+  });
+  const before = structuredClone(card);
+  render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
+  expect(await screen.findByLabelText("Расчётное время")).toHaveTextContent("не задано");
+  expect(screen.getByLabelText("Расчётное время")).not.toHaveTextContent("0 мин");
+  const html = buildPrintDocumentHtml("ТК", etkPrintPages(card, []));
+  expect(html).toMatch(/Расчётное время[\s\S]*не задано/);
+  expect(card).toEqual(before);
+});
+
+it("does not report a partial sum as the total when one time norm is missing", async () => {
+  stubFetch();
+  const card = techcard({ time: [{ name: "Печать", norm: "2" }, { name: "Нарезка", norm: "" }] });
+  render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
+  expect(await screen.findByLabelText("Расчётное время")).toHaveTextContent("не задано");
+});
+
+it("preserves an explicitly supplied zero time norm", async () => {
+  stubFetch();
+  const card = techcard({ times: { operation_seconds: "0" }, time: [{ name: "Этикетки", norm: "0" }] });
+  render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
+  expect(await screen.findByLabelText("Расчётное время")).toHaveTextContent("0 мин");
+});
 
 function stubFetch() {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () =>

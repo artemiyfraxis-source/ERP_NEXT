@@ -12,7 +12,7 @@ from collections.abc import Callable
 from typing import Any, Collection, Iterable, Mapping, Sequence
 from uuid import UUID
 
-from app.modules.techcards.etk_builder import norms_include_setup, operation_norms
+from app.modules.techcards.etk_builder import norms_include_setup, operation_norms, operation_time_summary
 
 from .domain import (
     EtkOperation, ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, link_inputs,
@@ -50,6 +50,8 @@ class RouteStep:
     block_place: int = 0
     # Шаг-ПФ (semifinished_steps): операции ЭТК этого полуфабриката по порядку; у шага-операции ЭТК пусто.
     etk_ops: tuple[EtkOperation, ...] = ()
+    # Numeric seconds are a lower bound; incomplete norms warn without blocking launch.
+    unknown_operations: int = 0
 
 
 # Типы операций генератора ТК (tcGenLogic ops[].type) по-русски. Конфиг генератора не пишет stage/typeLabel, поэтому
@@ -369,9 +371,16 @@ def launch_route(document: Mapping[str, Any] | None) -> LaunchRoute:
         code = operation_code(str(op.get("opNumber") or op.get("code") or etk.get("code") or ""))
         side = str(op.get("side") or etk.get("side") or "").strip()
         description = str(op.get("descr") or op.get("title") or etk.get("title") or stage).strip()
+        time_rows = etk.get("time") if isinstance(etk.get("time"), list) else []
+        raw_seconds = op.get("tOp")
+        if raw_seconds is None or not str(raw_seconds).strip():
+            raw_seconds = times.get("operation_seconds")
+        known_minutes, unknown_time = operation_time_summary(
+            etk if time_rows else {"times": {"operation_seconds": raw_seconds}}, batch,
+        )
         seconds_per_unit, setup_seconds = _step_seconds(
-            norms[index] if index < len(norms) else None, batch,
-            _seconds(op.get("tOp") if op else times.get("operation_seconds")),
+            known_minutes if unknown_time else norms[index] if index < len(norms) else None, batch,
+            _seconds(raw_seconds),
             _seconds(op.get("tPrep") if op else times.get("setup_seconds")),
             setup_in_norm=setup_in_norm,
         )
@@ -390,7 +399,12 @@ def launch_route(document: Mapping[str, Any] | None) -> LaunchRoute:
             manual=blocks[index].number > 0,
             block_number=blocks[index].number,
             block_place=blocks[index].order.index(index) if blocks[index].number else 0,
+            unknown_operations=int(unknown_time),
         ))
+    unknown_count = sum(step.unknown_operations for step in steps)
+    if unknown_count:
+        warnings += (f"Норма времени не задана: {unknown_count} оп. Указана нижняя граница времени; "
+                     "запуск разрешён, уточните нормы в техкарте.",)
     return LaunchRoute(tuple(steps), warnings)
 
 
@@ -489,6 +503,7 @@ def semifinished_steps(route: Sequence[RouteStep]) -> tuple[RouteStep, ...]:
             block=key, block_name=first.block_name, final=first.final, inputs=first.inputs,
             manual=True, block_number=numbers[key],
             etk_ops=tuple(EtkOperation(step.position, step.code, step.stage) for step in steps),
+            unknown_operations=sum(step.unknown_operations for step in steps),
         ))
     return tuple(result)
 
@@ -498,6 +513,11 @@ def launch_operations(route: Sequence[RouteStep], quantity: int) -> tuple[Produc
 
     Нарисованная технологом схема — операция задания на каждый ПФ (semifinished_steps): одна коробка на ПФ, входы —
     коробки предыдущих ПФ. Без схемы — как прежде, операция задания на каждую операцию ЭТК."""
+    return preview_operations(route, quantity)
+
+
+def preview_operations(route: Sequence[RouteStep], quantity: int) -> tuple[ProductionOperation, ...]:
+    """Numeric lower bounds with their actual PF factors, shared by previews and launch."""
     semis = semifinished_steps(route)
     if semis:
         numbers = {step.block: step.position for step in semis}
@@ -524,7 +544,7 @@ def norms_outdated(task: Any, document: Mapping[str, Any] | None) -> bool:
     теми же нормами (правка текста, ЭТК до версии 4, у которой подготовку производство и так вычитает) флаг не ставит.
     Допуск — округление ЭТК до 0,01 мин на партию. Другой состав этапов (число, коды) — устарели: нормы не те."""
     steps = launch_route(document).steps
-    if not steps:
+    if not steps or any(step.unknown_operations for step in steps):
         return True
     if any(operation.etk_ops for operation in task.operations):
         try:

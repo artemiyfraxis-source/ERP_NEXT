@@ -36,6 +36,24 @@ export const line = (x1: number, y1: number, x2: number, y2: number, stroke = ED
 export const label = (x: number, y: number, value: string, size = 11, weight = 600, fill = INK, anchor = "middle") =>
   `<text x="${f(x)}" y="${f(y)}" text-anchor="${anchor}" font-size="${size}" font-weight="${weight}" fill="${fill}">${esc(value)}</text>`;
 
+/** Wrap SVG captions without dropping text, including article numbers with no spaces and non-BMP characters. */
+export function wrapSvgText(value: string, columns: number): string[] {
+  const lines: string[] = [];
+  for (const paragraph of value.split(/\r?\n/)) {
+    let line = "";
+    for (const word of paragraph.trim().split(/\s+/).filter(Boolean)) {
+      if (line && Array.from(`${line} ${word}`).length <= columns) { line += ` ${word}`; continue; }
+      if (line) { lines.push(line); line = ""; }
+      const letters = Array.from(word);
+      let offset = 0;
+      while (letters.length - offset > columns) { lines.push(letters.slice(offset, offset + columns).join("")); offset += columns; }
+      line = letters.slice(offset).join("");
+    }
+    if (line) lines.push(line);
+  }
+  return lines;
+}
+
 function svg(height: number, body: string): string {
   return `<svg class="etk-svg etk-pf-svg" viewBox="0 0 ${W} ${height}" width="100%" preserveAspectRatio="xMinYMin meet" xmlns="http://www.w3.org/2000/svg">` +
     `<defs><pattern id="pfBraid" width="7" height="7" patternUnits="userSpaceOnUse"><rect width="7" height="7" fill="#9aa1a6"/>` +
@@ -134,7 +152,10 @@ export function coaxMountedDrawing(side: Side, end: Row, tube: string): string {
 
 /** Вся сборка: разъём А, кабель с размером длины, разъём Б, ТУТ на обоих концах, названия обоих разъёмов. */
 export function coaxAssemblyDrawing(a: Row, b: Row, lengthMm: string, tube: string, cable: string): string {
-  const cy = 48, s = 0.6, cableA = 6 + 106 * s, cableB = W - 6 - 106 * s;
+  const names = [coaxKindTitle(a), coaxKindTitle(b)], captionWidth = 146, lineHeight = 15;
+  const captions = names.map((name) => wrapSvgText(name, 19));
+  const captionHeight = Math.max(1, ...captions.map((lines) => lines.length)) * lineHeight;
+  const cy = captionHeight + 33, s = 0.6, cableA = 6 + 106 * s, cableB = W - 6 - 106 * s;
   const place = (end: Row, mirror: boolean) =>
     `<g transform="translate(${mirror ? W - 6 : 6},${cy}) scale(${mirror ? -s : s},${s})">${connectorSide(isFemale(end), 216)}</g>`;
   // Кабель между ТУТ: скрытая под гайкой и ТУТ часть рисуется самими разъёмами.
@@ -142,19 +163,22 @@ export function coaxAssemblyDrawing(a: Row, b: Row, lengthMm: string, tube: stri
   const tubeMid = (x: number) => x;
   body += label(tubeMid(6 + 171 * s), cy + 26, "ТУТ", 10, 700, MUTED) + label(tubeMid(W - 6 - 171 * s), cy + 26, "ТУТ", 10, 700, MUTED);
   body += label(W / 2, cy + 3.6, cable, 11, 600, "#fff");
-  const nameA = coaxKindTitle(a), nameB = coaxKindTitle(b);
-  if (nameA) body += label(6, 14, nameA, 12, 700, INK, "start");
-  if (nameB) body += label(W - 6, 14, nameB, 12, 700, INK, "end");
+  captions.forEach((lines, index) => {
+    if (!lines.length) return;
+    // Each caption owns its column. textLength bounds glyphs as well as spacing, independently of the browser font.
+    body += `<svg data-coax-caption="${index ? "B" : "A"}" x="${index ? W - 6 - captionWidth : 6}" y="0" width="${captionWidth}" height="${captionHeight + 2}" overflow="hidden" aria-label="${esc(names[index])}"><title>${esc(names[index])}</title>` +
+      lines.map((text, at) => `<text x="${index ? captionWidth : 0}" y="${14 + at * lineHeight}" text-anchor="${index ? "end" : "start"}" font-size="12" font-weight="700" fill="${INK}" textLength="${Math.min(captionWidth, Array.from(text).length * 7.2)}" lengthAdjust="spacingAndGlyphs">${esc(text)}</text>`).join("") + "</svg>";
+  });
   // Размер длины кабеля между лицами разъёмов.
-  const yd = 84;
+  const yd = cy + 36;
   body += line(6, cy + 20, 6, yd + 6, MUTED, .9, "3 3") + line(W - 6, cy + 20, W - 6, yd + 6, MUTED, .9, "3 3") +
     line(6, yd, W - 6, yd, INK, 1) + `<path d="M6,${yd} l9,-3.5 v7 z M${W - 6},${yd} l-9,-3.5 v7 z" fill="${INK}"/>` +
     `<rect x="${W / 2 - 46}" y="${yd - 10}" width="92" height="20" fill="#f6f8f8"/>` +
     label(W / 2, yd + 5, lengthMm ? `L = ${lengthMm} мм` : "L по КД", 13, 700, INK);
   const clamp = (end: Row) => /прижим|зажим/i.test(str(end.shield));
   const shieldText = clamp(a) && clamp(b) ? "оплётка зажата кольцом" : clamp(a) || clamp(b) ? "экран: зажим и обжим" : "втулки экрана обжаты";
-  if (tube) body += label(W / 2, 108, `${tube} на обоих концах · ${shieldText}`, 10, 400, MUTED);
-  return svg(114, body);
+  if (tube) body += label(W / 2, cy + 60, `${tube} на обоих концах · ${shieldText}`, 10, 400, MUTED);
+  return svg(cy + 66, body);
 }
 
 // ── Вход из etkPfArt ──
