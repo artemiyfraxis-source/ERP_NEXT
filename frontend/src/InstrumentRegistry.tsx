@@ -79,9 +79,10 @@ const columns: DataColumn<InstrumentRow>[] = ([
   </span>,
 }));
 
-export function InstrumentRegistry({ instruments, onChanged }: {
+export function InstrumentRegistry({ instruments, onChanged, canSeeReferences = false }: {
   instruments: ProductionInstrument[];
   onChanged: () => Promise<void>;
+  canSeeReferences?: boolean;
 }) {
   const [view, setView] = useState<View>(savedView);
   const [treeSort, setTreeSort] = useState(() => readSaved(tableKey).sort ?? null);
@@ -143,6 +144,7 @@ export function InstrumentRegistry({ instruments, onChanged }: {
     </div>}
     <div className="manual-stock-head"><h2>Средства измерения</h2>
       <div className="header-actions">
+        {canSeeReferences && <a className="secondary small" href="?section=references&tab=ob_measuring">База данных · Средства измерений</a>}
         <button className="secondary small" onClick={() => openNew("Средство измерений")}>+ Средство измерений</button>
         <button className="secondary small" onClick={() => openNew("Принадлежность")}>+ Общая принадлежность</button>
       </div>
@@ -175,6 +177,7 @@ export function InstrumentRegistry({ instruments, onChanged }: {
     </div>}
     {window && <InstrumentWindow key={window.record?.id ?? `new:${window.kind}:${window.parentId}`} instrument={window.record}
       kind={window.kind} parentId={window.parentId} instruments={instruments} close={closeCard} onChanged={onChanged}
+      referenceLink={canSeeReferences && window.record ? `?section=references&tab=ob_measuring&equipment=${encodeURIComponent(window.record.id)}` : undefined}
       onAccessory={(parentId) => openNew("Принадлежность", parentId)} />}
     {labels && <InstrumentLabelPrint instruments={labels} bulk close={() => setLabels(null)} />}
   </div>;
