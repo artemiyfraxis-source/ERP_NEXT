@@ -77,7 +77,7 @@ from .modules.purchasing import api_settings as purchasing_settings_api
 from .modules.purchasing import api_suppliers as purchasing_suppliers_api
 from .workflows import finished_goods_api
 from .workflows import production_intake_api
-from .workflows import coax_vswr_api, instrument_from_stock, instrument_labels, instrument_public_passport, marking_labels
+from .workflows import coax_vswr_api, instrument_from_stock, instrument_labels, instrument_public_passport, marking_labels, rf_kit_standards_api
 from .workflows import marking_outside_api
 from .workflows import machines_api
 from .workflows import equipment_setup_model
@@ -208,6 +208,7 @@ app.include_router(vna_screens_api.router)
 app.include_router(instrument_from_stock.router)
 app.include_router(instrument_labels.router)
 app.include_router(instrument_public_passport.router)
+app.include_router(rf_kit_standards_api.router)
 app.include_router(marking_labels.router)
 app.include_router(marking_outside_api.router)
 app.include_router(machine_writes_api.router)

@@ -16,6 +16,7 @@ from app.modules.warehouse import marking_profiles as _marking_profiles  # noqa:
 from app.modules.fulfillment import infrastructure as _fulfillment  # noqa: F401
 from app.modules.production import infrastructure as _production  # noqa: F401
 from app.modules.production import rf_infrastructure as _production_rf  # noqa: F401
+from app.modules.production import rf_kit_characterization_infrastructure as _production_rf_kits  # noqa: F401
 from app.modules.production import mating_infrastructure as _production_matings  # noqa: F401
 from app.modules.production import vna_session_infrastructure as _production_vna_sessions  # noqa: F401
 from app.modules.production import vna_screen_infrastructure as _production_vna_screens  # noqa: F401
