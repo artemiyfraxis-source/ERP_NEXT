@@ -19,7 +19,10 @@ from .harness_infrastructure import (
 from .kitset_infrastructure import SqlAlchemyKitsetRepository
 from .std_figures_infrastructure import SqlAlchemyStdFigureRepository
 from .td_issues_infrastructure import SqlAlchemyTdIssueRepository, TdIssueRow
-from .project_cards import OperationSketch, ProjectTechcard, TechcardRevision, TechcardStatus, TechcardValidationError
+from .project_cards import (
+    OperationSketch, ProjectTechcard, TechcardRevision, TechcardStatus, TechcardValidationError,
+    with_operation_fingerprints, with_override_fingerprints,
+)
 from .operation_cards import OperationCardTemplate, OperationRecordEdit, parse_operation_template
 from .template_sheets import TemplateDraft
 
@@ -194,6 +197,7 @@ class SqlAlchemyTechcardRepository:
 
     @staticmethod
     def _domain(row: ProjectTechcardRow) -> ProjectTechcard:
+        document = with_operation_fingerprints(row.document)
         return ProjectTechcard(
             id=row.id,
             version=row.version,
@@ -204,13 +208,13 @@ class SqlAlchemyTechcardRepository:
             deadline=row.deadline,
             status=TechcardStatus(row.status),
             revision=row.revision,
-            document=row.document,
+            document=document,
             manual_operation_keys=tuple(row.manual_operation_keys),
             created_at=row.created_at,
             updated_at=row.updated_at,
             issued_at=row.issued_at,
             inputs=row.inputs,
-            overrides=row.overrides,
+            overrides=with_override_fingerprints(row.overrides, document),
             review_note=row.review_note,
             derived_hash=row.derived_hash,
         )

@@ -10,15 +10,16 @@ import pytest
 from app.modules.techcards import etk_builder
 from app.modules.techcards.application import _hand_route, _keep_hand_route
 from app.modules.techcards.etk_derive import derive, route_override
-from app.modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
+from app.modules.techcards.infrastructure import ProjectTechcardRow, SqlAlchemyTechcardsUnitOfWork
 from app.modules.techcards.project_cards import (
-    OperationSketch, ProjectTechcard, TechcardValidationError, document_sketches, operation_key,
+    OperationSketch, ProjectTechcard, TechcardValidationError, document_sketches, operation_aliases, operation_key,
 )
 from app.workflows.etk_refresh import Context, NOTE_PREFIX, REASON_BUILDER, evaluate
 from app.workflows.techcard_build import Refs
 from tests.references.test_load_mirror import sessions  # noqa: F401
 from .test_etk_coax_fakra import FRESH, _fresh_cards
 from .test_project_cards import project_techcards_api  # noqa: F401
+from .test_etk_builder import CARDS, kit
 
 NOW = datetime(2026, 11, 23, 12)
 
@@ -274,3 +275,167 @@ def test_unresolved_wire_semantics_cannot_fall_back_to_a_reused_positional_key()
     replacement["build_config"]["ops"][0]["opKey"] = "replacementCut"
     with pytest.raises(TechcardValidationError, match="позиционный ключ"):
         card.rebuild(replacement, NOW)
+
+
+def legacy_braid(*, saved_kind="edit", backfill=False):
+    config = deepcopy(kit("708К.2-КБ1")["config"])
+    document = etk_builder.build_etk(config, CARDS)
+    assert not config["ops"][9].get("opKey")
+    assert document["operations"][9]["components"][0]["art"] == "Оплетка XS-3"
+    card = ProjectTechcard.create(project="708К.2", item_index="КБ1", product_name="Жгут",
+                                  source_calculation="", deadline=None, now=NOW).rebuild(document, NOW).issue(NOW)
+    key = operation_key(card.document["operations"][9])
+    if saved_kind == "edit":
+        edited = deepcopy(card.document["operations"][9])
+        edited["card"]["steps"][0]["text"] = "Ручная инструкция для XS-3"
+        card = card.edit_operation(key, edited, NOW)
+        card = replace(card, overrides={"operations": {key: {"operation": deepcopy(edited)}}})
+    elif saved_kind == "route":
+        card.document["route"]["source"] = "manual"
+        card = replace(card, overrides={"route": route_override(card.document)})
+    if backfill:
+        for op in card.document["operations"]:
+            op.pop("operation_fingerprint", None)
+        for edit in (card.overrides or {}).get("operations", {}).values():
+            edit["operation"].pop("operation_fingerprint", None)
+    ctx = Context(Refs(None), tuple(CARDS), "", None, "braid-identity-test", REASON_BUILDER, NOW)
+    return replace(card, inputs=config), ctx, key
+
+
+@pytest.mark.parametrize("saved_kind", ["edit", "route", "sketch"])
+@pytest.mark.parametrize("backfill", [False, True])
+def test_legacy_braid_swap_conflicts_without_issuing_or_moving_saved_content(saved_kind, backfill):
+    card, ctx, key = legacy_braid(saved_kind=saved_kind, backfill=backfill)
+    card.inputs["ops"][9], card.inputs["ops"][10] = card.inputs["ops"][10], card.inputs["ops"][9]
+    before = deepcopy(card.document)
+    updated, revision, result = evaluate(card, ctx, saved_sketch_keys=(key,) if saved_kind == "sketch" else ())
+    assert result.status == "conflict" and revision is None
+    assert updated.revision == card.revision and updated.document == before
+    assert updated.overrides == card.overrides and updated.manual_operation_keys == card.manual_operation_keys
+    assert "Монтаж оплётки" in updated.review_note and "XS-3" in updated.review_note
+
+
+@pytest.mark.parametrize("backfill", [False, True])
+def test_legacy_braid_unchanged_recipe_keeps_instruction_without_conflict(backfill):
+    card, ctx, key = legacy_braid(backfill=backfill)
+    updated, revision, result = evaluate(card, ctx, saved_sketch_keys=(key,))
+    assert result.status == "unchanged" and not result.conflicts and revision is None
+    assert (updated or card).document["operations"][9]["card"]["steps"][0]["text"] == "Ручная инструкция для XS-3"
+
+
+@pytest.mark.parametrize("backfill", [False, True])
+def test_legacy_braid_move_to_free_key_maps_instruction_route_and_sketch(backfill):
+    card, ctx, key = legacy_braid(backfill=backfill)
+    card.document["route"]["source"] = "manual"
+    card = replace(card, overrides={**card.overrides, "route": route_override(card.document)})
+    # Move XS-3 past a different operation; no braid occupies its former key.
+    card.inputs["ops"].insert(8, card.inputs["ops"].pop(9))
+    updated, revision, result = evaluate(card, ctx, saved_sketch_keys=(key,))
+    assert result.status == "revised" and revision is not None and not result.conflicts
+    new_key = "INS_BRAID::9::"
+    assert updated.manual_operation_keys == (new_key,)
+    assert list(updated.overrides["operations"]) == [new_key]
+    assert updated.document["operations"][8]["card"]["steps"][0]["text"] == "Ручная инструкция для XS-3"
+    old_blocks = {block["key"]: block["ops"] for block in card.document["route"]["blocks"]}
+    new_blocks = {block["key"]: block["ops"] for block in updated.document["route"]["blocks"]}
+    for block_key, positions in old_blocks.items():
+        assert new_blocks[block_key] == [9 if pos == 10 else 10 if pos == 9 else pos for pos in positions]
+    sketch = OperationSketch(key, "braid.png", "image/png", 5, "Технолог", NOW)
+    assert document_sketches([sketch], updated.document)[0].operation_key == new_key
+    _, repeated, outcome = evaluate(updated, ctx, saved_sketch_keys=(key,))
+    assert repeated is None and outcome.status == "unchanged"
+
+
+def test_legacy_fingerprints_backfill_on_read_without_changing_stored_document(sessions):
+    card, _, key = legacy_braid(backfill=True)
+    before = deepcopy(card.document)
+    with SqlAlchemyTechcardsUnitOfWork(sessions) as uow:
+        uow.techcards.save(card)
+        uow.commit()
+        loaded = uow.techcards.get(card.id)
+        fingerprint = loaded.document["operations"][9]["operation_fingerprint"]
+        assert loaded.overrides["operations"][key]["operation"]["operation_fingerprint"] == fingerprint
+        assert loaded.revision == card.revision and loaded.version == card.version
+        assert uow.session.get(ProjectTechcardRow, card.id).document == before
+        assert not uow.session.dirty
+
+
+@pytest.mark.parametrize("recipe_problem", ["missing", "misaligned"])
+def test_legacy_missing_fingerprint_cannot_guess_a_reordered_operation(recipe_problem):
+    card, ctx, key = legacy_braid(backfill=True)
+    if recipe_problem == "missing":
+        card.document.pop("build_config")
+    else:
+        card.document["build_config"]["ops"].pop()
+    card.inputs["ops"][9], card.inputs["ops"][10] = card.inputs["ops"][10], card.inputs["ops"][9]
+    updated, revision, result = evaluate(card, ctx, saved_sketch_keys=(key,))
+    assert result.status == "conflict" and revision is None
+    assert updated.document == card.document and updated.revision == card.revision
+
+
+@pytest.mark.parametrize("field", ["tutSegs", "tutParts"])
+@pytest.mark.parametrize("missing_recipe", [False, True])
+def test_legacy_tube_fingerprint_distinguishes_nested_piece_lengths(field, missing_recipe):
+    config = {"mode": "wire", "partQty": 1, "assemblyName": "Жгут", "ops": [
+        {"type": "cutTut", "opNum": "CUT_TUT", "tutArt": "TUBE", "tOp": "6",
+         field: [{"art": "TUBE", "name": "Tube", "len": length, "count": 1}]} for length in ("20", "40")
+    ]}
+    previous = etk_builder.build_etk(config, [])
+    if missing_recipe:
+        previous.pop("build_config")
+    config["ops"].reverse()
+    rebuilt = etk_builder.build_etk(config, [])
+    with pytest.raises(TechcardValidationError, match="позиционный ключ"):
+        operation_aliases(previous, rebuilt)
+
+
+def test_legacy_historical_alias_cannot_be_reused_for_a_different_operation():
+    card, ctx, key = legacy_braid()
+    card.inputs["ops"].insert(8, card.inputs["ops"].pop(9))
+    moved, _, result = evaluate(card, ctx, saved_sketch_keys=(key,))
+    assert result.status == "revised"
+    # The former XS-3 key becomes the key of an additional XS-5 operation.
+    changed_inputs = deepcopy(moved.inputs)
+    changed_inputs["ops"][9] = deepcopy(changed_inputs["ops"][10])
+    moved = replace(moved, inputs=changed_inputs)
+    updated, revision, result = evaluate(moved, ctx, saved_sketch_keys=(key,))
+    assert result.status == "conflict" and revision is None
+    assert updated.document == moved.document and updated.revision == moved.revision
+
+
+def test_legacy_historical_sketch_alias_cannot_be_reused_after_original_operation_is_removed():
+    card, ctx, key = legacy_braid(saved_kind="sketch")
+    card.inputs["ops"].insert(8, card.inputs["ops"].pop(9))
+    moved, _, result = evaluate(card, ctx, saved_sketch_keys=(key,))
+    assert result.status == "revised"
+    changed_inputs = deepcopy(moved.inputs)
+    changed_inputs["ops"].pop(8)
+    moved = replace(moved, inputs=changed_inputs)
+    updated, revision, result = evaluate(moved, ctx, saved_sketch_keys=(key,))
+    assert result.status == "conflict" and revision is None
+    assert updated.document == moved.document and updated.revision == moved.revision
+
+
+def test_saved_legacy_edit_fingerprint_is_checked_without_a_previous_document():
+    card, ctx, _ = legacy_braid()
+    card.inputs["ops"][9], card.inputs["ops"][10] = card.inputs["ops"][10], card.inputs["ops"][9]
+    _, conflicts = derive(card.inputs, card.overrides, lambda config: config, ctx.templates)
+    assert any(item["kind"] == "missing_operation" for item in conflicts)
+
+
+@pytest.mark.parametrize("attribute", ["branch", "ep"])
+def test_legacy_material_match_cannot_move_saved_content_to_a_different_branch(attribute):
+    first, second = ("A", "B") if attribute == "branch" else ({"label": "A"}, {"label": "B"})
+    config = {"mode": "wire", "partQty": 1, "assemblyName": "Жгут", "ops": [
+        {"type": "insTut", "opNum": "INS_TUT", "tutArt": "TUBE", "tutCount": 1, "tOp": "6", attribute: first}
+    ]}
+    document = etk_builder.build_etk(config, [])
+    card = ProjectTechcard.create(project="BRANCH", item_index="КБ1", product_name="Жгут",
+                                  source_calculation="", deadline=None, now=NOW).rebuild(document, NOW).issue(NOW)
+    key = operation_key(document["operations"][0])
+    config["ops"][0][attribute] = second
+    card = replace(card, inputs=config)
+    ctx = Context(Refs(None), (), "", None, "branch-identity-test", REASON_BUILDER, NOW)
+    updated, revision, result = evaluate(card, ctx, saved_sketch_keys=(key,))
+    assert result.status == "conflict" and revision is None
+    assert updated.document == card.document and updated.revision == card.revision

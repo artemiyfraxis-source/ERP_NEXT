@@ -7,6 +7,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from enum import Enum
+import hashlib
+import json
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -45,13 +47,98 @@ def operation_key(operation: dict[str, Any]) -> str:
     return f"{code}::{connector}::{side}"
 
 
+_IDENTITY_ATTRIBUTES = frozenset({
+    "type", "side", "art", "article", "name", "len", "length", "qty", "count", "units",
+    "ep", "epB", "firstTerm", "wires", "wire", "wireIdxs", "wireSources", "pins", "marks", "harness",
+    "material", "braid", "connector", "cable", "coax", "coaxEnd", "coaxB", "ends",
+    "tutCount", "tutSegs", "tutParts", "wrapKind", "spliceWeld", "terminal", "contact",
+    "physicalEnds", "id", "wireId", "endId", "end", "pin", "from", "to", "idx", "unit", "cores",
+    "double", "doublePins", "perTerm", "fold", "sleeves", "method", "markTube", "wireMarks",
+    "branch", "label", "tin", "crimpBatch",
+})
+
+
+def _material_identity(value: Any) -> Any:
+    """Recipe material/endpoint attributes, excluding template text, timing and reference norms."""
+    if isinstance(value, Mapping):
+        return {key: _material_identity(item) for key, item in value.items()
+                if key in _IDENTITY_ATTRIBUTES or key.endswith(("Art", "Name", "Len", "Length", "Kind", "Label"))}
+    if isinstance(value, list):
+        return [_material_identity(item) for item in value]
+    return value
+
+
+def _aligned_recipe(document: Mapping[str, Any], index: int) -> Mapping[str, Any] | None:
+    operations = document.get("operations") or []
+    config = document.get("build_config") or {}
+    raw_ops = config.get("ops") or []
+    if config.get("mode") == "manual" or len(raw_ops) != len(operations):
+        return None
+    op, raw = operations[index], raw_ops[index]
+    if (not isinstance(raw, Mapping) or op.get("position") != index + 1
+            or op.get("type") != raw.get("type")
+            or str(op.get("side") or "") != str(raw.get("side") or "")
+            or (raw.get("templateId") and str(op.get("template_id") or "") != str(raw["templateId"]))):
+        return None
+    return raw
+
+
+def with_operation_fingerprints(document: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Backfill identity in a copy of the saved snapshot; issued revision rows remain immutable.
+
+    All keyed attachments (edits, routes and sketches) share this operation identity. Never infer it
+    from the new inputs: only the recipe aligned with the saved document can backfill an old card.
+    """
+    if document is None:
+        return None
+    result = deepcopy(dict(document))
+    for index, op in enumerate(result.get("operations") or []):
+        if op.get("operation_key") or op.get("operation_fingerprint"):
+            continue
+        raw = _aligned_recipe(result, index)
+        if raw is None or raw.get("opKey"):
+            continue
+        identity = {"code": op.get("code"), "side": op.get("side") or "",
+                    "recipe": _material_identity(raw), "connector_article": op.get("connector_article") or "",
+                    "materials": _material_identity(op.get("components") or [])}
+        encoded = json.dumps(identity, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        op["operation_fingerprint"] = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+    return result
+
+
+def _positional_operation(op: Mapping[str, Any]) -> bool:
+    return str(op.get("connector") or "").split(" · ")[-1].isdigit()
+
+
+def _identity_layout(document: Mapping[str, Any]) -> list[Any]:
+    # Without a recipe even result names can be the only evidence of a piece's length.
+    # Ignore instruction/timing updates, but require the rest of the saved layout to match.
+    return [{key: value for key, value in op.items()
+             if key not in {"card", "time", "times", "title", "edited", "operation_fingerprint"}}
+            for op in document.get("operations") or []]
+
+
+def _ambiguous_operation(op: Mapping[str, Any]) -> TechcardValidationError:
+    name = op.get("title") or op.get("name") or op.get("code") or "без названия"
+    materials = ", ".join(str(item.get("art") or item.get("name") or "") for item in op.get("components") or [])
+    return TechcardValidationError(
+        f"Операция «{name}» ({op.get('position') or op.get('connector')}; {materials}): "
+        "позиционный ключ не подтверждает прежнюю операцию — требуется проверка технолога")
+
+
 def operation_aliases(previous: Mapping[str, Any] | None, document: Mapping[str, Any]) -> dict[str, str]:
     """Map legacy keys using the saved, aligned recipe, never the reordered positions or code alone."""
-    previous = previous or {}
+    previous = with_operation_fingerprints(previous) or {}
+    document = with_operation_fingerprints(document) or {}
     old_ops = previous.get("operations") or []
     config = previous.get("build_config") or {}
     raw_ops = config.get("ops") or []
     targets = {operation_key(op) for op in document.get("operations") or []}
+    target_ops = {operation_key(op): op for op in document.get("operations") or []}
+    by_fingerprint: dict[str, set[str]] = {}
+    for key, op in target_ops.items():
+        if fingerprint := op.get("operation_fingerprint"):
+            by_fingerprint.setdefault(fingerprint, set()).add(key)
     candidates: dict[str, set[str]] = {}
     for index, old in enumerate(old_ops):
         key = operation_key(old)
@@ -71,6 +158,27 @@ def operation_aliases(previous: Mapping[str, Any] | None, document: Mapping[str,
                     target = stable
             if target is None and key in targets:
                 raise TechcardValidationError("Смысловая операция не сопоставлена: позиционный ключ занят другой операцией")
+        elif not old.get("operation_key") and config.get("mode") != "manual":
+            fingerprint = old.get("operation_fingerprint")
+            target = None
+            if fingerprint:
+                if key in targets:
+                    if fingerprint != target_ops[key].get("operation_fingerprint"):
+                        raise _ambiguous_operation(old)
+                    target = key
+                else:
+                    matches = by_fingerprint.get(fingerprint, set())
+                    if len(matches) > 1:
+                        raise _ambiguous_operation(old)
+                    target = next(iter(matches), None)
+            elif _positional_operation(old):
+                indistinguishable = sum((op.get("code"), op.get("side")) == (old.get("code"), old.get("side"))
+                                        for op in old_ops) > 1
+                if indistinguishable or _identity_layout(previous) != _identity_layout(document):
+                    raise _ambiguous_operation(old)
+                target = key if key in targets else None
+            else:
+                target = key if key in targets else None
         else:
             target = key if key in targets else None
         if target is not None:
@@ -85,6 +193,8 @@ def operation_aliases(previous: Mapping[str, Any] | None, document: Mapping[str,
               if len(values) == 1}
     for alias, old_target in (previous.get("operation_key_aliases") or {}).items():
         target = mapped.get(old_target, old_target if old_target in targets else None)
+        if alias in targets and alias != target:
+            raise _ambiguous_operation(target_ops[alias])
         if target is not None and (alias not in mapped or mapped[alias] == target):
             mapped[alias] = target
     return {key: target for key, target in mapped.items() if key != target}
@@ -97,11 +207,26 @@ def resolved_operation_key(key: str, document: Mapping[str, Any]) -> str | None:
 
 def with_operation_identity(edited: Mapping[str, Any], base: Mapping[str, Any]) -> dict[str, Any]:
     result = deepcopy(dict(edited))
-    for field in ("position", "code", "connector", "side", "operation_key", "opKey"):
+    for field in ("position", "code", "connector", "side", "operation_key", "opKey", "operation_fingerprint"):
         if field in base:
             result[field] = base[field]
         else:
             result.pop(field, None)
+    return result
+
+
+def with_override_fingerprints(overrides: Mapping[str, Any] | None,
+                               document: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Read-time backfill for edits saved before operation fingerprints existed."""
+    if overrides is None:
+        return None
+    result = deepcopy(dict(overrides))
+    operations = {operation_key(op): op for op in (document or {}).get("operations") or []}
+    for key, edit in (result.get("operations") or {}).items():
+        op = edit.get("operation") if isinstance(edit, Mapping) else None
+        fingerprint = operations.get(key, {}).get("operation_fingerprint")
+        if isinstance(op, dict) and fingerprint:
+            op.setdefault("operation_fingerprint", fingerprint)
     return result
 
 
@@ -151,7 +276,7 @@ def _document(value: dict[str, Any]) -> dict[str, Any]:
     keys = [operation_key(item) for item in operations if isinstance(item, dict)]
     if len(keys) != len(operations) or len(set(keys)) != len(keys):
         raise TechcardValidationError("Операции ЭТК должны иметь уникальные код и сторону")
-    return deepcopy(value)
+    return with_operation_fingerprints(value)
 
 
 @dataclass(frozen=True)
@@ -262,12 +387,12 @@ class ProjectTechcard:
         updated_operation = deepcopy(operation)
         if operation_key(updated_operation) != key:
             raise TechcardValidationError("Код и сторона операции при правке не меняются")
-        operations = list(self.document["operations"])
+        document = with_operation_fingerprints(self.document)
+        operations = list(document["operations"])
         indexes = [index for index, item in enumerate(operations) if operation_key(item) == key]
         if not indexes:
             raise TechcardValidationError("Операция ЭТК не найдена")
-        operations[indexes[0]] = updated_operation
-        document = deepcopy(self.document)
+        operations[indexes[0]] = with_operation_identity(updated_operation, operations[indexes[0]])
         document["operations"] = operations
         return replace(
             self, document=document, revision=self.revision + 1,

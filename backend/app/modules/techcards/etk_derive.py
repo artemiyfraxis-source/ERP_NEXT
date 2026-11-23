@@ -100,10 +100,10 @@ def derive(
     if not isinstance(inputs, Mapping) or not inputs:
         return None, [_conflict(NO_INPUTS, NO_INPUTS_MESSAGE)]
     try:
-        document = stamp_templates(build_etk(
+        document = project_cards.with_operation_fingerprints(stamp_templates(build_etk(
             enrich(deepcopy(dict(inputs))), templates, operation_library_commit=operation_library_commit,
             technology_source=technology_source,
-        ), templates)
+        ), templates))
         aliases = operation_aliases(previous_document, document)
     except (ValueError, KeyError, TypeError, AttributeError, IndexError, TechcardValidationError) as error:
         return None, [_conflict(BUILD_FAILED, f"сборка не удалась: {error}")]
@@ -132,6 +132,11 @@ def _apply_operations(document: dict[str, Any], edits: object, conflicts: list[d
         if not isinstance(edited, Mapping):
             continue
         base = operations[index]
+        fingerprint = edited.get("operation_fingerprint")
+        if fingerprint and fingerprint != base.get("operation_fingerprint"):
+            conflicts.append(_conflict(
+                MISSING_OPERATION, f"Операция «{_label(base)}»: сохранённая правка относится к другой операции", key))
+            continue
         template_id = str(base.get("template_id") or "").strip()
         base_version = str(edit.get("base_template_version") or "")
         if base_version and template_id in versions and versions[template_id] != base_version:

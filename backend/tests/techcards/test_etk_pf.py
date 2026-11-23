@@ -159,7 +159,9 @@ def test_rebuild_keeps_the_hand_cut_pf_while_the_operations_are_the_same():
     fewer = document()
     fewer["operations"] = fewer["operations"][:4]
     before = deepcopy(previous)
-    with pytest.raises(TechcardValidationError, match="Ручная схема ПФ не подошла"):
+    # Truncating only the operations leaves an unaligned saved recipe; identity checking
+    # now rejects that snapshot before attempting to remap the manual route.
+    with pytest.raises(TechcardValidationError, match="позиционный ключ"):
         _keep_hand_route(previous, fewer)
     assert previous == before
 

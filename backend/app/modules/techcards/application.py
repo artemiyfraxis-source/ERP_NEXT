@@ -465,6 +465,7 @@ def edit_project_operation(command: EditTechcardOperationCommand, uow: UnitOfWor
         current = _current(command, uow)
         operation = _edited_operation(command.operation, command.actor, command.now, stamp=not command.to_template)
         updated = current.edit_operation(command.operation_key, operation, command.now, live=command.to_template)
+        operation = next(item for item in updated.document["operations"] if operation_key(item) == command.operation_key)
         stored = next((item for item in (current.document or {}).get("operations") or []
                        if operation_key(item) == command.operation_key), {})
         # The edit rides along with the inputs; an edit that went into the template too follows the template again.
