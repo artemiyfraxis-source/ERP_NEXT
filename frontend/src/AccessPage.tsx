@@ -3,6 +3,7 @@ import { DataTable, type DataColumn } from "./DataTable";
 import { ApiTokens } from "./ApiTokens";
 import { accessApi, type AccessLevel, type AccessMode, type AccessOverview, type AccessRow, type AccessSetting } from "./api";
 import { BLOCKS, NAV } from "./navigation";
+import { useCollapsedGroups } from "./useCollapsedGroups";
 
 /** NAV-ACCESS «Доступы» (SUPPLYMAP Portal.gs portalAccessGet/portalAccessSave, PortalApp.html openAccessHub and the
  *  per-person «Доступ» of «Сотрудники»): the level × section matrix and personal exceptions that are stronger than the
@@ -130,7 +131,8 @@ function filledRows(matrix: Record<string, AccessRow>): Record<string, AccessRow
   return Object.fromEntries(Object.entries(matrix).filter(([, row]) => Object.values(row).some(Boolean)));
 }
 
-export function AccessPage() {
+export function AccessPage({ viewerId }: { viewerId: string }) {
+  const groups = useCollapsedGroups(`erp-access-collapsed:${viewerId}`);
   const [data, setData] = useState<AccessOverview | null>(null);
   const [tab, setTab] = useState<Tab>("levels");
   const [matrix, setMatrix] = useState<Record<string, AccessRow>>({});
@@ -261,7 +263,12 @@ export function AccessPage() {
     {notice && <div className="success-banner">{notice}</div>}
     {data && tab === "levels" && <>
       <div className="access-matrix">
-        <DataTable label="Матрица доступов" rows={sections} rowKey={(section) => section.key} columns={matrixColumns} groupBy={(section) => section.group} emptyText="Разделов нет" />
+        <DataTable label="Матрица доступов" rows={sections} rowKey={(section) => section.key} columns={matrixColumns}
+          groupBy={(section) => section.group} collapsibleGroups collapsedGroups={groups.collapsed} onToggleCollapsedGroup={groups.toggle}
+          groupNote={(_name, rows) => {
+            const changed = rows.reduce((count, section) => count + editable.filter((level) => cellChanged(level.key, section.key)).length, 0);
+            return changed > 0 ? <> · <span className="access-dirty-note">{changed} не сохранено</span></> : null;
+          }} emptyText="Разделов нет" />
       </div>
       <div className={matrixDirty ? "form-actions access-savebar dirty" : "form-actions access-savebar"}>
         <button className="primary small" disabled={busy || !matrixDirty} onClick={() => void saveLevels()}>Сохранить доступы уровней</button>

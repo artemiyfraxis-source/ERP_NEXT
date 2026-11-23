@@ -30,6 +30,7 @@ import { WarehouseReceipt } from "./WarehouseReceipt";
 import { lotDocuments, receiptLine, shortDate } from "./warehouseReceiptLogic";
 import { FinishedGoodsPanel } from "./FinishedGoodsPanel";
 import { EquipmentPage } from "./EquipmentPage";
+import { WorkJournal } from "./ManualJobsPage";
 import { StockLinkDialog } from "./StockLinkDialog";
 import { downloadStockTable, ItemTypesPanel, RackLayoutPanel, StockImportPanel, StockJournalPanel } from "./WarehouseReferences";
 import {
@@ -68,9 +69,20 @@ export function WarehousePage({ admin = false, readOnly = false, finishedGoods =
   // the old `?section=equipment` lands on the second one). A sub-tab the viewer has no access to falls back to «Материалы».
   const [view, setView] = useState<StockView>(() => {
     const wanted = new URLSearchParams(window.location.search).get("view");
-    return wanted === "goods" && finishedGoods ? "goods" : wanted === "equipment" && equipment ? "equipment" : "stock";
+    return wanted === "work-materials" ? "work-materials" : wanted === "goods" && finishedGoods ? "goods" : wanted === "equipment" && equipment ? "equipment" : "stock";
   });
-  const views = finishedGoods || equipment ? <StockViews view={view} onChange={setView} goods={finishedGoods} equipment={equipment} /> : null;
+  const changeView = (next: StockView) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set("view", next);
+    window.history.replaceState(window.history.state, "", url);
+    setView(next);
+  };
+  const views = <StockViews view={view} onChange={changeView} goods={finishedGoods} equipment={equipment} />;
+  if (view === "work-materials") return <section className="page stock-page">
+    <header className="page-head"><h1>Склад</h1></header>
+    {views}
+    <WorkJournal mode="materials" />
+  </section>;
   if (equipment && view === "equipment") return <section className="page stock-page">
     <header className="page-head"><h1>Склад</h1></header>
     {views}
@@ -84,14 +96,15 @@ export function WarehousePage({ admin = false, readOnly = false, finishedGoods =
   return <StockPage admin={admin} readOnly={readOnly} canEditReferences={canEditReferences} views={views} />;
 }
 
-type StockView = "stock" | "goods" | "equipment";
+type StockView = "stock" | "goods" | "equipment" | "work-materials";
 
-/** «Материалы и комплектующие» | «Готовая продукция» | «Оборудование» под заголовком склада. */
+/** Stock sub-views; each preserves its existing permission gate. Work material is readable with warehouse access. */
 function StockViews({ view, onChange, goods, equipment }: { view: StockView; onChange: (view: StockView) => void; goods: boolean; equipment: boolean }) {
   const tabs: [StockView, string][] = [["stock", "Материалы и комплектующие"]];
   if (goods) tabs.push(["goods", "Готовая продукция"]);
   if (equipment) tabs.push(["equipment", "Оборудование"]);
-  return <div className="seg-tabs stock-views" role="tablist" aria-label="Склад">
+  tabs.push(["work-materials", "Материал работ"]);
+  return <div className="seg-tabs stock-views" role="tablist" aria-label="Разделы склада">
     {tabs.map(([key, label]) =>
       <button key={key} type="button" role="tab" aria-selected={view === key} className={view === key ? "on" : undefined} onClick={() => onChange(key)}>{label}</button>)}
   </div>;

@@ -2,7 +2,9 @@
    (ManualJobMaterial). Цвета — токены :root. */
 
 .mj-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
-.mj-head h1 { margin: 0; }
+.mj-head h2 { margin: 0; font-size: 16px; }
+.mj-machine { display: inline-flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; color: var(--muted-foreground); }
+.mj-machine select { min-width: 0; max-width: 280px; }
 .mj-period { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .mj-period label { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted-foreground); }
 .mj-period input { width: auto; }

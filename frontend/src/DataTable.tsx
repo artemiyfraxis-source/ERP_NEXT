@@ -120,6 +120,8 @@ export interface DataTableProps<T> {
   /** Подпись заголовка группы (по умолчанию — её имя); например, заказ и поставщик. */
   /** Третий аргумент — все строки после поиска и фильтров, до разбиения на страницы. */
   groupLabel?: (name: string, rows: T[], filteredRows: T[]) => ReactNode;
+  /** Status after the ordinary group row's count, also visible when folded. */
+  groupNote?: (name: string, rows: T[]) => ReactNode;
   /** Parent headers above ordinary table groups, in first-seen parent order. Parent headers have no selection checkbox. */
   groupParent?: (row: T) => string;
   groupParentLabel?: (name: string, rows: T[], filteredRows: T[]) => ReactNode;
@@ -130,6 +132,9 @@ export interface DataTableProps<T> {
   groupCards?: boolean;
   /** Заголовок группы сворачивает её строки (по умолчанию группы всегда раскрыты). */
   collapsibleGroups?: boolean;
+  /** Optional controlled folds; the screen owns viewer-scoped persistence. */
+  collapsedGroups?: ReadonlySet<string>;
+  onToggleCollapsedGroup?: (name: string) => void;
   /** Группы обычной таблицы открываются свёрнутыми; поиск, фильтр колонки или чип раскрывают их.
       В режиме blocks начальное состояние всегда раскрыто, затем запоминается выбор пользователя. */
   foldedByDefault?: boolean;
@@ -445,11 +450,14 @@ export function DataTable<T>({
   allLast = false,
   groupBy,
   groupLabel,
+  groupNote,
   groupParent,
   groupParentLabel,
   groupCells,
   groupCards = false,
   collapsibleGroups,
+  collapsedGroups,
+  onToggleCollapsedGroup,
   foldedByDefault = false,
   bulkActions = [],
   filteredActions = [],
@@ -690,7 +698,8 @@ export function DataTable<T>({
     shownFoldAll.current = foldAll;
     setFlipped(new Set());
   }, [foldAll]);
-  const isFolded = (name: string) => blocks ? blockFolds.blocks.has(name) : Boolean(collapsibleGroups) && foldAll !== flipped.has(name);
+  const isFolded = (name: string) => blocks ? blockFolds.blocks.has(name)
+    : Boolean(collapsibleGroups) && (collapsedGroups ? collapsedGroups.has(name) : foldAll !== flipped.has(name));
   const isSectionFolded = (section: string | undefined) => section !== undefined && blockFolds.sections.has(section);
   const blockBodyId = (name: string) => `${blockId}-block-${encodeURIComponent(name)}`;
   const blockHeadingId = (name: string) => `${blockId}-heading-${encodeURIComponent(name)}`;
@@ -1448,6 +1457,10 @@ export function DataTable<T>({
     if (delta) bar.scrollLeft += delta;
   }
   function toggleCollapsed(name: string) {
+    if (!blocks && collapsedGroups && onToggleCollapsedGroup) {
+      onToggleCollapsedGroup(name);
+      return;
+    }
     if (blocks) {
       changeBlockFolds((current) => {
         const next = new Set(current.blocks);
@@ -1820,9 +1833,9 @@ export function DataTable<T>({
                       {checkbox}
                       {(() => {
                         const picked = selectable ? groupRows.filter((row) => selected.has(rowKey(row))).length : 0;
-                        const title = <><strong>{(groupLabel ? groupLabel(name, groupRows, filtered) : name) || "—"}</strong> · {groupRows.length}{picked > 0 && <span className="group-picked"> · выбрано {picked}</span>}</>;
+                        const title = <><strong>{(groupLabel ? groupLabel(name, groupRows, filtered) : name) || "—"}</strong> · {groupRows.length}{groupNote?.(name, groupRows)}{picked > 0 && <span className="group-picked"> · выбрано {picked}</span>}</>;
                         return collapsibleGroups
-                          ? <button type="button" aria-expanded={!isFolded(name)} onClick={() => toggleCollapsed(name)} style={{ all: "unset", cursor: "pointer" }}>{isFolded(name) ? "▸" : "▾"} {title}</button>
+                          ? <button type="button" className="dt-group-fold" aria-expanded={!isFolded(name)} onClick={() => toggleCollapsed(name)}><span aria-hidden="true">{isFolded(name) ? "▸" : "▾"}</span> {title}</button>
                           : title;
                       })()}
                     </td>
