@@ -592,6 +592,6 @@ def test_p3_heartbeat_capability_shape_is_persisted_without_reinterpretation(env
 
     control_heartbeat(env[1], methods=methods)
     with env[3]() as session:
-        capability = session.get(VnaControlRow, "pc-1")
+        capability = session.get(VnaControlRow, ("pc-1", SERIAL))
         assert capability.version == 1 and capability.methods == methods
         assert control_capability(session, "pc-1", env[2].now) == methods

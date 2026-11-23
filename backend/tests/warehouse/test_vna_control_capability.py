@@ -13,7 +13,7 @@ def test_capability_freshness_preserves_aware_offsets_and_supports_sqlite_naive(
     report = now.astimezone(timezone.utc) if utc else now.replace(tzinfo=None)
     control = SimpleNamespace(version=1, methods=["solt2"], reported_at=report)
     pc = SimpleNamespace(version="2.8.0", legacy=False)
-    session = SimpleNamespace(get=lambda model, key: control if model is VnaControlRow else pc)
+    session = SimpleNamespace(get=lambda model, key: control if model is VnaControlRow else pc, scalars=lambda query: [control])
     assert control_capability(session, "pc", now) == ["solt2"]
     control.reported_at -= timedelta(minutes=4)
     with pytest.raises(ScanJobClosed):
@@ -25,7 +25,7 @@ def test_capability_accepts_protocols_one_and_two_only(version, accepted):
     now = datetime(2026, 11, 19, 10, tzinfo=timezone.utc)
     control = SimpleNamespace(version=version, methods=["acm"], reported_at=now)
     pc = SimpleNamespace(version="2.10.0", legacy=False)
-    session = SimpleNamespace(get=lambda model, key: control if model is VnaControlRow else pc)
+    session = SimpleNamespace(get=lambda model, key: control if model is VnaControlRow else pc, scalars=lambda query: [control])
     if accepted:
         assert control_capability(session, "pc", now) == ["acm"]
     else:

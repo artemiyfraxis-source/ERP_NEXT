@@ -37,6 +37,27 @@ class TransferInput(BaseModel):
     agent_id: str = Field(min_length=1, max_length=80)
 
 
+class AssociateInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    instrument_id: UUID
+    serial: str = Field(min_length=1, max_length=300)
+    agent_id: str = Field(min_length=1, max_length=80)
+
+
+@router.post("/identity")
+def associate(payload: AssociateInput, principal: Annotated[Principal, Depends(access_admin_principal)],
+              now: Now, uow_factory: UowFactory):
+    try:
+        instrument = capture_instrument(uow_factory(), payload.instrument_id)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    if instrument["source"] != "arinst":
+        raise HTTPException(422, "Подтверждение аппаратного UID доступно для Arinst")
+    _queue(lambda: devices.associate_vna(uow_factory(), instrument_id=payload.instrument_id,
+        serial=payload.serial, machine_id=payload.agent_id, actor=principal.actor, now=now))
+    return {"status": "associated", "serial": payload.serial}
+
+
 @router.post("/transfer")
 def transfer(payload: TransferInput, principal: Annotated[Principal, Depends(access_admin_principal)],
              now: Now, uow_factory: UowFactory):
@@ -44,13 +65,18 @@ def transfer(payload: TransferInput, principal: Annotated[Principal, Depends(acc
         instrument = capture_instrument(uow_factory(), payload.instrument_id)
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
-    if instrument["source"] != "s2vna" or not instrument["serial"]:
-        raise HTTPException(422, "Перенос доступен только для ВАЦ S2VNA с серийным номером")
-    if payload.serial != instrument["serial"]:
+    serial = instrument["serial"]
+    if instrument["source"] == "arinst":
+        with uow_factory() as uow:
+            identity = devices.instrument_identity(uow.session, payload.instrument_id)
+            serial = identity.serial if identity else ""
+    if not serial:
+        raise HTTPException(422, "Перенос требует подтверждённую идентичность ВАЦ")
+    if payload.serial != serial:
         raise HTTPException(409, "Серийный номер СИ изменился — проверьте прибор ещё раз")
-    _queue(lambda: devices.transfer_vna(uow_factory(), serial=instrument["serial"], owner=payload.owner_id,
+    _queue(lambda: devices.transfer_vna(uow_factory(), serial=serial, source=instrument["source"], owner=payload.owner_id,
         target=payload.agent_id, instrument_id=payload.instrument_id, actor=principal.actor, now=now,
-        check_sessions=lambda session: assert_vna_transfer_allowed(session, payload.instrument_id, instrument["serial"])))
+        check_sessions=lambda session: assert_vna_transfer_allowed(session, payload.instrument_id, serial)))
     return {"status": "transferred"}
 
 
