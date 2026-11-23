@@ -18,7 +18,7 @@ from app.modules.production.machine_writes import MachineWriteRow
 from app.shared.clock import MOSCOW
 from app.shared.persistence import AuditEventRow
 from tests.identity.test_api_tokens import _csrf, tokens_api  # noqa: F401
-from tests.workflows.test_machine_writes_api import (AGENT, CARD, NEXT, _claimed_writes, _job, _result,
+from tests.workflows.test_machine_writes_api import (AGENT, CARD, NEXT, _claimed_writes, _confirmed_body, _job, _result,
                                                      _text_at)
 from tests.workflows.test_machines_api import WORDS, _bridge, _report, machines_api  # noqa: F401
 
@@ -27,6 +27,7 @@ START = 0x10001  # D649 = 1, D650 = 1 in WORDS
 
 
 def _post(client, path, body):
+    body = _confirmed_body(client, path, body)
     return client.post(path, json=body, headers=_csrf(client))
 
 

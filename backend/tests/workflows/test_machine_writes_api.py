@@ -31,7 +31,24 @@ AGENT_NEW = {**AGENT, "runner_version": "1.2.0"}
 
 
 def _post(client, path, body):
+    body = _confirmed_body(client, path, body)
     return client.post(path, json=body, headers=_csrf(client))
+
+
+def _confirmed_body(client, path, body):
+    """Existing workflow tests act on a freshly confirmed preview; stale/missing guards use raw POST."""
+    if path not in (CARD + "/run", CARD + "/transfer"):
+        return body
+    body = dict(body)
+    if body.get("group_id"):
+        preview = client.get(CARD + "/transfer", params={key: body.get(key, "")
+                                                        for key in ("group_id", "length_mm")})
+        if preview.status_code == 200:
+            for key in ("expected_source", "expected_active_run_id"):
+                body.setdefault(key, preview.json()[key])
+    elif body.get("kind") == "manual":
+        body.setdefault("expected_active_run_id", client.get(CARD + "/run").json().get("expected_active_run_id"))
+    return body
 
 
 def _events(sessions, equipment_id):

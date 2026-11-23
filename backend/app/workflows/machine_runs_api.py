@@ -4,8 +4,11 @@ production/machine_runs.py; the write itself is the card's write queue (machine_
 
 - `GET  /api/production/machines/card/{ОБ}/run` (view) → `{run, manual, link_ok, problem, can_edit, can_control}`: the
   machine's newest run with live progress (done of planned from T.Finish), the manual job running on it.
-- `POST /api/production/machines/card/{ОБ}/run` (edit) `{kind: "cutting", group_id, length_mm, values?, confirm_state}`
-  or `{kind: "manual", job_id, values?, confirm_state}` → the queued write that starts a run. Cutting without `values`
+- `POST /api/production/machines/card/{ОБ}/run` (edit) `{kind: "cutting", group_id, length_mm, values?, confirm_state,
+  expected_source, expected_active_run_id}` or `{kind: "manual", job_id, values?, confirm_state,
+  expected_active_run_id}` → the queued write that starts a run. Cutting uses the source guard from the transfer
+  preview; both kinds compare the active run UUID/null under the machine lock (409 → refresh and confirm again).
+  Cutting without `values`
   writes the ETK plan (the same words as «Передать на станок»); with `values` — those (the drawing edited by hand)
   plus the ETK marking (422 «Маркировка: …» when it is blocked, nothing written).
   A manual job writes `values` plus its own order number «R-000001», product line and planned quantity.
@@ -40,7 +43,8 @@ from app.shared.clock import moscow_now
 from app.shared.events import AuditEvent
 from app.shared.http_auth import Principal
 
-from .machine_writes_api import (_can_edit, _confirm, _enqueue, _journal, _link, _transfer_plan, can_control,
+from .machine_writes_api import (_can_edit, _confirm, _enqueue, _journal, _link, can_control,
+                                 confirm_active_run, confirmed_transfer_plan, ExpectedSource, locked_link,
                                  cutting_run, latin, machines_edit_principal, marking_writes, refuse_when_done,
                                  refuse_while_manual, settle_run, transfer_summary)
 from .machines_api import Reader
@@ -63,6 +67,8 @@ class RunPayload(Payload):
     job_id: UUID | None = None
     values: dict[str, str | int | float] = Field(default_factory=dict, max_length=len(rules.OB019_FIELDS))
     confirm_state: int | None = None
+    expected_source: ExpectedSource | None = None
+    expected_active_run_id: UUID | None = None
 
 
 class ClosePayload(Payload):
@@ -96,6 +102,7 @@ def run_state(inventory: str, principal: Reader, factory: Factory, now: Now) -> 
         words, link_ok, problem = _live(session, link.equipment_id, now)
         row = runs.current(session, link.equipment_id)
         result = {"run": runs.view(row, words, link_ok) if row is not None else None,
+                  "expected_active_run_id": str(row.id) if runs.is_open(row) else None,
                   "manual": _manual_view(session, manual.running(session, link.equipment_id)),
                   "link_ok": link_ok, "problem": problem, "can_edit": _can_edit(principal),
                   "can_control": can_control(principal)}
@@ -115,13 +122,15 @@ def _whole(value: object) -> int | None:
 def start_run(inventory: str, payload: RunPayload, principal: Writer, factory: Factory, now: Now) -> dict:
     with factory() as uow:
         session = uow.session
-        link = _link(session, inventory)
+        link = locked_link(session, inventory)
         _confirm(session, link, payload.confirm_state)
+        confirm_active_run(session, link.equipment_id, payload.expected_active_run_id)
         if payload.kind == "cutting":
             if payload.group_id is None or not payload.length_mm.strip():
                 raise HTTPException(422, "Выберите задание резки")
             refuse_while_manual(session, link.equipment_id)
-            plan = _transfer_plan(session, link, payload.group_id, payload.length_mm, now)
+            plan = confirmed_transfer_plan(session, link, payload.group_id, payload.length_mm,
+                                           payload.expected_source, now)
             if payload.values:
                 # A size missing in the ETK comes with the values the first time (a re-send of the open run of this job,
                 # e.g. «Тираж» changed, keeps what is on the machine); the ETK marking goes with them as without (a
@@ -189,7 +198,7 @@ def start_run(inventory: str, payload: RunPayload, principal: Writer, factory: F
 def close_run(inventory: str, payload: ClosePayload, principal: Writer, factory: Factory, now: Now) -> dict:
     with factory() as uow:
         session = uow.session
-        link = _link(session, inventory)
+        link = locked_link(session, inventory)
         settle_run(uow, link.equipment_id, now)
         row = runs.current(session, link.equipment_id, for_update=True)  # a parallel close or re-send waits here
         if row is None or row.id != payload.run_id or not runs.is_open(row):
