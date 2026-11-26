@@ -1163,6 +1163,14 @@ class Shipment:
             raise ShippingValidationError("Закрытую или отменённую отгрузку нельзя менять")
         return replace(self, boxes=boxes, tk_note=str(tk_note or "").strip(), version=self.version + 1)
 
+    def set_tk_note(self, tk_note: str) -> Shipment:
+        """Комментарий для перевозчика без раскладки по коробам (владелец 26.11): только у неотгруженной отправки,
+        короба, PL/DN и статус не меняются."""
+        if self.status in {ShipmentStatus.SHIPPED, ShipmentStatus.CLOSED, ShipmentStatus.CANCELLED}:
+            raise ShippingValidationError("Комментарий для перевозчика у отгруженной или отменённой отправки не меняют")
+        text = str(tk_note or "").strip()
+        return self if text == self.tk_note else replace(self, tk_note=text, version=self.version + 1)
+
     @property
     def track_required(self) -> bool:
         return (
