@@ -209,6 +209,8 @@ export function VnaBench({ canEdit, connection }: { canEdit: boolean; connection
   const session = state.session?.status === "open" ? state.session : null;
   // Чужой сеанс виден, но управлять им может только тот, кто его открыл.
   const canAct = canEdit && (!session || session.owned !== false);
+  // Остановить и восстановить чужой сеанс может администратор: открывший мог уйти, а прибор нужен.
+  const canRecover = canEdit && Boolean(session) && (session?.owned !== false || Boolean(session?.can_recover));
   const notReady = state.device.s2vna_ready === false || Boolean(state.device.refusal);
   /** Открыть сеанс (для КБ — на полосе ЭТК задания); открытый сеанс сначала закрывается. */
   // Стрелки, Home и End переключают вкладки (как «Разделы ОТК»).
@@ -249,8 +251,22 @@ export function VnaBench({ canEdit, connection }: { canEdit: boolean; connection
       Сеанс открыл {session.operator ?? "другой сотрудник"} — управлять им может только он.</div>}
     {session?.command && <div className="vna-bench-command" role="status">
       <span>Выполняется: {session.command.label}{session.command.state === "queued" ? " — ждёт агента" : ""}, с {clock(session.command.since)}</span>
-      {canAct && <button type="button" className="secondary small" disabled={Boolean(busy)}
+      {canRecover && <button type="button" className="secondary small" disabled={Boolean(busy)}
         onClick={() => { if (window.confirm(`Прервать «${session.command?.label}»? Измерение остановится, результат не сохранится.`)) void act("abort", () => vnaBenchApi.abort(session.id, session.version)); }}>Прервать</button>}
+    </div>}
+    {session?.state === "recovery_required" && !session.command && <div className="vna-bench-command" role="alert">
+      <span>Ответ ВАЦ потерян — восстановите сеанс: прибор остановится и вернёт настройки оператора, результат текущего шага не сохранится.
+        {session.error ? ` Причина: ${session.error}` : ""}</span>
+      {canRecover && <button type="button" className="primary small" disabled={Boolean(busy)}
+        onClick={() => void act("recover", () => vnaBenchApi.abort(session.id, session.version))}>
+        {busy === "recover" ? "Восстанавливаем…" : "Восстановить"}</button>}
+      {canEdit && session.can_release_unrestored && <button type="button" className="secondary small" disabled={Boolean(busy)}
+        onClick={() => {
+          if (window.confirm("Закрыть сеанс без восстановления? Настройки оператора на S2VNA не вернутся — проверьте их на приборе вручную. "
+            + "Если агент ответит, что прежняя операция могла продолжиться, — перезапустите S2VNA, нажмите «Восстановить», "
+            + "и только если восстановление снова не пройдёт — «Закрыть без восстановления». Действие записывается в журнал."))
+            void act("release-unrestored", () => vnaBenchApi.releaseUnrestored(session.id, session.version));
+        }}>{busy === "release-unrestored" ? "Закрываем…" : "Закрыть без восстановления"}</button>}
     </div>}
     <div className="seg-tabs sub" role="tablist" aria-label="Разделы рабочего места ВАЦ" onKeyDown={tabKeys}>
       {TABS.map((item) => <button key={item.id} type="button" role="tab" id={`vna-bench-tab-${item.id}`} aria-controls="vna-bench-panel"

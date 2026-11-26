@@ -43,7 +43,10 @@ function Invoke-FakeS2Io {
         if ($Path -eq $script:rejectPath) { return }
         if ($Path -eq 'MMEMory.STORe.STATe') { [IO.File]::WriteAllText($Value,'original state'); return }
         if ($Path -eq 'MMEMory.LOAD.STATe') {
+            # Like S2VNA 26.2.2 (СИ.002, 26.11): a state file does not carry the sweep trigger — it keeps the current one.
+            $trigger = @{}; foreach ($key in 'INITiate(1).CONTinuous','TRIGger.SEQuence.SOURce') { $trigger[$key] = $script:ioValues[$key] }
             $script:ioValues = $script:originalValues.Clone(); $script:selected = 2
+            foreach ($key in $trigger.Keys) { $script:ioValues[$key] = $trigger[$key] }
             return
         }
         $script:ioValues[$Path] = $Value; return
@@ -129,6 +132,20 @@ Describe 'Управление ВАЦ: типовые команды и COM' {
     It 'изменённый шаг запрещает записи' {
         $command = New-ControlEnvelope; $status = New-ControlStatus $command; $status.step++
         { Assert-VnaLease $command $status } | Should Throw 'не владеет'
+    }
+    It 'аварийное закрытие без восстановления: release принимается в releasing, но не в aborting' {
+        # ERP «Закрыть без восстановления» (26.11) ставит сеанс в releasing: в aborting агент release не выполнит.
+        $command = New-ControlEnvelope release @{ screen_hash = $null }; $status = New-ControlStatus $command
+        $status.state = 'releasing'; { Assert-VnaLease $command $status } | Should Not Throw
+        $status.state = 'aborting'; { Assert-VnaLease $command $status } | Should Throw 'не владеет'
+    }
+    It 'release без экрана после сбоя восстановления освобождает прибор' {
+        [void](Invoke-ControlTest prepare)
+        $command = New-ControlEnvelope release @{ screen_hash = $null }; $command.protocol_version = 2
+        $status = New-ControlStatus $command; $status.state = 'releasing'
+        $result = Invoke-S2Command $script:controlApp $command $status (Join-Path (Get-VnaControlRoot) 'owner.json')
+        $result.released | Should Be $true
+        (Read-VnaJson (Join-Path (Get-VnaControlRoot) 'owner.json')).released | Should Be $true
     }
     It 'отменённая команда запрещает записи' {
         $command = New-ControlEnvelope; $status = New-ControlStatus $command; $status.commands[0].status = 'cancelled'

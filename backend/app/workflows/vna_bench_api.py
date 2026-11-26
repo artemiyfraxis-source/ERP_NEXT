@@ -232,9 +232,15 @@ def _session_row(uow, vna_id):
         VnaSessionRow.state.not_in(TERMINAL)).limit(1)) if vna_id else None
 
 
-def _owned(uow, session_id, principal):
+def _admin(principal) -> bool:
+    return bool(principal.full_access and not principal.service and principal.viewer is None)
+
+
+def _owned(uow, session_id, principal, *, admin_ok=False):
+    """The opener's session. `admin_ok`: an administrator may also stop or recover someone else's session
+    (the opener is away and the bench is stuck); such actions are journaled."""
     row = VnaSessionRepository(uow.session).get(session_id)
-    if row.purpose != "bench" or row.operator_id != principal.actor.id:
+    if row.purpose != "bench" or (row.operator_id != principal.actor.id and not (admin_ok and _admin(principal))):
         raise KeyError("Сеанс рабочего места ВАЦ не найден")
     return row
 
@@ -591,6 +597,8 @@ def _state(uow, principal, now, vna=None, row=None):
         status = "open" if row.state not in TERMINAL else "closed" if row.state == "recorded" else "aborted"
         session = dict(id=str(row.id), version=row.version, status=status, state=row.state, started_at=row.created_at,
                        operator=row.snapshot["operator"]["name"], owned=row.operator_id == principal.actor.id,
+                       can_recover=row.operator_id == principal.actor.id or _admin(principal),
+                       can_release_unrestored=_admin(principal) and row.state == "recovery_required",
                        error=row.error or None, steps=_steps_view(uow, row, commands, items),
                        view_screen_id=_view_screen_id(row),
                        command=_command_view(row, commands),
@@ -627,16 +635,23 @@ def _version(row, version):
         raise Refusal("stale", "Состояние уже изменилось — экран обновлён, повторите действие")
 
 
-def _act(factory, session_id, principal, now, action):
-    """Run one session change under the session lock and answer the full state."""
+RECOVERY_TEXT = ("Ответ ВАЦ потерян — нажмите «Восстановить» на карточке сеанса: прибор остановится и вернёт "
+                 "настройки оператора")
+
+
+def _act(factory, session_id, principal, now, action, *, recovery=False):
+    """Run one session change under the session lock and answer the full state.
+    A session whose device answer was lost accepts only recovery (the abort endpoint) until it is restored."""
     with _refusals():
         with factory() as uow:
-            _owned(uow, session_id, principal)
+            _owned(uow, session_id, principal, admin_ok=recovery)
         _expire(factory, now, session_id=session_id)
         with factory() as uow:
-            row = _owned(uow, session_id, principal)
+            row = _owned(uow, session_id, principal, admin_ok=recovery)
             repository = VnaSessionRepository(uow.session)
             repository.lock(row)
+            if row.state == "recovery_required" and not recovery:
+                raise Refusal("recovery_required", RECOVERY_TEXT)
             action(uow, repository, row)
             state = _state(uow, principal, now, row=row)
             uow.commit()
@@ -748,6 +763,9 @@ def open_session(principal: Person, now: Now, factory: Factory, techcards_factor
             vna_jobs.refuse_open_capture(uow.session, vna_id, instrument["serial"])
             repository = VnaSessionRepository(uow.session)
             if repository.active(vna_id, instrument["serial"]):
+                active = _session_row(uow, vna_id)
+                if active is not None and active.state == "recovery_required":
+                    raise Refusal("recovery_required", RECOVERY_TEXT)
                 raise Refusal("device_busy", "Прибор занят активной сессией ВАЦ — закройте её или прервите")
             try:
                 with uow.session.begin_nested():
@@ -802,15 +820,42 @@ def run_step(session_id: UUID, key: Literal["calibration", "confidence", "load_p
     return _act(factory, session_id, principal, now, action)
 
 
+def _session_journal(uow, principal, row, now, event_type, **details):
+    uow.audit.add(AuditEvent(id=uuid4(), aggregate_id=row.id, event_type=event_type,
+                             actor=Actor(id=principal.actor.id, name=principal.actor.name,
+                                         department=principal.actor.department), occurred_at=now,
+                             details={"session_id": str(row.id), "state": row.state,
+                                      "operator": row.snapshot["operator"]["name"], **details}))
+
+
 @router.post(PREFIX + "/sessions/{session_id}/abort")
 def abort(session_id: UUID, payload: Version, principal: Person, now: Now, factory: Factory):
+    """Stop the running command, or recover a session whose device answer was lost (abort, then restore the
+    operator's backup). The opener or an administrator (journaled when it is someone else's session)."""
     def action(uow, repository, row):
         _version(row, payload.version)
+        if row.operator_id != principal.actor.id:
+            _session_journal(uow, principal, row, now, "production.vna_bench_session_stopped_by_admin")
         if row.state in ("recovery_required",):
             repository.act(row, "recover", row.version, row.step, now)
         else:
             repository.act(row, "abort", row.version, row.step, now)
-    return _act(factory, session_id, principal, now, action)
+    return _act(factory, session_id, principal, now, action, recovery=True)
+
+
+@router.post(PREFIX + "/sessions/{session_id}/release-unrestored")
+def release_unrestored(session_id: UUID, payload: Version, principal: Person, now: Now, factory: Factory):
+    """Admin escape: restoring the operator's backup keeps failing, the bench must not stay unusable. The agent
+    releases the VNA without loading the backup — S2VNA settings are then checked by hand. Journaled."""
+    def action(uow, repository, row):
+        if not _admin(principal):
+            raise Refusal("forbidden", "Закрыть без восстановления может только администратор", status=403)
+        _version(row, payload.version)
+        if row.state != "recovery_required":
+            raise Refusal("stale", "Сеанс уже не ждёт восстановления — экран обновлён")
+        _session_journal(uow, principal, row, now, "production.vna_bench_closed_unrestored", error=row.error or "")
+        repository.act(row, "release_unrestored", row.version, row.step, now)
+    return _act(factory, session_id, principal, now, action, recovery=True)
 
 
 @router.post(PREFIX + "/sessions/{session_id}/close")
@@ -1344,7 +1389,10 @@ def complete_command(uow, row, command_id, payload, now):
     if command is None:
         return
     if command.op == "release":
-        repository.finish(row, now)
+        if (row.steps[row.step].get("item") or {}).get("unrestored"):
+            repository.abandon(row, now)
+        else:
+            repository.finish(row, now)
         return
     item = row.steps[row.step].get("item") or {}
     try:
