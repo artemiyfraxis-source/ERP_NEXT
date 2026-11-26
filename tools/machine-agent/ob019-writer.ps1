@@ -53,7 +53,9 @@ $script:Self = $MyInvocation.InvocationName
 if (-not $BridgeScript) { $BridgeScript = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) 'ob019-bridge.ps1' }
 . $BridgeScript -Server $Server -TokenPath $TokenPath -MbdHost $MbdHost -MbdPort $MbdPort -MbdScript $MbdScript -LogPath $LogPath -PollMs $PollMs -Once:$Once
 # 1.5.0: kind length_correction uses measured D658..659, pulse D600.6 and signed D54..55 read-back.
-$script:RunnerVersion = '1.5.1'
+# 1.5.2 (23.11.2026): kind reset_counters zeroes D645..646 / D649..650 through mbd 1.5.2 'reset_counters' (zeros only).
+$script:RunnerVersion = '1.5.2'
+$script:ResetMbd = '1.5.2'
 $script:CorrectionAlarm = $script:Json.DeserializeObject('"\u041d\u0430 \u0441\u0442\u0430\u043d\u043a\u0435 \u0430\u0432\u0430\u0440\u0438\u044f D782={0} \u2014 \u0441\u043d\u0430\u0447\u0430\u043b\u0430 \u0441\u0431\u0440\u043e\u0441\u044c\u0442\u0435"')
 $script:CorrectionAlarmUnreadable = $script:Json.DeserializeObject('"\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u0442\u044c \u0430\u0432\u0430\u0440\u0438\u044e \u0441\u0442\u0430\u043d\u043a\u0430 D782 \u2014 \u043e\u0431\u043d\u043e\u0432\u0438\u0442\u0435 \u0434\u0430\u043d\u043d\u044b\u0435"')
 $script:CorrectionUnconfirmed = $script:Json.DeserializeObject('"\u041f\u043e\u043f\u0440\u0430\u0432\u043a\u0430 \u043d\u0435 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0430 \u0441\u0442\u0430\u043d\u043a\u043e\u043c"')
@@ -272,6 +274,89 @@ function Invoke-LengthCorrection($Command, [Diagnostics.Stopwatch]$Since) {
     return $result
 }
 
+# Kind reset_counters (23.11.2026): "Obnulit schetchiki" / "Novyi tirazh" with zeroing. `reset` = the counter blocks
+# (D645 and/or D649, each exactly [0, 0]), `seen` = D645/646/649/650 the operator confirmed, `blocks` / `bits` =
+# optional ordinary words and switch bits written after the zeroing (the new batch: D22 target, cleared job texts,
+# marking off). Order: version, panel, state, seen counters, then mbd 'reset_counters' (mbd re-checks the state and
+# accepts zeros only), then the words, then the bits.
+# `before` / readback carry D645..650, so ERP journals the history D647..648 too.
+function Invoke-CounterReset($Command, [Diagnostics.Stopwatch]$Since) {
+    $result = @{ ok = $false; readback = @{}; before = @{}; error = ''; outcome = 'failed' }
+    $sent = $false
+    try {
+        $reset = @($Command['reset'] | Where-Object { $_ -ne $null })
+        $blocks = @($Command['blocks'] | Where-Object { $_ -ne $null })
+        $seen = $Command['seen']; $deadline = [int]$Command['deadline_ms']
+        $states = @($Command['states'] | ForEach-Object { [int]$_ })
+        $bits = @($Command['bits'] | Where-Object { $_ -ne $null })
+        if ($reset.Count -lt 1 -or $reset.Count -gt 2) { throw 'invalid counter reset payload' }
+        $targets = @()
+        foreach ($block in $reset) {
+            $a = $block['addr']
+            if (-not ($a -is [int]) -or @(645, 649) -notcontains $a -or $targets -contains $a) { throw 'invalid counter reset payload' }
+            $values = @($block['values'])
+            if ($values.Count -ne 2) { throw 'invalid counter reset payload' }
+            foreach ($v in $values) { if (-not ($v -is [int]) -or $v -ne 0) { throw 'counter reset writes only 0' } }
+            $targets += $a
+        }
+        foreach ($block in $blocks) {
+            if (-not (Test-BlockWritable $block)) { throw ('refused: D' + $block['addr'] + ' is not writable') }
+        }
+        foreach ($bit in $bits) {
+            if (-not (Test-BitWritable $bit)) { throw ('refused: D' + $bit['addr'] + '.' + $bit['bit'] + ' is not writable') }
+        }
+        foreach ($key in @('645', '646', '649', '650')) {
+            if ($seen -eq $null -or -not $seen.ContainsKey($key) -or $seen[$key] -isnot [int] -or $seen[$key] -lt 0 -or $seen[$key] -gt 65535) { throw 'missing seen counters' }
+        }
+        if ($Since.ElapsedMilliseconds -ge $deadline) { throw 'counter reset expired' }
+        if (Test-HmiOpen) { throw 'PXS_HMI is running' }
+        $version = Get-MbdVersion
+        if (-not (Test-MbdCurrent $version $script:ResetMbd)) { throw ('mbd outdated: ' + $(if ($version) { $version } else { 'no version' }) + ', need ' + $script:ResetMbd) }
+        $state = [int](Read-Range 766 1)[0]
+        if ($states -notcontains $state) { throw ('state ' + $state) }
+        $read = @(Read-Range 645 6)
+        if ($read.Count -ne 6) { throw 'short counter read' }
+        for ($i = 0; $i -lt 6; $i++) { $result['before'][[string](645 + $i)] = [int]$read[$i] }
+        foreach ($key in @('645', '646', '649', '650')) {
+            if ([int]$result['before'][$key] -ne [int]$seen[$key]) { throw ('seen value changed D' + $key) }
+        }
+        if (Test-HmiOpen) { throw 'PXS_HMI is running' }
+        if ($Since.ElapsedMilliseconds -ge $deadline) { throw 'counter reset expired' }
+        $sent = $true
+        $line = ConvertTo-JsonLite @{ cmd = 'reset_counters'; blocks = @($reset | ForEach-Object { @{ addr = [int]$_['addr']; values = @(0, 0) } }) }
+        $reply = $script:Json.DeserializeObject((Invoke-MbdLine $line))
+        if (-not $reply['ok']) {
+            $message = [string]$reply['error']
+            # mbd refuses before any write (panel open, wrong state, not a zero): nothing happened.
+            if ($message -like 'busy:*' -or $message -like 'reset_counters refused*') { $sent = $false }
+            throw $message
+        }
+        $after = @($reply['result']['readback'])
+        if ($after.Count -ne 6) { throw 'counter reset not confirmed' }
+        for ($i = 0; $i -lt 6; $i++) { $result['readback'][[string](645 + $i)] = [int]$after[$i] }
+        foreach ($a in $targets) {
+            if ([int]$after[$a - 645] -ne 0 -or [int]$after[$a - 644] -ne 0) { throw ('counter reset not confirmed D' + $a) }
+        }
+        foreach ($block in $blocks) {
+            $values = [int[]]@($block['values'] | ForEach-Object { [int]$_ })
+            $reply = $script:Json.DeserializeObject((Invoke-MbdLine (ConvertTo-JsonLite @{ cmd = 'write'; addr = [int]$block['addr']; values = $values })))
+            if (-not $reply['ok']) { throw ([string]$reply['error']) }
+            $words = @($reply['result']['readback'])
+            for ($i = 0; $i -lt $words.Count; $i++) { $result['readback'][[string]([int]$block['addr'] + $i)] = [int]$words[$i] }
+        }
+        foreach ($bit in $bits) {
+            $reply = $script:Json.DeserializeObject((Invoke-MbdLine (ConvertTo-JsonLite @{ cmd = 'setbit'; addr = [int]$bit['addr']; bit = [int]$bit['bit']; value = [int]$bit['value'] })))
+            if (-not $reply['ok']) { throw ([string]$reply['error']) }
+            $result['readback'][[string]([int]$bit['addr'])] = [int](@($reply['result']['readback'])[0])
+        }
+        $result['ok'] = $true; $result['outcome'] = 'done'
+    } catch {
+        $result['error'] = $_.Exception.Message
+        if ($sent -and $result['readback'].Count -eq 0) { $result['outcome'] = 'unknown' }
+    }
+    return $result
+}
+
 function New-Outcome([string]$Status, [string]$Reason, [string]$Detail, $Before, $After, [string]$Method = '') {
     return @{ outcome = $Status; reason = $Reason; detail = $Detail; before = $Before; after = $After; method = $Method }
 }
@@ -433,6 +518,7 @@ function Step-Commands([string]$Token) {
     if ($null -eq $command) { return $null }
     if ($command['kind'] -eq 'control') { return (Step-Control $command $since $Token) }
     if ($command['kind'] -eq 'length_correction') { $result = Invoke-LengthCorrection $command $since }
+    elseif ($command['kind'] -eq 'reset_counters') { $result = Invoke-CounterReset $command $since }
     else { $result = Invoke-MachineCommand $command }
     Write-BridgeLog ('command ' + $command['id'] + ' ok=' + $result['ok'] + ' ' + $result['error'])
     $body = Get-Identity
@@ -440,6 +526,7 @@ function Step-Commands([string]$Token) {
     if ($command['kind'] -eq 'length_correction') {
         $body['correction_pulsed'] = [bool]$result['correction_pulsed']; $body['before'] = $result['before']; $body['outcome'] = $result['outcome']
     }
+    if ($command['kind'] -eq 'reset_counters') { $body['before'] = $result['before']; $body['outcome'] = $result['outcome'] }
     [void](Invoke-Erp ('/api/production/machines/agent/writes/' + $command['id'] + '/result') (ConvertTo-JsonLite $body) $Token)
     return $result
 }

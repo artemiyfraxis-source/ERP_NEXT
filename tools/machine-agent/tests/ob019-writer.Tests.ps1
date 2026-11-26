@@ -170,7 +170,7 @@ Describe 'ERP exchange' {
         $script:posted[1]['body'] | Should Match '"readback":\{"20":1\}'
         $script:posted[1]['body'] | Should Match '"ok":true'
         $script:posted[1]['body'] | Should Match '"inventory":"\\u041e\\u0411.019"'
-        $script:posted[0]['body'] | Should Match '"runner_version":"1.5.1"'
+        $script:posted[0]['body'] | Should Match '"runner_version":"1.5.2"'
     }
     It 'does nothing when ERP has no command' {
         Mock Invoke-Erp { @{ code = 200; text = '{"command":null}' } }
@@ -416,7 +416,7 @@ Describe 'the operator panel on the PC (hmi_close / hmi_open)' {
         }
         [void](Step-Commands 'token')
         $result = $script:Json.DeserializeObject($script:posted[1]['body'])
-        ($result['outcome'] + '/' + $result['reason'] + '/' + $result['method'] + '/' + $result['runner_version']) | Should Be 'done/ok/forced/1.5.1'
+        ($result['outcome'] + '/' + $result['reason'] + '/' + $result['method'] + '/' + $result['runner_version']) | Should Be 'done/ok/forced/1.5.2'
         $script:killed | Should Be 1
     }
     It 'has no journal guessing left: nothing reads the TextLog' {
@@ -458,7 +458,7 @@ Describe 'against mbd.ps1 -Mock -LocalOnly' {
         }
         It 'sets a switch bit through the real service after checking its version' {
             $MbdPort = $port
-            Get-MbdVersion | Should Be '1.5.1'
+            Get-MbdVersion | Should Be '1.5.2'
             $result = Invoke-MachineCommand (New-Command @() @(0) @(@{ addr = 434; bit = 0; value = 1 }))
             $result['error'] | Should Be ''
             $result['readback']['434'] | Should Be 1
