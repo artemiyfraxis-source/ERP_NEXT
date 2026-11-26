@@ -58,6 +58,21 @@ def associate(payload: AssociateInput, principal: Annotated[Principal, Depends(a
     return {"status": "associated", "serial": payload.serial}
 
 
+class DissociateInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    instrument_id: UUID
+    serial: str = Field(min_length=1, max_length=300)
+
+
+@router.post("/identity/remove")
+def dissociate(payload: DissociateInput, principal: Annotated[Principal, Depends(access_admin_principal)],
+               now: Now, uow_factory: UowFactory):
+    _queue(lambda: devices.dissociate_vna(uow_factory(), instrument_id=payload.instrument_id, serial=payload.serial,
+        actor=principal.actor, now=now, check_sessions=lambda session: assert_vna_transfer_allowed(
+            session, payload.instrument_id, payload.serial, "Сначала завершите сеанс ВАЦ, затем снимите привязку UID")))
+    return {"status": "dissociated", "serial": payload.serial}
+
+
 @router.post("/transfer")
 def transfer(payload: TransferInput, principal: Annotated[Principal, Depends(access_admin_principal)],
              now: Now, uow_factory: UowFactory):

@@ -372,15 +372,17 @@ ARGS_V3 = {"prepare": EmptyArgs, "device_status": EmptyArgs, "apply_profile": Ar
 
 
 class ArinstLicense(StrictModel):
-    license_state: Literal["not_required", "TRIAL", "LOCKED", "ACTIVATED"]
-    trial_remaining_seconds: int | None = Field(default=None, ge=0, le=600, strict=True)
+    """Native ArinstVL needs no licence: the only accepted state is 'not_required'."""
+    license_state: Literal["not_required"]
     message: str = Field(max_length=300)
 
-    @model_validator(mode="after")
-    def remaining(self):
-        if (self.license_state == "TRIAL") != (self.trial_remaining_seconds is not None):
-            raise ValueError("Некорректный остаток пробного режима API")
-        return self
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_null_trial(cls, data):
+        # Agents of the first native build still sent an always-null trial field; drop only that.
+        if isinstance(data, dict) and "trial_remaining_seconds" in data and data["trial_remaining_seconds"] is None:
+            data = {key: value for key, value in data.items() if key != "trial_remaining_seconds"}
+        return data
 
 
 class ArinstDrain(StrictModel):
@@ -490,7 +492,4 @@ def validate_result_v3(op: str, args: dict, serial: str, raw: dict) -> dict:
         raise ValueError("Измерена другая калибровочная мера")
     if (result.closed is True) != (result.op == "close"):
         raise ValueError("Закрытие не подтверждено")
-    if result.op not in ("connect", "close") and (result.license.license_state == "LOCKED" or
-            result.license.license_state == "TRIAL" and result.license.trial_remaining_seconds <= 0):
-        raise ValueError("Время пробного режима вышло — переподключите прибор вручную или активируйте лицензию")
     return result.model_dump(mode="json", by_alias=True)

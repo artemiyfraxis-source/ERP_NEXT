@@ -40,7 +40,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.13.1'
+$script:AgentVersion = '2.13.2'
 $script:VnaIdnNextProbe = [datetime]::MinValue
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
@@ -1628,7 +1628,7 @@ function Open-ArinstConnection {
         $options = Invoke-ArinstWire $connection 0xD003
         $connection.options = ConvertFrom-ArinstOptions $options.payload
         $connection.identity = @{ serial = $Serial; hardware_uid = $uid; firmware = $firmware; model = 'VNA-DL' }
-        $connection.license = @{ license_state = 'not_required'; trial_remaining_seconds = $null; message = 'Связь: протокол ArinstVL' }
+        $connection.license = @{ license_state = 'not_required'; message = 'Связь: протокол ArinstVL' }
         $connection.observed_at = [DateTime]::UtcNow.ToString('o')
         Save-ArinstObservation $connection
         return $connection
@@ -1640,7 +1640,7 @@ function Save-ArinstObservation {
     Write-VnaJson (Get-ArinstObservationPath $identity.serial) @{
         source = 'arinst'; serial = $identity.serial; hardware_uid = $identity.hardware_uid; firmware = $identity.firmware
         model = $identity.model; observed_at = $Connection.observed_at; usb_path = $Connection.usb_path
-        license_state = 'not_required'; trial_remaining_seconds = $null; options = $Connection.options
+        license_state = 'not_required'; options = $Connection.options
     }
 }
 function Get-ArinstControlInventory {
@@ -1658,7 +1658,7 @@ function Get-ArinstControlInventory {
             $result += @{ source = 'arinst'; serial = $observation.serial; version = 3; methods = @()
                 ops = @('connect','read_profile','apply_profile','measure_standard','capture','close')
                 model = 'VNA-DL'; firmware = $observation.firmware; hardware_uid = $observation.hardware_uid
-                identity_verified = $true; license_state = 'not_required'; trial_remaining_seconds = $null
+                identity_verified = $true; license_state = 'not_required'
                 control_ready = (-not $busy); reason = $(if ($busy) { 'Закройте ArinstVL, затем подключите прибор через ERP' } else { '' })
                 observed_at = $observation.observed_at }
         } catch { Write-Log ('Arinst: ошибка сохранённой идентификации: ' + $_.Exception.Message) }
@@ -1785,7 +1785,7 @@ function Invoke-ArinstCommand {
     if ($Command.op -cin @('capture','measure_standard') -and $argsValue.orientation -cnotin @('forward','reverse')) { throw 'Arinst: подтвердите направление подключения кабеля' }
     if ($Command.op -ceq 'measure_standard' -and $argsValue.standard -cnotin @('OPEN','SHORT','LOAD','THRU')) { throw 'Arinst: неподдерживаемая калибровочная мера' }
     if ($Command.op -cin @('apply_profile','capture','measure_standard') -and (Test-Path -LiteralPath (Get-VnaQuarantinePath $Command))) {
-        throw 'Arinst: исход предыдущей операции неизвестен; требуется проверка прибора перед новым измерением'
+        throw 'Arinst: исход прошлого измерения неизвестен — прервите сеанс в ERP и откройте новый: при подключении агент заново проверит прибор и снимет блокировку, калибровку нужно будет повторить'
     }
     $started = [DateTime]::UtcNow.ToString('o'); $connection = $null
     try {
@@ -1799,6 +1799,11 @@ function Invoke-ArinstCommand {
             Write-VnaJson (Get-ArinstProfilePath $Command) @{ serial = $Command.instrument_serial; session_id = $Command.session_id; profile = $argsValue.profile }
             $result.profile = Read-ArinstProfile $Command $connection.options
         } elseif ($Command.op -ceq 'read_profile') { $result.profile = Read-ArinstProfile $Command $connection.options }
+        elseif ($Command.op -ceq 'connect') {
+            # A fresh, drained and re-identified connection is the device check; the server drops calibration on connect.
+            $quarantinePath = Get-VnaQuarantinePath $Command
+            if ([IO.File]::Exists($quarantinePath)) { Remove-Item -LiteralPath $quarantinePath -Force; Write-Log ('Arinst: блокировка после неизвестного исхода снята подключением ' + $Command.instrument_serial) }
+        }
         elseif ($Command.op -cin @('capture','measure_standard')) {
             $profile = Read-ArinstProfile $Command $connection.options
             if (-not $profile) { throw 'Arinst: сначала примените профиль сессии' }

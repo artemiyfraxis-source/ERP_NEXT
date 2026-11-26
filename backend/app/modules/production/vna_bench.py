@@ -60,18 +60,11 @@ def arinst_invalidated(snapshot, reason):
                                             coefficient_artifact_id=None)}
 
 
-def arinst_license(state, seconds, observed_at, now):
-    remaining = None
-    if state == "TRIAL":
-        remaining = max(0, int((seconds or 0) - max(0, (as_utc(now) - as_utc(aware(observed_at, now))).total_seconds())))
-        if remaining == 0:
-            state = "LOCKED"
-    message = {"not_required": "Связь: протокол ArinstVL", "ACTIVATED": "Лицензия активна",
-               "LOCKED": "Время пробного режима вышло — переподключите прибор вручную или активируйте лицензию"}.get(state)
-    if state == "TRIAL":
-        message = f"Пробный режим API — осталось {math.ceil(remaining / 60)} мин"
-    return dict(state=state or "UNKNOWN", trial_remaining_seconds=remaining,
-                message=message or "Состояние лицензии API неизвестно")
+def arinst_license(state):
+    """The native ArinstVL protocol needs no licence; anything else is simply not ready."""
+    if state == "not_required":
+        return dict(state="not_required", message="Связь: протокол ArinstVL")
+    return dict(state="UNKNOWN", message="Связь с Arinst не подтверждена агентом ERP")
 
 
 def arinst_calibration_steps(snapshot, *, orientation, transmission, run_id):

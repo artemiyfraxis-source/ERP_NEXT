@@ -1,7 +1,6 @@
 """C0 driver receipts, bounded partial data, and commissioning barriers."""
 from copy import deepcopy
 from dataclasses import asdict, replace
-from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -22,7 +21,7 @@ def receipt(op="capture", args=None):
                wire=[dict(tx_base64="KlVJRD8K", rx_base64="MQo=", complete=True)])
     result = dict(source="arinst", serial=SERIAL, hardware_uid=SERIAL[7:], firmware="2.0.0",
         model="VNA-DL", options=deepcopy(OPTIONS),
-        license=dict(license_state="not_required", trial_remaining_seconds=None, message="Связь: протокол ArinstVL"),
+        license=dict(license_state="not_required", message="Связь: протокол ArinstVL"),
         op=op, started_at="2026-11-23T12:00:00Z", finished_at="2026-11-23T12:00:01Z", duration_ms=1000,
         parser_status="complete", correction_origin="raw", raw_evidence=raw, raw_sha256=fingerprint(raw))
     if op in ("apply_profile", "read_profile", "capture", "measure_standard"):
@@ -63,6 +62,9 @@ def test_only_supported_profile_settings(field, value):
     {"raw_sha256": "0" * 64}, {"parser_status": "incomplete"}, {"correction_origin": "host"},
     {"started_at": "2026-11-23T12:00:00"}, {"finished_at": "2026-11-22T12:00:00Z"},
     {"profile": {**PROFILE, "points": 3}}, {"standard": "LOAD"}, {"closed": True}, {"rf_stopped": True},
+    {"license": dict(license_state="TRIAL", trial_remaining_seconds=60, message="")},
+    {"license": dict(license_state="ACTIVATED", message="")}, {"license": dict(license_state="LOCKED", message="")},
+    {"license": dict(license_state="not_required", trial_remaining_seconds=0, message="")},
 ])
 def test_invalid_receipt_is_not_persistable(patch):
     raw = receipt(); raw.update(patch)
@@ -83,18 +85,16 @@ def test_partial_trace_cannot_fabricate_grid_or_channels(patch):
         validate_result_v3("capture", dict(profile=PROFILE, orientation="forward"), SERIAL, raw)
 
 
-def test_trial_counts_down_with_sqlite_wall_clock_and_does_not_renew():
-    now = datetime(2026, 11, 23, 15, tzinfo=timezone(timedelta(hours=3)))
-    observed = now.replace(tzinfo=None)
-    assert bench.arinst_license("TRIAL", 60, observed, now)["trial_remaining_seconds"] == 60
-    assert bench.arinst_license("TRIAL", 60, observed, now + timedelta(seconds=61))["state"] == "LOCKED"
-    assert bench.arinst_license("ACTIVATED", None, observed, now)["message"] == "Лицензия активна"
+def test_legacy_null_trial_field_in_receipt_is_ignored():
+    raw = receipt(); raw["license"]["trial_remaining_seconds"] = None
+    assert "trial_remaining_seconds" not in validate_result_v3(
+        "capture", dict(profile=PROFILE, orientation="forward"), SERIAL, raw)["license"]
 
 
-def test_native_license_has_no_countdown():
-    now = datetime(2026, 11, 23, tzinfo=timezone.utc)
-    state = bench.arinst_license("not_required", None, now, now + timedelta(days=10))
-    assert state == dict(state="not_required", trial_remaining_seconds=None, message="Связь: протокол ArinstVL")
+def test_native_link_has_no_licence_or_countdown():
+    assert bench.arinst_license("not_required") == dict(state="not_required", message="Связь: протокол ArinstVL")
+    for legacy in ("TRIAL", "ACTIVATED", "LOCKED", "unknown", None):
+        assert bench.arinst_license(legacy)["state"] == "UNKNOWN"
 
 
 def test_native_exact_integer_grid_including_nondivisible_span_and_9ghz():

@@ -685,20 +685,18 @@ def _arinst_state(uow, principal, now, vna, row):
                             and pc.last_seen is not None
                             and as_utc(bench.aware(pc.last_seen, now)) >= as_utc(now) - LIVE_FOR)
     control = uow.session.get(VnaControlRow, (binding.machine_id, serial)) if binding else None
-    license_view = bench.arinst_license(control.license_state if control else None,
-        control.trial_remaining_seconds if control else None, control.reported_at if control else now, now)
+    license_view = bench.arinst_license(control.license_state if control else None)
     repository = VnaSessionRepository(uow.session)
     view = repository.view(row) if row else None
     # Anchor receipts at dispatch, conservatively before the device observation.
-    # HTTP delivery can be delayed; its arrival must never renew the trial or
-    # replace a newer heartbeat observation with an older cached receipt.
+    # HTTP delivery can be delayed; its arrival must never replace a newer heartbeat
+    # observation with an older cached receipt.
     receipts = [c for c in _commands(uow, row) if c.status == "done" and c.result.get("license")] if row else []
     if receipts:
         latest = receipts[-1]
         observed = latest.claimed_at
         if control is None or as_utc(bench.aware(observed, now)) >= as_utc(bench.aware(control.reported_at, now)):
-            license_view = bench.arinst_license(latest.result["license"]["license_state"],
-                latest.result["license"]["trial_remaining_seconds"], observed, now)
+            license_view = bench.arinst_license(latest.result["license"]["license_state"])
     readiness = None
     ops = set()
     if identity:
@@ -710,7 +708,7 @@ def _arinst_state(uow, principal, now, vna, row):
             ready = bool(ops and pc and device and device.present and not pc.legacy
                          and as_utc(bench.aware(pc.last_seen, now)) >= as_utc(now) - LIVE_FOR
                          and as_utc(bench.aware(device.last_seen, now)) >= as_utc(now) - LIVE_FOR
-                         and license_view["state"] in ("not_required", "TRIAL", "ACTIVATED"))
+                         and license_view["state"] == "not_required")
             if not ready:
                 readiness = "Прибор или агент недоступен; проверьте подключение"
         except ScanJobClosed as error:
@@ -913,10 +911,7 @@ def _complete_arinst(uow, repository, row, command_id, payload, now):
         snapshot["profile"] = result["profile"]
     if command.op == "prepare":
         snapshot = bench.arinst_invalidated(snapshot, "Подключение требует новой калибровки")
-        license_view = result["license"]
-        if license_view["license_state"] == "LOCKED" or license_view["license_state"] == "TRIAL" and not license_view["trial_remaining_seconds"]:
-            tail, message = [], license_view["message"]
-        elif snapshot.get("requested_profile"):
+        if snapshot.get("requested_profile"):
             tail = [bench.arinst_step("apply_profile", dict(profile=snapshot.pop("requested_profile")))]
         else:
             tail = [bench.arinst_step("device_status")]
