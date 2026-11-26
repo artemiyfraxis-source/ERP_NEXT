@@ -87,4 +87,12 @@ describe("api deadlines (U01)", () => {
     await expect(api("/api/requests")).resolves.toEqual({ ok: true });
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it("shows a busy production 503 by its Russian detail, not a bare status", async () => {
+    const detail = "Производство занято другим запросом — повторите позже";
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ detail }), {
+      status: 503, headers: { "Content-Type": "application/json", "Retry-After": "5" } }));
+    const reason = await api("/api/production/plan").catch((error) => error);
+    expect(failureText(reason, "Не удалось")).toBe(detail);
+  });
 });
