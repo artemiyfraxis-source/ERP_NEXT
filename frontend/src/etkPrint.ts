@@ -11,11 +11,11 @@ import {
   ETK_CONNECTION_COLUMNS, ETK_TUBE_COLUMNS, etkDocumentConnectionRows, etkPhysicalConfig, etkTubePlacementRows, etkContactSpecs, etkDrawHarness, etkFigure, etkParams, type EtkParam,
   type EtkTopologyData,
 } from "./etkDraw";
-import { ETK_TOOLING_SECTIONS, etkLabelResult, etkOperationName, etkToleranceLines, parseDefects, solderMode, shrinkRequirementLines, toolingSections } from "./etkOperation";
+import { ETK_TOOLING_SECTIONS, etkLabelResult, etkTimeRows, etkOperationName, etkToleranceLines, parseDefects, solderMode, shrinkRequirementLines, toolingSections } from "./etkOperation";
 import { figuresForDefect, stdFiguresPrintHtml, type StdFigureIndex } from "./stdFigures";
 import { formatDateTime, formatNumber, unitLabel } from "./format";
 import { etkCardSourceNote } from "./etkCardSource";
-import { etkPartSource, etkPfGroups, etkPfOutName, etkRouteDiagram, etkRouteOf, etkSemiSource, formatMinutes, opNumber, type EtkPfRow } from "./etkRoute";
+import { etkPartSource, etkPfGroups, etkPfOutName, etkRouteDiagram, etkRouteOf, etkSemiSource, formatTimeTotal, opNumber, type EtkPfRow } from "./etkRoute";
 import { hasMarkSerial, markLabelList, markSerialTemplate, type MarkSerialRange } from "./markSerial";
 import type { PrintBlock, PrintPage } from "./print";
 
@@ -85,7 +85,7 @@ function solderRows(operation: Row): string[][] {
 }
 
 export function operationKeyOf(operation: Row): string {
-  return `${text(operation.code).trim()}::${text(operation.connector).trim()}::${text(operation.side).trim()}`;
+  return text(operation.operation_key) || `${text(operation.code).trim()}::${text(operation.connector).trim()}::${text(operation.side).trim()}`;
 }
 
 function sketchImg(url: string | undefined): string {
@@ -139,7 +139,7 @@ function pfTable(route: EtkRoute | null, operations: Row[], batch: number): Prin
   return [{ heading: "Полуфабрикаты" }, { table: {
     columns: ["ПФ", "Операции", "Вход", "Выход"],
     rows: groups.map((group) => [
-      [`ПФ ${group.label}${group.final ? " · изделие" : ""}`, group.name, group.minutes > 0 ? `${formatMinutes(group.minutes)} мин на партию` : ""].filter(Boolean).join("\n"),
+      [`ПФ ${group.label}${group.final ? " · изделие" : ""}`, group.name, `${formatTimeTotal(group.minutes, group.unknownOperations)} на партию`].filter(Boolean).join("\n"),
       group.ops.map((position) => `${opNumber(Number(operations[position - 1]?.position) || position)} ${operations[position - 1] ? etkOperationTitle(operations[position - 1]) : ""}`.trim()).join("\n"),
       [...(inputs.get(group.key) ?? []).map((input) => `ПФ ${input.label}: ${input.text}${input.times ? ` ${input.times}` : ""}`),
         ...group.components.map((row) => [row.art || row.name || "", pfQty(row)].filter(Boolean).join(" — "))].join("\n"),
@@ -250,7 +250,7 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
     const figure = etkFigure(operation) + sketchImg(sketches[operationKeyOf(operation)]);
     const labelResult = etkLabelResult(operation, serial);
     const result = numbered(labelResult ? [labelResult] : rows(operation.result), (item) => [text(item.name), text(item.norm), "", unitLabel(text(item.unit))]);
-    const time = numbered(rows(operation.time), (item) => [labelResult && rows(operation.result).some((row) => row.name === item.name) ? labelResult.name : text(item.name), text(item.norm), ""]);
+    const time = numbered(etkTimeRows(operation), (item) => [labelResult && rows(operation.result).some((row) => row.name === item.name) ? labelResult.name : text(item.name), text(item.norm) || "не задано", ""]);
     return {
       title: `Операция ${text(operation.position || index + 1)}. ${etkOperationTitle(operation)}${operation.connector ? ` — ${text(operation.connector)}` : ""}`,
       subtitle: etkCardSourceNote({ card_source: text(operation.card_source), card_changed_at: text(operation.card_changed_at) }),
@@ -267,16 +267,16 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
           [...solderRows(operation), ...shrinkRequirementLines(operation).map((item) =>
             ["Температурный режим", "", `${item.material}. ${item.text}${item.sourceUrl ? ` · Источник: ${item.sourceUrl}` : ""}`, "", "", "", ""]),
             ...toolingRows(rows(opCard.tooling), units?.find((unit) => unit.etk_position === Number(operation.position || index + 1)))]),
-        ...(marks.length || steps.length ? [
+        ...(steps.length ? [
           section("Ход операции"),
-          ...table(labels?.columns ?? ["№", "Что маркируем", "Надпись", "Материал", "Где", ...(withLength ? ["Длина, мм"] : []), "На изделие", "На партию"], marks),
           ...table(["Тип", "№", "Описание операции, материалов и оснастки", "Допуск"], steps),
         ] : []),
         ...(defects ? [section("Типовые дефекты"), { text: defects }, ...defectFigures(defects, figures)] : []),
         ...(figure ? [section("Эскиз"), { figure }] : []),
-        ...(result.length || time.length ? [
+        ...(result.length || time.length || marks.length ? [
           section("Результат"),
           ...table(["№", text(operation.result_label) || "Результат", "Норма", "Факт / брак", "Ед."], result),
+          ...table(labels?.columns ?? ["№", "Что маркируем", "Надпись", "Материал", "Где", ...(withLength ? ["Длина, мм"] : []), "На изделие", "На партию"], marks),
           ...table(["№", "Расчётное время", "Норма, мин", "Факт"], time),
         ] : []),
       ],

@@ -1,6 +1,6 @@
 import { api } from "./api";
 
-/* «Ручная работа» (план «Станки вне проекта», срез S1, 19.11.2026): работа на любом станке вне проекта, счёт вручную.
+/* «Работа» (план «Станки вне проекта», срез S1, 19.11.2026): работа на любом станке вне проекта, счёт вручную.
    Сервер: `workflows/manual_jobs_api.py`, материал — `workflows/manual_job_stock.py` (срез S3), правила и таблицы —
    `production/manual_jobs.py`. */
 
@@ -45,7 +45,7 @@ export interface ManualJob {
   progress_quantity?: number | null;
   progress_at?: string | null;
   progress_over_plan?: boolean;
-  /** Строка очереди станка, по которой начата работа (`null` — «Вне задания»). */
+  /** Строка очереди станка, по которой начата работа (`null` — ввод параметров). */
   source?: ManualJobSource | null;
 }
 
@@ -161,7 +161,7 @@ export interface ManualJobStart {
   length_mm: string;
   quantity_planned: number | null;
   reference_id: string | null;
-  /** Строка очереди станка, по которой начинается работа; без неё — «Вне задания». */
+  /** Строка очереди станка, по которой начинается работа; без неё — ввод параметров. */
   source?: { task_id: string; operation_id: string; etk_position: string | number | null };
 }
 

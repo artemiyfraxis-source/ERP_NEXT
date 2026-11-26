@@ -42,7 +42,7 @@ from .board import BOARD_KEY_PREFIX, CardSnapshot, launch_command, _open_card, r
 from .cutting import cutting_recipes, digest
 from .cutting_application import describe_group
 from .domain import ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, unit_factors
-from .launchable import ReadyCard, launch_operations
+from .launchable import ReadyCard, launch_operations, preview_operations
 from .workload import UNASSIGNED, ZERO, Done, kb_site
 
 MAX_BATCH = 100
@@ -130,9 +130,9 @@ def ready_rows(
 
 
 def planned_operations(card: ReadyCard, quantity: int) -> tuple[tuple[ProductionOperation, Decimal], ...]:
-    """Операции, которые создаст запуск (тот же `launch_operations`), со штуками полуфабриката на изделие."""
+    """Предварительные нормы, со штуками ПФ на изделие; неизвестные нормы отмечены в card.route.warnings."""
     try:
-        operations = launch_operations(card.route.steps, quantity)
+        operations = preview_operations(card.route.steps, quantity)
     except ProductionValidationError:
         return ()
     factors = unit_factors(operations)

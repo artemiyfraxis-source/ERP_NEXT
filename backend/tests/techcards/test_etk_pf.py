@@ -20,6 +20,7 @@ from app.modules.techcards.domain.route import RouteOp, parse_route, pf_document
 from app.modules.techcards.etk_builder import attach_route, build_etk, document_route
 from app.modules.techcards.infrastructure import SqlAlchemyTechcardsUnitOfWork
 from app.modules.techcards.operation_cards import parse_operation_library
+from app.modules.techcards.project_cards import TechcardValidationError
 from app.shared.clock import moscow_now
 from app.shared.persistence import create_schema
 
@@ -157,7 +158,12 @@ def test_rebuild_keeps_the_hand_cut_pf_while_the_operations_are_the_same():
 
     fewer = document()
     fewer["operations"] = fewer["operations"][:4]
-    assert _keep_hand_route(previous, fewer)["route"]["source"] == "derived"
+    before = deepcopy(previous)
+    # Truncating only the operations leaves an unaligned saved recipe; identity checking
+    # now rejects that snapshot before attempting to remap the manual route.
+    with pytest.raises(TechcardValidationError, match="позиционный ключ"):
+        _keep_hand_route(previous, fewer)
+    assert previous == before
 
 
 def test_pf_documents_take_components_and_outside_pieces_and_hand_on_the_last_result():

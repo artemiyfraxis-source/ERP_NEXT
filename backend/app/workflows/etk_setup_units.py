@@ -52,6 +52,15 @@ def _newer(row, other) -> bool:
     return (row.updated_at, str(row.id)) > (other.updated_at, str(other.id))
 
 
+def ready_for_operation(session, task_id: UUID, operation_id: UUID) -> dict[int, object]:
+    """Latest READY snapshot per exact task/operation/ETK position; plain reads only."""
+    latest = {}
+    for row, position, _task in _ready(session, operation_id=operation_id, task_id=task_id):
+        if position not in latest or _newer(row, latest[position]):
+            latest[position] = row
+    return latest
+
+
 def _iso(value) -> str:
     return (value if value.tzinfo else value.replace(tzinfo=UTC)).isoformat()
 

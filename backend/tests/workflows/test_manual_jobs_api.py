@@ -1,4 +1,4 @@
-"""«Ручная работа» (S1): start on any machine of БД.ОБ, one running job per machine, numbers Р-000001…, finish with good /
+"""«Работа» (S1): start on any machine of БД.ОБ, one running job per machine, numbers Р-000001…, finish with good /
 defect and a material decision, cancel with a reason, compare-and-swap on `version`, the period register."""
 
 from datetime import timedelta
@@ -46,7 +46,7 @@ def test_start_numbers_one_running_per_machine_and_options(machines_api):
     with sessions() as session:
         events = session.scalars(select(AuditEventRow.details).where(
             AuditEventRow.event_type == "production.manual_job_started")).all()
-    assert events[0]["text"] == "Начата ручная работа Р-000001 на ОБ.019: Проба на образцах (ПВАМ 0,35 · 325,5 мм)"
+    assert events[0]["text"] == "Начата работа Р-000001 на ОБ.019: Проба на образцах (ПВАМ 0,35 · 325,5 мм)"
 
 
 def test_finish_rules_version_and_material(machines_api):

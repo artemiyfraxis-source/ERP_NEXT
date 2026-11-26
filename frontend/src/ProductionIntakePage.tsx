@@ -16,7 +16,7 @@ import { IntakeWindow, keyOf, leftOf, RollbackActWindow } from "./IntakeWindow";
 import { PrintOutcome, type PrintResult } from "./LabelPrint";
 import { PackWindow } from "./PackWindow";
 import { PrintSetupButton } from "./PrintSetupWindow";
-import { needsTrack, NoUpdWindow, onlyUpdBlocks, readyForTrack, readyToShip, type CardRights } from "./ShipmentCard";
+import { needsTrack, NoUpdWindow, onlyUpdBlocks, readyForTrack, readyToShip, ShipWithoutDataWindow, type CardRights, type Mutate } from "./ShipmentCard";
 import { CreateShipmentWindow, JournalWindow, RegisterGoodWindow, useDocLink } from "./ShipmentJournal";
 import { ShipWindow } from "./ShipWindow";
 import { TrackWindow } from "./TrackWindow";
@@ -90,7 +90,7 @@ function urlTab(): { tab: Tab | null; journal: boolean } {
   return { tab: TABS.some(([key]) => key === tab) ? tab as Tab : null, journal: false };
 }
 
-type Opened = { kind: "pack" | "ship"; project: string } | { kind: "track"; title: string; shipment: DispatchShipment } | { kind: "noupd"; shipment: DispatchShipment };
+type Opened = { kind: "pack" | "ship"; project: string } | { kind: "track"; title: string; shipment: DispatchShipment } | { kind: "noupd" | "bare"; shipment: DispatchShipment };
 type Accepting = { rows: IntakeRow[]; quantities: Record<string, number>; blank?: boolean };
 type RollingBack = { row: IntakeRow; act: IntakeAct; onStock: number };
 
@@ -211,12 +211,19 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     !shipment ? "" : contactText(shipment.track_number);
   const packStatus = (line: IntakeLine) => line.stage !== "accepted" || line.shipment ? ""
     : line.kb.pack_auto_allowed ? AUTO_PACK_LABEL : line.packNow > 0 ? "Разрешено" : "Нужно разрешение";
-  /** Почему «Трек…» выключен — своим столбцом, не только в подсказке кнопки. */
+  /** Отправку держит УПД — какое действие предложить: только № — «Вписать № УПД», нет самого УПД — «Внести УПД». */
+  const updGapAction = (shipment: DispatchShipment) => {
+    const gaps = new Set(shipment.missing_ship);
+    if (gaps.has("тип УПД") || gaps.has("файл УПД")) return { label: "Внести УПД", what: "УПД" };
+    if (gaps.has("№ УПД")) return { label: "Вписать № УПД", what: "№ УПД" };
+    return null;
+  };
+  /** «Ждём»: всё, чего не хватает отправке, одним списком рядом со статусом (владелец 23.11: «ощущение, что не хватает
+   *  только номера» — список говорит это прямо, а не по ячейкам «не заполнено» далеко справа). */
   const trackGaps = (line: IntakeLine) => {
     const shipment = line.shipment;
     if (!shipment) return [];
-    const fieldGaps = new Set(["условия доставки", "организация", "телефон получателя", "перевозчик", "адрес доставки", "тип УПД", "файл УПД", "№ УПД", "трек-номер"]);
-    return [...new Set([...shipment.missing_data, ...shipment.missing_ship].filter((gap) => !fieldGaps.has(gap)))];
+    return [...new Set([...shipment.missing_data, ...shipment.missing_ship])];
   };
   /** PL и DN по отдельности: номера нет — «Сформировать» этого документа, есть — ссылка на печать. */
   const docCell = (shipment: DispatchShipment, document: "pl" | "dn") => {
@@ -235,10 +242,14 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     try { setLabel({ grn, result: await intakeApi.printLabel(grn), error: "", busy: false }); }
     catch (reason) { setLabel({ grn, result: null, error: failureText(reason, "Этикетка не напечатана"), busy: false }); }
   }
-  const mutate = async (key: string, operation: () => Promise<unknown>, message: string) => {
+  const mutate: Mutate = async (key, operation, message) => {
     if (busy) return false;
     setBusy(key); setError(""); setNotice("");
-    try { await operation(); setNotice(message); await reload(); return true; }
+    try {
+      const result = await operation();
+      const outcome = typeof message === "string" ? message : message(result);
+      setNotice(typeof outcome === "string" ? outcome : outcome.warning); await reload(); return true;
+    }
     catch (reason) { setError(failureText(reason, "Операция не выполнена")); return false; }
     finally { setBusy(""); }
   };
@@ -315,14 +326,24 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     if (!["Собрана", "Упакована"].includes(shipment.status) || !canDispatch) return null;
     const needing = needsTrack(shipment);
     const ready = needing && (readyForTrack(shipment) || Boolean(shipment.track_number));
-    if (!ready && canWarehouse && onlyUpdBlocks(shipment) && (shipment.status === "Упакована" || Boolean(shipment.dn_number))) return <button type="button" className="secondary small intake-print" title="УПД нет — отгрузку без УПД разрешает уполномоченный по ПИН"
-      aria-label={`Без УПД ${title}`} onClick={() => setOpened({ kind: "noupd", shipment })}>Без УПД…</button>;
-    if (!needing || shipment.status !== "Упакована") return null;
+    // Держит УПД (владелец 23.11: «непонятно назначение кнопок»): главное — вписать его; запасной путь — отгрузить без него по ПИН.
+    const updGap = updGapAction(shipment);
+    // Груз уже уехал, а данных нет (владелец 23.11: «она уже отгружена»): руководителю — сразу из строки, не из окна упаковки.
+    const bare = rights.canUnship && shipment.lines.some((line) => num(line.picked) > 0) && !readyToShip(shipment) && shipment.missing_ship.length > 0
+      ? <button type="button" className="secondary small" title="Груз уже уехал: отметить «Отгружена», недостающее внести позже"
+        aria-label={`Уже отгружена ${title}`} onClick={() => setOpened({ kind: "bare", shipment })}>Уже отгружена…</button> : null;
+    const enter = updGap && canDispatch ? <button type="button" className="primary small" title={`Открыть данные отправки и вписать ${updGap.what}`}
+      aria-label={`${updGap.label} ${title}`} onClick={() => setShipmentData(shipment.id)}>{updGap.label}…</button> : null;
+    if (!ready && canWarehouse && onlyUpdBlocks(shipment) && (shipment.status === "Упакована" || Boolean(shipment.dn_number))) return <>{enter}
+      {bare ?? <button type="button" className="secondary small intake-print" title="УПД ещё нет — отгрузку без него разрешает уполномоченный по ПИН"
+        aria-label={`Отгрузить без УПД ${title}`} onClick={() => setOpened({ kind: "noupd", shipment })}>Отгрузить без УПД…</button>}</>;
+    if (enter) return <>{enter}{bare}</>;
+    if (!needing || shipment.status !== "Упакована") return bare;
     const gaps = shipment.missing_ship.filter((gap) => gap !== "трек-номер");
     const button = <button type="button" className="secondary small intake-print" disabled={!ready}
       title={ready ? "Вписать трек-номер ТК" : `Трек вносится, когда есть УПД и ТК${gaps.length ? ` — не хватает: ${gaps.join(", ")}` : ""}. Ждём данные менеджера`}
       aria-label={`Трек ${title}`} onClick={() => setOpened({ kind: "track", title, shipment })}>Трек…</button>;
-    return button;
+    return <>{button}{bare}</>;
   };
   /** Одно действие строки — по её шагу; число на кнопке — штуки этой строки. */
   const actionCell = (line: IntakeLine) => {
@@ -365,7 +386,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     { key: "needed", title: "Заказано", width: 88, numeric: true, value: (line) => num(line.kb.needed), render: (line) => num(line.kb.needed) > 0 ? formatNumber(num(line.kb.needed)) : dash },
     { key: "launched", title: "Запущено", width: 88, numeric: true, value: (line) => num(line.kb.launched), render: (line) => num(line.kb.launched) > 0 ? formatNumber(num(line.kb.launched)) : dash },
     { key: "left", title: "Остаток", width: 88, hint: "Заказано − принято по всем ГРН", numeric: true, value: (line) => leftOf(line.kb), render: (line) => leftOf(line.kb) > 0 ? formatNumber(leftOf(line.kb)) : dash },
-    { key: "action", title: ACTION_TITLE[tab] ?? "Действие", width: tab === "production" || tab === "all" ? 192 : tab === "packed" ? 256 : 144,
+    { key: "action", title: ACTION_TITLE[tab] ?? "Действие", width: tab === "production" || tab === "all" ? 192 : tab === "packed" ? 400 : 144,
       value: (line) => line.stage === "accepted" ? line.packNow || (line.shipment ? line.quantity : 0) : line.stage === "ready" ? line.quantity : "", render: actionCell },
     { key: "tasks", title: "Задания", wrap: true, width: 128, maxWidth: 200, value: (line) => line.kb.tasks.map((task) => task.number).join(", "),
       render: (line) => line.kb.tasks.length ? <span className="intake-clip intake-stage muted" title={tasksText(line.kb)}>{line.kb.tasks.map((task) => task.number).join(", ")}</span> : dash },
@@ -406,7 +427,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     { key: "updFile", title: "Файл УПД", width: 104, value: (line) => deliveryOf(line).upd_url ?? "", render: (line) => deliveryOf(line).upd_url
       ? <a href={deliveryOf(line).upd_url} target="_blank" rel="noreferrer">файл</a>
       : updRequired(line) && deliveryOf(line).upd_type && !["ЭДО", "БЕЗ УПД"].includes(deliveryOf(line).upd_type!) ? shippingValue("Файл УПД", "") : dash },
-    { key: "trackGaps", title: "Ждём для трека", hint: "Чего не хватает, чтобы вписать трек-номер", wrap: true, width: 160, maxWidth: 240,
+    { key: "trackGaps", title: "Ждём", hint: "Чего не хватает, чтобы отгрузить", wrap: true, width: 160, maxWidth: 240,
       value: (line) => trackGaps(line).join(", "), render: (line) => trackGaps(line).length ? <span className="tone-warn">{trackGaps(line).join(", ")}</span> : dash },
     { key: "pl", title: "PL", width: 136, value: (line) => line.shipment?.pl_number ?? "", render: (line) => line.shipment ? docCell(line.shipment, "pl") : dash },
     { key: "dn", title: "DN", width: 136, value: (line) => line.shipment?.dn_number ?? "", render: (line) => line.shipment ? docCell(line.shipment, "dn") : dash },
@@ -415,7 +436,9 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   ];
   const actionless = (tab === "production" && !canWarehouse) || (["accepted", "to_ship"].includes(tab) && !canDispatch);
   const leading = [...TAB_COLUMNS[tab], ...(tab === "shipped" && canDispatch ? ["action"] : [])].filter((key) => key !== "action" || !actionless);
-  const shipping = ["project", "customer", "shipment", "sequence", "status", "created", "deadline", "shippedAt", ...DELIVERY_COLUMNS, "track", "trackGaps", "upd", "updNumber", "updDate", "updFile", "pl", "dn", "deliveryEdit"];
+  // Что держит отправку — сразу за «Статусом» (владелец 23.11: «почему зависло» — пустой № УПД был за прокруткой):
+  // «Ждём для трека», УПД, трек, PL/DN, потом адресные данные.
+  const shipping = ["project", "customer", "shipment", "sequence", "status", "created", "deadline", "shippedAt", "trackGaps", "upd", "updNumber", "updDate", "updFile", "track", "pl", "dn", ...DELIVERY_COLUMNS, "deliveryEdit"];
   const hidden = new Set(["project", "customer", "shipment", "sequence", "created", "deadline", "stage", ...(tab === "shipped" ? [] : ["shippedAt"])]);
   const shipmentFields = new Set(["shipment", "sequence", "status", "created", "deadline", "shippedAt", ...DELIVERY_COLUMNS, "track", "trackGaps", "upd", "updNumber", "updDate", "updFile", "pl", "dn"]);
   const visibleColumns = [...new Set([...leading, ...shipping, "stage"])].flatMap((key) => columns.filter((column) => column.key === key))
@@ -481,7 +504,8 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     cells.action = <span className="ship-group-head">
       {(first.stage === "packed" || shipment.status === "Собрана") && trackAction(shipment, shipment.number)}
       {canDispatch && ["Новая", "Собрана", "Упакована"].includes(shipment.status) && <button type="button" className="secondary small"
-        onClick={() => setOpened({ kind: "pack", project: first.project })}>Короба и PL/DN</button>}
+        title="Окно упаковки: короба, PL и DN этой отправки" aria-label={`${shipment.status === "Упакована" ? "Изменить упаковку" : "Открыть упаковку"} ${shipment.number}`}
+        onClick={() => setOpened({ kind: "pack", project: first.project })}>{shipment.status === "Упакована" ? "Изменить упаковку…" : "Открыть упаковку…"}</button>}
       {canDispatch && ["Отгружена", "Закрыта"].includes(shipment.status) && <button type="button" className="secondary small"
         onClick={() => setOpened({ kind: "ship", project: first.project })}>Действия</button>}
     </span>;
@@ -525,7 +549,8 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     {opened?.kind === "pack" && <PackWindow project={opened.project} rows={projectRows(opened.project)} shipments={projectShips(opened.project)} rights={rights} reload={reload} close={() => setOpened(null)} />}
     {opened?.kind === "ship" && <ShipWindow project={opened.project} shipments={projectShips(opened.project)} rights={rights} reload={reload} close={() => setOpened(null)} />}
     {opened?.kind === "track" && <TrackWindow title={opened.title} shipments={[shipments.find((shipment) => shipment.id === opened.shipment.id) ?? opened.shipment]} reload={reload} close={() => setOpened(null)} />}
-    {opened?.kind === "noupd" && <NoUpdWindow shipment={opened.shipment} mutate={(key, operation, message) => mutate(key, operation, typeof message === "string" ? message : "Готово")} close={() => setOpened(null)} />}
+    {opened?.kind === "noupd" && <NoUpdWindow shipment={opened.shipment} mutate={mutate} close={() => setOpened(null)} />}
+    {opened?.kind === "bare" && <ShipWithoutDataWindow shipment={opened.shipment} gaps={opened.shipment.missing_ship} mutate={mutate} close={() => setOpened(null)} />}
     {header === "journal" && <JournalWindow shipments={shipments} selectedShipment={shipments.find((shipment) => shipment.id === urlParam("shipment"))} initialQuery={urlParam("q")} close={() => setHeader(null)} />}
     {header === "good" && <RegisterGoodWindow reload={reload} close={() => setHeader(null)} />}
     {header === "request" && <CreateShipmentWindow reload={reload} close={() => setHeader(null)} />}

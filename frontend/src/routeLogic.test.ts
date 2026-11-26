@@ -167,6 +167,8 @@ it("takes operation norms from the stored ETK only while it was built from the s
   expect(documentMinutes(document, ["cutWire"])).toBeNull();
   expect(documentMinutes(document, ["cutWire", "insTerm"])).toBeNull();
   expect(documentMinutes(null, ["cutWire"])).toBeNull();
+  document.operations[0].time!.push({ name: "Без нормы", norm: "" });
+  expect(documentMinutes(document, ["cutWire", "prsTerm"])).toEqual({ minutes: [11.54, .5], quantity: 5, unknown: [true, false] });
 });
 
 it("names the final block after its own last operation when asked; an empty final block is the product", () => {

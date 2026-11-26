@@ -72,7 +72,10 @@ def marking_plan(mark: Mapping | None, length: Decimal, translate: Callable[[str
         blocking.append(f"Режим маркировки «{mode}» не поддерживается")
         mode = "none"
     values: list[tuple[str, str]] = [("marking", "Выкл" if mode == "none" else "Вкл")]
-    if mode != "none":
+    if mode == "none":
+        # Disable the previous job completely: an old text must not return when marking is enabled again.
+        values += [("mark_by_step", "Выкл"), ("mark_count", "0"), *((key, "") for key in TEXT_KEYS)]
+    else:
         front_mm = _number(mark.get("frontMm"), DEFAULT_MARGIN_MM, "Метка у начала", blocking)
         back_mm = _number(mark.get("backMm"), DEFAULT_MARGIN_MM, "Метка у конца", blocking)
         step = _number(mark.get("stepMm"), DEFAULT_STEP_MM, "Шаг средних меток", blocking)

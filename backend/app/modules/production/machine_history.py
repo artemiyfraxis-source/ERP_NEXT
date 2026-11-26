@@ -59,6 +59,9 @@ MARK_TEXTS = (("F", 440), ("M", 455), ("B", 470))
 MARK_WORDS = (400, 411, 412, *range(440, 485))
 UNIQUE_VIOLATION = "23505"  # PostgreSQL SQLSTATE
 log = logging.getLogger(__name__)
+# Migration 0212 froze CHECK run_kind IN ('cutting', 'manual'): a standalone «wire» run is stored as 'manual'
+# (no cutting group); a new stored value needs a new migration.
+KINDS = ("cutting", "manual")
 _SQL = lambda values: ", ".join(repr(value) for value in values)  # noqa: E731
 
 
@@ -76,7 +79,7 @@ class MachineSpeedRow(Base):
         CheckConstraint("state_code BETWEEN 0 AND 65535", name="ck_production_machine_speed_rows_state"),
         CheckConstraint("alarm_code IS NULL OR alarm_code BETWEEN 0 AND 65535",
                         name="ck_production_machine_speed_rows_alarm"),
-        CheckConstraint(f"run_kind IS NULL OR run_kind IN ({_SQL(runs.KINDS)})",
+        CheckConstraint(f"run_kind IS NULL OR run_kind IN ({_SQL(KINDS)})",
                         name="ck_production_machine_speed_rows_run_kind"),
         CheckConstraint("run_write_id IS NULL OR run_kind IS NOT NULL", name="ck_production_machine_speed_rows_run"),
         CheckConstraint("trim(setup_key) <> ''", name="ck_production_machine_speed_rows_setup"),
@@ -149,7 +152,9 @@ def open_run(session: Session, equipment_id: UUID,
         return None, None, ""
     run = runs.info(row) or {}
     wire = ""
-    if run["kind"] == "manual":
+    if run["kind"] == "wire":
+        wire = str(run.get("wire") or "")
+    elif run["kind"] == "manual":
         job_id = _uuid(run.get("job_id"))
         job = session.get(ManualJobRow, job_id) if job_id else None
         wire = job.wire if job else ""
@@ -157,7 +162,7 @@ def open_run(session: Session, equipment_id: UUID,
         group_id = _uuid(run.get("group_id"))
         group = session.get(CuttingGroupRow, group_id) if group_id else None
         wire = str((group.recipe or {}).get("cable") or "") if group else ""
-    return row.id, run["kind"], (wire_of(wire) if wire.strip() else "")[:WIRE_MAX]
+    return row.id, "manual" if run["kind"] == "wire" else run["kind"], (wire_of(wire) if wire.strip() else "")[:WIRE_MAX]
 
 
 def _reason(last: MachineSpeedRow | None, boot: str, values: dict) -> str | None:

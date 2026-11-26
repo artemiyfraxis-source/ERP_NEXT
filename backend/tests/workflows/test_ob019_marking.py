@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from app.workflows.machine_writes_api import latin
 from app.workflows.ob019_marking import group_laser_mark, marking_plan
+from app.modules.production.machine_writes import FieldWrite, plan_writes
 
 LENGTH = Decimal(325)
 
@@ -24,9 +25,11 @@ def test_no_laser_mark_in_the_etk_means_no_plan():
     assert found == {"mode": "full"}
 
 
-def test_none_mode_switches_marking_off_and_nothing_else():
+def test_none_mode_clears_previous_job_texts_and_middle_mark_mode():
     plan = _plan({"mode": "none", "front": "A"})
-    assert plan["mode"] == "none" and _values(plan) == {"marking": "Выкл"} and plan["blocking"] == []
+    assert plan["mode"] == "none" and plan["blocking"] == []
+    assert _values(plan) == {"marking": "Выкл", "mark_by_step": "Выкл", "mark_count": "0",
+                             "mark_front": "", "mark_middle": "", "mark_back": ""}
 
 
 def test_ends_mode_registers_with_defaults_and_cleared_middle():
@@ -43,6 +46,25 @@ def test_full_mode_registers_with_step_and_cleared_edges():
                              "mark_front": "", "mark_back": "", "mark_count": "0", "mark_pos_front_mm": "15",
                              "mark_pos_back_mm": "10"}
     assert _values(_plan({"mode": "full", "middle": "X"}))["mark_step_mm"] == "100"
+
+
+def test_full_mode_encodes_step_text_and_mode_without_unverified_transfer_flag():
+    plan = _plan({"mode": "full", "middle": "WIRE 1", "stepMm": "50,5"})
+    blocks, bits, _ = plan_writes([FieldWrite(key, value) for key, value in _values(plan).items()], {})
+    words = {block["addr"] + offset: value for block in blocks for offset, value in enumerate(block["values"])}
+    assert bits == [{"addr": 400, "bit": 0, "value": 1}, {"addr": 422, "bit": 0, "value": 1}]
+    assert words[409] == 5050 and words[410] == 0
+    assert words[411] == words[412] == 0  # Count is inactive in distance mode; do not infer PLC semantics.
+    assert [words[address] for address in range(455, 470)] == [0x5749, 0x5245, 0x2031] + [0] * 12
+    assert all(words[address] == 0 for address in [*range(440, 455), *range(470, 485)])
+    assert 421 not in words and all(bit["addr"] != 421 for bit in bits)
+
+
+def test_off_mode_zero_fills_all_text_registers():
+    blocks, bits, _ = plan_writes([FieldWrite(key, value) for key, value in _values(_plan({"mode": "none"})).items()], {})
+    words = {block["addr"] + offset: value for block in blocks for offset, value in enumerate(block["values"])}
+    assert all(words[address] == 0 for address in range(440, 485))
+    assert bits == [{"addr": 400, "bit": 0, "value": 0}, {"addr": 422, "bit": 0, "value": 0}]
 
 
 def test_cyrillic_is_transliterated_with_a_warning():

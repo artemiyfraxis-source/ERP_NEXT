@@ -108,7 +108,7 @@ it("is a tab of «Доступы» for full access only", async () => {
     if (String(input) === "/api/auth/access") return json({ sections: [], levels: [], defaults: {}, seed: {}, matrix: {}, users: [] });
     return json({ tokens: TOKENS, scopes: {} });
   });
-  render(<AccessPage />);
+  render(<AccessPage viewerId="viewer-a" />);
   fireEvent.click(await screen.findByRole("button", { name: "Токены API" }));
   expect(await screen.findByText("Генератор на ноутбуке")).toBeInTheDocument();
 

@@ -1,6 +1,8 @@
 """ERP deletion history remains authoritative when a frozen mirror is reloaded."""
 
 from dataclasses import replace
+import json
+import sqlite3
 
 import pytest
 from alembic import command
@@ -15,6 +17,7 @@ from app.modules.references.domain import EQUIPMENT_TABS, TechOperationTab
 from app.modules.references.infrastructure import (
     EQUIPMENT_ROWS, EquipmentUnitRow, SqlAlchemyReferencesUnitOfWork, TechOperationRecordRow,
 )
+from app.modules.production.infrastructure import ProductionInstrumentRow
 from app.modules.references.load_mirror import format_report, load_mirror, read_mirror
 from app.shared.persistence import AuditEventRow
 from tests.references.test_load_mirror import (
@@ -23,10 +26,24 @@ from tests.references.test_load_mirror import (
 from tests.references.test_equipment_catalogs import cutover_db  # noqa: F401
 
 
-@pytest.mark.parametrize("kind,tab", tuple(zip(
-    ("Оборудование", "Средства измерений", "Обеспечивающее оборудование", "Аппликаторы", "Матрицы", "Инструмент"),
-    EQUIPMENT_TABS,
-)))
+def test_reload_never_loads_a_measuring_instrument(tmp_path, uow, sessions):
+    # 0217: a СИ lives only in the single registry; the mirror neither creates, overwrites nor resurrects one.
+    source = mirror(tmp_path, **{"БД.ОБ": FILES["БД.ОБ"].replace("Инструмент", "Средства измерений")})
+    for _ in range(2):
+        load_mirror(source, uow, dry_run=False, now=NOW)
+        assert rows(uow, EQUIPMENT_TABS) == []
+        assert rows(uow, TechOperationTab.HEAT_SHRINK) == ["ТУТ 4/2"]
+        with sessions() as session:
+            assert session.scalar(select(func.count()).select_from(EQUIPMENT_ROWS["ob_measuring"])) == 0
+            assert session.scalar(select(func.count()).select_from(ProductionInstrumentRow)) == 0
+
+
+@pytest.mark.parametrize("kind,tab", tuple(
+    (kind, tab) for kind, tab in zip(
+        ("Оборудование", "Средства измерений", "Обеспечивающее оборудование", "Аппликаторы", "Матрицы", "Инструмент"),
+        EQUIPMENT_TABS,
+    ) if tab != TechOperationTab.MEASURING  # see test_reload_never_loads_a_measuring_instrument
+))
 def test_reload_respects_deletions_in_every_equipment_catalog(tmp_path, uow, sessions, kind, tab):
     source = mirror(tmp_path, **{"БД.ОБ": FILES["БД.ОБ"].replace("Инструмент", kind)})
     load_mirror(source, uow, dry_run=False, now=NOW)
@@ -196,6 +213,19 @@ def test_live_equipment_provenance_wins_over_deleted_inventory_fallback(tmp_path
 
 def test_frozen_pre_cutover_equipment_does_not_override_a_live_deletion(cutover_db):
     path, config, ids = cutover_db
+    # 0217 refuses any populated СИ catalog that differs from the reviewed production manifest
+    # (tests/production/test_instrument_catalog_cutover.py), so this synthetic pre-cutover base carries no СИ.
+    with sqlite3.connect(path) as connection:
+        connection.execute("UPDATE tech_operation_records SET fields=? WHERE id=?", (json.dumps(
+            {"Тип": "Оборудование", "obType": "Оборудование", "Инв. номер": "ОБ.002", "Наменование": "Исходное имя"},
+            ensure_ascii=False), ids[1].hex))
+    command.upgrade(config, "0216_equipment_screen_group")
+    # The fixture writes with SQLite FKs off and leaves made-up lot/task ids; 0217's SQLite rebuild rightly checks
+    # every FK, so drop those orphans (none of them is equipment) before upgrading.
+    with sqlite3.connect(path) as connection:
+        while orphans := connection.execute("PRAGMA foreign_key_check").fetchall():
+            for table, rowid, _parent, _key in orphans:
+                connection.execute(f'DELETE FROM "{table}" WHERE rowid = ?', (rowid,))
     command.upgrade(config, "head")
     engine = create_engine(f"sqlite:///{path}")
     try:

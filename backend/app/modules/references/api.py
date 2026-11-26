@@ -101,6 +101,7 @@ class FieldEditPayload(BaseModel):
 
 class RecordEditPayload(BaseModel):
     edits: list[FieldEditPayload] = Field(min_length=1, max_length=MAX_ROW_EDITS)
+    version: int | None = Field(default=None, ge=1)
 
 
 class RecordCreatePayload(BaseModel):
@@ -258,6 +259,11 @@ def tech_operations(
             own = [name for name in own if name in catalog_columns]
         # БД.ОБ / БД.ОП: the ids the row is linked by (model, role, tool, «Обслуживает»; the models of the cells)
         extras = uow.equipment.record_extras(records) if hasattr(uow, "equipment") else {}
+        catalog = getattr(uow, "instrument_catalog", None)
+        if catalog is not None:
+            for item in records:
+                if item.tab == TechOperationTab.MEASURING:
+                    extras.setdefault(item.id, {}).update(catalog.metadata(item.id))
         if getattr(uow, "session", None) is not None:
             for unit_id, passport in instrument_passports(uow.session, [r.id for r in records if r.tab in EQUIPMENT_TABS]).items():
                 extras.setdefault(unit_id, {})["instrument_passport"] = passport
@@ -787,7 +793,7 @@ def edit_tech_record(
     record = _run_edit(lambda: edit_record(EditRecordCommand(
         record_id=record_id,
         edits=tuple(FieldEdit(item.field, item.old, item.value) for item in payload.edits),
-        actor=principal.actor, now=now,
+        actor=principal.actor, now=now, version=payload.version,
     ), uow_factory()))
     return _record_json(record)
 

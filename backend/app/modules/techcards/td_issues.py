@@ -300,6 +300,8 @@ class TdIssue:
 
 
 def operation_key_of(operation: dict[str, Any]) -> str:
+    if operation.get("operation_key"):
+        return str(operation["operation_key"])
     return "::".join(_text(operation.get(field)) for field in ("code", "connector", "side"))
 
 

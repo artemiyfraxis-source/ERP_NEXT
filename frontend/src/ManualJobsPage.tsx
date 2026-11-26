@@ -8,11 +8,15 @@ import { ManualJobWindow } from "./ManualJobWindow";
 import { manualJobsApi, type ManualJob, type ManualJobsList } from "./manualJobsApi";
 import "./manualJobs.css";
 
-/** «Ручная работа» (Производство): журнал работ на станках вне проекта за период — что делали, на каком станке,
- *  сколько годных и брака, что с материалом. Строка открывает окно работы (завершить / отменить), кнопка «Начать
- *  ручную работу» — новое окно. Видят «Производство», «Задания» и «Склад»; начинают и завершают те, у кого правка
- *  «Производства» или «Заданий». «Ждёт решения склада» — все завершённые работы, чей материал ещё не решён, за любые
- *  даты: строка открывает окно «Материал» (списать с партии / не списывать). */
+/** Shared by equipment and warehouse; starting outside-task work stays on equipment cards. */
+export interface WorkJournalProps {
+  /** Fixed equipment UUID for a machine card. Without it the journal offers an equipment filter. */
+  equipmentId?: string;
+  /** Initial period (ISO dates); users can still select historical periods. Defaults to URL dates or this week. */
+  period?: { from: string; to: string };
+  /** Warehouse mode opens all-date pending material by default, and completed rows open their material history. */
+  mode?: "journal" | "materials";
+}
 
 type Preset = "today" | "week" | "month";
 const PRESETS: Array<[Preset, string]> = [["today", "Сегодня"], ["week", "Неделя"], ["month", "Месяц"]];
@@ -37,37 +41,67 @@ const COLUMNS: DataColumn<ManualJob>[] = [
   { key: "operator", title: "Кто", filter: true, hidden: true, width: 140, value: (row) => row.operator },
 ];
 
-export function ManualJobsPage() {
-  const [period, setPeriod] = useState(() => presetPeriod("week"));
+export function WorkJournal({ equipmentId, period: initialPeriod, mode = "journal" }: WorkJournalProps = {}) {
+  const [initialQuery] = useState(() => new URLSearchParams(window.location.search));
+  const [period, setPeriod] = useState(() => {
+    const fallback = initialPeriod ?? presetPeriod("week");
+    return initialPeriod ?? { from: initialQuery.get("date_from") || fallback.from, to: initialQuery.get("date_to") || fallback.to };
+  });
+  const [selectedEquipment, setEquipment] = useState(() => initialQuery.get("equipment_id") || "");
+  const selected = equipmentId || selectedEquipment;
   const [data, setData] = useState<ManualJobsList | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [open, setOpen] = useState<ManualJob | "new" | null>(null);
+  const [open, setOpen] = useState<ManualJob | null>(null);
   const [material, setMaterial] = useState<ManualJob | null>(null);
-  const [waiting, setWaiting] = useState(false);
+  const [waiting, setWaiting] = useState(() => initialQuery.has("waiting") ? initialQuery.get("waiting") === "true" : mode === "materials");
   const [reload, setReload] = useState(0);
 
   useEffect(() => {
     if (!period.from || !period.to) return;
     const controller = new AbortController();
     setError("");
-    manualJobsApi.list(period.from, period.to, "", controller.signal, waiting)
-      .then(setData)
-      .catch((reason) => { if (!controller.signal.aborted) setError(failureText(reason, "Журнал ручной работы не загружен")); });
+    setLoading(true);
+    manualJobsApi.list(period.from, period.to, equipmentId ?? "", controller.signal, waiting)
+      .then(next => { if (!controller.signal.aborted) setData(next); })
+      .catch((reason) => { if (!controller.signal.aborted) setError(failureText(reason, "Журнал работ не загружен")); })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [period.from, period.to, waiting, reload]);
+  }, [period.from, period.to, equipmentId, waiting, reload]);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (!["machines", "stock"].includes(url.searchParams.get("section") ?? "")) return;
+    url.searchParams.set("date_from", period.from);
+    url.searchParams.set("date_to", period.to);
+    url.searchParams.set("waiting", String(waiting));
+    // A scoped journal must not replace the machine/source context of its host card.
+    if (!equipmentId) {
+      if (selectedEquipment) url.searchParams.set("equipment_id", selectedEquipment);
+      else url.searchParams.delete("equipment_id");
+    }
+    window.history.replaceState(window.history.state, "", url);
+  }, [period.from, period.to, waiting, selectedEquipment, equipmentId]);
 
   const saved = useCallback(() => setReload((value) => value + 1), []);
   const label = period.from === period.to ? formatDay(period.from) : `${formatDay(period.from)} – ${formatDay(period.to)}`;
-  const rows = useMemo(() => data?.rows ?? [], [data]);
+  const rows = useMemo(() => (data?.rows ?? []).filter(row => !selected || row.equipment_id === selected), [data, selected]);
+  const machines = useMemo(() => {
+    const result = new Map<string, string>();
+    for (const row of data?.rows ?? []) result.set(row.equipment_id, [row.inventory, row.machine].filter(Boolean).join(" · "));
+    return [...result].sort((a, b) => a[1].localeCompare(b[1], "ru", { numeric: true }));
+  }, [data]);
   const running = rows.filter((row) => row.status === "running").length;
   const waitingCount = data?.waiting_count ?? 0;
   const count = (value: number) => countLabel(value, ["работа", "работы", "работ"]);
   const decides = (row: ManualJob) => row.status === "done" && row.material === "pending" && Boolean(data?.can_decide);
-  const openRow = (row: ManualJob) => (decides(row) ? setMaterial(row) : setOpen(row));
+  const opensMaterial = (row: ManualJob) => (mode === "materials" && row.status === "done") || decides(row);
+  const openRow = (row: ManualJob) => (opensMaterial(row) ? setMaterial(row) : setOpen(row));
+  const title = mode === "materials" ? "Материал работ" : "Журнал работ";
 
-  return <section className="page mj-page">
+  return <section className="mj-page" aria-label={title}>
     <header className="page-head mj-head">
-      <h1>Ручная работа</h1>
+      <h2>{title}</h2>
       <div className="mj-period" role="group" aria-label="Период">
         {PRESETS.map(([key, title]) => {
           const value = presetPeriod(key);
@@ -77,24 +111,29 @@ export function ManualJobsPage() {
         <label>с<input type="date" name="from" autoComplete="off" aria-label="Начало периода" value={period.from} max={period.to} disabled={waiting} onChange={(event) => event.target.value && setPeriod({ ...period, from: event.target.value })} /></label>
         <label>по<input type="date" name="to" autoComplete="off" aria-label="Конец периода" value={period.to} min={period.from} disabled={waiting} onChange={(event) => event.target.value && setPeriod({ ...period, to: event.target.value })} /></label>
       </div>
+      <label className="mj-machine">Станок<select name="equipment_id" autoComplete="off" value={selected} disabled={Boolean(equipmentId)} onChange={event => setEquipment(event.target.value)}>
+        <option value="">Все станки</option>
+        {selected && !machines.some(([id]) => id === selected) && <option value={selected}>Выбранный станок</option>}
+        {machines.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+      </select></label>
       <button type="button" className={waiting ? "secondary small on mj-waiting" : "secondary small mj-waiting"} aria-pressed={waiting}
-        onClick={() => setWaiting(!waiting)}>Ждёт решения склада<span className={waitingCount ? "mj-count tone-warn" : "mj-count"}>{waitingCount}</span></button>
-      {data?.can_edit && <button type="button" className="primary mj-new" onClick={() => setOpen("new")}>Начать ручную работу</button>}
+        onClick={() => setWaiting(!waiting)}>Ждёт решения склада<span title="За все даты, все станки" className={waitingCount ? "mj-count tone-warn" : "mj-count"}>{waitingCount}</span></button>
     </header>
-    {error && <div className="error-banner" role="alert">{error}</div>}
-    {!data && !error && <p className="empty">Загрузка…</p>}
-    {data && <>
-      <p className="mj-summary">{waiting ? `Ждёт решения склада за все даты: ${count(rows.length)}`
-        : `За ${label}: ${count(rows.length)}${running ? ` · идёт сейчас ${running}` : ""}`}</p>
-      {!rows.length
-        ? <p className="empty">{waiting ? "Материал всех завершённых работ решён — склад ничего не ждёт"
-          : `За ${label} ручной работы не было${data.can_edit ? " — нажмите «Начать ручную работу» или кнопку «Ручная работа» на карточке станка" : ""}`}</p>
-        : <DataTable rows={rows} columns={COLUMNS} rowKey={(row) => row.id} label="Ручная работа" storageKey="manual-jobs"
-          exportName={waiting ? "Ручная работа — ждёт решения склада" : `Ручная работа ${label}`} onRowClick={openRow}
-          rowTitle={(row) => (decides(row) ? "Решить по материалу" : "Открыть работу")} pageSize={100} />}
-    </>}
-    {open && <ManualJobWindow job={open === "new" ? null : open} canEdit={data?.can_edit ?? false} canIssue={data?.can_issue ?? false}
+    {error && <div className="error-banner" role="alert">{error} <button type="button" className="secondary small" onClick={saved}>Повторить</button></div>}
+    {data && !loading && !error && <p className="mj-summary">{waiting ? `Ждёт решения склада за все даты: ${count(rows.length)}`
+      : `За ${label}: ${count(rows.length)}${running ? ` · идёт сейчас ${running}` : ""}`}</p>}
+    <DataTable rows={loading || error ? [] : rows} loading={loading} columns={COLUMNS} rowKey={(row) => row.id} label={title} storageKey="manual-jobs"
+      initialQuery={initialQuery.get("q") ?? undefined}
+      emptyText={error ? "Журнал не загружен" : rows.length ? "Ничего не найдено — измените поиск или фильтры"
+        : waiting ? (selected ? "На выбранном станке нет работ, ожидающих решения по материалу" : "Материал всех завершённых работ решён — склад ничего не ждёт")
+          : `За ${label} работ нет — выберите другой период или станок`}
+      exportName={waiting ? `${title} — ждёт решения склада` : `${title} ${label}`} onRowClick={openRow}
+      rowTitle={(row) => (opensMaterial(row) ? "Открыть материал работы" : "Открыть работу")} pageSize={100} />
+    {open && <ManualJobWindow job={open} canEdit={data?.can_edit ?? false} canIssue={data?.can_issue ?? false}
       close={() => setOpen(null)} onSaved={saved} />}
     {material && <ManualJobMaterial job={material} close={() => setMaterial(null)} onSaved={saved} />}
   </section>;
 }
+
+/** Compatibility export for existing consumers; the standalone page is no longer mounted by App. */
+export const ManualJobsPage = WorkJournal;

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
@@ -788,6 +788,10 @@ class MeasurementInstrument:
     warehouse_grn: str = ""
     warehouse_writeoff_id: UUID | None = None
     vna_app: str = ""
+    article: str = ""
+    notes: str = ""
+    measurement_category: str = ""
+    custom_fields: dict = field(default_factory=dict)
 
     def validate_for(self, moment: datetime) -> None:
         if self.kind is InstrumentKind.ACCESSORY:

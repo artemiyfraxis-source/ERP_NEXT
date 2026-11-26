@@ -123,8 +123,8 @@ def test_a_derived_scheme_keeps_the_shop_chain():
 
 def test_positional_blocks_apply_when_the_operations_carry_their_own_keys():
     """Generator ops keep their opKey inside «Ручная сборка»; the scheme still lists positions — both must work."""
-    ops = [{"type": "cutWire", "opKey": "cutA"}, {"type": "cutWire", "opKey": "cutB"},
-           {"type": "insHousing", "opKey": "house"}, {"type": "insMark", "key": "mark"}]
+    ops = [{"type": "cutWire", "opKey": "cutA", "tOp": 0}, {"type": "cutWire", "opKey": "cutB", "tOp": 0},
+           {"type": "insHousing", "opKey": "house", "tOp": 0}, {"type": "insMark", "key": "mark", "tOp": 0}]
     route = {"source": "manual", "blocks": [
         {"key": "wireA", "ops": [1], "final": False}, {"key": "wireB", "ops": ["2"], "final": False},
         {"key": "harness", "ops": [3, "mark"], "final": True},  # a position and an op key in one scheme
@@ -138,7 +138,7 @@ def test_positional_blocks_apply_when_the_operations_carry_their_own_keys():
 
 
 def test_every_scheme_that_does_not_fit_tells_the_master_why():
-    ops = [{"type": "cutWire", "key": "a"}, {"type": "prsTerm", "key": "b"}]
+    ops = [{"type": "cutWire", "key": "a", "tOp": 0}, {"type": "prsTerm", "key": "b", "tOp": 0}]
     reasons = [
         ({"blocks": [{"key": "x", "ops": ["a", "nope"], "final": True}], "edges": []}, "операции «nope» нет в техкарте (операций 2)"),
         ({"blocks": [{"key": "x", "ops": [1, 3], "final": True}], "edges": []}, "операции «3» нет в техкарте (операций 2)"),

@@ -18,7 +18,8 @@ owner's reason instead of «обновлено по справочнику»; af
 «unchanged», otherwise the whole run rolls back. Every change the refresh reports is printed per card (dry run too), and
 the run refuses when anything but the «Контроль КСВН» operation itself would change — allowed besides it: the ПФ
 scheme losing exactly that operation and the operation before it taking over the finished-product name in its
-«Результат» / «Норма времени» rows (same quantities, units, times) — a dry run with such a card ends with an error, not «dry run». Cards with hand-edited operations keep them (the refresh path keeps
+«Результат» / «Норма времени» rows, the operation after it accepting the unchecked product in «Принимает» (same
+quantities, units, times) — a dry run with such a card ends with an error, not «dry run». Cards with hand-edited operations keep them (the refresh path keeps
 overrides); a refresh conflict refuses --apply. Non-coax cards (the Orange Pi harness КБ1) and cards without inputs
 (КБ41) are never touched. Production tasks, serials, labels, measurements, cutting groups and stock are not written:
 launched tasks keep their pinned revision, and «Замеры КСВН» follows the current revision's «Контроль КСВН»
@@ -118,7 +119,9 @@ def _route(document, drop):
             for block in blocks or () if isinstance(block, Mapping)]
 
 
-_ROWS = {"Результат": "result", "Норма времени": "time"}
+# «Принимает»: since the coax finishing order (labels → shrink → КСВН → connector colour, PR 1020) the operation after
+# «Контроль КСВН» accepts its product; without the check it accepts the previous product — same quantity and unit.
+_ROWS = {"Результат": "result", "Норма времени": "time", "Принимает": "semis"}
 
 
 def _ops(document) -> dict:
@@ -127,8 +130,9 @@ def _ops(document) -> dict:
 
 def unexpected_changes(old, new, changes) -> list[dict]:
     """The refresh changes that are NOT the «Контроль КСВН» operation leaving (or, on rollback, coming back), the ПФ
-    scheme losing (gaining) exactly that operation, or the operation before it taking over (handing back) the finished
-    product as its «Результат» / «Норма времени» row name — quantities, units and times unchanged. Pure."""
+    scheme losing (gaining) exactly that operation, the operation before it taking over (handing back) the finished
+    product as its «Результат» / «Норма времени» row name, or the operation after it accepting (in «Принимает») the
+    product before the check instead of the checked one — quantities, units and times unchanged. Pure."""
     drop = _vswr_keys(old, new)
     same_route = _route(old, drop) == _route(new, drop)
     before, after = _ops(old), _ops(new)

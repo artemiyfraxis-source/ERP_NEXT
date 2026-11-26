@@ -364,13 +364,12 @@ interface PlanLoadSheetProps {
   onStatusChanged: () => void;
   onMark: (mark: SheetMark) => Promise<void>;
   onDeadline: (project: string, deadline: string) => Promise<void>;
-  onOpenProject: (row: ProductionPlanRow) => void;
+  onOpenProject?: (row: ProductionPlanRow) => void;
   onOpenJournal: (row: ProductionPlanRow) => void;
   /** Есть ли у проекта карточка в «Проектах» (подсказка к №); по умолчанию — есть КБ. */
-  hasCard?: (row: ProductionPlanRow) => boolean;
 }
 
-function PersonalPlanLoadSheet({ userId, rows, from, to, today, holidays, stages, suppliedValues, arrivalValues, canEdit, busy, onStatusChanged, onMark, onDeadline, onOpenProject, onOpenJournal, hasCard }: PlanLoadSheetProps) {
+function PersonalPlanLoadSheet({ userId, rows, from, to, today, holidays, stages, suppliedValues, arrivalValues, canEdit, busy, onStatusChanged, onMark, onDeadline, onOpenProject, onOpenJournal }: PlanLoadSheetProps) {
   const [query, setQuery] = useState("");
   const [showClosed, setShowClosed] = useState(false);
   const [showShipped, setShowShipped] = useState(false);
@@ -497,7 +496,6 @@ function PersonalPlanLoadSheet({ userId, rows, from, to, today, holidays, stages
   }
   const row = editing ? rows.find((item) => item.project === editing.project) : undefined;
   const span = layout.columns.length + units;
-  const cardOf = hasCard ?? ((item: ProductionPlanRow) => item.kits.length > 0);
 
   return <div className="zg">
     <div className="zg-toolbar">
@@ -560,7 +558,7 @@ function PersonalPlanLoadSheet({ userId, rows, from, to, today, holidays, stages
           {visible.map((group) => <SheetGroupRows key={group.key} group={group} showSpan={!group.closed && group.key !== lastStage}
             folded={collapsed.includes(group.key)} onToggle={() => toggleGroup(group.key)}
             layout={layout} days={days} weeks={scale === "week" ? weeks : null} units={units} today={today} canEdit={canEdit} busy={busy} suppliedValues={suppliedValues} onStatusChanged={onStatusChanged}
-            open={open} mark={mark} onOpenProject={onOpenProject} onOpenJournal={onOpenJournal} hasCard={cardOf} />)}
+            open={open} mark={mark} onOpenProject={onOpenProject} onOpenJournal={onOpenJournal} />)}
           {!shown && <tr className="zg-empty-row"><td colSpan={span} className="zg-empty">
             <span className="zg-empty-text">{query ? "Под этот поиск проектов нет." : "Проектов в плане нет — заведите проект в «Проектах»."}</span>
           </td></tr>}
@@ -593,7 +591,7 @@ function dayClass(day: SheetDay, today: string, base: string) {
   return [base, day.off && "zg-off", day.iso === today && "zg-today", day.monthStart && "zg-month"].filter(Boolean).join(" ");
 }
 
-function SheetGroupRows({ group, showSpan, folded, onToggle, layout, days, weeks, units, today, canEdit, busy, suppliedValues, onStatusChanged, open, mark, onOpenProject, onOpenJournal, hasCard }: {
+function SheetGroupRows({ group, showSpan, folded, onToggle, layout, days, weeks, units, today, canEdit, busy, suppliedValues, onStatusChanged, open, mark, onOpenProject, onOpenJournal }: {
   group: SheetGroupData;
   /** Полоса плановых работ нужна только открытым проектам не на последнем этапе. */
   showSpan: boolean;
@@ -609,10 +607,9 @@ function SheetGroupRows({ group, showSpan, folded, onToggle, layout, days, weeks
   suppliedValues: string[];
   open: (event: MouseEvent<HTMLElement>, project: string, field: string) => void;
   mark: (project: string, field: string, value: string, text?: string) => Promise<void>;
-  onOpenProject: (row: ProductionPlanRow) => void;
+  onOpenProject?: (row: ProductionPlanRow) => void;
   onOpenJournal: (row: ProductionPlanRow) => void;
   onStatusChanged: () => void;
-  hasCard: (row: ProductionPlanRow) => boolean;
 }) {
   const { rows } = group;
   return <>
@@ -623,7 +620,7 @@ function SheetGroupRows({ group, showSpan, folded, onToggle, layout, days, weeks
       style={{ "--zg-color": `var(--zg-c${projectColor(row.project)})` } as CSSProperties}>
       {layout.columns.map((column, index) => <SheetCellView key={column.key} column={column} index={index} layout={layout} row={row}
         canEdit={canEdit} busy={busy} suppliedValues={suppliedValues} onStatusChanged={onStatusChanged} open={open} mark={mark}
-        onOpenProject={onOpenProject} onOpenJournal={onOpenJournal} hasCard={hasCard} />)}
+        onOpenProject={onOpenProject} onOpenJournal={onOpenJournal} />)}
       {weeks ? <WeekCells row={row} weeks={weeks} today={today} showSpan={showSpan} /> : <CalendarCells row={row} days={days} today={today} showSpan={showSpan} canEdit={canEdit} open={open} />}
     </tr>)}
   </>;
@@ -646,7 +643,7 @@ function arrivalTone(value: string, late: boolean) {
   return "";
 }
 
-function SheetCellView({ column, index, layout, row, canEdit, busy, suppliedValues, onStatusChanged, open, mark, onOpenProject, onOpenJournal, hasCard }: {
+function SheetCellView({ column, index, layout, row, canEdit, busy, suppliedValues, onStatusChanged, open, mark, onOpenProject, onOpenJournal }: {
   column: Column;
   index: number;
   layout: Layout;
@@ -656,10 +653,9 @@ function SheetCellView({ column, index, layout, row, canEdit, busy, suppliedValu
   suppliedValues: string[];
   open: (event: MouseEvent<HTMLElement>, project: string, field: string) => void;
   mark: (project: string, field: string, value: string, text?: string) => Promise<void>;
-  onOpenProject: (row: ProductionPlanRow) => void;
+  onOpenProject?: (row: ProductionPlanRow) => void;
   onOpenJournal: (row: ProductionPlanRow) => void;
   onStatusChanged: () => void;
-  hasCard: (row: ProductionPlanRow) => boolean;
 }) {
   const key = column.key;
   const cell = key in (row.sheet ?? {}) ? row.sheet?.[key as ProductionPlanSheetField] : undefined;
@@ -684,10 +680,11 @@ function SheetCellView({ column, index, layout, row, canEdit, busy, suppliedValu
   if (key === "project") {
     // «Комментарий» скрыт — он виден отметкой у номера, текст — в подсказке.
     const note = layout.hidden.has("comment") ? row.sheet?.comment?.value ?? "" : "";
-    const action = "Открыть проект в ресурсном планировании";
-    return td(<button className="zg-project" title={note ? `${action}\nКомментарий: ${note}` : action} onClick={() => onOpenProject(row)}>
-      {row.project}{note && <i className="zg-note-mark" aria-hidden />}
-    </button>, note ? "zg-has-note" : "");
+    const content = <>{row.project}{note && <i className="zg-note-mark" aria-hidden />}</>;
+    const title = [onOpenProject && "Открыть карточку проекта", note && `Комментарий: ${note}`].filter(Boolean).join("\n");
+    return td(onOpenProject
+      ? <button className="zg-project" title={title} onClick={() => onOpenProject(row)}>{content}</button>
+      : <span className="zg-project" title={title}>{content}</span>, note ? "zg-has-note" : "");
   }
   if (key === "customer") {
     return td(<button className="zg-link" title={row.customer ? `${row.customer} — журнал проекта` : "Журнал проекта"} onClick={() => onOpenJournal(row)}>{row.customer || "—"}</button>);

@@ -156,7 +156,7 @@ describe("GenPfScheme", () => {
     const tiny = built();
     (tiny.document!.route as { blocks: Array<{ rolled_minutes: number }> }).blocks[1].rolled_minutes = 0.001;
     render(<p data-testid="tiny">{previewSummary(tiny)}</p>);
-    expect(screen.getByTestId("tiny")).toHaveTextContent(/^2 ПФ · 3 операции$/);
+    expect(screen.getByTestId("tiny")).toHaveTextContent("2 ПФ · 3 операции · на изделие 0,001 мин");
   });
 });
 
