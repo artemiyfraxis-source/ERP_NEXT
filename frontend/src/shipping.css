@@ -152,3 +152,18 @@ table.ship-lines.ship-lines-compact td.ship-name { width: auto; min-width: 260px
 .pack-permission-window .intake-window-table th,
 .pack-permission-window .intake-window-table td { white-space: normal; overflow-wrap: anywhere; }
 .pack-permission-window .ship-qty { max-width: 100%; }
+/* Окно упаковки v2: четыре группы действий, главное действие заметнее, крупнее шрифт. */
+.intake-pack .ship-card { gap: 14px; padding: 16px 18px; font-size: 14px; }
+.intake-pack .ship-card-head { font-size: 14px; }
+.intake-pack .ship-lines th, .intake-pack .ship-lines td, .intake-pack .intake-pack-table th, .intake-pack .intake-pack-table td { padding-top: 7px; padding-bottom: 7px; font-size: 14px; }
+.ship-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; align-items: start; }
+.ship-group { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+.ship-group-main { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 6%, var(--card)); }
+.ship-group-title { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; color: var(--muted-foreground); }
+.ship-group .ship-docs { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-top: 0; border-top: 0; }
+button.ship-primary { min-height: 44px; padding: 10px 28px; font-size: 16px; font-weight: 700; }
+.intake-pack-cell { display: inline-grid; justify-items: end; gap: 2px; }
+.intake-pack-cell small { font-size: 12px; white-space: nowrap; }
+.intake-pack-table .ship-qty { width: 96px; text-align: right; font-variant-numeric: tabular-nums; }
+.intake-pack-table .ship-qty.invalid { border-color: var(--tone-danger); }
+.intake-pack-table td.num { font-variant-numeric: tabular-nums; }

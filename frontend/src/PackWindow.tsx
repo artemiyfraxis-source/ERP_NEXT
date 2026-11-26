@@ -25,7 +25,7 @@ export function PackWindow({ project, rows, shipments, rights, reload, close }: 
   const dataShipment = shipments.find((shipment) => shipment.id === dataFor) ?? null;
   // После упаковки форма собирается заново по свежим остаткам.
 
-  return <PageWindow label={`Упаковка ${project}`} close={close} width={1280}>
+  return <PageWindow label={`Упаковка ${project}`} close={close} width={1440}>
     <section className="panel intake-window intake-pack">
       <header className="page-head"><h2>Упаковка · {project}</h2><button type="button" className="secondary small" onClick={close}>Закрыть</button></header>
       <Banners error={error} notice={notice} />
@@ -68,6 +68,8 @@ function PackForm({ project, candidates, rights, busy, mutate, reload }: { proje
 
   const pack = () => {
     setProblem("");
+    const bad = candidates.find((row) => canPack(row) && qty[kbKey(row)]?.trim() && !(num(qty[kbKey(row)]) > 0));
+    if (bad) { setProblem(`${bad.item_index}: введите число больше нуля`); return; }
     if (!chosen.length) { setProblem("Отметьте КБ и укажите количество"); return; }
     if (chosenGroups.length > 1) { setProblem("У выбранных КБ разные данные доставки. Упакуйте каждую группу отдельной отправкой; введённые количества сохранены."); return; }
     const over = chosen.find((row) => num(qty[kbKey(row)]) > permittedPack(row));
@@ -106,24 +108,37 @@ function PackForm({ project, candidates, rights, busy, mutate, reload }: { proje
               termsText(group.delivery.terms), group.delivery.carrier, group.delivery.upd_type].filter(Boolean).join(" · ") || "Не задана"}</span>
           </div>)}
         </div>}
-        <table className="grid compact intake-window-table">
-          <thead><tr><th aria-label="Отметка" /><th>КБ</th><th className="grow">Наименование</th><th className="num">Принято</th><th className="num">Упаковано</th><th className="num">На складе не упаковано</th><th className="num">Разрешено ещё</th><th className="num">Упаковать, шт</th></tr></thead>
+        <div className="table-scroll"><table className="grid compact intake-window-table intake-pack-table">
+          <thead><tr><th aria-label="Отметка" /><th>Позиция</th><th className="grow">Наименование</th><th className="num">Заказано</th><th className="num">Упаковано</th><th className="num">Недобор</th><th>ГРН</th></tr></thead>
           <tbody>{candidates.map((row) => {
             const key = kbKey(row);
             const allowed = canPack(row) && rights.canEdit;
-            const tooMuch = num(qty[key]) > permittedPack(row);
+            const typed = qty[key] ?? "";
+            const value = num(typed);
+            const limit = permittedPack(row);
+            const invalid = typed.trim() !== "" && (!Number.isFinite(Number(typed.replace(",", "."))) || value <= 0 || value > limit);
+            const reason = typed.trim() === "" ? "" : value <= 0 || !Number.isFinite(Number(typed.replace(",", "."))) ? "Введите число больше нуля" : value > limit ? `Можно не больше ${limit}` : "";
+            // Недобор — чего не хватает до заказанного после уже упакованного и вводимого сейчас.
+            const shortage = Math.max(round2(num(row.needed) - num(row.packed) - (invalid ? 0 : value)), 0);
+            const grn = (row.acts ?? []).map((act) => act.grn).filter(Boolean).join(", ") || row.grn || "";
             return <tr key={key} className={allowed ? undefined : "ship-line-off"}>
               <td><input type="checkbox" aria-label={`Упаковать ${row.item_index}`} disabled={!allowed} checked={allowed && Boolean(marked[key])} onChange={(event) => setMarked({ ...marked, [key]: event.target.checked })} /></td>
-              <td><strong>{row.item_index}</strong></td>
+              <td><strong>{row.project !== project ? `${row.project} · ` : ""}{row.item_index}</strong></td>
               <td className="grow"><span className="intake-clip intake-name" title={row.name}>{row.name}</span></td>
-              <td className="num">{row.accepted}</td><td className="num">{row.packed}</td><td className="num">{packable(row)}</td><td className="num"><strong>{row.pack_permission_remaining ?? "0"}</strong></td>
+              <td className="num">{row.needed} {row.unit}</td>
               <td className="num">{allowed
-                ? <input className={tooMuch ? "ship-qty invalid" : "ship-qty"} aria-label={`Сколько упаковать ${row.item_index}`} type="number" min="0" max={permittedPack(row)} step="any" value={qty[key] ?? ""}
-                  onChange={(event) => { setQty({ ...qty, [key]: event.target.value }); setMarked({ ...marked, [key]: num(event.target.value) > 0 }); }} />
-                : <span className="muted" title="Упаковать можно после решения менеджера «упаковывать»">{packAllowed(row) ? "—" : "ждёт решения менеджера"}</span>}</td>
+                ? <span className="intake-pack-cell">
+                  <input className={invalid ? "ship-qty invalid" : "ship-qty"} aria-label={`Сколько упаковать ${row.item_index}`} aria-invalid={invalid} aria-describedby={`pack-hint-${key}`} type="text" inputMode="decimal" data-max={limit} value={typed}
+                    placeholder={`до ${limit}`}
+                    onChange={(event) => { setQty({ ...qty, [key]: event.target.value }); setMarked({ ...marked, [key]: num(event.target.value) > 0 }); }} />
+                  <small className={invalid ? "tone-danger" : "muted"} id={`pack-hint-${key}`}>{invalid ? reason : `уже упаковано ${row.packed}, можно ещё ${limit}`}</small>
+                </span>
+                : <span className="muted" title="Упаковать можно после решения менеджера «упаковывать»">{packAllowed(row) ? row.packed : "ждёт решения менеджера"}</span>}</td>
+              <td className={shortage > 0 ? "num tone-warn" : "num"} aria-label={`Недобор ${row.item_index}`}>{shortage}</td>
+              <td>{grn || <span className="muted">—</span>}</td>
             </tr>;
           })}</tbody>
-        </table>
+        </table></div>
         {rights.canEdit && <div className="intake-window-actions">
           {rights.canManage && <label className="ship-inline">Отгрузить до<input aria-label={`Отгрузить до: проект ${project}`} type="date" min={isoDay(new Date())} value={deadline} onChange={(event) => setDeadline(event.target.value)} /></label>}
           {problem && <span className="tone-danger" role="alert">{problem}</span>}
