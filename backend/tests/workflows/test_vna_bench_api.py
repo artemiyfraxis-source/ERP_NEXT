@@ -20,6 +20,7 @@ from app.modules.production.rf_interfaces import RfDetails, RfInterface
 from app.modules.production.vna_check_infrastructure import VnaCheckRow
 from app.modules.production.vna_checks import KitStandard, kit_response
 from app.modules.production import vna_bench as bench
+from app.modules.production.vna_bench_protocol import screen_hash
 from app.modules.production.vna_screen_infrastructure import VnaScreenRepository
 from app.modules.production.vna_screens import screen as bench_screen
 from app.modules.production.vna_session_infrastructure import (VnaBenchItemRow, VnaCommandRow, VnaSessionRepository,
@@ -247,14 +248,24 @@ def calibrate(env):
     assert view["session"]["command"]["label"] == "сохранение настроек оператора"
     env["stub"].drive()
     view = state(env)
-    assert [s["key"] for s in view["session"]["steps"]] == ["calibration", "confidence", "load_port1", "load_port2"]
+    # 26.11.2026: one step — the ACM calibration; no confidence test, no LOAD (owner's decision).
+    assert [s["key"] for s in view["session"]["steps"]] == ["calibration"]
     assert view["session"]["steps"][0]["status"] == "pending" and not view["calibration"]["valid"]
-    for key in ("calibration", "load_port1", "load_port2"):
-        post(env, session_path(view, f"/steps/{key}"), {"version": view["session"]["version"]})
-        env["stub"].drive()
-        view = state(env)
-    assert [s["status"] for s in view["session"]["steps"]] == ["passed"] * 4, view["session"]["steps"]
-    assert view["calibration"]["valid"] and view["calibration"]["temperatures"] == TEMPS
+    post(env, session_path(view, "/steps/calibration"), {"version": view["session"]["version"]})
+    env["stub"].drive()
+    return assert_calibrated(env, state(env))
+
+
+def assert_calibrated(env, view):
+    """The ACM calibration alone made the session valid: one passed step, temperatures from the device reading after
+    it, and a «только калибровка» journal row."""
+    assert [(s["key"], s["status"]) for s in view["session"]["steps"]] == [("calibration", "passed")], view["session"]
+    assert view["calibration"]["valid"] and view["calibration"]["temperatures"] == env["stub"].temps
+    with env["sessions"]() as session:
+        check = session.get(VnaCheckRow, session.get(VnaSessionRow, UUID(view["session"]["id"])).calibration_check_id)
+        assert (check.kind, check.passed, check.confidence_passed, check.load_p1_vswr, check.load_p2_vswr) == (
+            "session", True, None, None, None)
+        assert check.note == "доверительный тест и LOAD отменены решением владельца 26.11.2026"
     return view
 
 
@@ -403,10 +414,10 @@ def test_calibration_journal_item_record_and_close(env):
     view = calibrate(env)
     with env["sessions"]() as session:
         journal = session.scalars(select(VnaCheckRow)).all()
-        assert [(r.kind, r.passed, r.load_p1_vswr <= 1.06) for r in journal] == [("session", True, True)]
+        assert [(r.kind, r.passed, r.load_p1_vswr) for r in journal] == [("session", True, None)]
         row = session.scalar(select(VnaSessionRow))
         assert row.calibration_check_id == journal[0].id and row.purpose == "bench" and row.task_id is None
-    assert matings(env, env["ids"]["acm"]) == 2 and matings(env, env["ids"]["cable1"]) == 2   # ECAL + LOAD
+    assert matings(env, env["ids"]["acm"]) == 2 and matings(env, env["ids"]["cable1"]) == 1   # ECAL only, no LOAD
     plan = post(env, session_path(view, "/plan"), {"target": dict(kind="instrument", instrument_id=str(env["ids"]["dut"]))})
     assert plan["refusal"] is None and plan["norm_vswr"] == 1.06 and plan["band_mhz"] == [10.0, 18000.0]
     assert plan["uncertainty"] and plan["screen_name"] == "ОТК — переход"
@@ -467,8 +478,8 @@ def test_refusals_before_and_during_items(env):
     env["stub"].drive()
     view = state(env)
     assert measure(env, view, expect=409)["detail"]["code"] == "calibration_expired"
-    assert post(env, session_path(view, "/steps/load_port1"), {"version": view["session"]["version"]},
-                409)["detail"]["code"] == "stale"
+    for dropped in ("confidence", "load_port1", "load_port2"):   # dropped by the owner on 26.11.2026
+        post(env, session_path(view, f"/steps/{dropped}"), {"version": view["session"]["version"]}, 422)
     assert post(env, session_path(view, "/steps/calibration"), {"version": view["session"]["version"] - 1},
                 409)["detail"]["code"] == "stale"
     view = calibrate_from_waiting(env, view)
@@ -483,12 +494,9 @@ def test_refusals_before_and_during_items(env):
 
 
 def calibrate_from_waiting(env, view):
-    for key in ("calibration", "load_port1", "load_port2"):
-        post(env, session_path(view, f"/steps/{key}"), {"version": view["session"]["version"]})
-        env["stub"].drive()
-        view = state(env)
-    assert view["calibration"]["valid"]
-    return view
+    post(env, session_path(view, "/steps/calibration"), {"version": view["session"]["version"]})
+    env["stub"].drive()
+    return assert_calibrated(env, state(env))
 
 
 def test_calibration_expires_after_four_hours_and_recalibrates_in_the_same_session(env):
@@ -500,30 +508,26 @@ def test_calibration_expires_after_four_hours_and_recalibrates_in_the_same_sessi
     assert measure(env, view, expect=409)["detail"]["code"] == "calibration_expired"
     post(env, session_path(view, "/steps/calibration"), {"version": view["session"]["version"]})
     env["stub"].drive()
-    view = state(env)
-    for key in ("load_port1", "load_port2"):
-        post(env, session_path(view, f"/steps/{key}"), {"version": view["session"]["version"]})
-        env["stub"].drive()
-        view = state(env)
-    assert view["calibration"]["valid"]
+    assert_calibrated(env, state(env))
 
 
-def test_failed_confidence_and_acm_change_and_failed_control_stop_work(env):
-    env["stub"].confidence_offset = 0.05   # ≈ 0,42 dB transmission: outside ±0,1 dB
+def test_refused_calibration_reading_and_acm_change_and_failed_control_stop_work(env):
+    # The reading after the ACM calibration has no ACM temperature: the calibration is not accepted, nothing journaled.
+    env["stub"].temps = {"vna_c": [30.0, 30.5], "acm_c": None}
     view = post(env, "/sessions")
     env["stub"].drive()
     view = state(env)
     post(env, session_path(view, "/steps/calibration"), {"version": view["session"]["version"]})
     env["stub"].drive()
     view = state(env)
-    assert view["session"]["steps"][1]["status"] == "failed" and not view["calibration"]["valid"]
+    assert view["session"]["steps"][0]["status"] == "failed" and not view["calibration"]["valid"]
+    assert view["session"]["steps"][0]["refusal"]["code"] == "temperature_unknown"
     with env["sessions"]() as session:
-        assert session.scalar(select(VnaCheckRow.passed)) is False
-    env["stub"].confidence_offset = 0.0
+        assert session.scalar(select(func.count()).select_from(VnaCheckRow)) == 0
+    env["stub"].temps = dict(TEMPS)
     post(env, session_path(view, "/steps/calibration"), {"version": view["session"]["version"]})
     env["stub"].drive()
-    view = state(env)
-    view = calibrate_loads(env, view)
+    view = assert_calibrated(env, state(env))
     # The ACM swapped on USB: the item's device reading refuses and the calibration is gone.
     env["stub"].acm_serial = "OTHER"
     measure(env, view)
@@ -533,7 +537,7 @@ def test_failed_confidence_and_acm_change_and_failed_control_stop_work(env):
     env["stub"].acm_serial = ACM_SERIAL
     post(env, session_path(view, "/steps/calibration"), {"version": view["session"]["version"]})
     env["stub"].drive()
-    view = calibrate_loads(env, state(env))
+    view = assert_calibrated(env, state(env))
     with env["sessions"]() as session:
         session.add(VnaCheckRow(id=uuid4(), instrument_id=UUID(S2_INSTRUMENT), kind="control_standard", passed=False,
                                 performed_at=env["clock"].now, recorded_at=env["clock"].now, source="weekly-failed",
@@ -543,15 +547,6 @@ def test_failed_confidence_and_acm_change_and_failed_control_stop_work(env):
         session.commit()
     assert measure(env, view, expect=409)["detail"]["code"] == "control_failed"
     assert state(env)["due"][0] == {**state(env)["due"][0], "kind": "weekly", "status": "failed"}
-
-
-def calibrate_loads(env, view):
-    for key in ("load_port1", "load_port2"):
-        post(env, session_path(view, f"/steps/{key}"), {"version": view["session"]["version"]})
-        env["stub"].drive()
-        view = state(env)
-    assert view["calibration"]["valid"], (view["calibration"], view["session"]["steps"], view["session"]["error"])
-    return view
 
 
 def test_agent_without_protocol_2_ops_cannot_open_a_bench_session(env):
@@ -713,6 +708,97 @@ def test_identical_receipt_is_acknowledged_once_and_different_one_conflicts(env)
     assert stub.send(command, payload).status_code == 200
     assert state(env)["session"]["version"] == before
     assert stub.send(command, stub.answer(command)).status_code == 409   # another backup id is another receipt
+
+
+def test_a_measurement_is_accepted_right_after_the_acm_calibration(env):
+    """Owner, 26.11.2026: no confidence test and no LOAD after the ACM — «Измерить» works at once."""
+    view = calibrate(env)
+    with env["sessions"]() as session:
+        ops = [s["op"] for s in session.get(VnaSessionRow, UUID(view["session"]["id"])).steps]
+        assert ops[-4:] == ["begin_calibration", "acm_calibrate", "save_calibration", "device_status"]
+        assert session.scalar(select(func.count()).select_from(VnaCommandRow).where(
+            VnaCommandRow.op.in_(("acm_confidence", "capture")))) == 0
+    measure(env, view)
+    env["stub"].drive()
+    item = state(env)["session"]["items"][0]
+    assert item["verdict"]["code"] == "pass" and item["verdict"]["final"]
+    with env["sessions"]() as session:
+        result = session.scalar(select(VnaBenchItemRow).where(VnaBenchItemRow.kind == "instrument")).result
+        assert result["calibration"]["load_check"] == "not_required"
+
+
+def old_calibration_steps(snapshot):
+    """The calibration as the code before 26.11.2026 built it: the confidence test and LOAD on each port after the ACM."""
+    profile = Profile.model_validate(snapshot["profile"])
+    head = bench.calibration_steps(snapshot)[:3]
+    calibration = head[0]["item"]
+    load_screen = bench.fit_screen(bench_screen("load_check"), profile)
+    loads = bench.run("load", calibration_run=calibration["run_id"])
+    return [*head, bench.step("acm_confidence", dict(profile=profile, module_serial=snapshot["acm"]["serial"]),
+                              item=calibration),
+            bench.screen_step(load_screen, calibration),
+            bench.capture_step(profile, screen_hash(load_screen), "LOAD порт 1", bench.connection(loads, "port1")),
+            bench.capture_step(profile, screen_hash(load_screen), "LOAD порт 2", bench.connection(loads, "port2"))]
+
+
+def confirm_directly(env):
+    """What a click confirmed before 26.11.2026 (the LOAD steps are no longer an endpoint key)."""
+    with env["sessions"]() as session:
+        row = session.scalar(select(VnaSessionRow).where(VnaSessionRow.state.in_(("awaiting_standard", "awaiting_dut"))))
+        VnaSessionRepository(session).act(row, "confirm", row.version, row.step, env["clock"].now)
+        session.commit()
+    env["stub"].drive()
+
+
+def open_old_session(env):
+    """A session opened before the change: its calibration still holds the confidence test and both LOAD steps."""
+    view = post(env, "/sessions")
+    env["stub"].drive()
+    with env["sessions"]() as session:
+        row = session.get(VnaSessionRow, UUID(view["session"]["id"]))
+        assert row.steps[row.step]["op"] == "acm_calibrate"
+        row.steps = row.steps[:2] + old_calibration_steps(row.snapshot)
+        session.commit()
+    view = state(env)
+    post(env, session_path(view, "/steps/calibration"), {"version": view["session"]["version"]})
+    env["stub"].drive()
+    return state(env)
+
+
+def test_an_old_format_session_renders_and_may_finish_its_old_steps(env):
+    view = open_old_session(env)
+    steps = view["session"]["steps"]
+    assert [(s["key"], s["status"]) for s in steps] == [("calibration", "passed"), ("confidence", "passed"),
+                                                        ("load_port1", "pending"), ("load_port2", "pending")]
+    assert steps[1]["result_text"].startswith("передача ") and not view["calibration"]["valid"]
+    for _ in range(2):   # a LOAD already confirmed before the release is still judged as it was
+        confirm_directly(env)
+    view = state(env)
+    assert [s["status"] for s in view["session"]["steps"]] == ["passed"] * 4 and view["calibration"]["valid"]
+    with env["sessions"]() as session:
+        check = session.scalar(select(VnaCheckRow))
+        assert (check.passed, check.confidence_passed, check.load_p1_vswr is not None) == (True, True, True)
+    measure(env, view)
+    env["stub"].drive()
+    assert state(env)["session"]["items"][0]["verdict"]["code"] == "pass"
+    # The next calibration of the same session follows the new flow.
+    env["clock"].now += timedelta(hours=4, minutes=1)
+    control_heartbeat(env["agent"])
+    view = state(env)
+    post(env, session_path(view, "/steps/calibration"), {"version": view["session"]["version"]})
+    env["stub"].drive()
+    assert_calibrated(env, state(env))
+
+
+def test_an_old_session_waiting_for_load_calibrates_anew_on_click(env):
+    view = open_old_session(env)
+    assert view["session"]["steps"][2]["status"] == "pending"
+    post(env, session_path(view, "/steps/calibration"), {"version": view["session"]["version"]})
+    env["stub"].drive()
+    view = assert_calibrated(env, state(env))
+    with env["sessions"]() as session:
+        ops = [s["op"] for s in session.get(VnaSessionRow, UUID(view["session"]["id"])).steps]
+        assert "capture" not in ops   # the waiting LOAD steps were dropped, never sent to the agent
 
 
 def test_flex_is_neither_due_nor_started(env):
@@ -926,7 +1012,7 @@ def test_assembly_session_records_each_connection_through_the_vswr_rule(env, mon
                                .order_by(VnaBenchItemRow.created_at)).all()
         assert [r.connection_no for r in rows] == [1, 1, 2, 3] and all(r.vswr_measurement_id for r in rows)
         assert len({r.group_id for r in rows}) == 2
-    assert matings(env, env["ids"]["cable1"]) == 2 + 4
+    assert matings(env, env["ids"]["cable1"]) == 1 + 4   # the ACM calibration (no LOAD since 26.11) + four sweeps
     # «Измерить заново»: a new item of the same position starts a fresh series, even after an open border one.
     for _ in range(2):   # the first new item ends «на границе»; the second must not become its repeat
         view = state(env)
@@ -962,7 +1048,7 @@ def test_refused_sweep_holds_no_connection_and_the_same_connection_is_taken_agai
     assert item["verdict"]["final"] and [c["no"] for c in item["connections"]] == [1, 2, 3]
     with env["sessions"]() as session:
         refused = session.execute(select(func.count()).select_from(VnaBenchItemRow)).scalar()
-        assert refused == 2 + 3   # LOAD 1/2 and three counted connections; the refused sweep is not a row
+        assert refused == 3   # three counted connections; the refused sweep is not a row
     assert matings(env, env["ids"]["dut"]) == 2 * 4                        # the refused sweep was a mating too
     view = state(env)
     post(env, session_path(view, f"/items/{item['id']}/record"), {"version": view["session"]["version"]})
@@ -981,9 +1067,7 @@ def test_a_border_series_restarts_after_a_recalibration(env):
     view = state(env)
     post(env, session_path(view, "/steps/calibration"), {"version": view["session"]["version"]})
     env["stub"].drive()
-    env["stub"].connected = ("load",)
-    calibrate_loads(env, state(env))
-    env["stub"].connected = None
+    assert_calibrated(env, state(env))
     item = connect_next(env, item)
     with env["sessions"]() as session:
         rows = session.scalars(select(VnaBenchItemRow).where(VnaBenchItemRow.kind == "instrument")
@@ -1070,11 +1154,10 @@ def test_monthly_check_restarts_whole_after_a_recalibration_and_journals_every_s
     check_id = start_monthly(env)
     phase = run_monthly(env, check_id, stop=lambda p: p["key"] == "short_p1")
     assert phase is not None
-    env["stub"].connected = ("load",)
     view = state(env)
     post(env, session_path(view, "/steps/calibration"), {"version": view["session"]["version"]})
     env["stub"].drive()
-    calibrate_loads(env, state(env))
+    assert_calibrated(env, state(env))
     check = next(c for c in state(env)["session"]["checks"] if c["id"] == check_id)
     assert [p["status"] for p in check["phases"]][:3] == ["pending"] * 3   # OPEN p1 is measured again
     assert run_monthly(env, check_id) is None

@@ -21,8 +21,11 @@ beforeEach(() => { vi.spyOn(vnaBenchApi, "targets").mockResolvedValue({ targets:
 
 const step = (key: VnaBenchStep["key"], status: VnaBenchStep["status"], text: string | null = null): VnaBenchStep =>
   ({ key, status, result_text: text, refusal: null, finished_at: status === "pending" ? null : "2026-11-19T14:10:00+03:00" });
-const allPassed: VnaBenchStep[] = [
-  step("calibration", "passed"), step("confidence", "passed", "передача 0,031 дБ ≤ 0,1; отражение 0,12 дБ ≤ 0,4/0,5"),
+// С 26.11.2026 калибровка — один шаг: доверительный тест и нагрузку владелец отменил.
+const allPassed: VnaBenchStep[] = [step("calibration", "passed")];
+// Сеанс, открытый до 26.11.2026: его четыре шага.
+const oldPassed: VnaBenchStep[] = [
+  step("calibration", "passed"), step("confidence", "passed", "передача 0,031 дБ ≤ 0,1; отражение 0,12 дБ ≤ 0,4/0,5"),
   step("load_port1", "passed", "КСВН 1,032 ≤ 1,06"), step("load_port2", "passed", "КСВН 1,028 ≤ 1,06"),
 ];
 
@@ -316,23 +319,33 @@ it("says why the calibration is invalid and why the device is refused, in Russia
   expect(screen.getByRole("button", { name: "Открыть сеанс" })).toBeDisabled();
 });
 
-it("opens a session on the adapter grid and confirms the calibration; the confidence test has no button", async () => {
+it("opens a session on the adapter grid: one calibration step, then measuring — no confidence test, no LOAD", async () => {
   vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state({ session: null }));
   const start = vi.spyOn(vnaBenchApi, "startSession").mockResolvedValue(state({ session: session({ steps: [step("calibration", "pending")] }) }));
-  const run = vi.spyOn(vnaBenchApi, "runStep").mockResolvedValue(state({ session: session({ steps: [step("calibration", "passed"), step("confidence", "running")] }) }));
+  const run = vi.spyOn(vnaBenchApi, "runStep").mockResolvedValue(state({ session: session({ steps: allPassed }) }));
   render(<VnaBench canEdit />);
   fireEvent.click(await screen.findByRole("button", { name: "Открыть сеанс" }));
   await waitFor(() => expect(start).toHaveBeenCalledWith({}));
 
   const steps = await screen.findByRole("list", { name: "Шаги сеанса" });
-  expect(within(steps).getAllByRole("listitem").map((li) => li.querySelector("strong")?.textContent))
-    .toEqual(["Калибровка АКМ", "Доверительный тест", "Нагрузка: порт 1", "Нагрузка: порт 2"]);
+  expect(within(steps).getAllByRole("listitem").map((li) => li.querySelector("strong")?.textContent)).toEqual(["Калибровка АКМ"]);
   expect(screen.getByText(/Подключите АКМ к концам обоих кабелей/)).toBeInTheDocument();
+  expect(screen.queryByText(/доверительный тест/i)).not.toBeInTheDocument();
   fireEvent.click(screen.getByLabelText("Разъёмы осмотрены и почищены"));
   fireEvent.click(screen.getByRole("button", { name: "Калибровать АКМ" }));
   await waitFor(() => expect(run).toHaveBeenCalledWith("s1", 3, "calibration"));
-  expect(await screen.findByText(/Тест идёт сам сразу после калибровки/)).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /доверительный тест/i })).not.toBeInTheDocument();
+  expect(await screen.findByText("Калибровка АКМ пройдена")).toBeInTheDocument();
+  expect(screen.queryByText(/Нагрузка|не проверен/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /нагрузк|доверительный тест/i })).not.toBeInTheDocument();
+});
+
+it("still shows an old session's four calibration steps", async () => {
+  vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state({ session: session({ steps: oldPassed }) }));
+  render(<VnaBench canEdit />);
+  expect(await screen.findByText("Калибровка пройдена · 4 шага")).toBeInTheDocument();
+  const steps = screen.getByRole("list", { name: "Шаги сеанса" });
+  expect(within(steps).getAllByRole("listitem").map((li) => li.querySelector("strong")?.textContent))
+    .toEqual(["Калибровка АКМ", "Доверительный тест", "Нагрузка: порт 1", "Нагрузка: порт 2"]);
 });
 
 it("offers only a new calibration after a failed confidence test", async () => {
@@ -358,7 +371,8 @@ it("offers a new calibration when the calibration expired after all steps", asyn
 });
 
 it("finds an adapter, shows its plan card with the fixture chain and the suggested top frequency", async () => {
-  vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state({ session: session({ steps: allPassed.slice(0, 2) }) }));
+  vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state({ session: session({ steps: [step("calibration", "pending")] }),
+    calibration: { valid: false, calibrated_at: null, valid_until: null, reason: null, temperatures: null } }));
   const resolve = vi.spyOn(vnaBenchApi, "resolve").mockResolvedValue({ candidates: [si035] });
   const planned = vi.spyOn(vnaBenchApi, "plan").mockResolvedValue(plan);
   vi.spyOn(productionApi, "instruments").mockResolvedValue({ instruments: [
@@ -377,8 +391,8 @@ it("finds an adapter, shows its plan card with the fixture chain and the suggest
   expect(screen.getByText("КСВН ≤ 1,06, U 0,012 · ADP1A, изготовитель")).toBeInTheDocument();
   expect(screen.getByText(/Цепочка «напрямую»/)).toBeInTheDocument();
   expect(screen.getByText("по серии и норме: до 18 ГГц")).toBeInTheDocument();
-  expect(screen.getByText(/Сначала пройдите калибровку/)).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Измерить нагрузку на порту 1" })).toBeEnabled();
+  expect(screen.getByText("Сначала выполните калибровку АКМ.")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Калибровать АКМ" })).toBeInTheDocument();
 
   fireEvent.click(screen.getByText(/^Оснастка и частота/));
   const left = screen.getByLabelText("Оснастка слева (к порту 1)");
@@ -662,15 +676,16 @@ it("measures the same object again after a final verdict, with its chain", async
 });
 
 it("repeats a step refused for a reason other than the calibration; a calibration refusal asks for a new calibration", async () => {
-  const refused = (code: string) => state({ session: session({ steps: [step("calibration", "passed"), step("confidence", "passed"),
-    { ...step("load_port1", "refused"), refusal: { code, message: "" } }] }) });
+  const refused = (code: string) => state({ session: session({ steps: [{ ...step("calibration", "refused"), refusal: { code, message: "" } }] }),
+    calibration: { valid: false, calibrated_at: null, valid_until: null, reason: null, temperatures: null } });
   const read = vi.spyOn(vnaBenchApi, "state").mockResolvedValue(refused("device_busy"));
   const run = vi.spyOn(vnaBenchApi, "runStep").mockResolvedValue(state());
   const { unmount } = render(<VnaBench canEdit />);
-  expect(await screen.findByText("Нагрузка: порт 1: команда не выполнена.")).toBeInTheDocument();
+  expect(await screen.findByText("Калибровка АКМ: команда не выполнена.")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Откалибровать заново" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText("Разъёмы осмотрены и почищены"));
   fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
-  await waitFor(() => expect(run).toHaveBeenCalledWith("s1", 3, "load_port1"));
+  await waitFor(() => expect(run).toHaveBeenCalledWith("s1", 3, "calibration"));
   unmount();
   read.mockResolvedValue(refused("temperature_drift"));
   render(<VnaBench canEdit />);

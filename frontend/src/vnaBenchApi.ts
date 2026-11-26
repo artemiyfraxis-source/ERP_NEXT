@@ -6,6 +6,7 @@ import { api, type VnaTransfer, type VswrTracePoint } from "./api";
    возвращает состояние; экран опрашивает `state`, пока что-то выполняется. Тексты отказов — по-русски с сервера;
    известные коды экран переводит сам (`refusalText`), код наружу не показывается. */
 
+/** С 26.11.2026 сервер присылает один шаг «calibration»; confidence и load_port* — только у сеанса, открытого раньше. */
 export type VnaBenchStepKey = "calibration" | "confidence" | "load_port1" | "load_port2";
 export type VnaBenchStatus = "pending" | "running" | "passed" | "failed" | "refused";
 export type VnaBenchCheckKind = "flex" | "weekly" | "monthly";
@@ -412,8 +413,8 @@ export const vnaBenchApi = {
   state: () => api<VnaBenchState>(`${BASE}/state`),
   /** Открыть сеанс рабочего места (purpose='bench'). */
   startSession: (input: VnaBenchSessionInput = {}) => post<VnaBenchState>("/sessions", input),
-  /** Подтвердить шаг после подключения: калибровка АКМ (и повтор), нагрузка на порт 1 / 2. Доверительный тест идёт сам. */
-  runStep: (sessionId: string, version: number, step: VnaBenchStepKey) =>
+  /** «Калибровать АКМ» после подключения АКМ (и повтор); доверительного теста и нагрузки после неё больше нет. */
+  runStep: (sessionId: string, version: number, step: "calibration") =>
     post<VnaBenchState>(`/sessions/${id(sessionId)}/steps/${step}`, { version }),
   /** Найти объект по скану или номеру: СИ («СИ.035»), задание и позиция («ПЗ-0001/3»), серийный номер изделия. */
   resolve: (query: string) => post<{ candidates: VnaBenchTarget[] }>("/resolve", { query }),
@@ -492,7 +493,7 @@ const REFUSALS: Record<string, string> = {
   temperature_unknown: "Прибор не сообщил температуру — без неё замер не принимается. Проверьте связь с ВАЦ.",
   calibration_expired: "Калибровка истекла (4 часа или конец смены) — откалибруйте заново.",
   acm_missing: "АКМ не подключён по USB — подключите модуль и дождитесь зелёного индикатора.",
-  points_over_limit: "Профиль больше 4001 точки — доверительный тест по нему невозможен. Нужен другой профиль.",
+  points_over_limit: "Точек в профиле больше, чем может ВАЦ. Нужен другой профиль.",
   no_norm: "Нормы КСВН для этого объекта нет — вердикт ставит контролёр с указанием причины.",
   no_band: "В ЭТК нет полосы для замера КСВН — технолог должен задать её в операции «Контроль КСВН».",
   other_calibration: "Этому объекту нужна другая калибровка (другая полоса или число точек) — откройте новый сеанс.",
@@ -515,7 +516,7 @@ const DETAILED = new Set(["vna_not_connected", "station_setup", "no_fixture_file
 
 /** Ни кода в словаре, ни текста сервера — всё равно понятная строка, никогда не пустой баннер. */
 export const REFUSAL_FALLBACK = "Команда ВАЦ не выполнена";
-/** Отказы, после которых калибровка недействительна и нужна новая (СТО 11.4, 11.5); прочие — повтор того же шага. */
+/** Отказы, после которых калибровка недействительна и нужна новая (СТО 11.5); прочие — повтор того же шага. */
 export const CALIBRATION_REFUSALS = new Set(["calibration_required", "calibration_expired", "correction_lost", "profile_changed",
   "temperature_drift", "temperature_unknown", "acm_missing"]);
 

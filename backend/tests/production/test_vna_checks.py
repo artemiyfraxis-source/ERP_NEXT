@@ -74,6 +74,15 @@ def test_passed_confidence_needs_loads_and_transmission_within_limit():
         expected_verdict("session", {"confidence_passed": True, "confidence_tx_dev_db": 0.2, "load_p1_vswr": 1.01, "load_p2_vswr": 1.01})
 
 
+def test_calibration_only_session_holds_no_check_values():
+    """26.11.2026: confidence and LOAD dropped by the owner — the accepted ACM calibration itself is the record."""
+    assert expected_verdict("session", {"calibration_only": True}) is True
+    with pytest.raises(ProductionValidationError, match="load_p1_vswr"):
+        expected_verdict("session", {"calibration_only": True, "load_p1_vswr": 1.01})
+    with pytest.raises(ProductionValidationError, match="confidence_passed"):
+        expected_verdict("session", {})   # without the flag a session row still needs its numbers
+
+
 def test_weekly_and_monthly_due_dates():
     assert add_month(datetime(2026, 1, 31, tzinfo=UTC)) == datetime(2026, 2, 28, tzinfo=UTC)
     now = datetime(2026, 11, 18, 12, tzinfo=UTC)
@@ -148,13 +157,20 @@ def test_database_refuses_a_verdict_that_disagrees_with_numbers(production_api):
             dict(kind="control_standard", passed=True, standard_inventory="СИ.009", vswr_dev=0.1, vswr_limit=0.015,
                  s21_dev_db=0.0, s21_limit_db=0.1),
             dict(kind="kit_standards", passed=True, standard_inventory="СИ.003", kit_ratio=1.5),
-            dict(kind="flex", passed=True, s21_dev_db=0.01, vswr_dev=0.0, load_p1_vswr=1.01))
+            dict(kind="flex", passed=True, s21_dev_db=0.01, vswr_dev=0.0, load_p1_vswr=1.01),
+            # 0221 «только калибровка»: all five values NULL and passed — nothing half-filled.
+            dict(kind="session", passed=True, load_p1_vswr=1.01, load_p2_vswr=1.01),
+            dict(kind="session", passed=False),
+            dict(kind="session", passed=True, confidence_rx_dev_db=0.1))
     factory = app.state.production_uow_factory().session_factory
     for row in rows:
         with factory() as session:
             session.add(VnaCheckRow(id=uuid4(), source=f"s-{uuid4()}", **{**base, **row}))
             with pytest.raises(IntegrityError):
                 session.flush()
+    with factory() as session:   # the calibration-only row itself is stored
+        session.add(VnaCheckRow(id=uuid4(), source=f"s-{uuid4()}", **{**base, "kind": "session", "passed": True}))
+        session.flush()
 
 
 def test_migration_creates_the_journal_with_constraints(tmp_path):

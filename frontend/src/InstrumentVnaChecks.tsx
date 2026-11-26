@@ -8,7 +8,7 @@ const localDay = (value: string | null) => value ? new Date(value).toLocaleDateS
 const num = (value: number | null, digits: number) => value === null ? "" : formatNumber(value, { digits, minDigits: digits });
 const confidenceText = (row: VnaCheckRecord) => row.confidence_passed === null ? "" : row.confidence_passed ? "Годен" : "Не годен";
 const kindShort: Record<VnaCheckRecord["kind"], string> = {
-  session: "Калибровка: доверительный тест и LOAD", flex: "Изгиб тракта", control_standard: "Контрольная мера", kit_standards: "Меры 6650F27",
+  session: "Калибровка АКМ", flex: "Изгиб тракта", control_standard: "Контрольная мера", kit_standards: "Меры 6650F27",
 };
 
 const columns: DataColumn<VnaCheckRecord>[] = [

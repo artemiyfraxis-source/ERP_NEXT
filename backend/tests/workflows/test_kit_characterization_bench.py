@@ -130,10 +130,9 @@ def calibrate(env, view):
     env["stub"].network = None
     env["stub"].drive()
     view = state(env)
-    for key in ("calibration", "load_port1", "load_port2"):
-        act(env, view, f"/steps/{key}")
-        env["stub"].drive()
-        view = state(env)
+    act(env, view, "/steps/calibration")   # no confidence test and no LOAD since 26.11.2026
+    env["stub"].drive()
+    view = state(env)
     assert view["calibration"]["valid"], view["session"]["steps"]
     return view
 

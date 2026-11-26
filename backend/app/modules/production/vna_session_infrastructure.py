@@ -13,7 +13,6 @@ from app.shared.persistence import Base
 from . import vna_bench as bench
 from . import vna_sessions as domain
 from .vna_bench_protocol import ARINST_WIRE_OPS, OPS_V2, command_args, validate_result_v2, validate_result_v3
-from .vna_screen_infrastructure import VnaScreenRepository
 
 ACTIVE_SQL = "state NOT IN ('recorded','failed','aborted')"
 COMMAND_TIMEOUT = timedelta(seconds=180)
@@ -263,8 +262,7 @@ class VnaSessionRepository:
             if protocol(row) == 3:
                 raise domain.SessionConflict("Для Arinst используйте шаги SOL/THRU")
             # СТО ФРАК-002-2026 п. 11.5: a lost calibration is redone in the same session; nothing of the old one stays.
-            self.append(row, bench.calibration_steps(row.snapshot, load=VnaScreenRepository(self.session).default("load")),
-                        now, **bench.UNCALIBRATED)
+            self.append(row, bench.calibration_steps(row.snapshot), now, **bench.UNCALIBRATED)
         elif is_bench and action == "close" and row.state == "ready":
             closing = bench.arinst_step("release") if protocol(row) == 3 else bench.release_step(bench.last_screen_hash(row.steps))
             self.append(row, [closing], now)

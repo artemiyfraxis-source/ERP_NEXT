@@ -152,10 +152,9 @@ def test_bench_draws_the_stored_screen_and_shows_a_saved_one_without_a_sweep(env
     refused = post(env, session_path(view, "/screen"), {"version": view["session"]["version"], "screen_id": adapter["id"]},
                    expect=409)
     assert refused["detail"]["code"] == "calibration_expired"
-    for key in ("calibration", "load_port1", "load_port2"):
-        post(env, session_path(view, f"/steps/{key}"), {"version": view["session"]["version"]})
-        env["stub"].drive()
-        view = state(env)
+    post(env, session_path(view, "/steps/calibration"), {"version": view["session"]["version"]})
+    env["stub"].drive()
+    view = state(env)
     plan = post(env, session_path(view, "/plan"), {"target": dict(kind="instrument", instrument_id=str(env["ids"]["dut"]))})
     assert plan["screen_name"] == "Переход (правка)" and plan["traces"][1]["scale"] == "-0,2…0 дБ"
     view = measure(env, view)
