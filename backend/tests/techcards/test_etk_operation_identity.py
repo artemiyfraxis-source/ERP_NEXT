@@ -634,3 +634,19 @@ def test_duplicate_target_fingerprints_cannot_take_saved_content_without_previou
     else:
         assert document is None
         assert any("смысловую идентичность" in item["message"] for item in conflicts)
+
+
+def test_switch_to_manual_assembly_keeps_unchanged_positional_keys_and_conflicts_on_changed_work():
+    """«Поправить вручную»: a manual build has no recipe fingerprints, so a positional key maps only to the same work."""
+    from app.modules.techcards.assembly_schema import generator_to_assembly
+    from .test_scheme_corrections import GENERATOR
+
+    previous = with_operation_fingerprints(etk_builder.build_etk(deepcopy(GENERATOR), []))
+    manual = etk_builder.build_etk(generator_to_assembly(deepcopy(GENERATOR)), [])
+    assert previous["operations"][0]["operation_fingerprint"] and operation_key(manual["operations"][0]) == "CUT_WIRE::1::"
+    assert operation_aliases(previous, manual) == {}
+
+    changed = deepcopy(manual)
+    changed["operations"][0]["result"][0]["name"] = "ПВ3 150мм"
+    with pytest.raises(TechcardValidationError, match="позиционный ключ не подтверждает"):
+        operation_aliases(previous, changed)

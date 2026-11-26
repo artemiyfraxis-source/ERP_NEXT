@@ -5,7 +5,7 @@ import { PageWindow } from "./PageWindow";
 import { formatMoment, formatNumber } from "./format";
 import { machineControlApi, type CuttingMachineRun } from "./machineControlApi";
 import { windowText } from "./productionGraph";
-import { cuttingLabels, cuttingRows, cuttingState, cuttingLabelsPage, cuttingLabelsTitle, cuttingKindTitle, cuttingLook, machineGood, type CuttingGroup, type MarkingProgress, type CuttingLabel, type CuttingMember, type CuttingSubmission, type CuttingWorkResult } from "./cuttingGroups";
+import { cuttingLabels, cuttingRows, cuttingState, cuttingLabelsPage, cuttingLabelsTitle, cuttingKindTitle, cuttingLook, cuttingProjects, labelTotals, machineGood, sharesText, tubeProjectHint, tubeTotals, type CuttingGroup, type MarkingProgress, type CuttingLabel, type CuttingMember, type CuttingSubmission, type CuttingWorkResult, type TubeTotal } from "./cuttingGroups";
 import { clock, useNow, workedSeconds } from "./productionTime";
 import { DOWNTIME_REASONS, type DowntimeReason } from "./downtimeApi";
 import type { MarkSerialRange } from "./markSerial";
@@ -123,16 +123,31 @@ export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruct
       { key: "blanks", title: "Шт.", numeric: true, value: (row) => Number(row.blank_quantity) },
       ...doneColumns,
     ],
+    // Label pieces per КБ, then items still without their labels (numbered labels go by item serial).
     labels: [
       { key: "item", title: "КБ", value: (row) => row.item, render: (row) => <b>{row.item}</b> },
-      { key: "printed", title: "Напечатано", numeric: true, value: (row) => progressOf(row)?.printed ?? null },
-      { key: "remaining", title: "Осталось", numeric: true, value: (row) => progressOf(row)?.remaining ?? null },
+      { key: "total", title: "Этикеток, шт", numeric: true, value: (row) => progressOf(row)?.total_labels ?? null },
+      { key: "printed", title: "Напечатано, шт", numeric: true, value: (row) => progressOf(row)?.printed_labels ?? null },
+      { key: "remaining", title: "Осталось, шт", numeric: true, value: (row) => progressOf(row)?.remaining_labels ?? null },
+      { key: "items", title: "Изделий без этикеток", numeric: true, value: (row) => progressOf(row)?.remaining ?? null },
     ],
     tubes: [],
   };
   const tubeRows = rows.flatMap((row) => row.tubes?.length
     ? row.tubes.map((tube, index) => ({ id: `${row.id}:${index}`, item: row.item, material: tube.material, length: Number(tube.length_mm), quantity: Number(tube.quantity) }))
     : [{ id: `${row.id}:-`, item: row.item, material: "—", length: null as number | null, quantity: null as number | null }]);
+  // Card face (owner 23.11): the physical work of the group, КБ detail behind «Подробно».
+  const tubes = look === "tubes" ? tubeTotals(rows) : null;
+  const tubeHint = tubes ? tubeProjectHint(rows, tubes.rows) : [];
+  const tubeTotalColumns: DataColumn<TubeTotal>[] = [
+    { key: "material", title: "Материал", value: (row) => row.material || "—", grow: true, wrap: true },
+    { key: "length", title: "Длина, мм", numeric: true, value: (row) => row.length },
+    { key: "quantity", title: "План, шт", numeric: true, value: (row) => row.quantity },
+  ];
+  const labelSum = look === "labels" ? labelTotals(rows, progress) : null;
+  const labelHint = labelSum && labelSum.remaining > 0 && cuttingProjects(rows).length > 1 ? sharesText(labelSum.projects) : "";
+  const doneCount = rows.filter((row) => row.state === "done").length;
+  const summary = look === "labels" || look === "tubes";
   const tubeColumns: DataColumn<(typeof tubeRows)[number]>[] = [
     { key: "item", title: "КБ", value: (row) => row.item, render: (row) => <b>{row.item}</b> },
     { key: "material", title: "Материал", value: (row) => row.material, grow: true },
@@ -157,7 +172,7 @@ export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruct
     : `${cuttingKindTitle[look]} · ${group.project} · ${rows.length} КБ`;
   return <section className={`mo-card cutting-group${done ? " done" : ""}`} aria-label={title}>
     <div className="mo-h">
-      <div className="mo-name"><h2>{title}</h2><small>{group.number} · {group.site}</small></div>
+      <div className="mo-name"><h2><button type="button" className="link-button mo-instruction-title" aria-haspopup="dialog" onClick={() => setView("instruction")}>{title}</button></h2><small>{group.number} · {group.site}</small></div>
       <div className="mo-side">
         {!readOnly && !done && <>
           {!session && <button type="button" className="primary" disabled={disabled || Boolean(activeSession) || group.partial_view}
@@ -171,7 +186,7 @@ export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruct
         </>}
         {canRefreshEtk && !readOnly && group.state === "open" && group.etk_stale && <button type="button" className="secondary" disabled={disabled}
           onClick={() => void act(async () => ({ ...(await productionApi.refreshCuttingGroupEtk(group.id, group.version)), outputs: [] }))}>Обновить из ЭТК</button>}
-        <button type="button" className="secondary" aria-haspopup="dialog" onClick={() => setView("instruction")}>Инструкция</button>
+        <button type="button" className="secondary" aria-haspopup="dialog" onClick={() => setView("instruction")}>{summary ? "Подробно" : "Инструкция"}</button>
         {look === "labels" && !readOnly && <button type="button" className="primary" disabled={disabled || group.partial_view || !progress || remainingLabels <= 0}
           aria-haspopup="dialog" onClick={() => setView("remaining")}>Печатать оставшиеся</button>}
         {look === "labels" && !readOnly && canPrint && <button type="button" className="secondary" disabled={disabled || group.partial_view}
@@ -180,14 +195,24 @@ export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruct
       </div>
     </div>
     <div className="mo-s mo-plan">План {windowText(group.planned_start, group.planned_finish)} {master && <> · норма {formatNumber(group.norm_seconds / 60)} мин</>}</div>
+    <div className="mo-s">{done ? "Выполнено" : summary ? `Сдано КБ: ${doneCount} из ${rows.length}`
+      : `Осталось: ${rows.reduce((total, row) => total + left(row), 0)} шт`}</div>
+    {look === "labels" && <dl className="cutting-totals" role="group" aria-label="Этикетки группы, шт">
+      <div><dt>Всего этикеток, шт</dt><dd>{labelSum ? formatNumber(labelSum.total) : "—"}</dd></div>
+      <div><dt>Напечатано, шт</dt><dd>{labelSum ? formatNumber(labelSum.printed) : "—"}</dd></div>
+      <div><dt>Осталось, шт</dt><dd>{labelSum ? formatNumber(labelSum.remaining) : "—"}</dd></div>
+    </dl>}
+    {labelHint && <div className="cutting-split">Осталось по проектам: {labelHint}</div>}
+    {tubes && tubes.rows.length > 0 && <DataTable rows={tubes.rows} columns={tubeTotalColumns} rowKey={(row) => row.key} label="Трубки группы, итого"
+      compactBelow={Infinity} pageSize={1000} phoneCards={false} />}
+    {tubes && tubes.missing.length > 0 && <div className="warning-inline">Нет трубок в ЭТК: {tubes.missing.join(", ")}</div>}
+    {tubeHint.length > 0 && <div className="cutting-split">По проектам: {tubeHint.length === 1 ? tubeHint[0]
+      : <ul>{tubeHint.map((line) => <li key={line}>{line}</li>)}</ul>}</div>}
     {session && <div className="mo-fact" role="status">{session.status === "Пауза" ? "На простое" : "В работе"} · время {clock(workedSeconds(session, now))}
       {group.downtime && <> · {group.downtime.reason_name}{group.downtime.comment ? ` · ${group.downtime.comment}` : ""}</>}</div>}
     {group.partial_view && <div className="warning-inline">Показаны только назначенные вам КБ. Этикетки — для показанных КБ.</div>}
     {error && !["submit", "downtime"].includes(view) && <div className="error-banner" role="alert">{error}</div>}
     {progressError && look === "labels" && <div className="error-banner" role="alert">{progressError}</div>}
-    {look === "tubes"
-      ? <DataTable rows={tubeRows} columns={tubeColumns} rowKey={(row) => row.id} label="Трубки группы" compactBelow={Infinity} pageSize={1000} phoneCards={false} />
-      : <DataTable rows={rows} columns={look === "mixed" ? columns : kindColumns[look]} rowKey={rowKey} label={look === "labels" ? "Этикетки по КБ группы" : "КБ группы резки"} compactBelow={Infinity} pageSize={1000} phoneCards={false} />}
     {view === "submit" && <GroupSubmit group={group} busy={disabled} error={error} close={() => setView("")}
       submit={(values, key) => act(() => productionApi.submitCuttingGroup(group.id, group.version, values, { onBehalfOf, key }))} />}
     {view === "downtime" && <GroupDowntime busy={disabled} error={error} close={() => setView("")}
@@ -196,11 +221,19 @@ export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruct
     {view === "remaining" && <MarkingPrintWindow source={{ group_id: group.id, version: group.version }} remaining title={`${group.project} · ${group.number}`}
       close={() => { setView(""); setProgressTick((tick) => tick + 1); }} />}
     {view === "outside" && <MarkingOutsideWindow group={group} close={() => setView("")} onChange={() => setProgressTick((tick) => tick + 1)} />}
-    {view === "instruction" && instruction && <PageWindow label="Инструкция группы резки" width={1400} close={() => setView("")}>
+    {view === "instruction" && instruction && <PageWindow label={summary ? "Подробно по КБ" : "Инструкция группы резки"} width={1400} close={() => setView("")}>
+      <div className="panel cutting-group-instruction">
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      {progressError && look === "labels" && <div className="error-banner" role="alert">{progressError}</div>}
+      {perRow && !readOnly && waitHint && <div className="warning-inline">{waitHint}</div>}
+      {look === "tubes"
+        ? <DataTable rows={tubeRows} columns={tubeColumns} rowKey={(row) => row.id} label="Трубки по КБ" compactBelow={Infinity} pageSize={1000} phoneCards={false} />
+        : <DataTable rows={rows} columns={look === "mixed" ? columns : kindColumns[look]} rowKey={rowKey} label={look === "labels" ? "Этикетки по КБ группы" : "КБ группы резки"} compactBelow={Infinity} pageSize={1000} phoneCards={false} />}
       <label className="cutting-instruction-picker">КБ<select value={instruction.id} onChange={(event) => setInstructionId(event.target.value)}>
         {rows.map((row) => <option key={row.id} value={row.id}>{row.item} · {row.name}</option>)}
       </select></label>
       {renderInstruction(instruction, () => setView(""))}
+      </div>
     </PageWindow>}
   </section>;
 }

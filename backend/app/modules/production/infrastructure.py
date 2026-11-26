@@ -613,6 +613,8 @@ class ProductionInstrumentRow(Base):
         CheckConstraint("kind <> 'Принадлежность' OR (verification_number IS NULL AND verified_at IS NULL AND verification_due IS NULL AND status IN ('Действует', 'Не используется'))", name='ck_production_instruments_accessory'),
         CheckConstraint("vna_app IN ('', 'S2VNA', 'Arinst VL')", name="ck_production_instruments_vna_app"),
         CheckConstraint("vna_app = '' OR kind = 'Средство измерений'", name="ck_production_instruments_vna_measuring"),
+        CheckConstraint("json_type(custom_fields) = 'object'", name="ck_production_instruments_custom_fields_object").ddl_if(dialect="sqlite"),
+        CheckConstraint("json_typeof(custom_fields) = 'object'", name="ck_production_instruments_custom_fields_object").ddl_if(dialect="postgresql"),
         Index("uq_production_instruments_serial_number", "serial_number", unique=True,
               sqlite_where=text("trim(serial_number) <> ''"),
               postgresql_where=text("trim(serial_number) <> ''")),
@@ -632,6 +634,10 @@ class ProductionInstrumentRow(Base):
     warehouse_grn: Mapped[str] = mapped_column(String(32), nullable=False, server_default="")
     warehouse_writeoff_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
     vna_app: Mapped[str] = mapped_column(String(16), nullable=False, default="", server_default="")
+    article: Mapped[str] = mapped_column(String(512), nullable=False, default="", server_default="")
+    notes: Mapped[str] = mapped_column(Text(), nullable=False, default="", server_default="")
+    measurement_category: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
+    custom_fields: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict, server_default="{}")
     verification_number: Mapped[str | None] = mapped_column(String(255), nullable=True)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     verification_due: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
@@ -805,6 +811,9 @@ class ProductionQcDecisionRow(Base):
     act_reference: Mapped[str] = mapped_column(Text(), nullable=False)
 
 
+_HYDRATE_CHUNK = 500  # task ids per IN list: well under SQLite's and PostgreSQL's bound-parameter limits
+
+
 class SqlAlchemyProductionRepository:
     def __init__(self, session: Session, resources=None):
         self.session = session
@@ -812,44 +821,60 @@ class SqlAlchemyProductionRepository:
         self._project_lock_scope = None
 
     def _domain(self, row: ProductionTaskRow) -> ProductionTask:
-        operation_rows = list(self.session.scalars(
-            select(ProductionOperationRow).where(ProductionOperationRow.task_id == row.id).order_by(ProductionOperationRow.position)
-        ))
-        # Колонки, а не строки ORM: add() удаляет и заново вставляет доли с теми же ключами.
-        share_row = ProductionOperationOperatorRow
-        operators = list(self.session.execute(
-            select(
-                share_row.operation_id, share_row.operator_id, share_row.quantity, share_row.planned_start,
-                share_row.planned_finish, share_row.started_at, share_row.finished_at,
-            )
-            .join(ProductionOperationRow, ProductionOperationRow.id == ProductionOperationOperatorRow.operation_id)
-            .where(ProductionOperationRow.task_id == row.id)
-            .order_by(ProductionOperationOperatorRow.operation_id, ProductionOperationOperatorRow.position)
-        ))
+        return self._domains((row,))[0]
+
+    def _domains(self, rows) -> list[ProductionTask]:
+        """Tasks with their operations, shares, input edges and team — four reads per chunk of tasks, not per task
+        (the cutting queue lists every running task once a minute). Same order and values as one task at a time."""
+        rows = list(rows)
+        if not rows:
+            return []
+        operation_rows: dict[UUID, list[ProductionOperationRow]] = {}
         by_operation: dict[UUID, list[OperationShare]] = {}
-        for share in operators:
-            by_operation.setdefault(share.operation_id, []).append(OperationShare(
-                share.operator_id, share.quantity, share.planned_start, share.planned_finish,
-                share.started_at, share.finished_at,
-            ))
-        # Входы — тоже колонками (add() переписывает рёбра), по возрастанию номера операции-входа.
-        edge, consumer, source = ProductionOperationInputRow, ProductionOperationRow, aliased(ProductionOperationRow)
         inputs: dict[UUID, list[OperationInput]] = {}
-        for item in self.session.execute(
-            select(edge.operation_id, edge.input_operation_id, edge.per_unit, edge.transfer_batch)
-            .join(consumer, consumer.id == edge.operation_id)
-            .join(source, source.id == edge.input_operation_id)
-            .where(consumer.task_id == row.id)
-            .order_by(edge.operation_id, source.position)
-        ):
-            inputs.setdefault(item.operation_id, []).append(
-                OperationInput(item.input_operation_id, item.per_unit, item.transfer_batch)
-            )
-        team = tuple(self.session.scalars(
-            select(ProductionTaskTeamRow.operator_id).where(ProductionTaskTeamRow.task_id == row.id)
-            .order_by(ProductionTaskTeamRow.position)
-        ))
-        return ProductionTask(
+        teams: dict[UUID, list[UUID]] = {}
+        share_row = ProductionOperationOperatorRow
+        edge, consumer, source = ProductionOperationInputRow, ProductionOperationRow, aliased(ProductionOperationRow)
+        ids = [row.id for row in rows]
+        for start in range(0, len(ids), _HYDRATE_CHUNK):
+            chunk = ids[start:start + _HYDRATE_CHUNK]
+            for operation in self.session.scalars(
+                select(ProductionOperationRow).where(ProductionOperationRow.task_id.in_(chunk))
+                .order_by(ProductionOperationRow.task_id, ProductionOperationRow.position)
+            ):
+                operation_rows.setdefault(operation.task_id, []).append(operation)
+            # Колонки, а не строки ORM: add() удаляет и заново вставляет доли с теми же ключами.
+            for share in self.session.execute(
+                select(
+                    share_row.operation_id, share_row.operator_id, share_row.quantity, share_row.planned_start,
+                    share_row.planned_finish, share_row.started_at, share_row.finished_at,
+                )
+                .join(ProductionOperationRow, ProductionOperationRow.id == ProductionOperationOperatorRow.operation_id)
+                .where(ProductionOperationRow.task_id.in_(chunk))
+                .order_by(ProductionOperationOperatorRow.operation_id, ProductionOperationOperatorRow.position)
+            ):
+                by_operation.setdefault(share.operation_id, []).append(OperationShare(
+                    share.operator_id, share.quantity, share.planned_start, share.planned_finish,
+                    share.started_at, share.finished_at,
+                ))
+            # Входы — тоже колонками (add() переписывает рёбра), по возрастанию номера операции-входа.
+            for item in self.session.execute(
+                select(edge.operation_id, edge.input_operation_id, edge.per_unit, edge.transfer_batch)
+                .join(consumer, consumer.id == edge.operation_id)
+                .join(source, source.id == edge.input_operation_id)
+                .where(consumer.task_id.in_(chunk))
+                .order_by(edge.operation_id, source.position)
+            ):
+                inputs.setdefault(item.operation_id, []).append(
+                    OperationInput(item.input_operation_id, item.per_unit, item.transfer_batch)
+                )
+            for task_id, operator_id in self.session.execute(
+                select(ProductionTaskTeamRow.task_id, ProductionTaskTeamRow.operator_id)
+                .where(ProductionTaskTeamRow.task_id.in_(chunk))
+                .order_by(ProductionTaskTeamRow.task_id, ProductionTaskTeamRow.position)
+            ):
+                teams.setdefault(task_id, []).append(operator_id)
+        return [ProductionTask(
             id=row.id, number=row.number, source_idempotency_key=row.source_idempotency_key,
             source_fingerprint=row.source_fingerprint, version=row.version, created_at=row.created_at,
             project=row.project, item=row.item, name=row.name, quantity=row.quantity,
@@ -865,15 +890,24 @@ class SqlAlchemyProductionRepository:
                 stage_key=operation.stage_key,
                 inputs=tuple(inputs.get(operation.id, ())),
                 etk_ops=_etk_ops_domain(operation.etk_ops),
-            ) for operation in operation_rows),
+            ) for operation in operation_rows.get(row.id, ())),
             techcard_id=row.techcard_id, techcard_revision=row.techcard_revision,
             flow_mode=FlowMode(row.flow_mode or FlowMode.MIXED.value),
-            transfer_batch=row.transfer_batch, early_quantity=row.early_quantity, team=team,
-        )
+            transfer_batch=row.transfer_batch, early_quantity=row.early_quantity, team=tuple(teams.get(row.id, ())),
+        ) for row in rows]
 
     def get(self, task_id: UUID) -> ProductionTask | None:
         row = self.session.get(ProductionTaskRow, task_id)
         return self._domain(row) if row is not None else None
+
+    def get_many(self, task_ids) -> dict[UUID, ProductionTask]:
+        """Several tasks in one batched read (missing ids are absent from the result)."""
+        ids = list(dict.fromkeys(task_ids))
+        rows = []
+        for start in range(0, len(ids), _HYDRATE_CHUNK):
+            rows.extend(self.session.scalars(select(ProductionTaskRow).where(
+                ProductionTaskRow.id.in_(ids[start:start + _HYDRATE_CHUNK]))))
+        return {task.id: task for task in self._domains(rows)}
 
     def by_idempotency_key(self, key: str) -> ProductionTask | None:
         row = self.session.scalar(select(ProductionTaskRow).where(ProductionTaskRow.source_idempotency_key == key))
@@ -892,7 +926,7 @@ class SqlAlchemyProductionRepository:
         rows = self.session.scalars(
             statement.order_by(ProductionTaskRow.created_at.desc(), ProductionTaskRow.id.desc()).limit(limit)
         )
-        return [self._domain(row) for row in rows]
+        return self._domains(rows)
 
     def for_project(self, project: str) -> list[ProductionTask]:
         """Все задания одного проекта (точно по `normalize_project_number`, по индексу ключа), старые первыми."""
@@ -904,7 +938,7 @@ class SqlAlchemyProductionRepository:
             .where(or_(ProductionTaskRow.project_key == key, ProductionTaskRow.project_key.is_(None)))
             .order_by(ProductionTaskRow.created_at, ProductionTaskRow.id)
         )
-        return [self._domain(row) for row in rows if normalize_project_number(row.project) == key]
+        return self._domains(row for row in rows if normalize_project_number(row.project) == key)
 
     def with_status(self, status: ProductionStatus) -> list[ProductionTask]:
         """Все задания в статусе (по индексу статуса), старые первыми — без общего лимита ленты."""
@@ -912,7 +946,7 @@ class SqlAlchemyProductionRepository:
             select(ProductionTaskRow).where(ProductionTaskRow.status == status.value)
             .order_by(ProductionTaskRow.created_at, ProductionTaskRow.id)
         )
-        return [self._domain(row) for row in rows]
+        return self._domains(rows)
 
     def for_operator(self, operator_id: UUID, limit: int = 300) -> list[ProductionTask]:
         """Задания, где оператор назначен хотя бы на одну операцию (экран «Мои задания»), свежие первыми."""
@@ -922,7 +956,7 @@ class SqlAlchemyProductionRepository:
         rows = self.session.scalars(select(ProductionTaskRow).where(ProductionTaskRow.id.in_(ids)).order_by(
             ProductionTaskRow.created_at.desc(), ProductionTaskRow.id.desc(),
         ).limit(limit))
-        return [self._domain(row) for row in rows]
+        return self._domains(rows)
 
     def planned(self, since: datetime) -> list[ProductionTask]:
         """Живые задания, где у кого-то есть окно, кончающееся не раньше since — только их двигает план по факту."""
@@ -934,7 +968,7 @@ class SqlAlchemyProductionRepository:
             ProductionTaskRow.status == ProductionStatus.RUNNING.value,
             ProductionTaskRow.handed_to == "",
         ).order_by(ProductionTaskRow.created_at, ProductionTaskRow.id))
-        return [self._domain(row) for row in rows]
+        return self._domains(rows)
 
     def lock_projects(
         self, task_ids: Sequence[UUID] = (), *, projects: Sequence[str] = (), planned_since: datetime | None = None,
@@ -1983,7 +2017,8 @@ class SqlAlchemyInstrumentRepository:
             serial_number=row.serial_number, manufacturer=row.manufacturer, doc_designation=row.doc_designation,
             quantity=row.quantity, storage_location=row.storage_location, warehouse_grn=row.warehouse_grn,
             warehouse_writeoff_id=row.warehouse_writeoff_id,
-            vna_app=row.vna_app,
+            vna_app=row.vna_app, article=row.article, notes=row.notes,
+            measurement_category=row.measurement_category, custom_fields=dict(row.custom_fields),
         )
 
     def lock_tree(self) -> None:
@@ -2036,7 +2071,7 @@ class SqlAlchemyInstrumentRepository:
             "verification_number", "verified_at", "verification_due",
             "parent_id", "serial_number", "manufacturer", "doc_designation", "quantity", "storage_location", "warehouse_grn",
             "warehouse_writeoff_id",
-            "vna_app",
+            "vna_app", "article", "notes", "measurement_category", "custom_fields",
         )}
         values.update(status=instrument.status.value, kind=instrument.kind.value)
         if instrument.version == 1:

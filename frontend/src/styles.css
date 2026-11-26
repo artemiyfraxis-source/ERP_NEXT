@@ -426,7 +426,11 @@ button[aria-busy="true"] { cursor: progress; }
 .brand-mark.large { width: 56px; height: 56px; font-size: 24px; }
 nav { display: block; }
 .nav-group { margin: 16px 0 0; padding-top: 10px; border-top: 1px solid var(--border); }
-.nav-group h4 { margin: 0 0 6px; padding: 0 9px; color: var(--muted-foreground); font-size: 11px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; }
+.nav-group h4 { margin: 0 0 6px; padding: 0; color: var(--muted-foreground); font-size: 11px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; }
+.nav-group-toggle { display: flex; align-items: center; gap: 4px; width: 100%; min-height: 28px; padding: 4px 8px; border: 0; background: transparent; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; text-align: left; cursor: pointer; touch-action: manipulation; }
+.nav-group-toggle:hover { background: var(--accent); }
+.nav-group-toggle .caret { width: 12px; flex: none; }
+.nav-group > [hidden] { display: none; }
 .nav-item { width: 100%; display: flex; align-items: center; border: 0; border-radius: 6px; padding: 8px 9px; color: var(--foreground); background: transparent; text-align: left; font-size: 13px; }
 .nav-item:hover { background: var(--accent); }
 /* «Запросы КП»: the request's ordinal, bold and large (owner 22.10: «просто порядковый номер жирно, чтобы было заметно»). */
@@ -1640,6 +1644,11 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .data-table tr.detail > td > .detail-body { position: sticky; left: 0; box-sizing: border-box; max-width: calc(var(--detail-width, 100%) - 24px); }
 .data-table tr.group-row td { background: var(--accent); font-size: 12px; }
 .data-table tr.group-row strong { display: inline; }
+.data-table .dt-group-fold { display: block; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; touch-action: manipulation; font-variant-numeric: tabular-nums; }
+.data-table .dt-group-fold:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
+@media (pointer: coarse) {
+  .nav-group-toggle, .data-table .dt-group-fold { min-height: 40px; }
+}
 .data-table .table-wrap tr.dt-parent-row > td { white-space: nowrap; font-weight: 400; }
 .data-table .table-wrap tr.dt-group-cells > td { white-space: nowrap; font-weight: 400; vertical-align: middle; }
 .data-table tr.group-row input[type="checkbox"] { width: auto; display: inline-block; margin: 0 8px 0 2px; padding: 0; vertical-align: middle; }
@@ -3623,7 +3632,8 @@ textarea.cell-edit-input { min-height: 62px; resize: vertical; }
 .zg-col-customer .zg-link:hover { color: var(--primary); text-decoration: underline; }
 .zg-table td.zg-col-project { padding: 0; background: color-mix(in srgb, var(--zg-color) 18%, var(--card)); }
 .zg-project { width: 100%; height: 100%; min-height: 0; border: 0; background: none; padding: 0 4px 0 9px; color: var(--foreground); font-size: var(--zg-font); font-weight: 700; text-align: left; box-shadow: inset 4px 0 0 var(--zg-color); }
-.zg-project:hover { text-decoration: underline; }
+span.zg-project { display: block; }
+button.zg-project:hover { text-decoration: underline; }
 .zg-project { position: relative; }
 .zg-note-mark { position: absolute; top: 50%; right: 5px; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: var(--zg-note); }
 

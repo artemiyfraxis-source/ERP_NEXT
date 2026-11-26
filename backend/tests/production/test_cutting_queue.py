@@ -419,9 +419,9 @@ def test_finished_frozen_groups_are_not_checked_or_read(production_api, monkeypa
         assert done(client, row, 10, operator=operator).status_code == 200
     batch(client, [issue("709К.", "КБ1")])
     visited = []
-    original = cutting_queue.check_access
-    monkeypatch.setattr(cutting_queue, "check_access",
-                        lambda group, uow, actor: (visited.append(str(group.id)), original(group, uow, actor)))
+    original = cutting_queue.check_group_sites
+    monkeypatch.setattr(cutting_queue, "check_group_sites",
+                        lambda group, *args: (visited.append(str(group.id)), original(group, *args)))
     rows = queue(client)["rows"]
     assert [row["project"] for row in rows] == ["709К."]
     assert finished["id"] not in visited and visited == [rows[0]["group_id"]]
@@ -708,3 +708,177 @@ def test_rows_are_grouped_by_the_full_wire_name_and_the_article_is_never_cut(pro
     article = rows["КБ4"]
     assert article["wire_name"] == article["wire"] == "RTK 031-ARTICLE-WITH-A-VERY-LONG-SUFFIX-123456"
     assert article["setup_text"].startswith("Заправьте RTK 031-ARTICLE-WITH-A-VERY-LONG-SUFFIX-123456")
+
+
+def derived(snapshot, machine_id):
+    """What the screen makes of the snapshot for one machine (cuttingQueueApi.ts `rowsOf`): the rows naming it (none —
+    the rows naming no machine) with it as their own, setup changes marked again over the filtered list."""
+    rows, previous = [], None
+    for row in snapshot["rows"]:
+        named = {item["machine_id"]: item["machine_name"] for item in row["machines"]}
+        if machine_id == "all":
+            shown = dict(row)
+        elif machine_id is None:
+            if named:
+                continue
+            shown = dict(row)
+        elif machine_id in named:
+            shown = {**row, "machine_id": machine_id, "machine_name": named[machine_id]}
+        else:
+            continue
+        shown["setup_change"] = shown["setup_key"] != previous
+        previous = shown["setup_key"]
+        rows.append(shown)
+    return rows
+
+
+def snapshot(client):
+    response = client.get(URL, params={"machine_id": "all", "snapshot": "true"})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_snapshot_equals_the_machine_list_and_every_machine_route(production_api):
+    """One read for the screen: the snapshot's rows, choices and version are what /machines and each machine route
+    return — several machines per row, the «Станок не указан» bucket, pools, grouped and standalone rows."""
+    client, _ = production_api
+    seed_units()
+    no_machine = document(length=700)
+    no_machine["operations"][0]["card"]["tooling"] = []
+    batch(client, [issue("708К.", "КБ1", standalone(several_machines(document(length=2000)))),
+                   issue("709К.", "КБ1", standalone(on_machine(document(length=1000), "ОБ.095"))),
+                   issue("710К.", "КБ1", standalone(with_cable(document(length=500), "RG 316"))),
+                   issue("711К.", "КБ1", standalone(no_machine)),
+                   issue("712К.", "КБ1", standalone(pooled(document(length=900)))),
+                   issue("713К.", "КБ1", standalone(on_machine(document(length=300), "ОБ.100.2"))),
+                   issue("714К.", "КБ1", document(length=800)), issue("714К.", "КБ2", document(length=600))])
+    body = snapshot(client)
+    everything = queue(client, "all")
+    assert (body["machine_id"], body["equipment_id"]) == ("all", None)
+    assert body["rows"] == everything["rows"] and body["version"] == everything["version"]
+    assert body["machines"] == client.get(f"{URL}/machines").json()["machines"]
+    assert len(body["machines"]) >= 6 and any(item["machine_id"] is None for item in body["machines"])
+    assert any(row["group_id"] for row in body["rows"]) and any(not row["group_id"] for row in body["rows"])
+    for machine in body["machines"]:
+        route = queue(client, machine["machine_id"] or "none")["rows"]
+        assert derived(body, machine["machine_id"]) == route, machine
+        assert len(route) == machine["rows"]
+    # Only «Все станки» has a snapshot.
+    for params in ({"machine_id": "ОБ.1", "snapshot": "true"}, {"machine_id": "none", "snapshot": "true"},
+                   {"equipment_id": str(uuid4()), "snapshot": "true"}):
+        assert client.get(URL, params=params).status_code == 422
+
+
+def test_version_changes_with_any_shown_value_and_only_then(production_api):
+    """The screen keeps its rows while the version is unchanged, so the version covers every shown field —
+    an assignee's name too, which changes no task version."""
+    from app.modules.identity.infrastructure import IdentityUserRow
+
+    client, operator = production_api
+    batch(client, [issue("708К.", "КБ1", standalone())])
+    first = snapshot(client)
+    assert snapshot(client)["version"] == first["version"]
+    row = first["rows"][0]
+    assert done(client, row, 1, operator=operator).status_code == 200
+    assigned = snapshot(client)
+    assert assigned["version"] != first["version"] and assigned["rows"][0]["operator_names"] == ["Оператор"]
+    with app.state.production_uow_factory() as uow:
+        uow.session.get(IdentityUserRow, operator).name = "Оператор Иванов"
+        uow.commit()
+    renamed = snapshot(client)
+    assert renamed["rows"][0]["operator_names"] == ["Оператор Иванов"] and renamed["version"] != assigned["version"]
+
+
+def statements_of(client, requests):
+    """SQL statements each request runs (all modules share one database in the test app)."""
+    from sqlalchemy import event
+
+    with app.state.production_uow_factory() as uow:
+        engine = uow.session.get_bind()
+    seen = []
+
+    def capture(*args):
+        seen.append(args[2])
+
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        counts = []
+        for path, params in requests:
+            seen.clear()
+            response = client.get(path, params=params)
+            assert response.status_code == 200, response.text
+            counts.append(len(seen))
+        return counts
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+
+
+def test_queue_reads_are_bounded_by_shape_not_by_the_number_of_tasks(production_api):
+    """Owner 23.11 «почему это так висит»: 40 rows cost 371 statements (four child reads and an access re-read per
+    task). The reads are batched now: 1, 40 and 80 tasks cost the same handful, for a viewer with a site — whose group
+    check also reads a handed-over member's task — on every route the screen uses."""
+    from app.modules.production.infrastructure import ProductionTaskRow
+
+    client, _ = production_api
+    requests = [(f"{URL}/machines", None), (URL, {"machine_id": "ОБ.1"}), (URL, {"machine_id": "all"}),
+                (URL, {"machine_id": "all", "snapshot": "true"})]
+    counts, made = {}, 0
+    for total in (1, 40, 80):
+        batch(client, [issue(f"7{index // 30:02d}К.", f"КБ{index % 30 + 1}", document(length=500 + index))
+                       for index in range(made, total)])
+        made = total
+        if total == 40:  # a handed-over member: its task is outside the running ones the queue lists
+            with app.state.production_uow_factory() as uow:
+                task = uow.session.scalars(select(ProductionTaskRow).where(ProductionTaskRow.item == "КБ2")).first()
+                task.handed_to = "ЦАР"
+                uow.commit()
+        rows = queue(client, "all")["rows"]
+        assert len(rows) == total - (1 if total > 1 else 0)
+        counts[total] = statements_of(client, requests)
+    assert all(count <= 40 for values in counts.values() for count in values), counts
+    assert counts[80] == counts[40], counts
+
+
+def test_queue_group_visibility_is_check_access_for_every_viewer_site(production_api):
+    """The batched group check of the queue sees exactly the groups `check_access` lets the viewer see: a group of
+    another site, a member handed over to another site, an inactive assignee of another site; viewer of ЦАР, ЖУК, none.
+    The ЖУК viewer sees only the ЖУК group: its members are unassigned and not handed over."""
+    from app.modules.identity.infrastructure import IdentityUserRow
+    from app.modules.production import cutting_queue
+    from app.modules.production.cutting_application import check_access
+    from app.modules.production.infrastructure import ProductionOperationOperatorRow, ProductionTaskRow
+    from tests.factories import Actor
+
+    client, _ = production_api
+    batch(client, [issue(project, item) for project in ("708К.", "709К.", "710К.", "711К.") for item in ("КБ1", "КБ2")])
+    found = {group["project"]: group for group in groups(client)}
+    stranger = uuid4()
+    with app.state.production_uow_factory() as uow:
+        uow.session.add(IdentityUserRow(id=stranger, login="zhuk", email="zhuk@example.test", name="Жуковский",
+                                        department="Производство", role="staff", site="ЖУК", active=False,
+                                        shop_worker=True))
+        uow.session.get(ProductionTaskRow, UUID(found["708К."]["rows"][0]["task_id"])).handed_to = "ЖУК"
+        uow.session.get(CuttingGroupRow, UUID(found["709К."]["id"])).site = "ЖУК"
+        uow.session.flush()
+        uow.session.add(ProductionOperationOperatorRow(operation_id=UUID(found["710К."]["rows"][0]["operation_id"]),
+                                                       operator_id=stranger, position=0))
+        uow.commit()
+    master = UUID("10000000-0000-0000-0000-000000000001")
+    actor = Actor(id=master, name="Мастер", department="Производство")
+    seen = {}
+    for site in ("ЦАР", "ЖУК", ""):
+        with app.state.production_uow_factory() as uow:
+            uow.session.get(IdentityUserRow, master).site = site
+            uow.commit()
+        with app.state.production_uow_factory() as uow:
+            listed = {item["group"]["id"] for item in cutting_queue.collect(uow, actor) if item["group"]}
+            expected = set()
+            for group in uow.session.scalars(select(CuttingGroupRow)):
+                try:
+                    check_access(group, uow, actor)
+                except PermissionError:
+                    continue
+                expected.add(str(group.id))
+        assert listed == expected, site
+        seen[site] = {project for project, group in found.items() if group["id"] in listed}
+    assert seen == {"ЦАР": {"711К."}, "ЖУК": {"709К."}, "": {"708К.", "709К.", "710К.", "711К."}}

@@ -133,8 +133,10 @@ CASES = [
      {"Наименование": "тутнг 4/2  черная", "Цвет": "чёрный"}, "тутнг 4/2  черная", ("Цвет", "черный", "чёрный"),
      {"Наименование": "Стяжка", "Цвет": ["белый"]}, "ожидается текст или число"),
     ("ob", {"baseValue": "EW-50A/Автомат", "obType": "Оборудование", "Инв. номер": "ОБ.099"},
-     {"Инв. номер": "ОБ.001", "obType": "Средства измерений"}, "inventory:об.001",
-     ("obType", "Инструмент", "Средства измерений"), {"baseValue": "8620DX/Фен"}, "не заполнен ключ"),
+     # A tool becomes equipment: since 0217 a СИ lives only in the single registry and an import that would turn a row
+     # into one is refused (tests/references/test_equipment.py::test_bulk_import_refuses_a_measuring_instrument).
+     {"Инв. номер": "ОБ.001", "obType": "Оборудование"}, "inventory:об.001",
+     ("obType", "Инструмент", "Оборудование"), {"baseValue": "8620DX/Фен"}, "не заполнен ключ"),
     ("suppliers", {"key": "https://www.terraelectronica.ru/catalog", "value": "ООО «Терраэлектроника»"},
      {"key": "chipdip.ru", "value": "АО «ЧИП и ДИП»"}, "chipdip.ru", ("value", 'АО "ЧИП И ДИП"', "АО «ЧИП и ДИП»"),
      {"key": "kroks.ru", "value": ""}, "Значение справочника обязательно"),

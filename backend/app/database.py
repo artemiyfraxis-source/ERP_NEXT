@@ -36,7 +36,7 @@ from .modules.purchasing.infrastructure import SqlAlchemyPurchasingUnitOfWork
 from .workflows.stage_names import install_stage_name_loader
 from .workflows import etk_refresh  # noqa: F401 — registers the refresh-request trigger on every session
 from .workflows.kitset_names import KitsetNameQueue
-from .workflows.new_operation import SqlAlchemyReferencesOperationsUnitOfWork
+from .workflows.instrument_catalog import SqlAlchemyInstrumentReferencesUnitOfWork
 from .workflows.project_registry import InternalAwareProjectRegistry, PlanSnapshotProjectRegistry
 from .workflows.receiving_stock import WarehouseStockBalanceLookup
 from .workflows.procurement_stage import ProcurementLineStageLookup
@@ -158,7 +158,7 @@ def build_shipping_uow_factory(engine: Engine) -> Callable[[], ShippingUnitOfWor
 def build_references_uow_factory(engine: Engine) -> Callable[[], ReferencesUnitOfWork]:
     sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
     # The references UoW that also sees operation cards (БД.ТК): renaming «Номер» can't orphan a card (owner 14.10).
-    return lambda: SqlAlchemyReferencesOperationsUnitOfWork(sessions)
+    return lambda: SqlAlchemyInstrumentReferencesUnitOfWork(sessions)
 
 
 def build_operations_uow_factory(engine: Engine) -> Callable[[], OperationsUnitOfWork]:

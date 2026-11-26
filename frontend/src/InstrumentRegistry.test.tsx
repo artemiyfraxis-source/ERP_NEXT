@@ -74,6 +74,24 @@ const save = () => fireEvent.click(screen.getByRole("button", { name: "Сохр�
 const writes = (requests: Request[]) => requests.filter((request) => request.method !== "GET");
 afterEach(() => { vi.restoreAllMocks(); localStorage.clear(); window.history.replaceState({}, "", "/"); });
 
+it("links the OTK record to the same canonical record in the database only with reference access", async () => {
+  const { onChanged, rerender } = setup();
+  expect(screen.queryByRole("link", { name: "База данных · Средства измерений" })).not.toBeInTheDocument();
+  open();
+  let dialog = screen.getByRole("dialog", { name: "Средство измерений: Анализатор цепей" });
+  expect(within(dialog).queryByRole("link", { name: "Открыть в базе данных" })).not.toBeInTheDocument();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Закрыть" }));
+  rerender(<InstrumentRegistry instruments={[instrument]} onChanged={onChanged} canSeeReferences />);
+  expect(screen.getByRole("link", { name: "База данных · Средства измерений" }))
+    .toHaveAttribute("href", "?section=references&tab=ob_measuring");
+  open();
+  dialog = screen.getByRole("dialog", { name: "Средство измерений: Анализатор цепей" });
+  expect(within(dialog).getByLabelText("Инв. №")).toHaveValue(instrument.inventory_number);
+  expect(within(dialog).getByRole("link", { name: "Открыть в базе данных" }))
+    .toHaveAttribute("href", `?section=references&tab=ob_measuring&equipment=${instrument.id}`);
+  await waitFor(() => expect(within(dialog).queryByText("Загрузка…")).not.toBeInTheDocument());
+});
+
 it("opens the inventory deep link when records arrive and does not reopen after closing", async () => {
   window.history.replaceState({}, "", "/?section=quality&tab=instruments&si=" + encodeURIComponent(accessory.inventory_number));
   const { rerender, onChanged } = setup([]);

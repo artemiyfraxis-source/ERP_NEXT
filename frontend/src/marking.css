@@ -76,15 +76,11 @@
 .marking-card-geometry { font-size: 13px; }
 .marking-card-jobs { display: grid; gap: 12px; min-width: 0; }
 .marking-card-jobs tr.is-selected td { background: color-mix(in srgb, var(--primary) 10%, var(--card)); }
-.marking-card-text { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(200px, 240px) minmax(280px, 1.2fr); gap: 12px 16px; align-items: start; }
+.marking-card-text { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 16px 24px; align-items: start; }
 .marking-card-text label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
-.marking-card-lines textarea { width: 100%; min-height: 200px; font-size: 14px; line-height: 1.5; resize: vertical; }
-.marking-card-options { display: grid; gap: 12px; }
-.marking-card-options input[type="number"] { width: 96px; text-align: right; font-variant-numeric: tabular-nums; }
-.marking-card-options p { margin: 0; font-size: 12px; }
 .marking-card-order { display: grid; gap: 4px; font-size: 13px; }
 .marking-card-order .check-inline, .marking-card-text .check-inline { flex-direction: row; align-items: center; gap: 8px; }
-.marking-card-numbers { display: flex; gap: 8px; }
+.marking-card-numbers { display: flex; align-items: center; gap: 8px; }
 .marking-card-preview { display: grid; gap: 8px; min-width: 0; }
 .marking-card-preview-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; font-size: 13px; }
 .marking-card-preview .empty { margin: 0; }
@@ -106,7 +102,51 @@
 .marking-card-order.is-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
 .marking-card-reason, .marking-window .marking-reason { display: flex; flex-direction: column; gap: 4px; max-width: 720px; font-size: 13px; }
 .marking-card-reason input { width: 100%; }
-.marking-card-options input[name="marking-card-wire"] { width: 96px; text-align: right; font-variant-numeric: tabular-nums; }
+.marking-text-editor { display: grid; gap: 12px; min-width: 0; }
+.marking-text-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px 12px; font-size: 13px; }
+.marking-text-heading button { flex-shrink: 0; min-height: 44px; }
+.marking-text-list { max-height: 300px; overflow: auto; overscroll-behavior: contain; border-block: 1px solid var(--border); }
+.marking-text-list table { table-layout: fixed; }
+.marking-text-list th { background: var(--sheet-head); position: sticky; top: 0; z-index: 1; }
+.marking-text-list :is(th, td) { padding: 6px 8px; white-space: normal; }
+.marking-text-list :is(th, td):first-child { padding-left: 0; }
+.marking-text-list th:first-child { padding-left: 8px; }
+.marking-text-list :is(th, td):nth-child(2) { width: 90px; text-align: right; }
+.marking-text-list :is(th, td):nth-child(3) { width: 64px; text-align: right; font-variant-numeric: tabular-nums; }
+.marking-text-list :is(th, td):last-child { width: 52px; padding-right: 0; }
+.marking-text-list input { width: 100%; min-width: 0; min-height: 44px; font-size: 14px; }
+.marking-text-list input[type="number"] { text-align: right; font-variant-numeric: tabular-nums; }
+.marking-text-list input[aria-invalid="true"] { border-color: var(--tone-danger); }
+.marking-text-list tbody tr { content-visibility: auto; contain-intrinsic-size: auto 64px; }
+.marking-text-remove { width: 44px; min-height: 44px; }
+.marking-text-remove:hover:not(:disabled) { color: var(--tone-danger); border-color: var(--tone-danger); }
+.marking-text-chip { display: inline-block; padding: 2px 6px; margin-top: 4px; border-radius: var(--control-radius); background: var(--accent); color: var(--foreground); font-size: 12px; }
+.marking-text-paste { display: grid; gap: 8px; padding: 12px; background: var(--panel-soft); border-radius: var(--control-radius); }
+.marking-text-paste textarea { width: 100%; resize: vertical; font-family: var(--font-mono); line-height: 1.5; }
+.marking-text-settings { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 16px; padding-top: 4px; }
+.marking-text-order { display: grid; gap: 6px; font-size: 13px; color: var(--muted-foreground); }
+.marking-text-order .seg-tabs { margin: 0; }
+.marking-text-order button { min-height: 44px; }
+.marking-card-text .marking-text-wire { display: grid; grid-template-columns: auto auto; gap: 4px 8px; font-size: 13px; }
+.marking-text-wire > span { font-size: 12px; font-weight: 400; }
+.marking-text-wire input { grid-column: 1 / -1; width: 96px; min-height: 44px; text-align: right; font-variant-numeric: tabular-nums; }
+.marking-card-numbers { font-size: 13px; color: var(--muted-foreground); }
+.marking-card-numbers > span { margin-right: 4px; }
+.marking-card-numbers input { width: 80px; min-height: 44px; text-align: right; font-variant-numeric: tabular-nums; }
+.marking-card-text .warning-inline { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.marking-text-preview { padding: 12px; background: var(--panel-soft); border-radius: var(--control-radius); }
+.marking-text-preview > p { margin: 4px 0 0; font-size: 13px; }
+.marking-text-preview-empty { display: grid; justify-items: center; gap: 12px; padding: 24px 12px; color: var(--muted-foreground); text-align: center; font-size: 13px; }
+.marking-text-preview-empty p { margin: 0; }
+.marking-text-blank { display: grid; place-items: center; width: min(200px, 100%); max-height: 180px; border: 1px dashed var(--border); background: var(--card); font-family: var(--font-mono); }
+.marking-card-strip.is-proportional { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); max-height: 300px; gap: 12px; padding: 8px 0; }
+.marking-card-strip.is-proportional img { width: 100%; height: auto; max-height: none; object-fit: contain; }
+.marking-text-footer { grid-column: 1 / -1; display: grid; gap: 12px; border-top: 1px solid var(--border); padding-top: 16px; }
+.marking-text-summary { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.marking-text-summary > span { color: var(--muted-foreground); }
+.marking-card-text .marking-card-actions { justify-content: start; }
+.marking-text-footer .marking-card-actions > span { flex: 1 1 240px; overflow-wrap: anywhere; }
+.marking-card-text :is(button, input, textarea) { touch-action: manipulation; }
 .marking-card :is(button, input, select, textarea):focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 /* «Наладка» — окно поверх карточки. */
 .marking-card-setup { display: grid; gap: 8px; }
@@ -114,10 +154,12 @@
 .marking-card-setup .machine-setup-head { display: none; }
 .marking-card-setup .machine-setup { border: 0; padding: 0; }
 @media (pointer: coarse) {
-  .marking-card-pult .check-inline, .marking-card-reason input, .marking-card-options input { min-height: 40px; }
+  .marking-card-pult .check-inline, .marking-card-reason input { min-height: 40px; }
 }
 @media (max-width: 1100px) {
-  .marking-card-text { grid-template-columns: minmax(0, 1fr) minmax(180px, 220px); }
-  .marking-card-preview { grid-column: 1 / -1; }
   .marking-card-profile { margin-left: 0; }
+}
+@media (max-width: 800px) {
+  .marking-card-text { grid-template-columns: minmax(0, 1fr); }
+  .marking-text-heading { flex-wrap: wrap; }
 }

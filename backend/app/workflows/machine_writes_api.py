@@ -9,7 +9,10 @@ The machine card («Настройки» part):
   cutting jobs of open groups and the hook-up wires `{label, conductor_mm, has_recipe}`; with a job: what «Передать на
   станок» writes — ETK nominal + ERP corrections except length; with a wire and no job (`group_id: null`):
   the wire's newest recipe, else the reference fallback + the correction. A recipe value is final (no offset on top).
-- `POST /api/production/machines/card/{ОБ}/transfer` (edit) `{group_id, length_mm, confirm_state}` → that write.
+- `POST /api/production/machines/card/{ОБ}/transfer` (edit) `{group_id, length_mm, confirm_state, expected_source,
+  expected_active_run_id}` → that write. The group preview supplies `expected_source` {group_id, version, length_mm,
+  plan_hash} and `expected_active_run_id` (UUID or null). Both are compared under machine/group locks; a stale or
+  missing source, or a changed active run → 409: refresh the preview and ask the operator to confirm again.
 - `POST /api/production/machines/card/{ОБ}/correction` (edit) — after a trial Слава says which case it is (owner 19.11):
   `machine` «станок режет не так» → the machine's stored offset of that parameter (ETK unchanged); `etk` «размер в ЭТК
   неверный» → a new revision of every issued ETK of the job with reason «правка наладчика: …», the technologist is
@@ -33,6 +36,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime
 from decimal import ROUND_CEILING, Decimal
+from hashlib import sha256
+import json
 from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
@@ -42,7 +47,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.modules.equipment_setup.recipe_infrastructure import SqlAlchemyRecipes
-from app.modules.equipment_setup.recipes import (EtkNominal, latest_for_wire, ob019_proposal, recipe_holds, recipe_wire,
+from app.modules.equipment_setup.recipes import (OB019_SPEED_PARAMETERS, EtkNominal, latest_for_wire, ob019_proposal, recipe_holds, recipe_wire,
                                                  wire_key)
 from app.modules.production import machine_control
 from app.modules.production import machine_runs as runs
@@ -104,10 +109,19 @@ class WritePayload(Payload):
     confirm_state: int | None = None
 
 
+class ExpectedSource(Payload):
+    group_id: UUID
+    version: int = Field(ge=1)
+    length_mm: str = Field(min_length=1, max_length=20)
+    plan_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class TransferPayload(Payload):
     group_id: UUID
     length_mm: str = Field(min_length=1, max_length=20)
     confirm_state: int | None = None
+    expected_source: ExpectedSource | None = None
+    expected_active_run_id: UUID | None = None
 
 
 class CorrectionPayload(Payload):
@@ -169,6 +183,43 @@ def _link(session, inventory: str) -> rules.MachineLinkRow:
     if link.kind != rules.KIND_OB019:
         raise HTTPException(409, f"{inventory}: запись с ERP есть только у ОБ.019")
     return link
+
+
+def locked_link(session, inventory: str) -> rules.MachineLinkRow:
+    """Serialize loads even when the machine has no run row yet; hold until commit/rollback.
+
+    SQLite's write transaction must precede the first read (FOR UPDATE is ignored there).
+    The shared production UoW may already have started BEGIN IMMEDIATE for resource claims.
+    """
+    if session.get_bind().dialect.name == "sqlite":
+        connection = session.connection()
+        if not connection.connection.driver_connection.in_transaction:
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+    link = session.scalar(select(rules.MachineLinkRow).where(
+        rules.MachineLinkRow.inventory_number == _inventory(inventory))
+        .with_for_update().execution_options(populate_existing=True))
+    if link is None or link.kind != rules.KIND_OB019:
+        return _link(session, inventory)
+    # Remaining pieces in the confirmed plan and the absolute PLC target must use the same counter.
+    # Telemetry normally updates only this row, so the link lock alone cannot keep that baseline stable.
+    session.scalar(select(rules.MachineSnapshotRow).where(
+        rules.MachineSnapshotRow.equipment_id == link.equipment_id)
+        .with_for_update().execution_options(populate_existing=True))
+    return link
+
+
+def active_run_id(session, equipment_id: UUID, *, lock: bool = False) -> str | None:
+    row = runs.current(session, equipment_id, for_update=lock)
+    return str(row.id) if runs.is_open(row) else None
+
+
+def confirm_active_run(session, equipment_id: UUID, expected: UUID | None, job: dict) -> None:
+    row = runs.current(session, equipment_id, for_update=True)
+    active = str(row.id) if runs.is_open(row) else None
+    if active != (str(expected) if expected is not None else None):
+        raise HTTPException(409, "Задание на станке изменилось — обновите карточку и подтвердите загрузку ещё раз")
+    if active is not None and not runs.same_job(runs.info(row), job):
+        raise HTTPException(409, f"На станке идёт задание {runs.info(row)['label']} — сначала завершите или прервите его")
 
 
 def _confirm(session, link: rules.MachineLinkRow, state: int | None) -> None:
@@ -362,7 +413,8 @@ def _plan_rows(session, link: rules.MachineLinkRow, nominal: EtkNominal, length:
     stored = commands.offsets(session, link.equipment_id)
     words = rules.snapshot_words(session.get(rules.MachineSnapshotRow, link.equipment_id))
     rows, missing = [], []
-    for key in WIRE_KEYS:
+    speed_keys = tuple(item.key for item in OB019_SPEED_PARAMETERS if recipe_holds(recipe, item.key))
+    for key in (*WIRE_KEYS, *speed_keys):
         base = reference[key] if key in recipe_keys else etk[key]
         final = key in recipe_keys and recipe_holds(recipe, key)
         offset = None if final else Decimal(0) if key == "length_mm" else commands.offset_value(stored.get(key))
@@ -370,7 +422,7 @@ def _plan_rows(session, link: rules.MachineLinkRow, nominal: EtkNominal, length:
         if value is None:
             missing.append(rules.OB019_FIELDS[key].label)
         live = rules.field_value(key, words)
-        rows.append({"key": key, "label": rules.OB019_FIELDS[key].label, "unit": "мм", "nominal": _shown(base.value),
+        rows.append({"key": key, "label": rules.OB019_FIELDS[key].label, "unit": rules.OB019_FIELDS[key].unit, "nominal": _shown(base.value),
                      "source": base.source, "offset": _shown(offset), "value": _shown(value),
                      "live": None if live is None else _shown(Decimal(str(live)))})
     blocking = [rules.OB019_FIELDS[key].label for key in ("length_mm", "strip_front_mm", "strip_back_mm")
@@ -379,9 +431,9 @@ def _plan_rows(session, link: rules.MachineLinkRow, nominal: EtkNominal, length:
 
 
 # The ETK gives length and strip of a job; cut diameter and knife back-off are the machine's own (Слава's эталон).
-JOB_RECIPE_KEYS = ("diameter_mm", "knife_back_mm")
+JOB_RECIPE_KEYS = ("diameter_mm", "knife_back_mm", *(item.key for item in OB019_SPEED_PARAMETERS))
 # Without a job everything but the length comes from the wire's recipe, else the reference fallback.
-WIRE_RECIPE_KEYS = tuple(key for key in WIRE_KEYS if key != "length_mm")
+WIRE_RECIPE_KEYS = tuple(key for key in WIRE_KEYS if key != "length_mm") + tuple(item.key for item in OB019_SPEED_PARAMETERS)
 
 
 def _transfer_plan(session, link: rules.MachineLinkRow, group_id: UUID, length_text: str,
@@ -401,10 +453,47 @@ def _transfer_plan(session, link: rules.MachineLinkRow, group_id: UUID, length_t
     quantity = max(planned - done, 0)
     job = {"total_set": quantity, "order_quantity": quantity, "order_number": latin(group.number),
            "product": latin(f"{nominal.wire} L{_shown(length)}")}
-    return {"group_id": str(group.id), "number": group.number, "wire": nominal.wire, "length_mm": _shown(length),
+    return {"group_id": str(group.id), "version": group.version, "number": group.number,
+            "wire": nominal.wire, "length_mm": _shown(length),
             "quantity": quantity, "planned": planned, "done": done, "rows": rows, "job": job, "missing": missing,
             "blocking": blocking,
             "marking": marking_plan(group_laser_mark(group.recipe or {}), length, latin)}
+
+
+def _expected_source(plan: dict) -> dict:
+    # Live PLC values only describe the comparison column; they are not values to write. Hash every other
+    # part of the preview, including quantities, offsets, recipe provenance and laser marking.
+    shown = {**plan, "rows": [{key: value for key, value in row.items() if key != "live"}
+                             for row in plan["rows"]]}
+    digest = sha256(json.dumps(shown, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+    return {"group_id": plan["group_id"], "version": plan["version"],
+            "length_mm": runs.length_key(plan["length_mm"]), "plan_hash": digest}
+
+
+def confirmed_transfer_plan(session, link, group_id: UUID, length_mm: str,
+                            expected: ExpectedSource | None, now: datetime) -> dict:
+    """Caller holds the machine link lock; group editors use the same group row lock."""
+    if expected is None:
+        raise HTTPException(409, "Подтвердите актуальный план загрузки задания на станок")
+    reason = "Группа резки или план загрузки изменились — обновите карточку и подтвердите загрузку ещё раз"
+    if expected.group_id != group_id or runs.length_key(expected.length_mm) != runs.length_key(length_mm):
+        raise HTTPException(409, reason)
+    group = session.scalar(select(CuttingGroupRow).where(CuttingGroupRow.id == group_id)
+                           .with_for_update().execution_options(populate_existing=True))
+    if group is None or group.version != expected.version or group.state not in GROUP_STATES:
+        raise HTTPException(409, reason)
+    if _quantity(session, group_id, _length(length_mm)) < 1:
+        raise HTTPException(409, reason)
+    try:
+        plan = _transfer_plan(session, link, group_id, length_mm, now)
+    except HTTPException as error:
+        if error.status_code in (404, 422):
+            raise HTTPException(409, reason) from error
+        raise
+    if _expected_source(plan) != {**expected.model_dump(mode="json"),
+                                   "length_mm": runs.length_key(expected.length_mm)}:
+        raise HTTPException(409, reason)
+    return plan
 
 
 def _wire_plan(session, link: rules.MachineLinkRow, wire_text: str, length_text: str) -> dict:
@@ -446,7 +535,9 @@ def transfer_preview(inventory: str, _principal: Reader, factory: Factory, now: 
         session = uow.session
         link = _link(session, inventory)
         if group_id is not None:
-            return _transfer_plan(session, link, group_id, length_mm, now)
+            plan = _transfer_plan(session, link, group_id, length_mm, now)
+            return {**plan, "expected_source": _expected_source(plan),
+                    "expected_active_run_id": active_run_id(session, link.equipment_id)}
         if wire.strip():
             return _wire_plan(session, link, wire, length_mm)
         groups = list(session.scalars(select(CuttingGroupRow).where(CuttingGroupRow.state.in_(GROUP_STATES))
@@ -461,23 +552,30 @@ def transfer_preview(inventory: str, _principal: Reader, factory: Factory, now: 
 def transfer(inventory: str, payload: TransferPayload, principal: Writer, factory: Factory, now: Now) -> dict:
     with factory() as uow:
         session = uow.session
-        link = _link(session, inventory)
+        link = locked_link(session, inventory)
         _confirm(session, link, payload.confirm_state)
+        confirm_active_run(session, link.equipment_id, payload.expected_active_run_id,
+                           runs.cutting(payload.group_id, payload.length_mm, "", None))
         refuse_while_manual(session, link.equipment_id)
-        plan = _transfer_plan(session, link, payload.group_id, payload.length_mm, now)
+        plan = confirmed_transfer_plan(session, link, payload.group_id, payload.length_mm, payload.expected_source, now)
         if plan["blocking"]:
             raise HTTPException(422, "В ЭТК не задано: " + ", ".join(plan["blocking"]))
         refuse_when_done(plan)
         writes = [commands.FieldWrite(row["key"], row["value"]) for row in plan["rows"] if row["value"] is not None]
         writes += [commands.FieldWrite(key, value) for key, value in plan["job"].items() if value not in ("", None)]
-        writes += marking_writes(plan)
+        current = runs.current(session, link.equipment_id)
+        new_job = not (runs.is_open(current) and runs.same_job(runs.info(current),
+                                                            runs.cutting(payload.group_id, payload.length_mm, "", None)))
+        writes += marking_writes(plan, new_job=new_job)
         return _enqueue(uow, link, principal, "transfer", writes, transfer_summary(plan), now,
                         run=cutting_run(plan, payload.length_mm))
 
 
-def marking_writes(plan: dict) -> list[commands.FieldWrite]:
+def marking_writes(plan: dict, *, new_job: bool = False) -> list[commands.FieldWrite]:
     """The ETK laser marking of a job plan (workflows/ob019_marking.py) — written with the job, 422 when it cannot be."""
     marking = plan.get("marking")
+    if marking is None and new_job:
+        marking = marking_plan({"mode": "none"}, Decimal(0), latin)
     if marking is None:
         return []
     if marking["blocking"]:
@@ -510,7 +608,7 @@ def refuse_while_manual(session, equipment_id: UUID) -> None:
     """A cutting job is not written while a manual job runs on the machine: the counter would mix both (plan S2)."""
     job = manual.running(session, equipment_id)
     if job is not None:
-        raise HTTPException(409, f"На станке идёт ручная работа {manual.number_text(job.number)} — "
+        raise HTTPException(409, f"На станке идёт работа {manual.number_text(job.number)} — "
                                  "завершите или отмените её")
 
 

@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { AccessMode, Principal } from "./api";
 import type { MachineCard, MachineRow, UnitSetup } from "./machinesApi";
 import { MachinesPage } from "./MachinesPage";
+import { manualJobsApi } from "./manualJobsApi";
 import { visibleNav } from "./navigation";
 import { machineStatus, Ob019CardView } from "./Ob019Card";
 
@@ -49,7 +50,7 @@ function card(overrides: Partial<MachineCard> = {}): MachineCard {
   };
 }
 
-afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); window.history.replaceState({}, "", "/"); });
 
 const NOT_INSTALLED: MachineRow = {
   key: "machine:u37", kind: "machine", equipment_id: null, inventory: "ОБ.037", name: "Автомат резки BZW-880", pc: "", ip: "",
@@ -153,7 +154,8 @@ it("shows one list grouped by purpose; the link is a badge; «Только по�
   machines(calls);
   render(<MachinesPage />);
   expect(await screen.findByRole("region", { name: "Резка" })).toBeTruthy();
-  expect(screen.queryByRole("tab")).toBeNull();  // наладка этому сотруднику закрыта, других вкладок нет
+  expect(screen.queryByRole("tab", { name: "Запросы на наладку" })).toBeNull();
+  expect(screen.getByRole("tab", { name: "Журнал работ" })).toBeVisible();
   expect(screen.queryByText(/С управлением|Без управления/)).toBeNull();
   // Groups follow the order of the API's families; an empty group is not drawn.
   expect(screen.getAllByRole("region").map((region) => region.getAttribute("aria-label"))).toEqual(
@@ -201,8 +203,7 @@ it("shows one list grouped by purpose; the link is a badge; «Только по�
   await waitFor(() => expect(within(dialog).getByLabelText("Длина провода")).toHaveValue("325,00"));
   expect(within(dialog).getByText("3 621 шт/ч")).toBeTruthy();
   expect(calls).toContain("/api/production/machines/u19");
-  fireEvent.click(within(dialog).getByRole("button", { name: "Наладка · ждёт" }));
-  expect(await screen.findByRole("dialog", { name: "Наладка ОБ.019" })).toBeTruthy();
+  expect(within(dialog).queryByRole("button", { name: "Наладка · ждёт" })).toBeNull();
 });
 
 it("«Только подключённые» keeps only what is on line now, not everything with an agent", async () => {
@@ -276,6 +277,7 @@ it("records the machine setup by the task from its card, by hand only with a rea
     if (url.includes("/setup-model/")) return json(SETUP);
     if (url.includes("/machine-queue")) return json({ equipment_id: "u05", inventory: "ОБ.005", version: "v", rows: [] });
     if (url.includes("/cutting-queue")) return json({ machine_id: null, version: "v", rows: [] });
+    if (url.includes("/manual-jobs/options")) return json({ machines: [{ id: "u05", inventory: "ОБ.005", name: "Станок", running: null }], wires: [], contacts: [], references: [], can_edit: true });
     if (url.includes("/manual-jobs")) return json({ date_from: "", date_to: "", rows: [], can_edit: true, downtimes: [] });
     return json({ now: "", rows: [TWISTER], families: FAMILIES });
   });
@@ -362,9 +364,13 @@ it("keeps PC, agent, link and an extra agent answer in the status line without a
   expect(screen.queryByText("Подключение")).toBeNull();
 });
 
-it("opens journal and full parameters from header buttons in PageWindows without bottom folds", async () => {
+it("keeps only journal and close in the machine header", async () => {
   machines();
-  const { container } = render(<Ob019CardView card={card()} />);
+  vi.spyOn(manualJobsApi, "list").mockResolvedValue({ date_from: "", date_to: "", rows: [], can_edit: false, waiting_count: 0 });
+  globalThis.window.history.replaceState({}, "", "/?section=machines&equipment=u19");
+  const { container } = render(<MachinesPage />);
+  await screen.findByRole("button", { name: "Журнал" });
+  expect(screen.getAllByRole("button", { name: "Журнал" })).toHaveLength(1);
   expect(container.querySelector(".machine-connection, .machine-journal, .machine-more")).toBeNull();
   expect(screen.queryByText(/Остальные параметры/)).toBeNull();
   const journal = screen.getByRole("button", { name: "Журнал" });
@@ -372,13 +378,15 @@ it("opens journal and full parameters from header buttons in PageWindows without
   fireEvent.click(journal);
   const window = await screen.findByRole("dialog", { name: "Журнал станка" });
   expect(await within(window).findByText("Записей пока нет")).toBeInTheDocument();
+  expect(within(window).getAllByRole("region", { name: "Журнал работ" })[0]).toBeVisible();
+  await waitFor(() => expect(manualJobsApi.list).toHaveBeenCalledWith(
+    expect.any(String), expect.any(String), "u19", expect.any(AbortSignal), false));
   fireEvent.keyDown(window, { key: "Escape" });
   expect(screen.queryByRole("dialog", { name: "Журнал станка" })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Все параметры" }));
-  const parameters = await screen.findByRole("dialog", { name: "Все параметры" });
-  expect(await within(parameters).findByRole("table", { name: "Провод и зачистка" })).toBeInTheDocument();
-  expect(within(parameters).getByLabelText("Длина провода")).toHaveValue("325,00");
-  fireEvent.click(within(parameters).getByRole("button", { name: "Закрыть" }));
+  expect(within(journal.closest("header")!).getAllByRole("button").map((button) => button.textContent)).toEqual(["Журнал", "Закрыть"]);
+  expect(screen.queryByRole("button", { name: "Все параметры" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Ручная работа" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Наладка" })).toBeNull();
   expect(screen.queryByRole("dialog", { name: "Все параметры" })).toBeNull();
 });
 
@@ -447,6 +455,7 @@ it("opens the work card only for a machine without control that is in БД.ОБ;
     const url = decodeURIComponent(String(input));
     if (url.includes("/machine-queue")) return json({ equipment_id: "u70", inventory: "ОБ.070.1", version: "v", rows: [] });
     if (url.includes("/cutting-queue")) return json({ machine_id: null, version: "v", rows: [] });
+    if (url.includes("/manual-jobs/options")) return json({ machines: [{ id: "u05", inventory: "ОБ.005", name: "Станок", running: null }], wires: [], contacts: [], references: [], can_edit: true });
     if (url.includes("/manual-jobs")) return json({ date_from: "", date_to: "", rows: [], can_edit: true, downtimes: [] });
     return json({ now: "", rows: [SOLDER, NOT_INSTALLED, TSC], families: FAMILIES });
   });
