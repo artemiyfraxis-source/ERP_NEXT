@@ -26,7 +26,7 @@ export function VnaTargetList({ sessionId, query, visible, onPick }: {
     if (!visible) return;
     let live = true;
     setRows(null); setError("");
-    vnaBenchApi.targets().then((result) => { if (live) setRows(result.targets); })
+    vnaBenchApi.targets().then((result) => { if (live) setRows(Array.isArray(result?.targets) ? result.targets : []); })
       .catch((reason) => { if (live) setError(failureText(reason, "Не удалось загрузить СИ для замера")); });
     return () => { live = false; };
   }, [sessionId, attempt, visible]);
