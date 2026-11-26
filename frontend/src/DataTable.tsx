@@ -740,7 +740,9 @@ export function DataTable<T>({
   const lineKeys = new Set(lines.map(rowKey));
   const linesSig = JSON.stringify([...lineKeys]);
   const keys = new Set(rows.map(rowKey));
-  const selectedRows = rows.filter((row) => lineKeys.has(rowKey(row)) && selected.has(rowKey(row)));
+  // Свёрнутая группа таблицы остаётся в выборе: массовые действия работают и с отмеченными строками внутри неё (блоки `blocks` — как раньше, без свёрнутых).
+  const selectableKeys = new Set(groups.flatMap(([name, groupRows]) => blocks && (isFolded(name) || isSectionFolded(blockSection?.(name))) ? [] : groupRows).map(rowKey));
+  const selectedRows = rows.filter((row) => selectableKeys.has(rowKey(row)) && selected.has(rowKey(row)));
   // Выбор переживает перезагрузку данных только для строк, которые остались.
   useEffect(() => {
     setSelected((current) => {

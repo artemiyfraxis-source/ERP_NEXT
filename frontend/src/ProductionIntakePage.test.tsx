@@ -135,6 +135,58 @@ it("selected receipt rows of the same KB produce one versioned delivery update",
   } })]));
 });
 
+it("a folded shipment keeps its selected KB for bulk actions and unfolds back with its documents and delivery", async () => {
+  // Данные доставки КБ грузятся по проектам строк приёмки — нужна хотя бы одна строка проекта.
+
+  itemDeliveries = [kbDelivery("КБ1"), kbDelivery("КБ2")];
+  shipments = [
+    { ...packedShipment, id: "later", number: "ОТГ-2", status: "Закрыта", shipped_at: "2026-11-08", lines: [shipmentLine({ picked: "250" })] },
+    { ...packedShipment, id: "earlier", number: "ОТГ-1", status: "Отгружена", shipped_at: "2026-11-03", lines: [shipmentLine({ id: "l2", item_index: "КБ2", picked: "50" })] },
+  ];
+  render(<ProductionIntakePage principal={principal} />);
+  fireEvent.click(await screen.findByRole("tab", { name: /^Отгружено/ }));
+  const kb2 = bodyRows("").find((tr) => tr.textContent?.includes("КБ2"))!;
+  fireEvent.click(kb2.querySelector('input[type="checkbox"]')!);
+  fireEvent.click(screen.getByRole("button", { name: "Свернуть отгрузку ОТГ-1" }));
+  expect(bodyRows("").some((tr) => tr.textContent?.includes("КБ2"))).toBe(false);
+  expect(shipmentRows()).toHaveLength(2);
+  expect(screen.getByText("Выбрано: 1")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Задать доставку выбранным КБ" }));
+  await screen.findByText("Доставка · 591К.3 · КБ2");
+  fireEvent.click(screen.getByRole("button", { name: "Отмена" }));
+  fireEvent.click(screen.getByRole("button", { name: "Развернуть отгрузку ОТГ-1" }));
+  expect(bodyRows("").some((tr) => tr.textContent?.includes("КБ2"))).toBe(true);
+});
+
+it("the documents and delivery foot sits under its own shipment", async () => {
+  intakeRows = [];
+  shipments = [
+    { ...packedShipment, id: "later", number: "ОТГ-2", status: "Закрыта", shipped_at: "2026-11-08", upd_number: "УПД-2", track_number: "TRK-2", phone: "+7 222", lines: [shipmentLine({ picked: "250" })] },
+    { ...packedShipment, id: "earlier", number: "ОТГ-1", status: "Отгружена", shipped_at: "2026-11-03", upd_number: "УПД-1", track_number: "TRK-1", phone: "+7 111", lines: [shipmentLine({ id: "l2", item_index: "КБ2", picked: "50" })] },
+  ];
+  render(<ProductionIntakePage principal={principal} />);
+  fireEvent.click(await screen.findByRole("tab", { name: /^Отгружено/ }));
+  const order = [...document.querySelectorAll("tr.dt-group-block, tr.dt-group-foot")].map((tr) => tr.className.includes("foot") ? "foot" : "head");
+  expect(order).toEqual(["head", "foot", "head", "foot"]);
+  expect(shipmentRows().map((block) => [cell(block, "Отправка"), cell(block, "№ УПД"), cell(block, "Трек"), cell(block, "Телефон")])).toEqual([
+    ["ОТГ-2", "УПД-2", "TRK-2", "+7 222"],
+    ["ОТГ-1", "УПД-1", "TRK-1", "+7 111"],
+  ]);
+  for (const foot of document.querySelectorAll("tr.dt-group-foot")) expect(foot.previousElementSibling).not.toHaveClass("dt-group-block");
+});
+
+it("copy buttons put the track number and the phone on the clipboard", async () => {
+  intakeRows = [];
+  shipments = [{ ...packedShipment, status: "Отгружена", shipped_at: "2026-11-08", track_number: "TRK-77", phone: "+7 900 555", lines: [shipmentLine()] }];
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+  render(<ProductionIntakePage principal={principal} />);
+  fireEvent.click(await screen.findByRole("tab", { name: /^Отгружено/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "Скопировать трек-номер" }));
+  fireEvent.click(screen.getByRole("button", { name: "Скопировать телефон" }));
+  expect(writeText.mock.calls).toEqual([["TRK-77"], ["+7 900 555"]]);
+});
+
 it.each(["Новая", "Собрана", "Упакована", "Отгружена", "Закрыта", "Отменена"])("shipment head editing follows status %s; documents retain their rules", (status) => {
   const shipment = { ...packedShipment, status, receiver: "Иванов", phone: "+7 123", contact: "Контакт", note: "Позвонить", deadline: "2026-11-12" } as DispatchShipment;
   render(<ShipmentCard shipment={shipment} rights={{ canManage: true, canWarehouse: true, canEdit: true, canUnship: false }}
