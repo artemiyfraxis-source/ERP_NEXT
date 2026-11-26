@@ -39,7 +39,7 @@ function snapshot(rows: CuttingQueueRow[] = [...ROWS, NONE_ROW], machines = MACH
 }
 
 const isSnapshot = (url: string) => url.includes("snapshot=true");
-const snapshots = (mock: ReturnType<typeof vi.spyOn>) => mock.mock.calls.filter(([url]) => isSnapshot(String(url))).length;
+const snapshots = (mock: ReturnType<typeof vi.spyOn>) => mock.mock.calls.filter(([url]: unknown[]) => isSnapshot(String(url))).length;
 
 function mockApi(onDone?: (init: RequestInit) => Response, body: () => unknown = () => snapshot()) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
