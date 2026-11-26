@@ -85,6 +85,17 @@ RUNNER_HMI = "1.4.0"
 RUNNER_CORRECTION = "1.5.1"
 LENGTH_CORRECTION = "length_correction"
 RUNNER_HMI_OUTDATED = "Служба записи на ПК станка устарела — обновите (нужна 1.4.0)"
+# «Обнулить счётчики» (owner 23.11.2026): only the runner and mbd 1.5.2 write the PLC counters — exactly 0 to D645..646
+# (сделано в пучке) and D649..650 (сделано всего) through mbd's own `reset_counters` (never the general write list),
+# only while the machine stands; D647..648 (история) is read before and after, never written. Whether the PLC keeps a
+# PC-written 0 and leaves D647 alone is a live check with the owner (docs/data/ob019-register-map-2026-11-18.md).
+RESET_COUNTERS = "reset_counters"
+RUNNER_COUNTERS = "1.5.2"
+RUNNER_COUNTERS_OUTDATED = ("Служба записи на ПК станка устарела — обновите (нужна 1.5.2): обнулять счётчики "
+                            "умеет только она")
+RESET_STATES = (100, 102, 106, 107)  # Нажмите сброс / Готов / Пучок готов / Тираж готов — the machine stands
+COUNTER_WORDS = (645, 646, 649, 650)
+COUNTER_READ = tuple(range(645, 651))  # with the history D647..648 for the journal
 RUNNER_WORDS: dict[int, str] = {address: RUNNER_HMI for address in range(44, 54)}
 # The words the runner 1.1.0 writes (ob019-writer.ps1 before 19.11.2026): mode, job and quantities, wire and strip,
 # marking texts, order number and product. Anything else, and any switch bit, needs `RUNNER_NEEDED`.
@@ -126,12 +137,16 @@ def runner_needed_for(bits: list[dict], addresses) -> str | None:
 def runner_refusal(needed: str) -> str:
     if needed == RUNNER_CORRECTION:
         return "Служба записи на ПК станка устарела — обновите (нужна 1.5.1)"
+    if needed == RUNNER_COUNTERS:
+        return RUNNER_COUNTERS_OUTDATED
     return {RUNNER_FEED_WHEEL: RUNNER_FEED_WHEEL_OUTDATED, RUNNER_HMI: RUNNER_HMI_OUTDATED}.get(needed, RUNNER_OUTDATED)
 
 
 def runner_needed_for_row(row: "MachineWriteRow") -> str | None:
     if row.payload.get(LENGTH_CORRECTION):
         return RUNNER_CORRECTION
+    if row.payload.get(RESET_COUNTERS):
+        return RUNNER_COUNTERS
     if row.purpose == CONTROL:
         return RUNNER_HMI if row.command in HMI_COMMANDS else None
     return runner_needed_for(list(row.payload.get("bits") or []), expected_words(row))
@@ -302,7 +317,7 @@ def _expire(session: Session, equipment_id: UUID, now: datetime) -> list[Machine
             changed.append(row)
         elif row.status == "taken" and row.taken_at is not None and rules.since(row.taken_at, now) > RESULT_WAIT:
             row.status, row.finished_at, row.error = (
-                "unknown" if row.payload.get(LENGTH_CORRECTION) else "failed", now,
+                "unknown" if row.payload.get(LENGTH_CORRECTION) or row.payload.get(RESET_COUNTERS) else "failed", now,
                 "Агент станка не сообщил результат записи")
             changed.append(row)
     session.flush()
@@ -432,7 +447,8 @@ def claim(session: Session, equipment_id: UUID, now: datetime,
 
 
 def expected_words(row: MachineWriteRow) -> dict[int, int]:
-    return {block["addr"] + offset: int(word) for block in row.payload["blocks"]
+    """Every word the command writes: the counter zeros of «Обнулить счётчики» (`reset`) and the ordinary blocks."""
+    return {block["addr"] + offset: int(word) for block in [*(row.payload.get("reset") or []), *row.payload["blocks"]]
             for offset, word in enumerate(block["values"])}
 
 
@@ -492,6 +508,95 @@ def enqueue_length_correction(session: Session, *, equipment_id: UUID, measured:
     return row, expired
 
 
+def counters(words: dict) -> dict[str, int | None]:
+    """Сделано всего (D649) and в пучке (D645) from snapshot or read-back words (int or str keys)."""
+    plain = {int(key): value for key, value in (words or {}).items() if str(key).isdigit()}
+    return {"total": rules._u32(plain, 649), "batch": rules._u32(plain, 645)}
+
+
+def enqueue_reset_counters(session: Session, *, equipment_id: UUID, seen_total: int, seen_batch: int,
+                           writes: list[FieldWrite] | None, summary: str, actor_id: UUID, actor_name: str,
+                           now: datetime) -> tuple[MachineWriteRow, list[MachineWriteRow]]:
+    """«Обнулить счётчики»: D645..646 and D649..650 → 0, optionally followed by ordinary `writes` (the new batch of
+    «Новый тираж»: target D22 = 0, cleared job texts) in the same command. The person confirmed «сделано N → 0, пучок M
+    → 0» from the card: the fresh snapshot must hold exactly those, the machine must stand (`RESET_STATES`; with
+    `writes` only the idle states the ordinary write needs), no other write open, runner 1.5.2. The words and switch bits
+    of `writes` go after the zeroing, the counters themselves never through them. → (command, expired)."""
+    link = session.get(rules.MachineLinkRow, equipment_id)
+    if link is None:
+        raise MachineCommandRefused("Станок не подключён к ERP")
+    snapshot = session.get(rules.MachineSnapshotRow, equipment_id)
+    code = rules.link_status(snapshot, now)
+    if code != "ok":
+        raise MachineCommandRefused(f"Счётчики не обнулены: {rules.LINK_TEXTS[code][0].lower()}")
+    if rules.since(snapshot.reported_at, now) > COUNTER_FRESH:
+        raise MachineCommandRefused("Счётчики не обнулены: нет свежего счётчика станка (данные старше 5 с) — "
+                                    "проверьте связь и повторите")
+    words = rules.snapshot_words(snapshot)
+    state = words.get(766)
+    allowed = IDLE_STATES if writes else RESET_STATES
+    if state not in allowed:
+        text = rules.OB019_STATES.get(state, (f"код {state}", ""))[0] if state is not None else "неизвестно"
+        need = ", ".join(rules.OB019_STATES[item][0].lower() for item in allowed)
+        raise MachineCommandRefused(f"Обнулить счётчики можно, только когда станок стоит ({need}); сейчас: "
+                                    f"{text.lower()}")
+    live = counters(words)
+    if live["total"] is None or live["batch"] is None or any(words.get(address) is None for address in COUNTER_WORDS):
+        raise MachineCommandRefused("Счётчики не обнулены: счётчик станка не прочитан")
+    if (live["total"], live["batch"]) != (seen_total, seen_batch):
+        raise MachineCommandRefused(f"Счётчик станка изменился: сделано {live['total']}, пучок {live['batch']} — "
+                                    "проверьте и подтвердите ещё раз")
+    if runner_outdated(equipment_id, now, RUNNER_COUNTERS):
+        raise MachineCommandRefused(RUNNER_COUNTERS_OUTDATED)
+    blocks: list[dict] = []
+    bits: list[dict] = []
+    shown: list[dict] = []
+    if writes:
+        blocks, bits, shown = plan_writes(writes, words)
+        if any(block["addr"] + offset in COUNTER_READ for block in blocks
+                       for offset in range(len(block["values"]))):
+            raise rules.MachineWriteInvalid("Вместе с обнулением записываются только слова задания")
+    expired = _expire(session, equipment_id, now)
+    if session.scalar(select(MachineWriteRow.id).where(MachineWriteRow.equipment_id == equipment_id,
+                                                      MachineWriteRow.status.in_(OPEN))) is not None:
+        raise MachineCommandRefused("На станок уже идёт запись — дождитесь её результата")
+    fields = [{"key": "total_finished", "label": "Сделано", "unit": "шт", "before": str(live["total"]), "after": "0"},
+              {"key": "batch_finished", "label": "Сделано в пучке", "unit": "шт", "before": str(live["batch"]),
+               "after": "0"}, *shown]
+    row = MachineWriteRow(id=uuid4(), equipment_id=equipment_id, purpose="settings", status="queued",
+        payload={RESET_COUNTERS: True, "reset": [{"addr": 645, "values": [0, 0]}, {"addr": 649, "values": [0, 0]}],
+                 "blocks": blocks, "bits": bits, "fields": fields, "states": list(allowed),
+                 "seen": {str(address): int(words[address]) for address in COUNTER_WORDS}},
+        summary=" ".join(summary.split())[:500], created_by=actor_id, created_by_name=actor_name[:200], created_at=now)
+    try:
+        with session.begin_nested():
+            session.add(row)
+            session.flush()
+    except IntegrityError:
+        raise MachineCommandRefused("На станок уже идёт запись — дождитесь её результата") from None
+    return row, expired
+
+
+def _reset_reason(reason: str, status: str) -> str:
+    """The runner's English refusal of a counter reset in operator words; panel, mbd version and state stay for the
+    common translation in `finish`."""
+    if "busy" in reason or "PXS_HMI" in reason or reason.startswith(("mbd outdated", "state ")):
+        return reason
+    if reason.startswith("reset_counters refused: state "):
+        return "state " + reason.removeprefix("reset_counters refused: state ")
+    if reason.startswith(("seen value changed", "reset_counters refused: seen value changed")):
+        return "Счётчик станка изменился — обновите карточку и подтвердите ещё раз"
+    if reason.startswith("machine not standing after counter reset"):
+        return "Счётчики обнулены, но станок уже не стоит — проверьте станок и счётчик"
+    if reason == "counter reset expired":
+        return "Команда обнуления опоздала — повторите"
+    if reason.startswith("counter reset not confirmed"):
+        return "Станок не подтвердил обнуление — счётчик не стал 0"
+    if status == "unknown":
+        return "Результат обнуления неизвестен — проверьте счётчик на станке"
+    return "Счётчики не обнулены: " + reason
+
+
 def finish(session: Session, *, equipment_id: UUID, command_id: UUID, ok: bool, readback: dict, error: str,
            now: datetime, correction_pulsed: bool = False, before: dict | None = None,
            outcome: str | None = None) -> MachineWriteRow:
@@ -525,13 +630,22 @@ def finish(session: Session, *, equipment_id: UUID, command_id: UUID, ok: bool, 
             differ.append("поправка не подтверждена станком")
         if before != row.payload["seen"]:
             differ.append("длина или поправка до записи изменилась")
+    reset = bool(row.payload.get(RESET_COUNTERS))
+    if reset:
+        kept |= set(COUNTER_READ)
+        seen = row.payload["seen"]
+        if ok and {key: (before or {}).get(key) for key in seen} != seen:
+            differ.append("счётчик до обнуления изменился")
     row.readback = {str(address): word for address, word in sorted(read.items()) if address in kept}
     row.finished_at = now
     if ok and not differ:
         row.status, row.error = "done", ""
     else:
-        row.status = "unknown" if correction and (correction_pulsed or outcome == "unknown") else "failed"
+        row.status = ("unknown" if (correction and (correction_pulsed or outcome == "unknown"))
+                      or (reset and outcome == "unknown") else "failed")
         reason = " ".join(str(error or "").split())
+        if reset and reason:
+            reason = _reset_reason(reason, row.status)
         if "busy" in reason or "PXS_HMI" in reason:
             reason = rules.HMI_OPEN
         elif reason.startswith("mbd outdated"):
@@ -589,6 +703,11 @@ def command_view(row: MachineWriteRow) -> dict:
             "length_correction_before": shown(length_correction_value(row.payload.get("seen", {}))) if correction else None,
             "length_correction_after": shown(length_correction_value(row.readback or {}))
                 if correction and row.status == "done" else None,
+            # «Обнулить счётчики»: what the person confirmed and, once done, what the machine read back (the card shows
+            # it until the next snapshot catches up).
+            "reset_counters": {"before": counters(row.payload.get("seen") or {}),
+                               "after": counters(row.readback or {}) if row.status == "done" else None}
+                if row.payload.get(RESET_COUNTERS) else None,
             "command": row.command, "state_before": _state_text(states.get("before")),
             "state_after": _state_text(states.get("after")),
             # «Закрыть пульт на ПК»: how the runner closed it — graceful / forced / none (it was not open) / started —,

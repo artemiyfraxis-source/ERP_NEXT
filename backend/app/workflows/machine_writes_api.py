@@ -21,6 +21,9 @@ The machine card («Настройки» part):
   showed: 409 when the machine holds another one now, 409 while a parameter write is open on the machine; response
   `{offset, etk, written, measured}`. Length instead requires measured + seen and queues D658 / D600.6, returning
   the queued `command`; signed D54 is exposed by control.length_correction and command read-back fields.
+- `POST /api/production/machines/card/{ОБ}/counters/reset` (edit) `{confirm_state, seen_total, seen_batch}` →
+  «Обнулить счётчики»: one queued command, D649..650 and D645..646 → 0 (runner 1.5.2), only while the machine stands
+  (100 / 102 / 106 / 107), no write open, no ERP job run or manual job open, the counters still as confirmed.
 `confirm_state` is the machine state the person confirmed in the dialog: a different state now → 409.
 
 The command runner on the machine PC (`tools/machine-agent/ob019-writer.ps1`, token `machine:report`, PC bound):
@@ -137,6 +140,13 @@ class CorrectionPayload(Payload):
     note: str = Field(default="", max_length=200)
 
 
+class CountersPayload(Payload):
+    """«Обнулить счётчики»: the state and the counters the confirmation showed («Сделано 2056 → 0, пучок 6 → 0»)."""
+    confirm_state: int
+    seen_total: int = Field(ge=0, le=0xFFFFFFFF)
+    seen_batch: int = Field(ge=0, le=0xFFFFFFFF)
+
+
 class AgentPayload(Payload):
     inventory: str = Field(min_length=1, max_length=64)
     machine_id: str = Field(min_length=1, max_length=80)
@@ -242,10 +252,32 @@ def _closed(uow, rows: list[commands.MachineWriteRow], actor, now: datetime) -> 
             _journal(uow, row.equipment_id, "command_finished", actor, now, f"{row.summary}: {text} — {row.error}",
                      command_id=str(row.id), command=row.command or "", status=row.status)
         else:
-            _journal(uow, row.equipment_id, "write_failed", actor, now,
-                     (f"Результат поправки неизвестен — проверьте станок: {row.summary} — {row.error}"
-                      if row.status == "unknown" else f"Не записано: {row.summary} — {row.error}"),
-                     command_id=str(row.id))
+            _journal(uow, row.equipment_id, "write_failed", actor, now, _failed_text(row), command_id=str(row.id))
+
+
+def _failed_text(row: commands.MachineWriteRow) -> str:
+    if row.status != "unknown":
+        return f"Не записано: {row.summary} — {row.error}"
+    what = "обнуления" if row.payload.get(commands.RESET_COUNTERS) else "поправки"
+    return f"Результат {what} неизвестен — проверьте станок: {row.summary} — {row.error}"
+
+
+def _journal_counters(uow, row: commands.MachineWriteRow, actor, now: datetime, before: dict | None) -> None:
+    """«Обнулить счётчики»: D645..650 before and after as the runner read them — the history D647..648 included, so the
+    journal shows whether the PLC kept it (open question of the register map)."""
+    before = {str(key): value for key, value in (before or row.payload.get("seen") or {}).items()}
+    after = {str(key): value for key, value in (row.readback or {}).items()}
+    u32 = lambda words, address: (None if not isinstance(words.get(str(address)), int)  # noqa: E731
+                                  or not isinstance(words.get(str(address + 1)), int)
+                                  else words[str(address)] + 65536 * words[str(address + 1)])
+    text = lambda value: "—" if value is None else str(value)  # noqa: E731
+    parts = {name: (u32(before, address), u32(after, address))
+             for name, address in (("total", 649), ("batch", 645), ("history", 647))}
+    _journal(uow, row.equipment_id, "counters_reset", actor, now,
+             f"Счётчики станка: сделано {text(parts['total'][0])} → {text(parts['total'][1])}, пучок "
+             f"{text(parts['batch'][0])} → {text(parts['batch'][1])}; история (D647) {text(parts['history'][0])} → "
+             f"{text(parts['history'][1])}", command_id=str(row.id),
+             **{f"{name}_{side}": text(value) for name, pair in parts.items() for side, value in zip(("before", "after"), pair)})
 
 
 def _enqueue(uow, link, principal: Principal, purpose: str, writes, summary: str, now: datetime,
@@ -368,6 +400,33 @@ def write(inventory: str, payload: WritePayload, principal: Writer, factory: Fac
         _confirm(uow.session, link, payload.confirm_state)
         writes = [commands.FieldWrite(key, value) for key, value in payload.values.items()]
         return _enqueue(uow, link, principal, "settings", writes, "Запись настроек с карточки", now)
+
+
+@router.post("/card/{inventory}/counters/reset")
+def reset_counters(inventory: str, payload: CountersPayload, principal: Writer, factory: Factory, now: Now) -> dict:
+    """«Обнулить» next to «Сделано … из …» (owner 23.11.2026): D649 and D645 → 0, nothing else. Not while an ERP job run
+    or a manual job counts on the machine (their progress is counted from D649 — «Новый тираж» closes them first)."""
+    with factory() as uow:
+        session = uow.session
+        link = locked_link(session, inventory)
+        _confirm(session, link, payload.confirm_state)
+        settle_run(uow, link.equipment_id, now)
+        if runs.is_open(runs.current(session, link.equipment_id)):
+            raise HTTPException(409, "На станке открыто задание — обнулите счётчик через «Новый тираж»")
+        refuse_while_manual(session, link.equipment_id)
+        try:
+            row, expired = commands.enqueue_reset_counters(
+                session, equipment_id=link.equipment_id, seen_total=payload.seen_total, seen_batch=payload.seen_batch,
+                writes=None, summary=f"Обнулить счётчики: сделано {payload.seen_total} → 0, пучок {payload.seen_batch} → 0",
+                actor_id=principal.actor.id, actor_name=principal.actor.name, now=now)
+        except commands.MachineCommandRefused as error:
+            raise HTTPException(409, str(error)) from error
+        except rules.MachineWriteInvalid as error:
+            raise HTTPException(422, str(error)) from error
+        _closed(uow, expired, principal.actor, now)
+        _journal(uow, link.equipment_id, "write_queued", principal.actor, now, row.summary, command_id=str(row.id))
+        uow.commit()
+        return commands.command_view(row)
 
 
 def _group(session, group_id: UUID) -> CuttingGroupRow:
@@ -855,6 +914,13 @@ def next_command(payload: AgentPayload, bridge: Bridge, factory: Factory, now: N
                                 "deadline_ms": max(0, int((commands.COMMAND_TTL - rules.since(row.created_at, now))
                                                           .total_seconds() * 1000)),
                                 "states": list(commands.IDLE_STATES)}}
+        if row.payload.get(commands.RESET_COUNTERS):
+            return {"command": {"id": str(row.id), "kind": commands.RESET_COUNTERS, "reset": row.payload["reset"],
+                                "blocks": row.payload["blocks"], "bits": commands.expected_bits(row),
+                                "seen": row.payload["seen"],
+                                "deadline_ms": max(0, int((commands.COMMAND_TTL - rules.since(row.created_at, now))
+                                                          .total_seconds() * 1000)),
+                                "states": list(row.payload["states"])}}
         return {"command": {"id": str(row.id), "kind": "write", "blocks": row.payload["blocks"],
                             "bits": commands.expected_bits(row), "states": list(commands.IDLE_STATES)}}
 
@@ -903,14 +969,16 @@ def command_result(command_id: UUID, payload: ResultPayload, bridge: Bridge, fac
                     _journal(uow, link.equipment_id, "length_corrected", bridge.actor, now,
                              f"Поправка станка: D54 = {_shown(old)} → {_shown(new)} мм",
                              command_id=str(row.id), before=_shown(old), after=_shown(new), register="D54")
+                if row.payload.get(commands.RESET_COUNTERS):
+                    _journal_counters(uow, row, bridge.actor, now, payload.before)
                 _journal(uow, link.equipment_id, "write_done", bridge.actor, now,
                          f"Записано и проверено: {row.summary}", command_id=str(row.id))
                 _run_verified(uow, row, bridge.actor, now)
             else:
-                _journal(uow, link.equipment_id, "write_failed", bridge.actor, now,
-                         (f"Результат поправки неизвестен — проверьте станок: {row.summary} — {row.error}"
-                          if row.status == "unknown" else f"Не записано: {row.summary} — {row.error}"),
+                _journal(uow, link.equipment_id, "write_failed", bridge.actor, now, _failed_text(row),
                          command_id=str(row.id))
+                if row.payload.get(commands.RESET_COUNTERS) and (payload.before or row.readback):
+                    _journal_counters(uow, row, bridge.actor, now, payload.before)
         uow.commit()
         return {"status": row.status, "error": row.error}
 
