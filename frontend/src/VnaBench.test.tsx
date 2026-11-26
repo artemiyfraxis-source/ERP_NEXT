@@ -40,7 +40,6 @@ const state = (extra: Partial<VnaBenchState> = {}): VnaBenchState => ({
   },
   calibration: { valid: true, calibrated_at: "2026-11-19T14:40:00+03:00", valid_until: "2026-11-19T18:40:00+03:00", reason: null, temperatures: null },
   due: [
-    { kind: "flex", due_at: null, last_at: null, status: "due" },
     { kind: "weekly", due_at: "2026-11-23T00:00:00+03:00", last_at: "2026-11-16T10:00:00+03:00", status: "ok" },
     { kind: "monthly", due_at: "2026-11-18T00:00:00+03:00", last_at: null, status: "overdue" },
   ],
@@ -516,7 +515,7 @@ it("polls the state while the agent runs a command and offers to abort it", asyn
   expect(read.mock.calls.length).toBe(calls);
 });
 
-it("lists the three checks with due dates and guides a monthly check by the server's phases", async () => {
+it("lists the weekly and monthly checks with due dates and guides a monthly check by the server's phases", async () => {
   vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state({ session: session({ steps: allPassed, checks: [{
     id: "c1", version: 2, kind: "monthly", status: "running", result_text: null, refusal: null, started_at: "2026-11-19T15:00:00+03:00", finished_at: null,
     phases: [
@@ -528,8 +527,8 @@ it("lists the three checks with due dates and guides a monthly check by the serv
   render(<VnaBench canEdit />);
   fireEvent.click(await screen.findByRole("tab", { name: "Проверки" }));
   const list = screen.getByRole("table", { name: "Проверки ВАЦ" });
-  expect(within(list).getByText("Шевеление кабелей")).toBeInTheDocument();
-  expect(within(list).getByText("нужна после калибровки")).toBeInTheDocument();
+  expect(within(list).queryByText("Шевеление кабелей")).toBeNull();
+  expect(within(list).getAllByRole("button", { name: "Начать" })).toHaveLength(2);
   expect(within(list).getByText("Еженедельная — контрольная мера СИ.009")).toBeInTheDocument();
   expect(within(list).getByText("Ежемесячная — меры 6650F27")).toBeInTheDocument();
   expect(within(list).getByText("до 23.11")).toBeInTheDocument();
@@ -546,7 +545,18 @@ it("starts a check by kind", async () => {
   render(<VnaBench canEdit />);
   fireEvent.click(await screen.findByRole("tab", { name: "Проверки" }));
   fireEvent.click(within(screen.getByRole("table", { name: "Проверки ВАЦ" })).getAllByRole("button", { name: "Начать" })[0]);
-  await waitFor(() => expect(start).toHaveBeenCalledWith("s1", 3, { kind: "flex" }));
+  await waitFor(() => expect(start).toHaveBeenCalledWith("s1", 3, { kind: "weekly" }));
+});
+
+it("still shows a bend check started before it was dropped (old open session)", async () => {
+  vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state({ session: session({ steps: allPassed, checks: [{
+    id: "c0", version: 2, kind: "flex", status: "running", result_text: null, refusal: null, started_at: "2026-11-19T15:00:00+03:00", finished_at: null,
+    phases: [{ key: "load_p1", label: "LOAD на кабеле порта 1, кабель изгибается", status: "pending", connection_no: null, connections_total: null, result_text: null }],
+  }] }) }));
+  render(<VnaBench canEdit />);
+  fireEvent.click(await screen.findByRole("tab", { name: "Проверки" }));
+  expect(screen.getByRole("heading", { name: "Шевеление кабелей" })).toBeInTheDocument();
+  expect(within(screen.getByRole("table", { name: "Проверки ВАЦ" })).queryByText("Шевеление кабелей")).toBeNull();
 });
 
 it("words the server's flex, weekly and monthly phases and the due states", () => {
@@ -557,7 +567,6 @@ it("words the server's flex, weekly and monthly phases and the due states", () =
   expect(phaseHint("weekly", phase("si009"))).toMatch(/^Подключите контрольный переход СИ.009/);
   expect(phaseHint("monthly", phase("thru", "MA6666B (THRU), перемычка", 1)))
     .toBe("Соедините концы кабелей перемычкой из набора (MA6666B (THRU), перемычка). Подключение 1 из 3.");
-  expect(dueText({ kind: "flex", due_at: null, last_at: "2026-11-19T14:50:00+03:00", status: "ok" }).text).toBe("пройдена после калибровки");
   expect(dueText({ kind: "weekly", due_at: null, last_at: null, status: "due" }).text).toBe("ещё не выполнялась");
 });
 

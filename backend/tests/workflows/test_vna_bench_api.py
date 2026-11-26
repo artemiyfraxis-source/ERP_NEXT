@@ -17,7 +17,12 @@ from app.modules.production.rf_infrastructure import RfRepository
 from app.modules.production.rf_interfaces import RfDetails, RfInterface
 from app.modules.production.vna_check_infrastructure import VnaCheckRow
 from app.modules.production.vna_checks import KitStandard, kit_response
-from app.modules.production.vna_session_infrastructure import VnaBenchItemRow, VnaCommandRow, VnaSessionRow
+from app.modules.production import vna_bench as bench
+from app.modules.production.vna_screen_infrastructure import VnaScreenRepository
+from app.modules.production.vna_screens import screen as bench_screen
+from app.modules.production.vna_session_infrastructure import (VnaBenchItemRow, VnaCommandRow, VnaSessionRepository,
+                                                               VnaSessionRow)
+from app.modules.production.vna_sessions import Profile
 from app.modules.warehouse.devices import DeviceRow, VnaBindingRow, VnaControlRow
 from app.modules.warehouse.scan_agents import ScanAgentRow
 from app.shared.http_auth import Principal, authenticated_principal
@@ -226,6 +231,19 @@ def calibrate(env):
     assert [s["status"] for s in view["session"]["steps"]] == ["passed"] * 4, view["session"]["steps"]
     assert view["calibration"]["valid"] and view["calibration"]["temperatures"] == TEMPS
     return view
+
+
+def start_old_flex(env):
+    """A bend check started before the owner dropped it (26.11.2026): the endpoint refuses a new one, so its steps are
+    added as the old code added them — an open old session may still finish it, history must still render."""
+    with env["sessions"]() as session:
+        row = session.scalar(select(VnaSessionRow).where(VnaSessionRow.state == "ready"))
+        steps = bench.item_steps(Profile.model_validate(row.snapshot["profile"]),
+                                 bench_screen(VnaScreenRepository(session).default("load")), None, bench.run("flex"))
+        VnaSessionRepository(session).append(row, steps, env["clock"].now)
+        session.commit()
+    env["stub"].drive()
+    return state(env)
 
 
 def measure(env, view, target=None, expect=200):
@@ -499,7 +517,7 @@ def test_failed_confidence_and_acm_change_and_failed_control_stop_work(env):
                                 s21_dev_db=0.01, s21_limit_db=0.1, note=""))
         session.commit()
     assert measure(env, view, expect=409)["detail"]["code"] == "control_failed"
-    assert state(env)["due"][1] == {**state(env)["due"][1], "kind": "weekly", "status": "failed"}
+    assert state(env)["due"][0] == {**state(env)["due"][0], "kind": "weekly", "status": "failed"}
 
 
 def calibrate_loads(env, view):
@@ -672,11 +690,18 @@ def test_identical_receipt_is_acknowledged_once_and_different_one_conflicts(env)
     assert stub.send(command, stub.answer(command)).status_code == 409   # another backup id is another receipt
 
 
-def test_flex_weekly_and_monthly_checks_write_the_journal(env):
+def test_flex_is_neither_due_nor_started(env):
+    view = calibrate(env)
+    assert [d["kind"] for d in view["due"]] == ["weekly", "monthly"]
+    refused = post(env, session_path(view, "/checks"), {"version": view["session"]["version"], "kind": "flex"}, 422)
+    assert refused["detail"]["message"].startswith("Шевеление кабелей отменено владельцем")
+    assert state(env)["session"]["checks"] == []
+
+
+def test_old_flex_weekly_and_monthly_checks_write_the_journal(env):
     view = calibrate(env)
     stub = env["stub"]
-    view = post(env, session_path(view, "/checks"), {"version": view["session"]["version"], "kind": "flex"})
-    stub.drive()
+    start_old_flex(env)
     check = state(env)["session"]["checks"][0]
     assert [p["key"] for p in check["phases"]] == ["load_p1", "load_p2", "thru_memory", "thru_flex"]
     for connected in (("load",), ("load",), ("thru",), ("thru",)):
@@ -722,7 +747,7 @@ def test_flex_weekly_and_monthly_checks_write_the_journal(env):
         assert kinds == [("session", True), ("flex", True), ("control_standard", True), ("kit_standards", True)]
         assert session.scalar(select(func.count()).select_from(VnaBenchItemRow).where(
             VnaBenchItemRow.kind == "kit_standards")) == 21
-    assert [d["status"] for d in state(env)["due"]] == ["ok", "ok", "ok"]
+    assert [(d["kind"], d["status"]) for d in state(env)["due"]] == [("weekly", "ok"), ("monthly", "ok")]
 
 
 def test_abort_returns_the_device_and_frees_the_lease(env):
@@ -941,8 +966,7 @@ def test_a_border_series_restarts_after_a_recalibration(env):
 def test_refused_phases_are_retaken_in_flex_and_monthly_checks(env):
     view = calibrate(env)
     stub = env["stub"]
-    view = post(env, session_path(view, "/checks"), {"version": view["session"]["version"], "kind": "flex"})
-    stub.drive()
+    start_old_flex(env)
     check = state(env)["session"]["checks"][0]
     for connected, corrupt in ((("load",), 1), (("load",), 0), (("load",), 0), (("thru",), 1), (("thru",), 0),
                                (("thru",), 0)):

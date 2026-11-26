@@ -61,7 +61,7 @@ export interface VnaBenchCalibration {
   temperatures: VnaBenchTemperatures | null;
 }
 
-/** Срок проверки; `flex` — шевеление: «ok» — пройдено после текущей калибровки, «due» — ещё нет. */
+/** Срок еженедельной и ежемесячной проверки (шевеление кабелей отменено 26.11.2026 и в сроках не бывает). */
 export interface VnaBenchDue {
   kind: VnaBenchCheckKind;
   due_at: string | null;

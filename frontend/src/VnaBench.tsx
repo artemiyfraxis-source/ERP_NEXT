@@ -79,12 +79,12 @@ export const VERDICTS: Record<VnaBenchVerdict["code"], { label: string; tone: st
   not_assessed: { label: "Не оценивается", tone: "" },
 };
 
+/* Шевеление кабелей отменено владельцем 26.11.2026: его больше не запускают, название — для уже сделанных. */
 const CHECKS: { kind: VnaBenchCheckKind; title: string; what: string }[] = [
-  { kind: "flex", title: "Шевеление кабелей", what: "При каждой калибровке. LOAD на кабеле: КСВН остаётся ≤ 1,06; перемычка: S21 меняется не больше ±0,05 дБ." },
   { kind: "weekly", title: "Еженедельная — контрольная мера СИ.009", what: "Переход ADP1A СИ.009 сравнивается с эталонной кривой из его карточки: отклонение КСВН и S21 не больше U." },
   { kind: "monthly", title: "Ежемесячная — меры 6650F27", what: "OPEN, SHORT, LOAD на каждом порту и перемычка: 0 дБм, ПЧ 1 кГц, три подключения с поворотом на 120°." },
 ];
-const CHECK_TITLES = Object.fromEntries(CHECKS.map((check) => [check.kind, check.title])) as Record<VnaBenchCheckKind, string>;
+const CHECK_TITLES = { flex: "Шевеление кабелей", ...Object.fromEntries(CHECKS.map((check) => [check.kind, check.title])) } as Record<VnaBenchCheckKind, string>;
 
 /** Что сделать руками на фазе проверки — словами владельца; ключи фаз задаёт сервер, незнакомая — его название. */
 export function phaseHint(kind: VnaBenchCheckKind, phase: VnaBenchCheckPhase): string {
@@ -308,11 +308,6 @@ function temperatureText(state: VnaBenchState): string {
 
 export function dueText(due: VnaBenchDue | undefined): { text: string; tone: string } {
   if (!due) return { text: "нет данных", tone: "tone-neutral" };
-  if (due.kind === "flex") {
-    return due.status === "ok" ? { text: "пройдена после калибровки", tone: "tone-ok" }
-      : due.status === "failed" ? { text: "не пройдена — замените кабель", tone: "tone-danger" }
-        : { text: "нужна после калибровки", tone: "tone-warn" };
-  }
   const day = due.due_at ? formatMoment(due.due_at).slice(0, 5) : "";
   if (due.status === "ok") return { text: `до ${day}`, tone: "tone-ok" };
   if (due.status === "failed") return { text: "не пройдена — замеры остановлены", tone: "tone-danger" };

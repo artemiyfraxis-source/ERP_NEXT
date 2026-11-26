@@ -72,6 +72,7 @@ Techcards = Annotated[Callable | None, Depends(techcards_uow_factory)]
 Refs = Annotated[Callable | None, Depends(references_uow_factory)]
 MEASURING = ("instrument", "assembly")       # stopped by a failed weekly/monthly control (разд. 14)
 ITEMS = ("instrument", "assembly")
+# "flex" stays only to show the bend checks already made (history, an old open session); it is no longer started.
 CHECKS = {"flex": "flex", "weekly": "control_standard", "monthly": "kit_standards"}
 CHECK_NAMES = {v: k for k, v in CHECKS.items()}
 JUDGE_ERRORS = (ProductionValidationError, VnaDataError, ValueError, KeyError)
@@ -86,6 +87,7 @@ FLEX_PHASES = (("load_p1", "LOAD на кабеле порта 1, кабель и
                ("load_p2", "LOAD на кабеле порта 2, кабель изгибается", "port2"),
                ("thru_memory", "Перемычка, кабели в рабочем положении — графики запоминаются", "thru"),
                ("thru_flex", "Перемычка, кабели изогнуты", "thru_bent"))
+FLEX_DROPPED = "Шевеление кабелей отменено владельцем (26.11.2026): после калибровки АКМ оно не нужно"
 
 
 class Refusal(Exception):
@@ -342,17 +344,10 @@ def _calibration(row, now):
 def _due(uow, vna, row, now):
     if vna is None:
         return []
+    # The weekly and monthly controls only: the bend check after every calibration was dropped by the owner (26.11.2026).
     statuses = {"ok": "ok", "overdue": "overdue", "never": "due", "failed": "failed"}
-    due = [dict(kind=CHECK_NAMES[d["kind"]], due_at=d["due_at"], last_at=d["last_at"], status=statuses[d["status"]])
-           for d in VnaCheckRepository(uow.session).due(vna.id, now)]
-    # 14: the bend check belongs to every calibration.
-    last = uow.session.scalar(select(VnaCheckRow).where(VnaCheckRow.instrument_id == vna.id, VnaCheckRow.kind == "flex")
-                              .order_by(VnaCheckRow.performed_at.desc()).limit(1))
-    fresh = bool(last and row is not None and row.calibrated_at
-                 and as_utc(bench.aware(last.performed_at, now)) >= as_utc(bench.aware(row.calibrated_at, now)))
-    due.insert(0, dict(kind="flex", due_at=None, last_at=last.performed_at if last else None,
-                       status=("ok" if last.passed else "failed") if fresh else "due"))
-    return due
+    return [dict(kind=CHECK_NAMES[d["kind"]], due_at=d["due_at"], last_at=d["last_at"], status=statuses[d["status"]])
+            for d in VnaCheckRepository(uow.session).due(vna.id, now)]
 
 
 def _runs(row) -> list[dict]:
@@ -1283,15 +1278,14 @@ def _one(uow, rows, what):
 def start_check(session_id: UUID, payload: CheckInput, principal: Person, now: Now, factory: Factory):
     def action(uow, repository, row):
         _version(row, payload.version)
+        if payload.kind == "flex":
+            raise Refusal("invalid", FLEX_DROPPED, 422)
         kind = CHECKS[payload.kind]
         _gates(uow, row, now, kind)
         profile = _profile(row)
-        if kind != "flex" and row.snapshot["profile_kind"] != "adapter":
+        if row.snapshot["profile_kind"] != "adapter":
             raise Refusal("other_calibration", "Проверки мерами — на сетке «ОТК — переход»; откройте сеанс без КБ")
-        if kind == "flex":
-            meta = bench.run("flex")
-            steps = bench.item_steps(profile, bench_screen(_screen(uow, "load")), None, meta)
-        elif kind == "control_standard":
+        if kind == "control_standard":
             if payload.instrument_id is not None:
                 card_id = payload.instrument_id
             else:
