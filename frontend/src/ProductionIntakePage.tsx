@@ -334,8 +334,19 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   /** «Отгрузить» / «Отгрузить выбранные» / «Отгрузить всё»: отправки уезжают целиком, по одной тем же `/ship` со своей
    *  версией; ход — «Отгружаем 1 из 3…», отказ одной не держит остальные и называет её номер. */
   /** true — хоть одна отправка уехала (выбор можно снять); отказ в вопросе или все отказы — выбор остаётся. */
-  async function shipShipments(ready: DispatchShipment[], skipped: DispatchShipment[] = [], scope = ""): Promise<boolean> {
+  /** КБ, которые уедут с отправками, но не видны в отмеченных карточках (скрыты поиском или стоят у другого проекта):
+   *  «591К.3 КБ4, КБ5; 600К.1 КБ7», не больше 10, дальше «и ещё N». */
+  const hiddenKb = (ready: DispatchShipment[], visible: ReadonlySet<string>) => {
+    const hidden = ready.flatMap((shipment) => shipment.lines.filter((line) => num(line.picked) > 0 && !visible.has(`${shipment.id}:${line.id}`)));
+    const byProject = new Map<string, string[]>();
+    for (const line of hidden.slice(0, 10)) byProject.set(line.project, [...(byProject.get(line.project) ?? []), line.item_index]);
+    const text = [...byProject].map(([project, items]) => `${project} ${items.join(", ")}`).join("; ");
+    return hidden.length ? `${text}${hidden.length > 10 ? ` и ещё ${hidden.length - 10}` : ""}` : "";
+  };
+  /** `visible` — строки отмеченных карточек, видимые сейчас: всё остальное, что уедет, вопрос называет поимённо. */
+  async function shipShipments(ready: DispatchShipment[], skipped: DispatchShipment[] = [], scope = "", visible?: ReadonlySet<string>): Promise<boolean> {
     if (busy || !ready.length) return false;
+    const hidden = visible ? hiddenKb(ready, visible) : "";
     const count = `${ready.length} ${plural(ready.length, ["отправку", "отправки", "отправок"])}`;
     const others = ready.flatMap((shipment) => {
       const projects = [...new Set(shipment.lines.map((line) => line.project))];
@@ -343,6 +354,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     });
     const question = `Отгрузить ${count}${scope}: ${ready.map((shipment) => `${shipment.number} (${shipmentSize(shipment)})`).join("; ")}?`
       + (others.length ? ` Отправка уезжает целиком: ${others.join("; ")}.` : "")
+      + (hidden ? ` Уедут также не показанные здесь КБ: ${hidden}.` : "")
       + (skipped.length ? ` Не готовы и пропущены: ${skipped.map((shipment) => `${shipment.number} — ${shipment.missing_ship.join(", ") || "не хватает данных"}`).join("; ")}.` : "");
     if (!window.confirm(question)) return false;
     setBusy("bulk-ship"); setError(""); setNotice("");
@@ -375,7 +387,9 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       const rowsOfCards = shown.filter((line) => line.shipment?.id === id && cards.has(shipmentGroupKey(line)));
       (rowsOfCards.every((line) => picked.has(line.id)) ? whole : partial).push(shipment);
     }
-    return { whole, partial, ready: whole.filter((shipment) => SHIPPABLE.includes(shipment.status) && readyToShip(shipment)),
+    // Видимые строки отмеченных карточек: что уедет кроме них, вопрос перечислит.
+    const visible = new Set(shown.filter((line) => line.shipment && cards.has(shipmentGroupKey(line))).map((line) => line.id));
+    return { whole, partial, visible, ready: whole.filter((shipment) => SHIPPABLE.includes(shipment.status) && readyToShip(shipment)),
       blocked: whole.filter((shipment) => SHIPPABLE.includes(shipment.status) && !readyToShip(shipment)) };
   };
   const accept = (kbs: IntakeRow[], quantity: (row: IntakeRow) => number, blank = false) =>
@@ -595,7 +609,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       disabled={!ready || partial || Boolean(busy)} aria-label={`Отгрузить ${shipment.number}`}
       title={partial ? "Отправка уезжает целиком: отметьте все её КБ или снимите выбор" : ready ? `Отгрузить всю отправку: ${shipmentSize(shipment)}`
         : `Не хватает: ${shipment.missing_ship.join(", ") || "данных"}`}
-      onClick={() => void shipShipments([shipment])}>{picked.size && !partial ? "Отгрузить выбранные" : "Отгрузить"} · {shipmentSize(shipment)}</button>;
+      onClick={() => void shipShipments([shipment], [], "", new Set(groupRows.map((line) => line.id)))}>{picked.size && !partial ? "Отгрузить выбранные" : "Отгрузить"} · {shipmentSize(shipment)}</button>;
     const actions = <span className="ship-group-head intake-ship-actions">
       {(first.stage === "packed" || shipment.status === "Собрана") && trackAction(shipment, shipment.number)}
       {shipButton}
@@ -673,7 +687,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
             return `Отгрузить выбранные (${ready.length}) · ${all.length}${NBSP}поз. · ${sumByUnit(all.map((line) => ({ unit: line.unit, quantity: num(line.picked) }))) || `0${NBSP}шт`}`;
           },
           // Ничего не уехало (отказ в вопросе или все отказы) — ошибка оставляет выбор как был.
-          run: async (selected: IntakeLine[]) => { const chosen = chosenShipments(selected); if (!(await shipShipments(chosen.ready, chosen.blocked))) throw new Error("не отгружено"); } }] : [])] : []}
+          run: async (selected: IntakeLine[]) => { const chosen = chosenShipments(selected); if (!(await shipShipments(chosen.ready, chosen.blocked, "", chosen.visible))) throw new Error("не отгружено"); } }] : [])] : []}
         groupSelectLabel={(_name, groupRows) => groupRows[0]?.shipment ? `Выбрать отправку ${groupRows[0].shipment.number}` : "Выбрать группу"}
         groupParent={(line) => line.project} groupParentLabel={projectLabel} groupBy={shipmentGroupKey} groupBlock={shipmentBlock} groupSort exportName="Приёмка с производства"
         searchText={(line) => line.shipment ? shipmentSearch({ ...line.shipment, lines: line.shipment.lines.filter((position) => line.id === `${line.shipment!.id}:${position.id}`) }) : []} initialQuery={urlParam("q")} searchPlaceholder="Проект, КБ, наименование, ГРН или задание"

@@ -1348,6 +1348,23 @@ describe("Приёмка v2 (владелец 26.11): отправка — св�
     expect(screen.getByRole("textbox", { name: "Телефон" })).toHaveValue("+7 1");
   });
 
+  it("поиск скрыл КБ отмеченной отправки: вопрос называет скрытые КБ, уедет вся отправка", async () => {
+    const ask = vi.spyOn(window, "confirm").mockReturnValue(true);
+    intakeRows = [];
+    shipments = [twoKb];
+    window.history.replaceState({}, "", "/?tab=to_ship");
+    render(<ProductionIntakePage principal={principal} />);
+    await screen.findByText("ОТГ-c");
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "Жгут КБ3" } });
+    expect(bodyRows("")).toHaveLength(1);
+    fireEvent.click(bodyRows("КБ3")[0].querySelector('input[type="checkbox"]')!);
+    fireEvent.click(screen.getByRole("button", { name: /^Отгрузить выбранные \(1\)/ }));
+    const question = String(ask.mock.calls[0][0]).replace(/\s/g, " ");
+    expect(question).toContain("ОТГ-c (2 поз. · 12 шт)");
+    expect(question).toContain("Уедут также не показанные здесь КБ: 591К.3 КБ4.");
+    await waitFor(() => expect(writes().map((call) => call.url)).toEqual(["/api/shipping/shipments/c/ship"]));
+  });
+
   it("зрителю — без карандашей, «Редактировать» и «Отгрузить»", async () => {
     intakeRows = [];
     shipments = [readyShipment("a", "КБ1")];
