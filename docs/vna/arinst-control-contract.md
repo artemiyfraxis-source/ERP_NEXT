@@ -19,7 +19,7 @@ installed ArinstVL and imported files never establish verified identity.
   "source":"arinst","serial":"arinst:3932198-827215893-540422231",
   "version":3,"methods":[],"ops":["connect","read_profile","apply_profile","measure_standard","capture","close"],
   "model":"VNA-DL","firmware":"2.0.0","hardware_uid":"3932198-827215893-540422231",
-  "identity_verified":true,"license_state":"not_required","trial_remaining_seconds":null,
+  "identity_verified":true,"license_state":"not_required",
   "control_ready":true,"reason":"","observed_at":"2026-11-23T12:00:00Z"
 }]},"arinst_candidates":[{"usb_path":"USB\\VID_0483&PID_5740\\...","port":"COM3"}]}
 ```
@@ -135,8 +135,12 @@ table is needed in T1. T4 enforces exact-grid reuse/invalidation and prohibits d
 
 ## Licence: не требуется; commissioning
 
-Native ArinstVL commands need no licence, registration or key. `license_state="not_required"`
-is ready; there is no trial countdown. Russian UI copy: «Связь: протокол ArinstVL».
+Native ArinstVL commands need no licence, registration or key. `license_state` is only
+`unknown` or `not_required` (CHECK in 0219); only `not_required` is ready. There is no trial state,
+countdown or `trial_remaining_seconds` field anywhere. A heartbeat from an older agent that still reports
+a licence state (TRIAL/LOCKED/ACTIVATED) is accepted but stored as `unknown`, not ready, with the reason
+«обновите агент ERP»; its stray `trial_remaining_seconds` is dropped. A receipt carrying any licence
+state other than `not_required` is refused. Russian UI copy: «Связь: протокол ArinstVL».
 The native path uses the same physical UID as the earlier SCPI identification, preserving associations.
 
 The 2026-11-23 read-only bench captures confirmed ID/type/firmware, options, two scans and eight
@@ -146,5 +150,4 @@ never apply it twice. Do not infer the native array standard order from the earl
 
 Remaining release gates are characterized standards and physical comparison with the bench.
 No acceptance/save gate is removed by protocol support or passing software tests.
-Migration 0219 is adjusted only because its original licence/readiness CHECK constraints reject
-`not_required`; it is unpublished on main. Existing production migrations are unchanged.
+Migration 0219 (unpublished on main) carries no trial column and allows only these two licence states. Existing production migrations are unchanged.

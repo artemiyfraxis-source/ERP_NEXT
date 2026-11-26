@@ -94,9 +94,8 @@ class VnaControlRow(Base):
         CheckConstraint("version >= 1", name="ck_vna_control_version"),
         CheckConstraint("source IN ('s2vna','arinst')", name="ck_vna_control_source"),
         CheckConstraint("trim(serial) <> '' AND ((source = 'arinst' AND serial = 'arinst:' || hardware_uid AND hardware_uid <> '') OR (source = 's2vna' AND lower(serial) NOT LIKE 'arinst:%'))", name="ck_vna_control_serial"),
-        CheckConstraint("license_state IN ('unknown','not_required','TRIAL','LOCKED','ACTIVATED')", name="ck_vna_control_license"),
-        CheckConstraint("(license_state = 'TRIAL' AND trial_remaining_seconds IS NOT NULL AND trial_remaining_seconds BETWEEN 0 AND 600) OR (license_state <> 'TRIAL' AND trial_remaining_seconds IS NULL)", name="ck_vna_control_trial"),
-        CheckConstraint("source <> 'arinst' OR NOT control_ready OR (identity_verified AND version = 3 AND (license_state IN ('not_required','ACTIVATED') OR (license_state = 'TRIAL' AND trial_remaining_seconds > 0)))", name="ck_vna_control_ready"),
+        CheckConstraint("license_state IN ('unknown','not_required')", name="ck_vna_control_license"),
+        CheckConstraint("source <> 'arinst' OR NOT control_ready OR (identity_verified AND version = 3 AND license_state = 'not_required')", name="ck_vna_control_ready"),
     )
     machine_id: Mapped[str] = mapped_column(String(80), ForeignKey("warehouse_scan_agents.machine_id", ondelete="CASCADE"), primary_key=True)
     serial: Mapped[str] = mapped_column(String(300), primary_key=True)
@@ -106,7 +105,6 @@ class VnaControlRow(Base):
     hardware_uid: Mapped[str] = mapped_column(String(100), nullable=False, default="", server_default="")
     identity_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     license_state: Mapped[str] = mapped_column(String(12), nullable=False, default="unknown", server_default="unknown")
-    trial_remaining_seconds: Mapped[int | None] = mapped_column(Integer)
     control_ready: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     reason: Mapped[str] = mapped_column(String(500), nullable=False, default="", server_default="")
     version: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -181,6 +179,24 @@ def associate_vna(uow, *, instrument_id: UUID, serial: str, machine_id: str, act
         uow.commit()
 
 
+def dissociate_vna(uow, *, instrument_id: UUID, serial: str, actor: Actor, now: datetime,
+                   check_sessions: Callable[[Session], None]) -> None:
+    """Admin unbind of a wrong/replaced UID; re-association then goes through associate_vna again."""
+    with uow:
+        session = _session(uow)
+        # Same binding-row lock as session creation and transfer: no session can open meanwhile.
+        session.execute(update(VnaBindingRow).where(VnaBindingRow.serial == serial).values(serial=serial))
+        check_sessions(session)
+        existing = instrument_identity(session, instrument_id)
+        if existing is None or existing.serial != serial:
+            raise ScanJobClosed("Привязка СИ изменилась — обновите карточку и проверьте прибор ещё раз")
+        session.delete(existing)
+        uow.audit.add(AuditEvent(id=uuid4(), aggregate_id=instrument_id, event_type="warehouse.vna_identity_removed",
+            actor=actor, occurred_at=now, details={"source": existing.source, "serial": serial,
+                                                   "verified_machine_id": existing.verified_machine_id}))
+        uow.commit()
+
+
 def _claim_binding(session, serial, machine_id):
     if session.get(VnaBindingRow, serial) is None:
         try:
@@ -221,7 +237,7 @@ def control_heartbeat(uow, machine_id: str, capability: dict | None, now: dateti
                 version=item["version"], methods=list(item.get("methods") or []),
                 ops=list(item.get("ops") or []) if item["version"] in (2, 3) else [], reported_at=reported)
             for field in ("model", "firmware", "hardware_uid", "identity_verified", "license_state",
-                          "trial_remaining_seconds", "control_ready", "reason"):
+                          "control_ready", "reason"):
                 if field in item:
                     setattr(row, field, item[field])
             session.add(row)
@@ -272,10 +288,7 @@ def control_capability(session, machine_id: str, now: datetime, *, serial: str =
             or control.version not in ((3,) if source == "arinst" else (1, 2)) or reported < now - LIVE_FOR):
         raise ScanJobClosed("Агент не поддерживает актуальный протокол vna_control версии 1 или 2")
     if source == "arinst":
-        remaining = (control.trial_remaining_seconds or 0) - (now - reported).total_seconds()
-        if control.license_state == "LOCKED" or (control.license_state == "TRIAL" and remaining <= 0):
-            raise ScanJobClosed("Время пробного режима вышло — переподключите прибор вручную или активируйте лицензию")
-        if not control.control_ready or not control.identity_verified or control.license_state not in ("not_required", "TRIAL", "ACTIVATED"):
+        if not control.control_ready or not control.identity_verified or control.license_state != "not_required":
             raise ScanJobClosed(control.reason or "Arinst не готов к управлению через ERP")
     return control.methods
 

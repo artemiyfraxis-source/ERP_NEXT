@@ -330,7 +330,9 @@ def claim_session_command(factory, machine_id, observed_serial, now):
         repository = VnaSessionRepository(uow.session)
         command = repository.pending(machine_id, observed_serial)
         if command is None:
-            if (repository.pending(machine_id) is not None
+            # An Arinst poll names one configured UID; an expired or unbound one simply has no job,
+            # even while a Planar session on the same PC waits for its own command.
+            if (not (observed_serial or "").lower().startswith("arinst:") and repository.pending(machine_id) is not None
                     and uow.session.get(devices.VnaControlRow, (machine_id, observed_serial)) is None):
                 raise ScanJobClosed("Перед командой прочитайте серийный номер подключённого ВАЦ; он не совпадает с сессией")
             return None

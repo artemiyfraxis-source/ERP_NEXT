@@ -23,7 +23,7 @@ def reports(clock):
                  identity_verified=True, control_ready=True, observed_at=clock.now.isoformat()),
             dict(source="arinst", serial=SERIAL, version=3, methods=[], ops=["connect", "read_profile", "close"],
                  model="VNA-DL", firmware="2.0.0", hardware_uid=UID, identity_verified=True, license_state="not_required",
-                 trial_remaining_seconds=None, control_ready=True, observed_at=clock.now.isoformat())]
+                 control_ready=True, observed_at=clock.now.isoformat())]
 
 
 def beat(capture, items=None, **extra):
@@ -78,21 +78,27 @@ def test_inventory_only_planar_retains_full_capture_identity(capture):
     assert devices.idn_serial(choices[0]["vna"]["name"]) == "26030095"
 
 
-def test_cached_observation_and_trial_cannot_be_refreshed_by_poll_or_heartbeat(capture):
-    initial = reports(capture[2])
-    initial[1]["license_state"] = "TRIAL"  # Old agent observations remain conservative.
-    initial[1]["trial_remaining_seconds"] = 5
-    assert beat(capture, initial).status_code == 200
-    capture[2].now += timedelta(seconds=6)
+@pytest.mark.parametrize("legacy", [
+    {"license_state": "TRIAL", "trial_remaining_seconds": 5}, {"license_state": "ACTIVATED", "trial_remaining_seconds": None},
+    {"license_state": "LOCKED", "trial_remaining_seconds": None, "control_ready": False},
+])
+def test_legacy_licence_report_keeps_heartbeat_but_never_makes_arinst_ready(capture, legacy):
+    initial = reports(capture[2]); initial[1].update(legacy)  # An agent from the SCPI-licence era.
     assert beat(capture, initial).status_code == 200
     with capture[3]() as session:
-        with pytest.raises(ScanJobClosed, match="Время пробного"):
+        control = session.get(devices.VnaControlRow, ("pc-1", SERIAL))
+        assert (control.license_state, control.control_ready) == ("unknown", False)
+        assert "обновите агент" in control.reason
+        with pytest.raises(ScanJobClosed, match="обновите агент"):
             devices.control_capability(session, "pc-1", capture[2].now, serial=SERIAL, source="arinst")
-    capture[2].now += timedelta(minutes=4)
-    assert beat(capture, initial).status_code == 200
+        assert devices.control_capability(session, "pc-1", capture[2].now, serial="26030095") == ["acm"]
+
+
+def test_legacy_null_trial_field_is_ignored(capture):
+    items = reports(capture[2]); items[1]["trial_remaining_seconds"] = None
+    assert beat(capture, items).status_code == 200
     with capture[3]() as session:
-        with pytest.raises(ScanJobClosed):
-            vna_jobs.control_station(session, SERIAL, capture[2].now, source="arinst")
+        assert devices.control_capability(session, "pc-1", capture[2].now, serial=SERIAL, source="arinst") == []
 
 
 def test_native_license_never_counts_down_but_identity_still_expires(capture):
@@ -102,7 +108,7 @@ def test_native_license_never_counts_down_but_identity_still_expires(capture):
     assert beat(capture, initial).status_code == 200
     with capture[3]() as session:
         control = session.get(devices.VnaControlRow, ("pc-1", SERIAL))
-        assert control.license_state == "not_required" and control.trial_remaining_seconds is None
+        assert control.license_state == "not_required" and not hasattr(control, "trial_remaining_seconds")
         assert devices.control_capability(session, "pc-1", capture[2].now, serial=SERIAL, source="arinst") == []
     capture[2].now += timedelta(minutes=4)
     assert beat(capture, initial).status_code == 200
@@ -114,8 +120,7 @@ def test_native_license_never_counts_down_but_identity_still_expires(capture):
 @pytest.mark.parametrize("patch", [
     {"serial": "arinst"}, {"hardware_uid": "01-2-3"}, {"hardware_uid": "4294967296-2-3"},
     {"identity_verified": False}, {"model": "S50180"}, {"version": 2}, {"ops": ["*RST"]},
-    {"methods": ["acm"]}, {"license_state": "LOCKED", "trial_remaining_seconds": None},
-    {"trial_remaining_seconds": 0}, {"trial_remaining_seconds": 601}, {"observed_at": "2026-11-23T12:00:00"},
+    {"methods": ["acm"]}, {"license_state": "unknown"}, {"observed_at": "2026-11-23T12:00:00"},
 ])
 def test_invalid_arinst_claims_are_rejected_before_inventory_write(capture, patch):
     items = reports(capture[2]); items[1].update(patch)
@@ -149,11 +154,11 @@ def test_operator_confirmation_preserves_printed_serial_and_is_idempotent(captur
     assert admin.post(JOBS + "/identity", json=payload, headers=_csrf(admin)).status_code == 409
 
 
-def test_locked_identity_can_be_associated_but_cannot_control(capture):
-    items = reports(capture[2]); items[1].update(license_state="LOCKED", trial_remaining_seconds=None, control_ready=False)
+def test_not_ready_identity_can_be_associated_but_cannot_control(capture):
+    items = reports(capture[2]); items[1].update(license_state="unknown", control_ready=False, reason="Закройте ArinstVL")
     assert beat(capture, items).status_code == 200
     with capture[3]() as session:
-        with pytest.raises(ScanJobClosed, match="Время пробного"):
+        with pytest.raises(ScanJobClosed, match="Закройте ArinstVL"):
             vna_jobs.control_station(session, SERIAL, capture[2].now, source="arinst")
     assert capture[0].post(JOBS + "/identity", json=dict(instrument_id=ARINST_INSTRUMENT, serial=SERIAL, agent_id="pc-1"),
                            headers=_csrf(capture[0])).status_code == 200
@@ -189,3 +194,18 @@ def test_arinst_transfer_preserves_guard_and_cancels_old_capture(capture):
         assert session.get(devices.VnaBindingRow, SERIAL).machine_id == "pc-2"
         with pytest.raises(ScanJobClosed):
             vna_jobs.control_station(session, SERIAL, capture[2].now, machine_id="pc-1", source="arinst")
+
+
+def test_admin_unbinds_uid_then_reassociates(capture):
+    assert beat(capture).status_code == 200
+    admin, _, _, sessions = capture
+    payload = dict(instrument_id=ARINST_INSTRUMENT, serial=SERIAL, agent_id="pc-1")
+    assert admin.post(JOBS + "/identity", json=payload, headers=_csrf(admin)).status_code == 200
+    wrong = dict(instrument_id=ARINST_INSTRUMENT, serial="arinst:1-2-3")
+    assert admin.post(JOBS + "/identity/remove", json=wrong, headers=_csrf(admin)).status_code == 409
+    removal = dict(instrument_id=ARINST_INSTRUMENT, serial=SERIAL)
+    assert admin.post(JOBS + "/identity/remove", json=removal, headers=_csrf(admin)).status_code == 200
+    with sessions() as session:
+        assert devices.instrument_identity(session, UUID(ARINST_INSTRUMENT)) is None
+    assert admin.post(JOBS + "/identity/remove", json=removal, headers=_csrf(admin)).status_code == 409
+    assert admin.post(JOBS + "/identity", json=payload, headers=_csrf(admin)).status_code == 200

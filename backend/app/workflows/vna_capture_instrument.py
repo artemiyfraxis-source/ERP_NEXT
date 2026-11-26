@@ -42,10 +42,11 @@ def arinst_station(session, instrument_id, serial, now, *, machine_id=None, op="
     return owner
 
 
-def assert_vna_transfer_allowed(session, instrument_id: UUID, serial: str) -> None:
-    """Called under the binding lock: no calibration or queued control may survive a move to another PC."""
+def assert_vna_transfer_allowed(session, instrument_id: UUID, serial: str,
+                                message: str = "Сначала завершите сеанс ВАЦ на закреплённом ПК, затем перенесите прибор") -> None:
+    """Called under the binding lock: no calibration or queued control may survive a move or an unbind."""
     if VnaSessionRepository(session).active(instrument_id, serial):
-        raise ScanJobClosed("Сначала завершите сеанс ВАЦ на закреплённом ПК, затем перенесите прибор")
+        raise ScanJobClosed(message)
 
 
 def capture_instrument(uow, instrument_id: UUID, *, direct: bool = False) -> dict[str, str]:

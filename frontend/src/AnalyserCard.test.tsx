@@ -34,7 +34,7 @@ function serve(calls: string[], { captures = [FILE] as unknown[], bench = BENCH 
     if (url === "/api/production/vna-bench/state") return json(bench);
     if (url === "/api/production/vna-bench/state?instrument_id=si-001") return json({
       source: "arinst", device: { instrument_id: "si-001", control_ready: true, supported_ops: ["connect", "close"],
-        reason: null, license: { state: "not_required", trial_remaining_seconds: null } },
+        reason: null, license: { state: "not_required", message: "Связь: протокол ArinstVL" } },
       profile: null, calibration: { valid: false, status: "required" }, acceptance: { eligible: false, message: "Не введён в эксплуатацию" }, session: null, latest_trace: null,
     });
     if (url.startsWith("/api/production/vna-bench/screens")) return json({ screens: [] });

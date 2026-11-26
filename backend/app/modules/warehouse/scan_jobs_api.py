@@ -318,11 +318,24 @@ class VnaDeviceControl(BaseModel):
     firmware: str = Field(default="", max_length=80)
     hardware_uid: str = Field(default="", max_length=100)
     identity_verified: bool = False
-    license_state: Literal["unknown", "not_required", "TRIAL", "LOCKED", "ACTIVATED"] = "unknown"
-    trial_remaining_seconds: int | None = Field(default=None, ge=0, le=600, strict=True)
+    license_state: Literal["unknown", "not_required"] = "unknown"
     control_ready: bool = False
     reason: str = Field(default="", max_length=500)
     observed_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_licence_fields(cls, data):
+        # Agents before the native protocol reported an SCPI licence/trial. Such a report never
+        # makes a device ready: the stale field is dropped and any licence state but the native
+        # 'not_required' becomes 'unknown' with control refused until the agent is updated.
+        if not isinstance(data, dict):
+            return data
+        data = {key: value for key, value in data.items() if key != "trial_remaining_seconds"}
+        if data.get("source") == "arinst" and data.get("license_state", "unknown") not in ("unknown", "not_required"):
+            data.update(license_state="unknown", control_ready=False,
+                        reason="Агент ERP сообщает устаревшее состояние лицензии — обновите агент ERP на этом ПК")
+        return data
 
     @model_validator(mode="after")
     def valid_device(self):
@@ -334,11 +347,8 @@ class VnaDeviceControl(BaseModel):
                 raise ValueError("Arinst требует подтверждённый UID, модель, прошивку и протокол 3")
             if self.methods or len(set(self.ops)) != len(self.ops) or not set(self.ops) <= ARINST_CONTROL_OPS:
                 raise ValueError("Некорректные операции Arinst; калибровку выполняет сервер")
-            if (self.license_state == "TRIAL") != (self.trial_remaining_seconds is not None):
-                raise ValueError("Остаток времени допустим только для пробной лицензии")
-            if self.control_ready and (self.license_state not in ("not_required", "ACTIVATED", "TRIAL") or
-                    (self.license_state == "TRIAL" and not self.trial_remaining_seconds)):
-                raise ValueError("Заблокированная лицензия не разрешает управление")
+            if self.control_ready and self.license_state != "not_required":
+                raise ValueError("Управление Arinst возможно только по протоколу ArinstVL")
         else:
             if self.serial.lower().startswith("arinst:") or self.hardware_uid:
                 raise ValueError("UID Arinst нельзя использовать как серийный номер S2VNA")
@@ -346,7 +356,7 @@ class VnaDeviceControl(BaseModel):
                 raise ValueError("Серийный номер S2VNA не совпадает с полным ответом идентификации")
             legacy = VnaControlCapability(version=self.version, methods=self.methods, ops=self.ops)
             self.ops = legacy.ops
-            if self.license_state != "unknown" or self.trial_remaining_seconds is not None:
+            if self.license_state != "unknown":
                 raise ValueError("Состояние лицензии Arinst недопустимо для S2VNA")
         return self
 

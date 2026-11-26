@@ -95,7 +95,7 @@ def test_open_read_capture_receipt_replay_close_and_partial_artifacts(env):
     view = ready(env)
     assert view["profile"] == PROFILE and view["device"]["printed_serial"] == "26030096"
     assert view["device"]["license"]["state"] == "not_required"
-    assert view["device"]["license"]["trial_remaining_seconds"] is None
+    assert set(view["device"]["license"]) == {"state", "message"}
     assert view["device"]["options"]["scan_range_hz"] == [1000000, 9000000000]
     assert view["device"]["power_dbm"] is None and not view["calibration"]["valid"]
     view = action(env, view, "arinst/capture", orientation="reverse")
@@ -166,25 +166,16 @@ def test_exclusive_session_and_legacy_capture_conflict(env):
     assert response.status_code == 409
 
 
-def test_locked_connect_and_close_allowed_without_fresh_capability(env):
-    with env[3]() as session:
-        control = session.get(VnaControlRow, ("pc-1", SERIAL))
-        control.license_state, control.trial_remaining_seconds, control.control_ready = "LOCKED", None, False
-        control.reported_at = env[2].now - timedelta(hours=1)
-        session.commit()
+@pytest.mark.parametrize("legacy", [dict(license_state="TRIAL", trial_remaining_seconds=60, message="Пробный режим"),
+                                    dict(license_state="LOCKED", message="Время вышло"),
+                                    dict(license_state="ACTIVATED", message="Лицензия активна")])
+def test_receipt_with_licence_or_trial_state_is_refused(env, legacy):
     open_session(env)
     command = poll(env)
-    result = receipt("connect")
-    result["license"] = dict(license_state="LOCKED", trial_remaining_seconds=None, message="Время пробного режима вышло")
-    send(env, command, result)
+    result = receipt("connect"); result["license"] = legacy
+    send(env, command, result, expected=422)
     view = state(env)
-    assert view["session"]["state"] == "ready" and view["device"]["license"]["state"] == "LOCKED"
-    assert poll(env) is None
-    post(env, f"/sessions/{view['session']['id']}/arinst/profile", dict(version=view["session"]["version"], profile=PROFILE), 409)
-    action(env, view, "close")
-    close = poll(env)
-    result = receipt("close"); result["license"] = dict(license_state="LOCKED", trial_remaining_seconds=None, message="Время вышло")
-    send(env, close, result)
+    assert view["device"]["license"]["state"] == "not_required" and view["session"]["state"] != "ready"
 
 
 @pytest.mark.parametrize("active_session", [False, True])
@@ -328,19 +319,6 @@ Assert-VnaLease $fixture.command $fixture.status
     assert result.returncode == 0, result.stderr.decode(errors="replace")
 
 
-def test_delayed_receipt_does_not_renew_trial_or_override_newer_heartbeat(env):
-    open_session(env)
-    command = poll(env)
-    result = receipt("connect")
-    result["license"]["license_state"] = "TRIAL"
-    result["license"]["trial_remaining_seconds"] = 60
-    env[2].now += timedelta(seconds=50)
-    send(env, command, result)
-    assert state(env)["device"]["license"]["trial_remaining_seconds"] == 10
-    env[2].now += timedelta(seconds=11)
-    assert state(env)["device"]["license"]["state"] == "LOCKED"
-
-
 def test_uncommissioned_setters_not_enqueued_and_browser_cannot_supply_evidence(env):
     assert beat(env).status_code == 200  # read-only operations only
     post(env, "/sessions", dict(instrument_id=ARINST_INSTRUMENT, arinst_profile=PROFILE), 409)
@@ -357,11 +335,11 @@ def test_delayed_receipt_cannot_override_newer_license_observation(env):
     open_session(env)
     command = poll(env)
     env[2].now += timedelta(seconds=50)
-    items = reports(env[2]); items[1]["trial_remaining_seconds"] = 5
-    items[1]["license_state"] = "TRIAL"
+    items = reports(env[2]); items[1].update(license_state="unknown", control_ready=False)
     assert beat(env, items).status_code == 200
     send(env, command, receipt("connect"))  # An older receipt must not override newer observation.
-    assert state(env)["device"]["license"]["trial_remaining_seconds"] == 5
+    view = state(env)
+    assert view["device"]["license"]["state"] == "UNKNOWN" and view["device"]["control_ready"] is False
 
 
 def test_both_quality_save_entrypoints_remain_closed(env):
@@ -383,3 +361,10 @@ def test_loads_only_kit_is_not_promoted_to_sol_standards(env):
         session.commit()
     post(env, f"/sessions/{view['session']['id']}/arinst/calibration",
          dict(version=view["session"]["version"], kit_id=str(kit), reference_plane="DUT"), 422)
+
+
+def test_poll_naming_expired_arinst_uid_has_no_job_while_another_session_waits(env):
+    # Planar and Arinst agents share a PC: polling a UID whose observation expired is "no job", not an error.
+    open_session(env)
+    assert poll(env, "arinst:1-2-3") is None
+    assert poll(env)["op"] == "connect"
