@@ -4348,6 +4348,10 @@ def _generator_chain(
             previous_result = result
             previous_norm = rows[0]["norm"] if rows else _output_norm(op, config)
             chain.append(op)
+        elif _mark_print(op):
+            # Печать меток стоит в стороне от цепочки, но набор проводов дальше идёт по штуке на изделие, как раньше шёл
+            # через неё (insMark — штучная, _output_norm): без этого резка (без количества) давала пусто / провода × партию.
+            previous_norm = _output_norm(op, config)
     return links
 
 

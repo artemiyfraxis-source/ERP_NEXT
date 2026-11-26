@@ -1274,3 +1274,28 @@ def test_a_two_length_harness_tube_cut_hands_its_own_rows_to_the_operation_that_
     expected = [{"name": "ТУТ 6/3мм, черная — 40 мм", "norm": "5", "unit": "Шт."}, {"name": "ТУТ 6/3мм, черная — 25 мм", "norm": "10", "unit": "Шт."}]
     assert [{key: row[key] for key in ("name", "norm", "unit")} for row in cut["result"]] == expected
     assert put_on["semis"][1:] == expected  # input rows == the previous output rows, 15 pieces on both sides
+
+
+def test_flag_printing_aside_keeps_the_wire_set_quantity_of_the_following_marker_tube_ops():
+    """Prod dry-run 26.11 (Orange Pi harness, 708К.5 КБ1 shape): with the flag print out of the chain the marker-tube
+    print took the cut wires with no quantity and putting the marker tubes on took wires × batch (14 → 280). Both take
+    one wire set per harness, as before (14); the tubes come in as the cut's own rows (28 ТТК + 560 marker pieces)."""
+    wires = [{"idx": 0, "name": "ПВАМ 0,35 красный", "qty": 1, "length": 230}, {"idx": 1, "name": "ПВАМ 0,35 черный", "qty": 1, "length": 90}]
+    built = build_etk({"partQty": 14, "assemblyName": "Жгут подключения", "wires": wires, "ops": [
+        {"type": "cutWireStrip", "opKey": "cutWire", "tOp": "5"},
+        {"type": "cutTut", "opKey": "cutTubes", "tutArt": "ТТК 3/1мм, черная", "tutCount": 2, "tutSegs": [{"len": "20", "count": 2}], "tOp": "1"},
+        {"type": "insMark", "opKey": "printMarks", "markPhase": "print", "marks": MARKS, "tOp": "4"},
+        {"type": "cutTut", "opKey": "cutWireMark", "tutArt": "ТУТ 2/1 белая", "tutCount": 40, "tutSegs": [{"len": "15", "count": 40}],
+         "markTube": True, "wireMarks": True, "markTexts": ["X1 to X2", "X2 to X1"], "tOp": "4"},
+        {"type": "insTut", "opKey": "onWireMark", "tutCount": 40, "markTube": True, "wireMarks": True, "tOp": "3"},
+        {"type": "heatTut", "opKey": "heatWireMark", "tutCount": 40, "markTube": True, "wireMarks": True, "tOp": "9"},
+    ]}, CARDS)
+    cut, tubes, printed, mark_print, mark_on, mark_heat = built["operations"]
+    plain = lambda rows: [(row["name"], row["norm"]) for row in rows]  # noqa: E731
+    wire_set = "Провода нарезаны: ПВАМ 0,35 красный — 1 шт по 230 мм; ПВАМ 0,35 черный — 1 шт по 90 мм"
+    assert printed["semis"] == []
+    assert plain(mark_print["semis"]) == [(wire_set, "14")]
+    # The tube inputs are exactly what the two cuts handed over (28 ТТК pieces, 560 printed marker pieces).
+    assert plain(mark_on["semis"]) == [(wire_set, "14"), *plain(tubes["result"]), *plain(mark_print["result"])]
+    assert [norm for _, norm in plain(mark_on["semis"])] == ["14", "28", "560"]
+    assert plain(mark_heat["semis"]) == [("Провода нарезаны: ПВАМ 0,35 красный — 1 шт по 230 мм; ПВАМ 0,35 черный — 1 шт по 90 мм; маркировка надета", "14")]
