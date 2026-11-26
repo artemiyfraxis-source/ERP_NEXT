@@ -365,7 +365,7 @@ it.each([false, true])("весь заказ принят: упаковка бе�
   fireEvent.click(screen.getByRole("button", { name: "Упаковать 591К.3 КБ1: 30" }));
   const dialog = await screen.findByRole("dialog");
   expect(within(dialog).getByRole("checkbox", { name: "Упаковать КБ1" })).toBeEnabled();
-  expect(within(dialog).getByRole("spinbutton", { name: "Сколько упаковать КБ1" })).toHaveAttribute("max", "30");
+  expect(within(dialog).getByRole("textbox", { name: "Сколько упаковать КБ1" })).toHaveAttribute("placeholder", "до 30");
 });
 
 it.each([false, true])("исчерпанное разрешение: количества видны, право менеджера=%s", async (manager) => {
@@ -875,6 +875,7 @@ it("склад видит общие данные и редактирует ка
     const dialog = await screen.findByRole("dialog", { name: "Отгрузка 591К.3" });
     expect(within(within(dialog).getByRole("article", { name: "Отправка ОТГ-20261029-03" })).queryByRole("button", { name: "Закрыть" })).not.toBeInTheDocument();
     expect(within(within(dialog).getByRole("article", { name: "Отправка ОТГ-20261029-01" })).getByRole("button", { name: "Отгрузить" })).toBeDisabled();
+    const ask = vi.spyOn(window, "confirm").mockReturnValue(true);
     fireEvent.click(within(within(dialog).getByRole("article", { name: "Отправка ОТГ-20261029-02" })).getByRole("button", { name: "Отгрузить" }));
     expect(await within(dialog).findByText(/^Отгружено: ОТГ-20261029-02\. Не закрыта — не хватает: файл УПД/)).toBeInTheDocument();
     expect(calls.find((call) => call.url === "/api/shipping/shipments/s2/ship")?.body).toEqual({ version: 3 });

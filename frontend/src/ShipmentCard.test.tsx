@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Shipment } from "./api";
 import type { DispatchShipment } from "./productionIntakeApi";
@@ -117,4 +117,48 @@ it("prints each document that has a number: DN without PL — only «Печат�
   render(<Card value={{ ...gappy, pl_number: "PL663К.1-1", dn_number: "" }} full />);
   expect(screen.getByRole("button", { name: "Печать PL" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Печать DN" })).toBeNull();
+});
+
+it("groups actions into shipping, documents, print and extra, with the primary action in the first", () => {
+  const packed = { ...gappy, missing_ship: [], missing_data: [], ready_to_ship: true, pl_number: "PL1", dn_number: "DN1", phone: "1" } as DispatchShipment;
+  render(<Card value={packed} full={false} />);
+  for (const name of ["Отгрузка", "Документы", "Печать", "Дополнительно"]) expect(screen.getByRole("group", { name })).toBeInTheDocument();
+  expect(within(screen.getByRole("group", { name: "Отгрузка" })).getByRole("button", { name: "Отгрузить" })).toBeEnabled();
+  expect(within(screen.getByRole("group", { name: "Документы" })).getByRole("button", { name: "Сохранить документы" })).toBeInTheDocument();
+  expect(within(screen.getByRole("group", { name: "Печать" })).getByRole("button", { name: "Печать PL" })).toBeInTheDocument();
+  expect(within(screen.getByRole("group", { name: "Дополнительно" })).getByRole("button", { name: "Отменить заявку" })).toBeInTheDocument();
+});
+
+it.each([["Отгрузить", /ship$/], ["Отменить заявку", /cancel$/]])("asks before «%s» and does nothing when declined", async (label, url) => {
+  const fetcher = vi.fn(async () => new Response(JSON.stringify({ closed: true })));
+  vi.stubGlobal("fetch", fetcher);
+  const packed = { ...gappy, missing_ship: [], missing_data: [], ready_to_ship: true } as DispatchShipment;
+  render(<Card value={packed} full={false} />);
+  const ask = vi.spyOn(window, "confirm").mockReturnValue(false);
+  fireEvent.click(screen.getByRole("button", { name: label }));
+  expect(ask).toHaveBeenCalledTimes(1);
+  expect(fetcher).not.toHaveBeenCalled();
+  ask.mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: label }));
+  await waitFor(() => expect(fetcher).toHaveBeenCalled());
+  expect(String((fetcher.mock.calls[0] as unknown[])[0])).toMatch(url);
+  if (label === "Отгрузить") expect(ask.mock.calls[1][0]).toMatch(/Позиций: 1, штук: 5/);
+  ask.mockRestore();
+});
+
+it("asks before returning a line to the warehouse and before reissuing documents", async () => {
+  const fetcher = vi.fn(async () => new Response(JSON.stringify({ shipment: gappy })));
+  vi.stubGlobal("fetch", fetcher);
+  const packed = { ...gappy, status: "Собрана", pl_number: "PL1", dn_number: "DN1" } as DispatchShipment;
+  render(<Card value={packed} full={false} />);
+  const ask = vi.spyOn(window, "confirm").mockReturnValue(false);
+  fireEvent.click(screen.getByRole("button", { name: "Вернуть на склад" }));
+  expect(ask).toHaveBeenCalledTimes(1); expect(fetcher).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Перевыпустить" }));
+  fireEvent.click(screen.getAllByRole("button", { name: "Перевыпустить" })[0]);
+  expect(ask).toHaveBeenCalledTimes(2); expect(fetcher).not.toHaveBeenCalled();
+  ask.mockReturnValue(true);
+  fireEvent.click(screen.getByRole("button", { name: "Вернуть на склад" }));
+  await waitFor(() => expect(String((fetcher.mock.calls[0] as unknown[])[0])).toMatch(/unpick$/));
+  ask.mockRestore();
 });
