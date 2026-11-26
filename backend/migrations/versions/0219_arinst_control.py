@@ -1,7 +1,10 @@
 """Per-device VNA capabilities and explicit instrument/Arinst UID association.
 
 Only the ephemeral capability cache is rebuilt. Jobs, sessions, artifacts and registry history
-are untouched. Ambiguous or stale singleton capabilities require a fresh heartbeat.
+are untouched. Every cached row is kept (the integrity check counts it): a fresh capability with exactly
+one fresh, present, owned Planar device is keyed to that serial; any other (ambiguous, stale or deviceless)
+is keyed to UNRESOLVED — a serial no S2VNA identification can produce (it holds a comma), so no route ever
+selects it — unverified and not ready, until the agent's next heartbeat replaces the machine's rows.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -17,6 +20,8 @@ DESTRUCTIVE = False
 
 CONTROL = "warehouse_vna_control"
 IDENTITIES = "warehouse_vna_identities"
+# idn_serial() splits the IDN answer on commas, so a real S2VNA serial never contains one.
+UNRESOLVED = "legacy,unresolved"
 
 
 def _legacy_table():
@@ -38,17 +43,21 @@ def upgrade():
     # SQLite stores the ERP's Moscow wall time; PostgreSQL retains the offset.
     cutoff = datetime.now(timezone(timedelta(hours=3))) - timedelta(minutes=3)
     cached = []
-    for item in bind.execute(sa.select(old).where(old.c.reported_at >= cutoff)).mappings():
+    for row in bind.execute(sa.select(old, (old.c.reported_at >= cutoff).label("fresh"))).mappings():
+        item, fresh = {key: row[key] for key in old.c.keys()}, row["fresh"]
         serials = list(bind.execute(sa.select(devices.c.device_id).join(bindings,
             (bindings.c.serial == devices.c.device_id) & (bindings.c.machine_id == devices.c.machine_id))
             .join(agents, agents.c.machine_id == devices.c.machine_id).where(
                 devices.c.machine_id == item["machine_id"], devices.c.kind == "s2vna",
                 devices.c.present.is_(True), devices.c.last_seen >= cutoff,
                 agents.c.last_seen >= cutoff, agents.c.legacy.is_(False),
-                ~sa.func.lower(devices.c.device_id).like("arinst:%"))).scalars())
+                ~sa.func.lower(devices.c.device_id).like("arinst:%"))).scalars()) if fresh else []
         if len(serials) == 1:
-            cached.append({**dict(item), "serial": serials[0], "source": "s2vna",
-                           "identity_verified": True, "control_ready": True})
+            cached.append({**item, "serial": serials[0], "source": "s2vna",
+                           "identity_verified": True, "control_ready": True, "reason": ""})
+        else:
+            cached.append({**item, "serial": UNRESOLVED, "source": "s2vna", "identity_verified": False,
+                           "control_ready": False, "reason": "Кэш до 0219: прибор не определён — ждём heartbeat агента"})
     op.drop_table(CONTROL)
     table = op.create_table(CONTROL,
         sa.Column("machine_id", sa.String(80), sa.ForeignKey("warehouse_scan_agents.machine_id", ondelete="CASCADE"), primary_key=True),

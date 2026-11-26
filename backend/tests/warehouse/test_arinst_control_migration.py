@@ -81,7 +81,11 @@ def test_backfill_constraints_identity_and_safe_downgrade(migrated):
     # SQLite reflects UUID as CHAR(32); restore the bind processors for typed fixture values.
     identity.c.instrument_id.type = sa.Uuid()
     identity.c.verified_by.type = sa.Uuid()
-    assert list(connection.execute(sa.select(control.c.machine_id, control.c.serial))) == [("exact", "101")]
+    # Every cached row survives; only the exact, fresh one is routable, the rest wait for a heartbeat.
+    assert sorted(connection.execute(sa.select(control.c.machine_id, control.c.serial, control.c.source,
+            control.c.identity_verified, control.c.control_ready))) == [
+        ("ambiguous", revision.UNRESOLVED, "s2vna", False, False), ("exact", "101", "s2vna", True, True),
+        ("stale", revision.UNRESOLVED, "s2vna", False, False)]
     item = dict(machine_id="exact", serial="arinst:1-2-3", source="arinst", version=3, methods=[], ops=["connect"],
                 reported_at=now, hardware_uid="1-2-3", firmware="2.0.0", model="VNA-DL", identity_verified=True,
                 license_state="not_required", trial_remaining_seconds=None, control_ready=True)
@@ -110,6 +114,8 @@ def test_backfill_constraints_identity_and_safe_downgrade(migrated):
     with Operations.context(MigrationContext.configure(connection)):
         revision.downgrade()
     assert [c["name"] for c in sa.inspect(connection).get_columns(revision.CONTROL)] == ["machine_id", "version", "methods", "ops", "reported_at"]
+    assert sorted(connection.execute(sa.text(f"SELECT machine_id, version FROM {revision.CONTROL}"))) == [
+        ("ambiguous", 2), ("exact", 2), ("stale", 2)]
 
 
 def test_full_sqlite_history_upgrades_to_single_0219_head(tmp_path, monkeypatch):

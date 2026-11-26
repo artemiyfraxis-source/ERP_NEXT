@@ -41,8 +41,10 @@ ID/type/firmware evidence. No synthetic `arinst` backfill. `devices.instrument_i
 lookup seam; `capture_instrument` must use this for direct Arinst sessions, preserving printed
 serial and Planar behavior. Association does not silently reassign a device or its PC owner.
 
-Migration backfills a cached Planar capability only with exactly one fresh, present, owned
-Planar device on that PC. Ambiguous caches are discarded, history/jobs/artifacts are preserved.
+Migration keys a cached Planar capability to a serial only with exactly one fresh, present, owned
+Planar device on that PC. Every other (ambiguous, stale or deviceless) cache row is kept under the
+unroutable serial `legacy,unresolved` (no IDN serial holds a comma), unverified and not ready, until
+the next heartbeat replaces it; no row is lost. History/jobs/artifacts are preserved.
 Downgrade refuses persistent associations and multi-device/Arinst control data before DDL.
 
 ## Routing and typed commands
