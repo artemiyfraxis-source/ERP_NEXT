@@ -84,6 +84,11 @@ export function reworkTemplateFits(type: string, code: string): boolean {
   const codes: Record<string, string[]> = { cutWire: ["CUT_WIRE_hand", "CUT_WIRE_auto"], stripCable: ["STRIP_WIRE", "STRIP_CABLE", "STRIP_CABLE_sheld"], tin: ["SDR_tin"], insMark: ["INS_MARK"] };
   return (codes[type] || []).includes(code);
 }
+/** Монтаж меток (markPhase install) с картой печати (PRINT_…): название, оснастка и норма карты — от другой операции
+ *  (аудит ЭТК 23.11, A4). Сервер сборки ЭТК пишет то же предупреждение (etk_builder._operation_issues). */
+export function markPhaseConflict(markPhase: string | undefined, code: string): boolean {
+  return markPhase === "install" && /^PRINT_/i.test(code.trim());
+}
 export type Endpoint = {
   id: string; side: Side; connId: string; method: "crimp" | "solder"; methodAuto: boolean;
   sdrTmpl: string | null; termId: string; wireIdxs: number[]; otp: boolean; double: boolean;
@@ -4201,6 +4206,19 @@ export function makeGen(D: GenData, S: GenState) {
       && !S.manualTemplates.includes(spec.opKey);
     return (autoRepick ? pickTemplateForOp_(spec) : (S.selectedTemplates[spec.opKey] || pickTemplateForOp_(spec))) || "";
   }
+  /** Операции монтажа меток, у которых выбрана карта печати (аудит 23.11, A4: Orange Pi оп. 22 — PRINT_MARK_TUBE на
+   *  установке хлястика): предупреждение на каждую. Ручной выбор не переписывается молча; залипший заменяет правило
+   *  `outdated`, когда в библиотеке есть карта монтажа. */
+  function markPhaseConflicts_(): string[] {
+    return getActiveOps().flatMap((spec) => {
+      const code = templateCode_(templateIdFor(spec));
+      return markPhaseConflict(spec.markPhase, code)
+        ? [`«${spec.label || spec.opKey}»: для монтажа меток выбрана карта печати ${code} — выберите карту монтажа.`] : [];
+    });
+  }
+  function templateCode_(id: string) {
+    return String((D.templates || []).find((t) => t.id === id)?.title || "").split("|")[0].trim();
+  }
   /** renderOpsCard: `selectedTemplates[opKey] = sel.value` для каждой показанной операции. null — запоминать нечего. */
   function stickTemplates() {
     let next: Record<string, string> | null = null;
@@ -4688,7 +4706,8 @@ export function makeGen(D: GenData, S: GenState) {
       if (!S.advancedLength && !sharedLength()) return { cfg, error: 'Укажите длину кабелей (поле "Длина, мм" вверху секции).', warnings: [] };
       if (S.advancedLength && (cfg.wires as Array<{ length: number }>).some((w) => !w.length)) return { cfg, error: "Укажите длину для каждого кабеля.", warnings: [] };
     }
-    return { cfg: { ...cfg, ops }, error: "", warnings: checkTerminalFit_().concat(bomWarnings_(cfg), connections_().warnings, twistDiaWarnings_(), twistCheck.warnings) };
+    return { cfg: { ...cfg, ops }, error: "", warnings: checkTerminalFit_().concat(bomWarnings_(cfg), connections_().warnings, twistDiaWarnings_(), twistCheck.warnings,
+      markPhaseConflicts_()) };
   }
 
   return {
