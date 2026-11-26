@@ -112,7 +112,9 @@ def test_every_method_keeps_the_splice_time_and_the_card_of_its_template(method)
     operation = op_by_key(document, "splice")
     assert operation["card"] is not None
     assert operation["time"][0]["norm"] == "10"  # 0,5 мин × 4 сростка × 5, подготовка в норму не входит
-    assert not document["warnings"]
+    # Only the other operations of this config, which carry no tOp, report their missing norm; the splice none.
+    assert all(text.endswith(": не задана норма времени") and not text.startswith(f"Операция {operation['position']} ")
+               for text in document["warnings"])
 
 
 def test_config_without_method_builds_the_splice_as_before():

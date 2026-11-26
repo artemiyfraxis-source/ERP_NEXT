@@ -3153,7 +3153,7 @@ def _typed_operation(
         operation["result"] = _printed_mark_rows(op, config)  # ПФ схемы: напечатанные метки, а не «Маркировка нанесена»
     _with_output(operation, single, output, single if is_last else "")
     if any(not row["norm"] for row in operation["time"]):
-        warnings.append(f"Операция {position} ({code}): норма времени не задана — расчётное время не определено.")
+        warnings.append(f"Операция {position} ({code}): не задана норма времени")  # wording of «Ручная сборка»
     issues = _operation_issues(op, config, code, operation["result"])
     if issues:
         operation["warnings"] = issues
@@ -4287,7 +4287,10 @@ def _generator_chain(
         result = _result_name(op, config, previous_result, [*chain, op])
         output = _chain_output(op, config, [*chain, op])
         if op.get("type") in TUT_CUT_TYPES:
-            tut_cuts.append({"name": result, "norm": _tut_pieces(op, config), "key": str(op.get("opKey") or "")})
+            # A cut split into rows per length (A2) hands the same rows on to the operation that puts them on.
+            split = [{key: row[key] for key in ("name", "norm", "unit")} for row in _result_rows(op, config, result, False, result)
+                     if OUTPUT_TITLE in row] if op.get("type") == "coaxCutTut" else []
+            tut_cuts.append({"name": result, "norm": _tut_pieces(op, config), "key": str(op.get("opKey") or ""), "rows": split})
         auxiliary = None
         taken = []
         if op.get("type") in {"insTut", "endCap", "coaxInsTut"}:
@@ -4304,7 +4307,7 @@ def _generator_chain(
         semis = [] if code.startswith("CUT_") or _mark_print(op) else _semis_rows(op, config, previous_result, previous_norm, auxiliary, tut_on)
         if op.get("opKey") in {"coaxProtectIns", "coaxInsLabel"}:
             semis = ([_row(previous_result, previous_norm)] if previous_result else []) + [
-                _row(item["name"], _format(item["norm"])) for item in taken]
+                row for item in taken for row in (item["rows"] or [_row(item["name"], _format(item["norm"]))])]
         is_last = index == len(operations)
         rows = None
         if str(op.get("type") or "").startswith("coax") and _coax_cables(config) > 1:

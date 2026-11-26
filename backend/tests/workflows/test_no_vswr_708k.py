@@ -30,6 +30,10 @@ def _with_form(config):
     config = deepcopy(config)
     config["coax"]["vswrControl"] = {"mode": "all", "every": None}
     config["gen_state"] = {"S": {"coax": {"vswrMode": "all", "vswrEvery": "50"}}, "v": 1}
+    # Production cards carry their БД.ОП norms; without them every operation would warn «не задана норма времени» and
+    # the warning of the dropped check would count as a change besides «Контроль КСВН».
+    for op in config["ops"]:
+        op["tOp"] = op.get("tOp") or "6"
     return config
 
 

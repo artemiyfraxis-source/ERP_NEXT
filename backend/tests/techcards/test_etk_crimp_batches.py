@@ -74,7 +74,8 @@ def test_each_terminal_is_crimped_at_cut_in_its_own_batch_with_its_own_norm():
     assert op_by_key(document, "cutWire")["fields"]["strip"]["b"] is True
     # Ручной опрессовки нет — всё обжато при резке.
     assert not [op for op in document["operations"] if op["type"] == "prsTerm"]
-    assert document["warnings"] == []
+    # Only missing time norms (this hand-made config has no tOp) — no other warning.
+    assert all(text.endswith(": не задана норма времени") for text in document["warnings"])
 
 
 def test_batches_name_the_connectors_they_crimp():
@@ -229,7 +230,8 @@ def test_the_generator_draws_the_semi_finished_graph_kits_branches_splice_groups
     assert {pair for pair in edges if pair[0].startswith(("pf-A", "pf-spl", "pf-hs"))} == {
         ("pf-A1", "pf-spl1"), ("pf-A2", "pf-spl2"), ("pf-A3", "pf-spl2"), ("pf-A4", "pf-hs"),
         ("pf-spl1", "pf-hs"), ("pf-spl2", "pf-hs"), ("pf-hs", "pf-final")}
-    assert document["warnings"] == []
+    # Only missing time norms (this hand-made config has no tOp) — no other warning.
+    assert all(text.endswith(": не задана норма времени") for text in document["warnings"])
 
 
 def test_a_hand_edit_wins_and_a_generated_graph_that_no_longer_fits_falls_back_with_a_warning():

@@ -149,7 +149,8 @@ def test_converted_assembly_builds_the_same_operations_through_the_manual_path(c
             assert built[key] == expected[key], (case, expected["position"], key)
     assert manual["topology"] == typed["topology"]
     assert manual.get("connections") == typed.get("connections")
-    assert manual["warnings"] == typed["warnings"]
+    # The same warnings; «Ручная сборка» lists the missing time norms after all card checks, the generator per operation.
+    assert sorted(manual["warnings"]) == sorted(typed["warnings"])
 
 
 @pytest.mark.parametrize("case", sorted(CASES))
@@ -286,6 +287,7 @@ def test_a_generator_operation_without_its_card_is_a_warning_not_an_error():
     assert document["operations"][0]["card"] is None
     assert document["warnings"] == [
         "Операция 1 (cutWireCrimp): нет карточки CUT_WIRE+1crimp", "Операция 2 (insTerm): нет карточки INS_terminal",
+        "Операция 2 (INS_terminal): не задана норма времени",
     ]
 
 

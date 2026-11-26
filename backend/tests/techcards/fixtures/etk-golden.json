@@ -3,6 +3,7 @@
   "345К.2-КБ1": {
    "keys": [
     "schema_version",
+    "output_version",
     "kit",
     "operations",
     "topology",
@@ -11,6 +12,7 @@
     "source"
    ],
    "top": {
+    "output_version": "6b86b273ff34fce19d6b",
     "kit": "2c01c82de7519fdf3848",
     "topology": "48ce7198f411b8c10c45",
     "warnings": "4f53cda18c2baa0c0354",
@@ -19,19 +21,20 @@
    },
    "operations": [
     "141a9ba8d34ac2248b16",
-    "9aa76b6580d5c5a1bde7",
-    "554b84b6f50c16886e4a",
-    "c22eea68c4db40a50405",
-    "4d1a08f3576551677dea",
-    "6694eade6d2c0882b62d",
-    "44ee4a56c92203a2f95a",
-    "3c5c04a79bbe786deca6",
-    "e5f5c815d5cafb735538"
+    "fc0329d7db17a6dcb5bd",
+    "0e7e8bde088ae5cf7d02",
+    "33f0f6152cb7b5a7366b",
+    "ac6955355a2a553f7aa6",
+    "c53e8e2f86ab19aef0bd",
+    "6f2ee9e86e9d24f88fd7",
+    "048dc4d5445326201de7",
+    "3b2dad36aa4ea36a6162"
    ]
   },
   "591К.5-КБ2": {
    "keys": [
     "schema_version",
+    "output_version",
     "kit",
     "operations",
     "topology",
@@ -40,6 +43,7 @@
     "source"
    ],
    "top": {
+    "output_version": "6b86b273ff34fce19d6b",
     "kit": "00015b4b7ad56347158e",
     "topology": "06f79160ec9ef8780f2b",
     "warnings": "4f53cda18c2baa0c0354",
@@ -49,19 +53,20 @@
    "operations": [
     "e3c482d761f395c04b2d",
     "93e0595bd724c9be212d",
-    "91db869cbf91a96be62a",
-    "f868e3d3bb45bc213e12",
-    "ae9d3a9e8f2ba0eb7723",
+    "17bd1c9a09358bc74670",
+    "1081244bdf0b2b4d25b1",
+    "23bb143cbb5c689fb8bb",
     "9e107c77966e8b3b4ad0",
-    "4cf1e6eee68febede8d6",
-    "5b8d0bc7d89cac67a7e4",
-    "518a3c5de5e4da210536",
-    "b147ec9e9499ed8d1d72"
+    "22fc7b0df9c1ef810e67",
+    "40acb09f9caf721544ea",
+    "d4b9071512933f9fc207",
+    "0f44dd817cac5b492c15"
    ]
   },
   "708К.2-КБ1": {
    "keys": [
     "schema_version",
+    "output_version",
     "kit",
     "operations",
     "topology",
@@ -70,6 +75,7 @@
     "source"
    ],
    "top": {
+    "output_version": "6b86b273ff34fce19d6b",
     "kit": "9a33328771cde8fd85a3",
     "topology": "9e174ba015dab2da2f64",
     "warnings": "4f53cda18c2baa0c0354",
@@ -78,25 +84,26 @@
    },
    "operations": [
     "a2e6710f33e1500b4fb1",
-    "6f99ebb2c57385f9b097",
-    "e1e7fd87c92c3733209a",
-    "5ae3f3f57b2cb8df279f",
-    "f82f6c3816f8aa90bf58",
+    "12872c5e88aa866d049f",
+    "b75166822b04d456d591",
+    "6fc19aec932925b2447b",
+    "feeabc394759114e330f",
     "7b5ee5324ccf5df10a3d",
-    "5b4a28abf216ec2babce",
-    "b367a951722545437cdb",
-    "6abcf89259d498d1333c",
-    "9799c882241a9298e782",
-    "3efa56a24dc96417b48d",
-    "7ccb03dd80d4058984e1",
-    "0fcb09dffd67cd8e675f",
-    "d47c0b0d5861a10f0662",
-    "44201dbd0744f4809cc7"
+    "c994fc5caf70693c2500",
+    "80d3b1c3b95d26940dcd",
+    "297fd5f14797c242283d",
+    "fe096cf01a81ba58cbe5",
+    "6c8d100e60d081de95e8",
+    "0ef0ec2ab7a0a449e2b1",
+    "23662d4f58923870b82e",
+    "41b6553b471b5f89175f",
+    "cd14f0b8b3cd3a0e1c97"
    ]
   },
   "708К.2-КБ1 без длины": {
    "keys": [
     "schema_version",
+    "output_version",
     "kit",
     "operations",
     "topology",
@@ -105,6 +112,7 @@
     "source"
    ],
    "top": {
+    "output_version": "6b86b273ff34fce19d6b",
     "kit": "9a33328771cde8fd85a3",
     "topology": "9e174ba015dab2da2f64",
     "warnings": "4f53cda18c2baa0c0354",
@@ -113,25 +121,26 @@
    },
    "operations": [
     "a2e6710f33e1500b4fb1",
-    "6f99ebb2c57385f9b097",
-    "e1e7fd87c92c3733209a",
-    "5ae3f3f57b2cb8df279f",
-    "f82f6c3816f8aa90bf58",
+    "12872c5e88aa866d049f",
+    "b75166822b04d456d591",
+    "6fc19aec932925b2447b",
+    "feeabc394759114e330f",
     "7b5ee5324ccf5df10a3d",
-    "5b4a28abf216ec2babce",
-    "b367a951722545437cdb",
-    "6abcf89259d498d1333c",
-    "9799c882241a9298e782",
-    "3efa56a24dc96417b48d",
-    "7ccb03dd80d4058984e1",
-    "0fcb09dffd67cd8e675f",
-    "d47c0b0d5861a10f0662",
-    "44201dbd0744f4809cc7"
+    "c994fc5caf70693c2500",
+    "80d3b1c3b95d26940dcd",
+    "297fd5f14797c242283d",
+    "fe096cf01a81ba58cbe5",
+    "6c8d100e60d081de95e8",
+    "0ef0ec2ab7a0a449e2b1",
+    "23662d4f58923870b82e",
+    "41b6553b471b5f89175f",
+    "cd14f0b8b3cd3a0e1c97"
    ]
   },
   "708К.5-КБ1": {
    "keys": [
     "schema_version",
+    "output_version",
     "kit",
     "operations",
     "topology",
@@ -140,6 +149,7 @@
     "source"
    ],
    "top": {
+    "output_version": "6b86b273ff34fce19d6b",
     "kit": "4d8ab1bda2f7f4de784b",
     "topology": "9196fd20731320edc3be",
     "warnings": "4f53cda18c2baa0c0354",
@@ -148,25 +158,26 @@
    },
    "operations": [
     "69fbb321b0086864258c",
-    "3c796cd9728f73f00a70",
-    "c42b89c98c8403c8332c",
-    "b3a37df5eedf381a2799",
-    "6f44081d04a62ef2a444",
+    "380b0d27f830ea0988be",
+    "686d3d882f257b47b49d",
+    "12bcbb71768e2d59fa23",
+    "1ae7d2f20846ebc659f4",
     "238dda9af14bc318eba5",
-    "859fcd74b0d568c56cb3",
-    "66bd7d28c21343a93fce",
-    "f2afd445f48b14dfd783",
-    "efe5b6e1555248a9730e",
-    "e2eee83ff41cf0874d0a",
-    "9ed6ff7c7c3dc373346a",
-    "97081af872921e4e3d62",
-    "02b490ae3dfb48f47933",
-    "69eadc88489a069fe64f"
+    "ab8041c89ecdd1689dd7",
+    "8bc2311199d5a6659db6",
+    "f307ab60789ca74d14a4",
+    "383a230207ad402fdade",
+    "a4283b89aa3964bb042a",
+    "406ec452fc3dd3d53ce8",
+    "91c2970ecde98d831c04",
+    "ed7e3264ae078ac10059",
+    "a1131220389d5bf4f64a"
    ]
   },
   "708К.5-КБ1 нормы терминалов": {
    "keys": [
     "schema_version",
+    "output_version",
     "kit",
     "operations",
     "topology",
@@ -175,6 +186,7 @@
     "source"
    ],
    "top": {
+    "output_version": "6b86b273ff34fce19d6b",
     "kit": "4d8ab1bda2f7f4de784b",
     "topology": "9196fd20731320edc3be",
     "warnings": "d0c5e45b6d8b981d2aae",
@@ -183,25 +195,26 @@
    },
    "operations": [
     "69fbb321b0086864258c",
-    "3c796cd9728f73f00a70",
-    "c42b89c98c8403c8332c",
-    "b3a37df5eedf381a2799",
-    "6f44081d04a62ef2a444",
+    "380b0d27f830ea0988be",
+    "686d3d882f257b47b49d",
+    "12bcbb71768e2d59fa23",
+    "1ae7d2f20846ebc659f4",
     "837463b39d5ef0f5ad1a",
-    "859fcd74b0d568c56cb3",
-    "66bd7d28c21343a93fce",
-    "ffadc598daa227a7a789",
-    "efe5b6e1555248a9730e",
-    "d988a00aee35c8e5c65a",
-    "9ed6ff7c7c3dc373346a",
-    "21c64a9717d1f1edc018",
-    "02b490ae3dfb48f47933",
-    "69eadc88489a069fe64f"
+    "ab8041c89ecdd1689dd7",
+    "8bc2311199d5a6659db6",
+    "2351ab4899945b55950f",
+    "383a230207ad402fdade",
+    "b4dc6f3f1b2992200d48",
+    "406ec452fc3dd3d53ce8",
+    "63a17a510ceb977507f9",
+    "ed7e3264ae078ac10059",
+    "a1131220389d5bf4f64a"
    ]
   },
   "720К.-КБ1": {
    "keys": [
     "schema_version",
+    "output_version",
     "kit",
     "operations",
     "topology",
@@ -210,6 +223,7 @@
     "source"
    ],
    "top": {
+    "output_version": "6b86b273ff34fce19d6b",
     "kit": "9bc94bab782604fa94d3",
     "topology": "a7c88eb97a06b8429586",
     "warnings": "4f53cda18c2baa0c0354",
@@ -219,14 +233,15 @@
    "operations": [
     "58cefcd057e39a20a099",
     "82e48e5847c19456b5c2",
-    "d1259dd3f42728cd14e8",
-    "d44e787224f0fdb865db",
-    "ab6a993d21ec48fd7104"
+    "f4024eb589482600e47d",
+    "2db48ef0cb23692460d1",
+    "4902706761edfd7eb27a"
    ]
   },
   "720К.-КБ1 нет шаблона": {
    "keys": [
     "schema_version",
+    "output_version",
     "kit",
     "operations",
     "topology",
@@ -235,6 +250,7 @@
     "source"
    ],
    "top": {
+    "output_version": "6b86b273ff34fce19d6b",
     "kit": "9bc94bab782604fa94d3",
     "topology": "a7c88eb97a06b8429586",
     "warnings": "c46ee1b68adf53f23449",
@@ -244,14 +260,15 @@
    "operations": [
     "8acff480eee48587358d",
     "82e48e5847c19456b5c2",
-    "d1259dd3f42728cd14e8",
-    "d44e787224f0fdb865db",
-    "ab6a993d21ec48fd7104"
+    "f4024eb589482600e47d",
+    "2db48ef0cb23692460d1",
+    "4902706761edfd7eb27a"
    ]
   },
   "720К.-КБ1 нормы терминалов": {
    "keys": [
     "schema_version",
+    "output_version",
     "kit",
     "operations",
     "topology",
@@ -260,6 +277,7 @@
     "source"
    ],
    "top": {
+    "output_version": "6b86b273ff34fce19d6b",
     "kit": "9bc94bab782604fa94d3",
     "topology": "a7c88eb97a06b8429586",
     "warnings": "4f53cda18c2baa0c0354",
@@ -269,14 +287,15 @@
    "operations": [
     "58cefcd057e39a20a099",
     "e92cc6b5c0c8a51f8418",
-    "d1259dd3f42728cd14e8",
-    "2fe1d1f3da385a1b6e25",
-    "ab6a993d21ec48fd7104"
+    "f4024eb589482600e47d",
+    "52b32315a47786834449",
+    "4902706761edfd7eb27a"
    ]
   },
   "720К.-КБ1 распиновка": {
    "keys": [
     "schema_version",
+    "output_version",
     "kit",
     "operations",
     "topology",
@@ -285,6 +304,7 @@
     "source"
    ],
    "top": {
+    "output_version": "6b86b273ff34fce19d6b",
     "kit": "9bc94bab782604fa94d3",
     "topology": "a7c88eb97a06b8429586",
     "warnings": "4f53cda18c2baa0c0354",
@@ -294,14 +314,15 @@
    "operations": [
     "58cefcd057e39a20a099",
     "82e48e5847c19456b5c2",
-    "4d69de4e2783b5b41d32",
-    "d44e787224f0fdb865db",
-    "ab6a993d21ec48fd7104"
+    "c7a6c34983393419518a",
+    "2db48ef0cb23692460d1",
+    "4902706761edfd7eb27a"
    ]
   },
   "720К.-КБ1 соединения": {
    "keys": [
     "schema_version",
+    "output_version",
     "kit",
     "operations",
     "topology",
@@ -311,6 +332,7 @@
     "source"
    ],
    "top": {
+    "output_version": "6b86b273ff34fce19d6b",
     "kit": "9bc94bab782604fa94d3",
     "topology": "a7c88eb97a06b8429586",
     "connections": "821c6a09da78d0ea39d3",
@@ -321,14 +343,15 @@
    "operations": [
     "58cefcd057e39a20a099",
     "82e48e5847c19456b5c2",
-    "ca7a7dc3e5f4b4e33b2c",
-    "d44e787224f0fdb865db",
-    "c708fbf28f15ad0f0402"
+    "b246f144c6433e16bfeb",
+    "2db48ef0cb23692460d1",
+    "bbadc8275754f8d7021a"
    ]
   },
   "720К.1.2-КБ1": {
    "keys": [
     "schema_version",
+    "output_version",
     "kit",
     "operations",
     "topology",
@@ -337,6 +360,7 @@
     "source"
    ],
    "top": {
+    "output_version": "6b86b273ff34fce19d6b",
     "kit": "9bc94bab782604fa94d3",
     "topology": "ba12490554947ff1681f",
     "warnings": "4f53cda18c2baa0c0354",
@@ -345,14 +369,15 @@
    },
    "operations": [
     "6996c33be62791f2d5ea",
-    "c6b5fdb25175c1aeedc5",
-    "0b93a3c0e70cbf18e878",
-    "bd05f0f76c0170fae167"
+    "8398370201f8865b8043",
+    "38ca2f07baa4b209648a",
+    "17c39f262f9b0850d00e"
    ]
   },
   "720К.1.2-КБ1 нормы терминалов": {
    "keys": [
     "schema_version",
+    "output_version",
     "kit",
     "operations",
     "topology",
@@ -361,6 +386,7 @@
     "source"
    ],
    "top": {
+    "output_version": "6b86b273ff34fce19d6b",
     "kit": "9bc94bab782604fa94d3",
     "topology": "ba12490554947ff1681f",
     "warnings": "4f53cda18c2baa0c0354",
@@ -369,14 +395,15 @@
    },
    "operations": [
     "e4783bd3f29670d680f9",
-    "c6b5fdb25175c1aeedc5",
-    "66d65d0ff1e4d575ccad",
-    "bd05f0f76c0170fae167"
+    "8398370201f8865b8043",
+    "995b52da2ed3b550f7f7",
+    "17c39f262f9b0850d00e"
    ]
   },
   "729К.2-КБ1": {
    "keys": [
     "schema_version",
+    "output_version",
     "kit",
     "operations",
     "topology",
@@ -385,6 +412,7 @@
     "source"
    ],
    "top": {
+    "output_version": "6b86b273ff34fce19d6b",
     "kit": "42c117fb3ca37c78b10d",
     "topology": "3c7ec778d0d2e4b03a2b",
     "warnings": "4f53cda18c2baa0c0354",
@@ -393,16 +421,17 @@
    },
    "operations": [
     "bc34205b6799808c5856",
-    "9c67666c9ff9b22d5ab4",
-    "31ba21a7df15a7f55b4f",
-    "a5ac629ad3bf01ff86a2",
-    "6a296649211fb3926208",
-    "0a9cce79c5a50d98a7f4"
+    "47c89aca31b3450f7740",
+    "84860795626a7e158e04",
+    "46f7260f65869c7cc68b",
+    "77c7934010782161be48",
+    "e139935765668133f2fc"
    ]
   },
   "коаксиал": {
    "keys": [
     "schema_version",
+    "output_version",
     "kit",
     "operations",
     "topology",
@@ -411,20 +440,22 @@
     "source"
    ],
    "top": {
+    "output_version": "6b86b273ff34fce19d6b",
     "kit": "3a1134095171209fd156",
     "topology": "a461bf77bc4e4d732f7a",
-    "warnings": "40551347c5bdd2d9614e",
+    "warnings": "1074a983ad67f7827012",
     "build_config": "1097cfe7a43685a552eb",
     "source": "44136fa355b3678a1146"
    },
    "operations": [
-    "59e6593f78198e3f09b9",
-    "687658821136873ff5ec"
+    "629c80925aa34f995e97",
+    "60308a1bb3a4257b4caa"
    ]
   },
   "резка без длины": {
    "keys": [
     "schema_version",
+    "output_version",
     "kit",
     "operations",
     "topology",
@@ -433,19 +464,21 @@
     "source"
    ],
    "top": {
+    "output_version": "6b86b273ff34fce19d6b",
     "kit": "c6796eae2feed04b6304",
     "topology": "a461bf77bc4e4d732f7a",
-    "warnings": "c7b07187ed0d688a9a05",
+    "warnings": "e7f7d6a6b604c11a3467",
     "build_config": "a62fe8d6636e06dbba81",
     "source": "44136fa355b3678a1146"
    },
    "operations": [
-    "6e12a227b6c43f558eb2"
+    "f2b690dd79ff4e00f06e"
    ]
   },
   "резка с обжимом": {
    "keys": [
     "schema_version",
+    "output_version",
     "kit",
     "operations",
     "topology",
@@ -454,20 +487,22 @@
     "source"
    ],
    "top": {
+    "output_version": "6b86b273ff34fce19d6b",
     "kit": "a3f58d2ee060b5e60af1",
     "topology": "96bb8986084f15265118",
-    "warnings": "cd75d795bff8aec65303",
+    "warnings": "8afbb5c1c8d2a9e9578a",
     "build_config": "c98ca3c309322a9220cf",
     "source": "44136fa355b3678a1146"
    },
    "operations": [
     "36b261e0871ca79c79e2",
-    "44446c389b5e72c4f88a"
+    "0eb7e8662c9e631dbf9a"
    ]
   },
   "резка с обжимом, мерительный инструмент": {
    "keys": [
     "schema_version",
+    "output_version",
     "kit",
     "operations",
     "topology",
@@ -476,20 +511,22 @@
     "source"
    ],
    "top": {
+    "output_version": "6b86b273ff34fce19d6b",
     "kit": "2463d0760340aaeecae9",
     "topology": "96bb8986084f15265118",
-    "warnings": "cd75d795bff8aec65303",
+    "warnings": "8afbb5c1c8d2a9e9578a",
     "build_config": "9f419bf8a09dd16b40ed",
     "source": "44136fa355b3678a1146"
    },
    "operations": [
     "0d14e481aa82fa9deb9f",
-    "b3ab4102284a134ac62d"
+    "8229f5dd14ffc71f8b24"
    ]
   },
   "резка, обжим, лужение": {
    "keys": [
     "schema_version",
+    "output_version",
     "kit",
     "operations",
     "topology",
@@ -498,20 +535,22 @@
     "source"
    ],
    "top": {
+    "output_version": "6b86b273ff34fce19d6b",
     "kit": "680f5b6c9b8baf47a941",
     "topology": "e93dfae404655c11860f",
-    "warnings": "cd75d795bff8aec65303",
+    "warnings": "8afbb5c1c8d2a9e9578a",
     "build_config": "142627d4e3d034ac385f",
     "source": "44136fa355b3678a1146"
    },
    "operations": [
     "b6f485408b70da0b2b33",
-    "fd084aec9575693b7ccf"
+    "9c74efff73a3baf4efce"
    ]
   },
   "сростки и разделка": {
    "keys": [
     "schema_version",
+    "output_version",
     "kit",
     "operations",
     "topology",
@@ -520,18 +559,19 @@
     "source"
    ],
    "top": {
+    "output_version": "6b86b273ff34fce19d6b",
     "kit": "ec0f031a50bfe70d0985",
     "topology": "4b33b032edcef09b7510",
-    "warnings": "31e65096fb479e46968f",
+    "warnings": "92bfd07e6b9549065db9",
     "build_config": "2b4386c0b0bff4dc42ee",
     "source": "44136fa355b3678a1146"
    },
    "operations": [
-    "75839781b78b1cc69bf6",
-    "493d39e66f3228bec193",
-    "0d0f839ad49169f14c26",
-    "b91a48163bdfddc6be43",
-    "93f1cf8cbd22e3da4a59"
+    "9b3bcdf334c8cc330529",
+    "d8ea5e07cd5d5c3285bc",
+    "c81969ba2a7c4552b3a1",
+    "ba12313ec9285b140dd8",
+    "de7857d3f66e137710a6"
    ]
   }
  }

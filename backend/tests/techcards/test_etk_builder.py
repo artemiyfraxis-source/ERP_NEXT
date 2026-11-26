@@ -300,7 +300,7 @@ def test_a_former_side_template_id_resolves_by_the_operation_code_and_the_side_i
         ("ins-terminal-2-54-6-3-монтаж-терминалов", "INS_terminal_2,54-6,3 | Монтаж терминалов (В)"),
     ]
     # Only the missing time norms of this hand-made config are reported (no tOp on the mountings).
-    assert all(item["card"] for item in mounts) and all("норма времени не задана" in text for text in legacy["warnings"])
+    assert all(item["card"] for item in mounts) and all("не задана норма времени" in text for text in legacy["warnings"])
     assert legacy["operations"] == current["operations"]
     # an unknown id whose code has no template stays unresolved, as before
     config["ops"][1].update(templateId="gone-a", opNum="NO_SUCH_CODE")
@@ -1239,7 +1239,7 @@ def test_coax_and_wire_times_keep_a_missing_norm_unknown(seconds, norm):
     document = build_etk(config, _fresh_cards(config))
     insert = _op(document, "coaxInsertA")
     assert insert["time"][0]["norm"] == norm  # 6 s × 4 cables × 15 / 60 = 6 min
-    assert any("Операция 4 (INS_HFM_CONTACT): норма времени не задана" in text for text in document["warnings"]) == (norm == "")
+    assert any("Операция 4 (INS_HFM_CONTACT): не задана норма времени" in text for text in document["warnings"]) == (norm == "")
     assert _op(document, "coaxShieldA")["time"][0]["norm"] == "6"
 
 
