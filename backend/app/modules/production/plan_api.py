@@ -40,6 +40,7 @@ from .plan import (
     work_days_left,
 )
 from .plan_sheet import calendar_span
+from .resource_claims import ResourcesBusy
 from .plan_application import (
     AddPlanEventCommand,
     ReplacePlanProjectsCommand,
@@ -134,6 +135,8 @@ def _safe_read(name: str, factory, reader, default=()):
     """ProdPlan.gs prodPlanData_ `safe`: a failing source leaves its column empty, the plan still loads."""
     try:
         return _read(factory, reader, default)
+    except ResourcesBusy:
+        raise  # a busy production lock is a retryable 503, not silently empty columns
     except Exception:  # noqa: BLE001 - any source failure degrades to an empty column, as in SUPPLYMAP
         logger.warning("production plan source %s failed", name, exc_info=True)
         return default
