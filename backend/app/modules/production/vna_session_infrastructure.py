@@ -272,14 +272,20 @@ class VnaSessionRepository:
             self._abort(row, now)
         elif action == "recover" and row.state == "recovery_required":
             self._abort(row, now)
-        elif action == "release_unrestored" and row.state == "recovery_required" and protocol(row) == 2:
+        elif (action == "release_unrestored" and row.state == "recovery_required" and row.purpose == "bench"
+              and protocol(row) == 2):
             # Admin escape when restoring keeps failing: the agent stops controlling the VNA without loading the
             # operator's backup (its settings are checked by hand); the session ends `aborted` on the receipt.
-            self._change(row, now, state="aborting", error="")
+            # It runs as the bench's own closing step (`releasing`): every agent refuses `release` while `aborting`
+            # (Assert-VnaLease accepts only abort/restore there), 2.12.0 included.
             self.session.execute(update(VnaCommandRow).where(
                 VnaCommandRow.session_id == row.id, VnaCommandRow.status.in_(("pending", "claimed")),
             ).values(status="cancelled", finished_at=now))
-            self._enqueue(row, "release", {"screen_hash": None}, now)
+            closing = bench.release_step(None)
+            closing["item"] = {**closing["item"], "unrestored": True}
+            self._change(row, now, steps=row.steps[:row.step] + [closing], state=bench.executing_state("release"),
+                         error="")
+            self._enqueue(row, "release", closing["args"], now)
         else:
             raise domain.SessionConflict("Действие недоступно на текущем шаге")
 
@@ -368,7 +374,7 @@ class VnaSessionRepository:
             if command.result_hash != digest:
                 raise domain.SessionConflict("Повторный ответ отличается от сохранённого")
             return None  # Lost HTTP acknowledgement: no state mutation, no second artifact or execution.
-        if command.status != "claimed" or (row.state == "aborting" and command.op not in ("abort", "restore", "release")):
+        if command.status != "claimed" or (row.state == "aborting" and command.op not in ("abort", "restore")):
             raise domain.SessionConflict("Команда не ожидает результат")
         self.expect(row, version, step)
         state = row.state
@@ -428,6 +434,10 @@ class VnaSessionRepository:
         self._next(row, row.step + 1, now)
         if error:
             self._change(row, now, error=error[:2000])
+
+    def abandon(self, row, now):
+        """Bench: the admin's release without restoring was accepted — control ended, nothing is recorded."""
+        self._change(row, now, state="aborted", step=len(row.steps))
 
     def finish(self, row, now):
         """Bench: `release` was accepted — the agent keeps the ERP screen and calibration for viewing only."""

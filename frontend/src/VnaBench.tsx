@@ -262,7 +262,8 @@ export function VnaBench({ canEdit, connection }: { canEdit: boolean; connection
         {busy === "recover" ? "Восстанавливаем…" : "Восстановить"}</button>}
       {canEdit && session.can_release_unrestored && <button type="button" className="secondary small" disabled={Boolean(busy)}
         onClick={() => {
-          if (window.confirm("Закрыть сеанс без восстановления? Настройки оператора на S2VNA не вернутся — проверьте их на приборе вручную. Действие записывается в журнал."))
+          if (window.confirm("Закрыть сеанс без восстановления? Настройки оператора на S2VNA не вернутся — проверьте их на приборе вручную. "
+            + "Если агент ответит, что прежняя операция могла продолжиться, — перезапустите S2VNA и нажмите ещё раз. Действие записывается в журнал."))
             void act("release-unrestored", () => vnaBenchApi.releaseUnrestored(session.id, session.version));
         }}>{busy === "release-unrestored" ? "Закрываем…" : "Закрыть без восстановления"}</button>}
     </div>}

@@ -1,6 +1,8 @@
 """«ВАЦ — рабочее место» end to end: the S5 screen's API against a stub protocol-v2 agent (S3 + S4)."""
 
 import base64
+from pathlib import Path
+import re
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -68,6 +70,19 @@ def grid(profile):
 
 def gamma(vswr):
     return complex((vswr - 1) / (vswr + 1), 0)
+
+
+AGENT_PS1 = Path(__file__).parents[3] / "tools" / "print-agent" / "agent.ps1"
+
+
+def agent_lease_rule() -> tuple[set[str], set[str]]:
+    """The real agent's Assert-VnaLease, read from agent.ps1: states it refuses every command in, and the only ops it
+    still runs while `aborting`. The stub applies it, so a server flow the agent would refuse cannot pass here."""
+    body = re.search(r"function Assert-VnaLease \{(.*?)\n\}", AGENT_PS1.read_text(encoding="utf-8"), re.S).group(1)
+    names = lambda text: set(re.findall(r"'([a-z_]+)'", text))  # noqa: E731
+    refused = re.search(r"\$Status\.state -in @\(([^)]*)\)", body).group(1)
+    aborting = re.search(r"\$Status\.state -eq 'aborting' -and \$Command\.op -notin @\(([^)]*)\)", body).group(1)
+    return names(refused), names(aborting)
 
 
 class Agent:
@@ -151,6 +166,15 @@ class Agent:
         assert response.status_code == 200, response.text
         return response.json()["job"]
 
+    def assert_lease(self, command):
+        """What the agent checks before touching the device (Assert-VnaLease): the session status it reads back."""
+        response = TestClient(app).get(f"/api/stock/vna/sessions/{command['session_id']}",
+                                       headers={**self.env["agent"], "X-Agent-Machine-Id": "pc-1"})
+        assert response.status_code == 200, response.text
+        status, (refused, aborting_ops) = response.json(), agent_lease_rule()
+        assert status["lease_held"] and status["state"] not in refused, (command["op"], status["state"])
+        assert status["state"] != "aborting" or command["op"] in aborting_ops, (command["op"], status["state"])
+
     def send(self, command, payload=None):
         return TestClient(app).post(f"/api/stock/vna/commands/{command['id']}/result", json=payload or self.answer(command),
                                     headers={**self.env["agent"], "X-Agent-Machine-Id": "pc-1"})
@@ -162,6 +186,7 @@ class Agent:
             if command is None:
                 return
             assert command["protocol_version"] == 2
+            self.assert_lease(command)
             response = self.send(command)
             assert response.status_code == 200, response.text
         pytest.fail("Агент не дождался паузы")
@@ -789,12 +814,21 @@ def test_a_failing_restore_is_closed_without_restoring_by_an_admin(env):
     with env["sessions"]() as session:
         command = session.scalars(select(VnaCommandRow).where(VnaCommandRow.status == "pending")).one()
         assert (command.op, command.args["screen_hash"]) == ("release", None)
-    env["stub"].drive()
+    # Until the agent takes it (offline PC), the card shows the queued closing — not a silent dead end.
+    view = state(env)
+    assert view["session"]["state"] == "releasing" and view["session"]["command"]["label"] == "закрытие сеанса"
+    assert view["session"]["command"]["state"] == "queued"
+    env["stub"].drive()   # the stub refuses, like the agent, anything Assert-VnaLease would refuse
     assert state(env)["session"] is None
     with env["sessions"]() as session:
         assert session.scalar(select(VnaSessionRow.state)) == "aborted"
     assert _events(env, "production.vna_bench_closed_unrestored") == 1
     assert post(env, "/sessions")["session"]["status"] == "open"
+
+
+def test_the_lease_rule_is_read_from_the_agent():
+    refused, aborting_ops = agent_lease_rule()
+    assert {"aborted", "recorded", "failed", "recovery_required"} <= refused and aborting_ops == {"abort", "restore"}
 
 
 def test_only_an_admin_closes_without_restoring_and_only_a_stuck_session(env, monkeypatch):

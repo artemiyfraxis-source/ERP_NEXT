@@ -1383,7 +1383,10 @@ def complete_command(uow, row, command_id, payload, now):
     if command is None:
         return
     if command.op == "release":
-        repository.finish(row, now)
+        if (row.steps[row.step].get("item") or {}).get("unrestored"):
+            repository.abandon(row, now)
+        else:
+            repository.finish(row, now)
         return
     item = row.steps[row.step].get("item") or {}
     try:
