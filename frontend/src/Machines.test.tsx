@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { afterEach, expect, it, vi } from "vitest";
 import type { AccessMode, Principal } from "./api";
 import type { MachineCard, MachineRow, UnitSetup } from "./machinesApi";
-import { MachinesPage } from "./MachinesPage";
+import { MachinesPage, shortOperations } from "./MachinesPage";
 import { manualJobsApi } from "./manualJobsApi";
 import { visibleNav } from "./navigation";
 import { machineStatus, Ob019CardView } from "./Ob019Card";
@@ -164,7 +164,8 @@ it("shows one list grouped by purpose; the link is a badge; «Только по�
   const cutting = screen.getByRole("region", { name: "Резка" });
   const tile = within(cutting).getByText("ОБ.019").closest("button")!;
   expect(within(tile).getByText("EW-3185+L · ЦАР")).toBeTruthy();
-  expect(within(tile).getByText("Резка, Резка с разделкой")).toBeTruthy();
+  // Short capabilities under «Резка»; the full operation names stay in the tooltip and the search.
+  expect(within(tile).getByText("Резка + разделка").getAttribute("title")).toBe("Резка, Резка с разделкой");
   expect(within(tile).getByText("Ждёт наладки").className).toContain("tone-warn");
   expect(within(tile).getByText("Наладка: полная")).toBeTruthy();
   expect(within(tile).getByText("Аварийный стоп").className).toContain("tone-danger");
@@ -470,4 +471,18 @@ it("opens the work card only for a machine without control that is in БД.ОБ;
   const info = await screen.findByRole("dialog", { name: /ОБ\.037/ });
   expect(within(info).getByRole("region", { name: "Сведения" })).toBeTruthy();
   expect(within(info).queryByRole("status", { name: "Состояние станка" })).toBeNull();
+});
+
+it("shortens cutting capabilities to «Резка + …», drops duplicates and keeps other operations readable", () => {
+  // ОБ.019 as БД.ОБ lists it (owner 23.11: «Резка + разделка, маркировка»).
+  expect(shortOperations(["Резка", "Резка с разделкой", "Резка с разделкой+ маркировка", "Резка линейных материалов"]))
+    .toBe("Резка + разделка, маркировка");
+  expect(shortOperations(["Резка линейных материалов"])).toBe("Резка линейных материалов");
+  expect(shortOperations(["Резка", "Резка линейных материалов"])).toBe("Резка");
+  expect(shortOperations(["Резка"])).toBe("Резка");
+  expect(shortOperations(["Резка с разделкой", "резка  с разделкой"])).toBe("Резка + разделка");
+  expect(shortOperations(["Опрессовка терминалов", "Резка с разделкой + маркировка", "Опрессовка терминалов"]))
+    .toBe("Опрессовка терминалов, Резка + разделка, маркировка");
+  expect(shortOperations(["Резка линейных материалов", "Плазменная зачистка"])).toBe("Резка линейных материалов, Плазменная зачистка");
+  expect(shortOperations([])).toBe("");
 });
