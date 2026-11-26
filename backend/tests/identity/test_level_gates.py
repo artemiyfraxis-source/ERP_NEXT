@@ -18,7 +18,7 @@ from app.modules.identity.domain import ACCESS_LEVELS, FULL_ACCESS_LEVELS, LEVEL
 from app.modules.identity.level_migration import GATES, OLD_SECTIONS, passes_after
 from app.modules.references.api import _map_rights
 from app.modules.shipping import api as shipping_api
-from app.modules.warehouse import scan_jobs_api
+from app.modules.warehouse import scan_jobs_api, api as warehouse_api
 from app.shared import http_auth
 from app.shared.http_auth import Principal, authenticated_principal
 from app.workflows import employee_card_api, instrument_catalog_api, machine_writes_api, machines_api, manual_jobs_api, marking_labels, vna_screens_api
@@ -41,6 +41,7 @@ DEPENDENCIES = {
     "marking_read": marking_labels.marking_read_principal,
     # «Станки» (0193, after the transfer): the master (Производство) and the fitter (Задания) read the list and the card.
     "machines_view": machines_api.machines_view_principal,
+    "material_owners_view": warehouse_api.material_owners_view_principal,
     # Commands to a machine, «Стоп» included (20.11.2026): Производство or Задания; ОТК only reads «Оборудование».
     "machines_command": machines_api.machines_command_principal,
     # ОБ.019 writes (0195): the fitter and the master write settings, transfers and corrections.

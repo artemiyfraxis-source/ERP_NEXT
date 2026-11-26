@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from decimal import Decimal
 from hashlib import sha256
@@ -61,6 +61,7 @@ from app.modules.shipping.infrastructure import (
 )
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
+from app.shared.clock import as_utc
 from app.shared.persistence import AuditEventRow, SqlAlchemyAuditRepository, SqlAlchemyOutboxRepository
 
 ZERO = Decimal("0")
@@ -71,6 +72,52 @@ OUTSIDE_TASKS_REASON = "Цех сдал по заданиям меньше: пр
 BEYOND_TASKS_ASK = "подтвердите приёмку сверх сданного"
 ACCEPT_BATCH_NAMESPACE = uuid5(NAMESPACE_URL, "erp-next:shipping:accept-from-production")
 BATCH_EVENT = "shipping.goods_accepted_batch"
+
+
+def production_grn_category(session, project_number):
+    from app.modules.purchasing.infrastructure import InternalProjectRow
+    from .grn_allocation import GrnCategory
+    project = session.scalar(select(InternalProjectRow).where(InternalProjectRow.number == project_number))
+    purpose = project.purpose.strip() if project else ""
+    category = GrnCategory.RD if purpose.casefold() in {"rnd", "r&d", "опытный образец (ниокр)"} or purpose.casefold().startswith("ниокр") else GrnCategory.FRX
+    return category, purpose
+
+
+def allocate_production_act(session, good, moves):
+    """Allocate the own-production hand-in act in the transaction of its stock movement."""
+    from app.modules.shipping.domain import acceptance_act, MoveKind
+    from .grn_allocation import GrnCapacityExceeded, GrnConflict, GrnContext, GrnRequest, fingerprint_body, grn_allocator
+    move = next((item for item in moves if item.kind is MoveKind.ACCEPT), None)
+    if move is None:
+        return None
+    category, purpose = production_grn_category(session, good.project)
+    act_id = uuid5(move.id, "acceptance-act")
+    from app.shared.project_identity import ProjectIdentityConflict, stable_project_key
+    try:
+        project_id = stable_project_key(session, good.project)
+    except ProjectIdentityConflict as error:
+        raise ShippingValidationError(f"История переименований проекта {good.project} неоднозначна: {error}") from error
+    context = GrnContext(project=project_id, production_order=project_id,
+        acceptance_document=str(act_id), purpose=purpose or "Приёмка собственного изделия из производства")
+    request = GrnRequest(category=category, source_kind="finished_goods_act",
+        source_op_id=str(act_id), context=context, body_fingerprint=fingerprint_body({
+            "good_id": str(good.id), "item_index": good.item_index, "article": good.article,
+            "name": good.name, "unit": good.unit, "quantity": format(move.quantity.normalize(), "f"),
+            "received_at": good.received_at.isoformat(), "location": good.location,
+        }))
+    try:
+        identity = grn_allocator(session).allocate(request, registered_at=as_utc(move.occurred_at))
+    except GrnConflict as error:
+        raise ConcurrentShippingUpdate(str(error)) from error
+    except GrnCapacityExceeded as error:
+        raise ShippingValidationError(str(error)) from error
+    if move.actor_id is None:
+        raise ShippingValidationError("Для акта приёмки нужен идентификатор ответственного")
+    return replace(acceptance_act(good, (move,), identity.number), grn_id=identity.id,
+        grn_category=identity.category.value, grn_context=identity.context.payload(), grn_contract_version=1,
+        quality_state="RELEASED", quality_basis=f"Приёмка из производства, акт {act_id}",
+        quality_decided_by=move.actor_id, quality_decided_at=move.occurred_at, quality_version=1,
+        expiry_required=False)
 
 
 # ── One session for the whole command ───────────────────────────────────────────────────────────────────────────
@@ -434,13 +481,16 @@ def accept_batch(command: AcceptBatchCommand, uow_factory) -> AcceptBatchResult:
         unconfirmed = tuple(row for line, *_, row in planned if row is not None and not line.confirm_beyond_tasks)
         if unconfirmed:
             raise BeyondTasksNotConfirmed(unconfirmed)
-        accepted = []
-        for line, good, limit, basis, reason, row in planned:
-            accepted.append(accept_into_stock(
+        accepted_by_id = {}
+        # Match allocate_many's category lock order across mixed FRX/R&D commands; keep response order below.
+        ordered = sorted(planned, key=lambda item: production_grn_category(uow.session, item[1].project)[0])
+        for line, good, limit, basis, reason, row in ordered:
+            accepted_by_id[good.id] = accept_into_stock(
                 uow, good, line.quantity, received_at=received_at, actor=command.actor, now=command.now,
                 limit=limit, limit_basis=basis, reason=reason, id_seed=batch_id, location=line.location,
                 beyond_tasks=confirmation(row, command.actor),
-            ))
+            )
+        accepted = [accepted_by_id[good.id] for _, good, *_ in planned]
         uow.audit.add(AuditEvent(
             id=uuid5(batch_id, "batch"), aggregate_id=batch_id, event_type=BATCH_EVENT, actor=command.actor,
             occurred_at=command.now, details={
@@ -476,6 +526,16 @@ def accept_one(command: AcceptOneCommand, uow_factory) -> FinishedGood:
         good = uow.goods.get(command.good_id)
         if good is None:
             raise KeyError(f"Finished good not found: {command.good_id}")
+        operation_id = uuid5(good.id, f"accept-one:v{command.expected_version}")
+        fingerprint = sha256(json.dumps({"quantity": str(command.quantity.normalize()),
+            "received_at": command.received_at.isoformat() if command.received_at else None,
+            "location": command.location.strip(), "confirm_beyond_tasks": command.confirm_beyond_tasks},
+            sort_keys=True).encode()).hexdigest()
+        done = uow.batch_details(operation_id)
+        if done:
+            if done["fingerprint"] != fingerprint:
+                raise ConcurrentShippingUpdate("Повтор приёмки с другим содержанием")
+            return good
         if good.version != command.expected_version:
             raise ConcurrentShippingUpdate("Позиция готовой продукции изменилась после загрузки формы")
         kb = read_delivered(uow, uow.production.for_project(good.project)).get(kit_stage_key(good.project, good.item_index))
@@ -487,7 +547,11 @@ def accept_one(command: AcceptOneCommand, uow_factory) -> FinishedGood:
             uow, good, command.quantity, received_at=command.received_at or command.now.date(), actor=command.actor,
             now=command.now, limit=limit, limit_basis=basis, reason=reason, location=command.location,
             beyond_tasks=confirmation(row, command.actor),
+            id_seed=operation_id,
         )
+        uow.audit.add(AuditEvent(id=uuid5(operation_id, "batch"), aggregate_id=operation_id,
+            event_type=BATCH_EVENT, actor=command.actor, occurred_at=command.now,
+            details={"fingerprint": fingerprint, "good_id": str(good.id)}))
         notify_dispatch_gaps(uow, updated.project, (updated.item_index,), f"good:{updated.id}:v{updated.version}", command.now)
         uow.commit()
         return updated

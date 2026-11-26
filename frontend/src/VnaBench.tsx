@@ -3,6 +3,7 @@ import { ApiError, failureText, productionApi, rfInterfacesApi, vnaCaptureApi, t
 import { formatMoment, formatNumber, glueUnits, toNumber } from "./format";
 import { VswrChart } from "./VswrChart";
 import { ArinstPartialChart } from "./vnaCapture";
+import { VnaTargetList } from "./VnaTargetList";
 import { ScreenSwitcher, VnaScreensEditor, lossTitle } from "./VnaScreensEditor";
 import { benchItem, benchMainAction } from "./vnaBenchWorkflow";
 import {
@@ -855,6 +856,7 @@ function ObjectPanel({ state, session, calibrationValid, canEdit, busy, blockedS
       </label>
       <button type="submit" className="secondary" disabled={looking || !query.trim()}>{looking ? "Ищу…" : "Найти"}</button>
     </form>
+    <VnaTargetList sessionId={sessionId} query={query} visible={!target && !looking} onPick={(next) => void pick(next)} />
     {error && <div className="error-banner" role="alert">{error}</div>}
     {candidates && candidates.length === 0 && <p className="muted-text">Ничего не найдено — проверьте номер СИ или задание и позицию.</p>}
     {candidates && candidates.length > 1 && <ul className="vna-bench-candidates" aria-label="Найденные объекты">
@@ -865,6 +867,11 @@ function ObjectPanel({ state, session, calibrationValid, canEdit, busy, blockedS
     </ul>}
     {!target && !candidates && <p className="muted-text">Отсканируйте СИ или КБ — сеанс откроется на нужной полосе.</p>}
     {target && <h3 className="vna-bench-selected">{targetTitle(target)}</h3>}
+    {target && <button type="button" className="secondary small" disabled={busy || looking || inProgress || Boolean(session?.command)}
+      onClick={() => {
+        planRequest.current += 1;
+        setTarget(null); setPlan(null); setCandidates(null); setQuery(""); setError("");
+      }}>Выбрать другой объект</button>}
   </div>
   <div className={`vna-bench-readiness${!freshReadings ? " machine-muted" : ""}`} role="group" aria-label="Готовность к калибровке">
     <span>{freshReadings && state.device.warmup_min !== null && state.device.warmup_min >= 40 ? "✓" : "○"} Прогрев ≥ 40 мин</span>

@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from app.main import app
+from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.production.infrastructure import (ProductionInstrumentFileRow, ProductionInstrumentRow,
                                                    SqlAlchemyProductionUnitOfWork)
 from app.modules.production.mating_infrastructure import InstrumentMatingRow
@@ -236,6 +237,123 @@ def matings(env, instrument_id):
     with env["sessions"]() as session:
         return session.scalar(select(func.coalesce(func.sum(InstrumentMatingRow.delta), 0)).where(
             InstrumentMatingRow.instrument_id == instrument_id))
+
+
+def test_target_list_reuses_rf_registry_and_excludes_vna_acm_and_non_rf(env):
+    with env["sessions"]() as db:
+        for number, name, details in (
+            ("СИ.201", "Термометр", None),
+            ("СИ.202", "Кабель", RfDetails((port(), port(male=False)))),
+            ("СИ.203", "Комплект нагрузок", RfDetails(role="load_kit")),
+            ("СИ.204", "Переход SMA розетка – SMA вилка", None),
+            ("СИ.205", "Другой ВАЦ", RfDetails((port(), port()), "vna")),
+        ):
+            card_id = uuid4()
+            db.add(ProductionInstrumentRow(id=card_id, version=1, inventory_number=number, name=name,
+                                          instrument_type="Оснастка", kind="Принадлежность", status="Действует"))
+            db.flush()
+            if details:
+                RfRepository(db).save(card_id, details)
+        db.commit()
+    response = env["admin"].get(URL + "/targets")
+    assert response.status_code == 200, response.text
+    rows = {row["number"]: row for row in response.json()["targets"]}
+    assert {"СИ.035", "СИ.009", "СИ.003", "СИ.100", "СИ.101", "СИ.202", "СИ.203", "СИ.204"} <= rows.keys()
+    assert not {"СИ.104", "СИ.201", "СИ.205"} & rows.keys()
+    assert S2_INSTRUMENT not in {row["instrument_id"] for row in rows.values()}
+    assert rows["СИ.035"] == dict(kind="instrument", instrument_id=str(env["ids"]["dut"]), number="СИ.035",
+                                  name="Переход коаксиальный ADP1A 3,5 мм", serial_number="N8B035",
+                                  interfaces_text="3.5mm вилка – 3.5mm розетка", last_measured_at=None)
+
+
+# The list belongs to the bench: same right as the bench state (ОТК edit, the contract gate production_quality).
+@pytest.mark.parametrize("permissions,status", [({"quality": "edit"}, 200), ({"quality": "view"}, 403), ({"production": "edit"}, 403), ({}, 403)])
+def test_target_list_follows_the_bench_right(env, monkeypatch, permissions, status):
+    monkeypatch.setitem(app.dependency_overrides, authenticated_principal, lambda: Principal(
+        actor=Actor(id=uuid4(), name="Наблюдатель", department="ОТК"), email="viewer@example.test",
+        roles=frozenset(), permissions=permissions))
+    response = env["admin"].get(URL + "/targets")
+    assert response.status_code == status, response.text
+
+
+def test_target_list_uses_accepted_captures_and_imported_measurement_date(env):
+    view = calibrate(env)
+    measure(env, view)
+
+    def rows():
+        response = env["admin"].get(URL + "/targets")
+        assert response.status_code == 200, response.text
+        return {row["number"]: row for row in response.json()["targets"]}
+
+    assert rows()["СИ.035"]["last_measured_at"] is None  # queued command is not a measurement
+    env["stub"].drive()
+    assert rows()["СИ.035"]["last_measured_at"][:10] == env["clock"].now.date().isoformat()
+    with env["sessions"]() as db:
+        for key, content in (("standard", touchstone([1e7, 18e9], [0j, 0j], [1 + 0j, 1 + 0j])),
+                             ("cable1", b"invalid touchstone")):
+            db.add(ProductionInstrumentFileRow(id=uuid4(), instrument_id=env["ids"][key], kind="Прочее",
+                file_name="Замер ВАЦ S50180, 01.10.2026.s2p", content=content, uploaded_at=env["clock"].now,
+                uploaded_by=db.scalar(select(VnaSessionRow.operator_id))))
+        db.commit()
+    listed = rows()
+    assert listed["СИ.009"]["last_measured_at"] == "2026-10-01"  # not the later upload date
+    assert listed["СИ.100"]["last_measured_at"] is None
+    with env["sessions"]() as db:
+        for day, content in (("01.09.2026", touchstone([1e7, 18e9], [0j, 0j], [1 + 0j, 1 + 0j])),
+                             ("01.11.2026", b"invalid touchstone")):
+            db.add(ProductionInstrumentFileRow(id=uuid4(), instrument_id=env["ids"]["standard"], kind="Прочее",
+                file_name=f"Замер ВАЦ S50180, {day}.s2p", content=content, uploaded_at=env["clock"].now + timedelta(hours=1),
+                uploaded_by=db.scalar(select(VnaSessionRow.operator_id))))
+        db.commit()
+    assert rows()["СИ.009"]["last_measured_at"] == "2026-10-01"
+
+
+@pytest.mark.parametrize("valid", [True, False])
+def test_target_list_bounds_history_parsing_and_body_loads(env, monkeypatch, valid):
+    from app.workflows import vna_bench_api
+    from app.modules.production.infrastructure import SqlAlchemyInstrumentFileRepository
+
+    content = touchstone([1e7, 18e9], [0j, 0j], [1 + 0j, 1 + 0j]) if valid else b"invalid touchstone"
+    with env["sessions"]() as db:
+        for index in range(100):
+            day = datetime(2026, 7, 1) + timedelta(days=index)
+            db.add(ProductionInstrumentFileRow(id=uuid4(), instrument_id=env["ids"]["dut"], kind="Прочее",
+                file_name=f"Замер ВАЦ S50180, {day:%d.%m.%Y}.s2p", content=content,
+                uploaded_at=env["clock"].now + timedelta(seconds=100 - index),
+                uploaded_by=db.scalar(select(IdentityUserRow.id))))
+        db.commit()
+    parsed, loaded = [], []
+    parse, get = vna_bench_api.characterization, SqlAlchemyInstrumentFileRepository.get
+
+    def tracked_parse(file):
+        parsed.append(file.file_name)
+        return parse(file)
+
+    def tracked_get(self, instrument_id, file_id):
+        loaded.append(file_id)
+        return get(self, instrument_id, file_id)
+
+    monkeypatch.setattr(vna_bench_api, "characterization", tracked_parse)
+    monkeypatch.setattr(SqlAlchemyInstrumentFileRepository, "get", tracked_get)
+    response = env["admin"].get(URL + "/targets")
+    assert response.status_code == 200, response.text
+    row = next(row for row in response.json()["targets"] if row["number"] == "СИ.035")
+    assert row["last_measured_at"] == ("2026-10-08" if valid else None)
+    assert len(parsed) == len(loaded) == (1 if valid else 3)
+    assert parsed[0] == "Замер ВАЦ S50180, 08.10.2026.s2p"
+
+
+def test_target_list_imported_capture_uses_moscow_day(env):
+    content = b"! captured=2026-10-31T22:30:00+00:00\n" + touchstone([1e7, 18e9], [0j, 0j], [1 + 0j, 1 + 0j])
+    with env["sessions"]() as db:
+        db.add(ProductionInstrumentFileRow(id=uuid4(), instrument_id=env["ids"]["dut"], kind="Прочее",
+            file_name="Замер ВАЦ S50180.s2p", content=content, uploaded_at=env["clock"].now,
+            uploaded_by=db.scalar(select(IdentityUserRow.id))))
+        db.commit()
+    response = env["admin"].get(URL + "/targets")
+    assert response.status_code == 200, response.text
+    row = next(row for row in response.json()["targets"] if row["number"] == "СИ.035")
+    assert row["last_measured_at"] == "2026-11-01"
 
 
 def test_calibration_journal_item_record_and_close(env):

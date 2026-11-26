@@ -155,7 +155,7 @@ def _offset(align: str, room: int, used: int) -> int:
     return 0
 
 
-def _draw_text(canvas: _Canvas, element: Element, text: str, texts: list[str], overflow: list[str]) -> None:
+def _draw_text(canvas: _Canvas, element: Element, text: str, texts: list[str], overflow: list[str], *, strict=False) -> None:
     x0, y0, x1, y1 = canvas.box(element)
     width, height = x1 - x0, y1 - y0
     if not text.strip() or width <= 0 or height <= 0:
@@ -165,6 +165,9 @@ def _draw_text(canvas: _Canvas, element: Element, text: str, texts: list[str], o
         lines, size, cut = _set_text(text.rstrip(), element, width, height, canvas.dots_per_mm, keep_spaces=True)
     else:
         lines, size, cut = _set_text(" ".join(text.split()), element, width, height, canvas.dots_per_mm)
+    # The legacy ellipsis path reports geometry only. A GRN must also report lost characters.
+    if strict and "".join("".join(lines).split()) != "".join(text.split()):
+        cut = True
     if cut:
         overflow.append(element.id)
     face = font(_face(element), size)
@@ -257,6 +260,32 @@ def _draw_rule(canvas: _Canvas, element: Element) -> None:
 
 def render(template: LabelTemplate, content: LabelContent, settings: PrintSettings) -> LabelLayout:
     """The label in printer dots, at the settings' size and dpi. ValueError — a code does not fit its element."""
+    if content.category:
+        from .template import check_template
+        from .template import format_key
+        check_template(template, content.kind, format_key(settings.width_mm, settings.height_mm))
+        kinds = {element.kind for element in template.elements}
+        if not {"qr", "code128"} <= kinds:
+            raise ValueError("Этикетка ГРН требует QR и Code128; добавьте оба кода в шаблон")
+        from .template import PLACEHOLDER
+        fields = {element.field for element in template.elements if element.kind == "field"}
+        fields.update(key for element in template.elements if element.kind == "text"
+                      for key in PLACEHOLDER.findall(element.text or ""))
+        required = [{"grn"}, {"name"}, {"expiry"}, {"quality", "receipt_quality"}, {"passport"},
+                    {"received", "receipt_quality"}, {"context"}]
+        required.append({"article", "article_quantity"} if content.kind == "lot" else {"project_item"})
+        required.append({"quantity", "article_quantity"})
+        if content.value("form_footer"):
+            required.append({"form_footer"})
+        if any(not (group & fields) for group in required):
+            raise ValueError("В шаблоне ГРН отсутствуют обязательные поля паспорта, ВК или контекста")
+        for code in (element for element in template.elements if element.kind in ("qr", "code128")):
+            for other in template.elements:
+                if code is other:
+                    continue
+                if (code.x_mm < other.x_mm + other.w_mm and other.x_mm < code.x_mm + code.w_mm
+                        and code.y_mm < other.y_mm + other.h_mm and other.y_mm < code.y_mm + code.h_mm):
+                    raise ValueError(f"Элемент «{other.id}» перекрывает код или свободное поле «{code.id}»")
     dots_per_mm = settings.dpi / 25.4
     canvas = _Canvas(js_round(settings.width_mm * dots_per_mm), js_round(settings.height_mm * dots_per_mm), dots_per_mm)
     texts: list[str] = []
@@ -264,10 +293,13 @@ def render(template: LabelTemplate, content: LabelContent, settings: PrintSettin
     skipped: list[str] = []
     qr_module_dots = qr_modules = bar_module_dots = None
     for element in template.elements:
+        if content.category and element.kind in ("field", "text"):
+            # New GRN designs never make required content unreadably small to fit a box.
+            element = element.model_copy(update={"fit": "ellipsis"})
         if element.kind == "field":
-            _draw_text(canvas, element, content.value(element.field or ""), texts, overflow)
+            _draw_text(canvas, element, content.value(element.field or ""), texts, overflow, strict=bool(content.category))
         elif element.kind == "text":
-            _draw_text(canvas, element, content.substitute(element.text or ""), texts, overflow)
+            _draw_text(canvas, element, content.substitute(element.text or ""), texts, overflow, strict=bool(content.category))
         elif element.kind == "qr":
             module, size = _draw_qr(canvas, element, content.code)
             if qr_module_dots is None:
@@ -282,6 +314,9 @@ def render(template: LabelTemplate, content: LabelContent, settings: PrintSettin
             _draw_logo(canvas, element)
         else:
             _draw_rule(canvas, element)
+    if content.category and (overflow or skipped):
+        raise ValueError("Данные ГРН не помещаются: " + ", ".join(overflow + skipped)
+                         + ". Увеличьте элементы или выберите этикетку 100×50 мм")
     # Threshold in the middle: the label is black and white, the smoothed edges of letters become a dot or not.
     image = canvas.image.point(lambda value: 0 if value < 128 else 255).convert("1", dither=Image.Dither.NONE)
     return LabelLayout(

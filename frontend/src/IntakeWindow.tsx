@@ -1,3 +1,4 @@
+import { QualityChip } from "./GrnFields";
 import { useRef, useState } from "react";
 import { ApiError, failureText } from "./api";
 import { PageWindow } from "./PageWindow";
@@ -184,7 +185,7 @@ export function RollbackActWindow({ row, act, onStock, close, onDone }: {
 
   return <PageWindow label={`Акт приёмки ${act.grn}`} close={close} width={640}>
     <section className="panel intake-window intake-act">
-      <header className="page-head"><h2>{`Акт приёмки ${act.grn}`}</h2>
+      <header className="page-head"><h2>{`Акт приёмки ${act.grn}`}</h2><QualityChip passport={act} quietLegacy />
         <button type="button" className="secondary small" onClick={close}>Закрыть</button></header>
       {error && <div className="error-banner" role="alert">{error}</div>}
       <dl className="intake-act-facts">

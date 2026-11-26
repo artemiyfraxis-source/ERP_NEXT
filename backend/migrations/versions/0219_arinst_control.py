@@ -13,7 +13,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "0219_arinst_control"
-down_revision = "0217_unify_instrument_catalog"
+down_revision = "0218_grn_registry"
 branch_labels = None
 depends_on = None
 DESTRUCTIVE = False

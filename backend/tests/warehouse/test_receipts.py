@@ -9,6 +9,8 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
+
+from tests.warehouse.test_api import quick_payload
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
@@ -37,7 +39,7 @@ HEADER = {
     "warehouse": "ЦАР", "supplier": "ООО «Ромашка Электро»", "invoice_number": "СЧ-45", "invoice_date": "2026-10-01",
     "upd_number": "123", "upd_date": "2026-10-20", "purpose": "591К.3",
 }
-LINE = {"article": "CON-001", "quantity": "10", "storage_location": "2A1", "labels": 3}
+LINE = {"article": "CON-001", "quantity": "10", "storage_location": "2A1", "labels": 3, "grn_category": "PPM"}
 PNG = bytes.fromhex(
     "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
     "1f15c4890000000d49444154789c63f80f00000101000518d84e0000000049454e44ae426082"
@@ -79,7 +81,8 @@ def _receipt(client, **fields) -> dict:
 
 
 def _accept(client, receipt_id, **fields):
-    return client.post(f"/api/stock/receipts/{receipt_id}/accept", json={**LINE, **fields})
+    return client.post(f"/api/stock/receipts/{receipt_id}/accept",
+                       json={**LINE, "acceptance_id": str(uuid4()), **fields})
 
 
 # --- schema -----------------------------------------------------------------------------------------------------
@@ -193,8 +196,9 @@ def test_accept_puts_one_lot_of_the_delivery_and_one_label_job_with_a_copy_per_b
     body = response.json()
     lot = body["lot"]
     assert (lot["grn"], lot["warehouse"], lot["balance"], lot["purpose"], lot["storage_location"]) == (
-        "OLD.26.0000001", "ЦАР", "10", "591К.3", "2A1")
-    assert lot["source_receiving_ids"] == [f"manual:{receipt['id']}"]
+        "PPM.26.000001", "ЦАР", "10", "591К.3", "2A1")
+    assert len(lot["source_receiving_ids"]) == 1
+    assert lot["source_receiving_ids"][0].startswith("warehouse_receipt:")
     assert lot["receipt"] == {"id": receipt["id"], "supplier": "ООО «Ромашка Электро»", "invoice_number": "СЧ-45",
                               "invoice_date": "2026-10-01", "upd_number": "123", "upd_date": "2026-10-20",
                               "prd_number": "", "prd_date": None, "scan_file": ""}
@@ -208,7 +212,7 @@ def test_accept_puts_one_lot_of_the_delivery_and_one_label_job_with_a_copy_per_b
 
     detail = client.get(f"/api/stock/receipts/{receipt['id']}").json()
     assert detail["receipt"]["lots_count"] == 1
-    assert [row["grn"] for row in detail["lots"]] == ["OLD.26.0000001"]
+    assert [row["grn"] for row in detail["lots"]] == ["PPM.26.000001"]
 
 
 def test_a_label_that_cannot_be_made_never_costs_the_lot(stand, monkeypatch):
@@ -323,7 +327,7 @@ def test_article_info_fills_from_the_last_lot_then_the_reference_db_then_purchas
     assert after["info"]["datasheet"] == ""  # the LAST lot had none, the first one is not read
     assert after["info"]["series"] == "N" and after["info"]["manufacturer"] == "Амфенол"
     assert after["info"]["expiry_date"] is None
-    assert after["info"]["source"].startswith("партия OLD.26.0000002")
+    assert after["info"]["source"].startswith("партия PPM.26.000002")
     assert after["places"] == ["2A1", "1F4"]
     assert client.get("/api/stock/article-info?q=N-C58P&warehouse=ЖУК").json()["places"] == []
 
@@ -483,12 +487,12 @@ def test_lot_list_scan_and_journal_show_the_delivery(stand):
     client, _ = stand
     receipt = _receipt(client, invoice_number="", invoice_date=None)
     _accept(client, receipt["id"])
-    client.post("/api/stock/batches", json={"items": [{"article": "OLD-1", "quantity": "1", "storage_location": "1F4"}]})
+    client.post("/api/stock/batches", json=quick_payload({"items": [{"article": "OLD-1", "quantity": "1", "storage_location": "1F4"}]}))
 
     lots = {lot["article"]: lot for lot in client.get("/api/stock").json()["lots"]}
     assert lots["CON-001"]["receipt"]["upd_number"] == "123"
     assert lots["OLD-1"]["receipt"] is None
-    scanned = client.get("/api/stock/scan?code=OLD.26.0000001").json()["lots"]
+    scanned = client.get("/api/stock/scan?code=PPM.26.000001").json()["lots"]
     assert scanned[0]["receipt"]["id"] == receipt["id"]
 
     events = [row["event"] for row in client.get("/api/stock/journal").json()["rows"]]

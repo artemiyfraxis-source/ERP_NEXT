@@ -8,10 +8,9 @@ from decimal import Decimal
 import pytest
 
 from app.modules.warehouse.application import (
-    AddManualStockCommand,
     ManualStockItem,
     PoisonWarehouseMessage,
-    add_manual_stock,
+    manual_lot,
     dispatch_next_warehouse_received,
 )
 from app.modules.warehouse.domain import StockLot, WarehouseValidationError
@@ -75,18 +74,11 @@ def test_bad_passport_in_a_received_event_is_quarantined(payload, error):
 
 
 def _manual(uow, **passport):
-    # One row: its row error (SK-10) is raised here so the passport checks read as before.
-    result = add_manual_stock(AddManualStockCommand(
-        items=(ManualStockItem(
+    # Passport normalization is independent of transactional number allocation.
+    return manual_lot(ManualStockItem(
             warehouse="ЦАР", name="Шайба", item_type="Крепёж", purpose="Склад", unit="шт",
-            quantity=Decimal("100"), storage_location="1F4", **passport,
-        ),),
-        actor=Actor(name="Кладовщик", department="Склад"),
-        now=datetime(2026, 9, 22, 12, 0),
-    ), uow)
-    if result.errors:
-        raise WarehouseValidationError(result.errors[0].error)
-    return result.lots[0]
+            quantity=Decimal("100"), storage_location="1F4", grn_category="PPM", **passport,
+        ))
 
 
 def test_manual_stock_takes_the_lot_passport_and_stores_the_mass_of_one_piece():

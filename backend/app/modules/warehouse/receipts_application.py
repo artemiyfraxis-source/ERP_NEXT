@@ -4,7 +4,7 @@ The storekeeper opens a delivery (склад, поставщик, счёт, УП
 — ideally only article and quantity, the rest is filled from the last lot of the article, the reference DB, the
 purchasing nomenclature and the procurement line of the invoice. «Принять» on a line asks for the place and the number
 of bags: the line becomes ONE lot through the quick entry's own path (`manual_lot` + `place_manual_lots`: the same row
-checks, OLD.YY numbering and `warehouse.manually_received` event, now with the delivery header), and one label job
+checks, category GRN allocation and `warehouse.manually_received` event, now with the delivery header), and one label job
 with that many copies goes to the print queue in the same transaction. A label that cannot be made never costs the
 lot: the lot stays, `label_error` says why."""
 
@@ -22,7 +22,9 @@ from app.shared.file_types import sniffed_type
 from app.shared.identity import Actor
 
 from . import receipt_learning, scan_jobs
-from .application import ManualStockItem, UnitOfWork, manual_lot, place_manual_lots, receipt_audit
+from .application import ManualStockItem, UnitOfWork, manual_command_fingerprint, manual_lot, place_manual_lots, receipt_audit
+from .acceptance import acceptance_event_id, accepted_result
+from .grn import GrnConflict, fingerprint_body
 from .domain import (
     RECEIPT_SCAN_PATH,
     ReceiptConflict,
@@ -146,27 +148,43 @@ def _queue_labels(uow, lot: StockLot, copies: int, actor: Actor, now: datetime) 
     if session is None:
         return None, "Партия принята; очередь печати недоступна — напечатайте этикетку из карточки партии"
     try:
-        settings = uow.label_settings.load() or DEFAULT_PRINT_SETTINGS
-        tspl = tspl_job(lot_layout_in(session, lot, now, settings), settings, copies)
-        return add_job(session, tspl=tspl, copies=copies, kind="lot", lot_id=lot.id, created_by=actor.name,
-                       now=now), ""
+        with session.begin_nested():
+            settings = uow.label_settings.load() or DEFAULT_PRINT_SETTINGS
+            tspl = tspl_job(lot_layout_in(session, lot, now, settings), settings, copies)
+            job_id = add_job(session, tspl=tspl, copies=copies, kind="lot", lot_id=lot.id, created_by=actor.name,
+                             now=now)
+            session.flush()
+        return job_id, ""
     except Exception as error:  # noqa: BLE001 — a label (fonts, settings, layout) must never cost the accepted lot
         return None, f"Партия принята, этикетка не поставлена в очередь: {error}"
 
 
 def accept_receipt_line(
     command: AcceptLineCommand, uow: UnitOfWork, expected: ExpectedLookup | None = None,
+    *, context_validator=None,
 ) -> AcceptedLine:
     """«Принять»: the line → one lot of the delivery (НАЗНАЧЕНИЕ: the line's, else the delivery's, else «Склад») and its
     labels into the print queue, one transaction. Row errors are WarehouseValidationError (422); the line awaited in
     «Приёмка» is ExpectedInReceiving (409) until the storekeeper confirms it."""
     if not 1 <= command.labels <= COPIES_MAX:
         raise WarehouseValidationError(f"Этикеток — от 1 до {COPIES_MAX}")
-    if (command.acceptance_id is None) != (command.learning is None):
-        raise WarehouseValidationError("Для строки УПД нужны номер приёмки и исходная строка")
+    if command.acceptance_id is None:
+        raise WarehouseValidationError("Нужен стабильный номер операции приёмки")
     with uow:
-        if command.acceptance_id is not None:
-            receipt_learning.lock_acceptance(uow.session, command.receipt_id)
+        receipt_learning.lock_acceptance(uow.session, command.receipt_id)
+        request_fingerprint = fingerprint_body({"receipt_id": str(command.receipt_id),
+            "item": manual_command_fingerprint((command.item,)), "labels": command.labels,
+            "confirm_expected": command.confirm_expected,
+            "learning": receipt_learning.request_snapshot(command)["learning"]})
+        replay = accepted_result(uow, command.acceptance_id)
+        if replay is not None:
+            if replay["request_fingerprint"] != request_fingerprint:
+                raise GrnConflict("Повтор приёмки с тем же номером содержит другие данные")
+            return AcceptedLine(receipt=uow.receipts.get(command.receipt_id),
+                lot=uow.warehouse.get(UUID(replay["lot_id"])),
+                label_job_id=UUID(replay["label_job_id"]) if replay["label_job_id"] else None,
+                label_error=replay["label_error"])
+        if command.learning is not None:
             previous = receipt_learning.previous_acceptance(uow.session, command)
             if previous is not None:
                 result = previous.accepted
@@ -187,10 +205,18 @@ def accept_receipt_line(
             found = expected(receipt, draft.article)
             if found is not None:
                 raise ExpectedInReceiving(expected_text(found))
-        [placed] = place_manual_lots(uow, [(0, draft)], command.actor, command.now, receipt)
+        [placed] = place_manual_lots(uow, [(0, draft)], command.actor, command.now, receipt,
+            operation_ids={0: str(command.acceptance_id)}, context_validator=context_validator,
+            request_details={"labels": command.labels, "confirm_expected": command.confirm_expected,
+                             "learning": receipt_learning.request_snapshot(command)["learning"]})
         job_id, label_error = _queue_labels(uow, placed.lot, command.labels, command.actor, command.now)
         if command.learning is not None:
             receipt_learning.confirm_line(uow.session, command, receipt, placed.lot, job_id, label_error)
+        uow.audit.add(AuditEvent(id=acceptance_event_id(command.acceptance_id), aggregate_id=placed.lot.id,
+            event_type="grn.receipt_accepted", actor=command.actor, occurred_at=command.now,
+            details={"receipt_id": str(receipt.id), "acceptance_id": str(command.acceptance_id),
+                     "lot_id": str(placed.lot.id), "request_fingerprint": request_fingerprint,
+                     "label_job_id": str(job_id) if job_id else "", "label_error": label_error}))
         uow.commit()
     return AcceptedLine(receipt=receipt, lot=placed.lot, label_job_id=job_id, label_error=label_error)
 

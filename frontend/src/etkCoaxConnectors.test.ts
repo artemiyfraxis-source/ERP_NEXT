@@ -55,42 +55,50 @@ describe("разделка коакса: каждая сторона назва�
   });
 });
 
-describe("ПФ коаксиальной сборки: картинка на размер карточки", () => {
-  it("ПФ «Кабель с центральным контактом»: только конец кабеля и подпись «сторона … · под …»", () => {
+describe("ПФ коаксиальной сборки: компактное состояние на размер карточки (ревью 23.11, S8–S10)", () => {
+  it("ПФ «Кабель с центральным контактом»: конец кабеля, штырь у вилки и гнездо у розетки", () => {
     const a = art("Кабель с центральным контактом, сторона А"), b = art("Кабель с центральным контактом, сторона В");
-    expect(texts(a)).toContain("сторона А · под SMA-Male");
-    expect(texts(b)).toContain("сторона В · под SMA-Female bulkhead");
-    ["оплётка", "диэлектрик", "контакт, припой", "RG316"].forEach((name) => expect(texts(a)).toContain(name));
-    expect(a).toContain('fill="url(#pfBraid)"');
-    expect(Math.min(...sizes(a))).toBeGreaterThanOrEqual(10);
+    expect(texts(a)).toEqual(expect.arrayContaining(["сторона А · SMA-Male", "штырь припаян на жиле"]));
+    expect(texts(b)).toEqual(expect.arrayContaining(["сторона В · SMA-Female bulkhead", "гнездо припаяно на жиле"]));
+    expect(a).toContain('data-state="pin"');
+    expect(b).toContain('data-state="socket"');
+    expect(b).not.toContain('data-part="pin-tip"');
+    expect(Math.min(...sizes(a), ...sizes(b))).toBeGreaterThanOrEqual(10);
     expect(a).not.toContain("L1 =");
   });
 
-  it("ПФ «Сторона … собрана»: тот же конец с ТУТ, втулкой экрана и корпусом — гайка у вилки, резьба у розетки", () => {
+  it("ПФ «Сторона … собрана»: состояние по маршруту — гильза и ТУТ надеты, но ещё не обжата и не усажена (это в изделии)", () => {
     const a = art("Сторона А собрана"), b = art("Сторона В собрана");
-    expect(texts(a)).toEqual(expect.arrayContaining(["сторона А · под SMA-Male", "накидная гайка", "втулка экрана", "ТУТ 4/2"]));
-    expect(texts(b)).toEqual(expect.arrayContaining(["сторона В · под SMA-Female bulkhead", "корпус с резьбой", "втулка экрана", "ТУТ 4/2"]));
+    expect(a).toContain('data-geometry="section"');
+    expect(a).toMatch(/data-part="ferrule" data-state="loose"/);
+    expect(a).toMatch(/data-part="tube" data-state="loose"/);
+    expect(a).not.toMatch(/data-state="(crimped|shrunk)"/);
+    expect(texts(a).join(" ")).toContain("гильза надета, не обжата");
+    expect(texts(b)).toContain("сторона В · SMA-Female bulkhead");
     expect(Math.min(...sizes(a), ...sizes(b))).toBeGreaterThanOrEqual(10);
   });
 
-  it("изделие: оба разъёма, ТУТ на обоих концах и размер 275 мм; без заглушки «Раз…»", () => {
+  it("изделие: концы «А»/«В» метками, полные названия в табличке, ТУТ усажены, L по названию 275 мм", () => {
     const svg = art("Кабельная сборка");
-    expect(svg).toContain('aria-label="SMA-Male (вилка)"');
-    expect(svg).toContain('aria-label="SMA-Female bulkhead (розетка)"');
-    expect(texts(svg)).toContain("L = 275 мм");
-    expect(texts(svg).filter((text) => text === "ТУТ")).toHaveLength(2);
-    expect(svg).not.toMatch(/Раз|Разъ/);
-    expect(svg).not.toContain('data-part="connector"');
+    expect(texts(svg)).toEqual(expect.arrayContaining(["А", "В", "L = 275 мм"]));
+    expect(texts(svg).join(" ")).toContain("SMA-Male (вилка) · SMA-C174P");
+    expect(texts(svg).join(" ")).toContain("SMA-Female bulkhead (розетка) · SMA-C316F");
+    expect(svg.match(/data-part="tube" data-state="shrunk"/g)).toHaveLength(2);
+    expect(svg.match(/data-part="ferrule" data-state="crimped"/g)).toHaveLength(2);
+    expect(svg).not.toMatch(/Раз…|data-part="connector"/);
     expect(Math.min(...sizes(svg))).toBeGreaterThanOrEqual(10);
   });
 
-  it("резка кабеля и трубок рисуются как раньше", () => {
-    expect(art("Нарезанные трубки")).toContain("ТУТ 4/2мм, черная");
-    expect(art("Нарезанный и разделанный кабель")).toContain("А — SMA-Male");
+  it("резка кабеля и трубок — компактно, без цепочек размеров операции", () => {
+    expect(art("Нарезанные трубки")).toContain("ТУТ 4/2мм, черная — 20 мм");
+    const cutArt = art("Нарезанный и разделанный кабель");
+    expect(texts(cutArt)).toContain("длина реза 285 мм");
+    expect(cutArt).toContain("etk-pf-compact");
+    expect(cutArt).not.toContain("±");
   });
 });
 
-describe("эскизы операций «Надеть» и «Монтаж корпуса» (владелец 19.10)", () => {
+describe("эскизы операций «Надеть» и «Монтаж корпуса» (владелец 19.10, ревью 23.11)", () => {
   const tube = operations.find((operation) => operation.type === "coaxInsTut")!;
   const sleeve = operations.find((operation) => operation.type === "coaxInsSleeve")!;
   const housings = operations.filter((operation) => operation.type === "coaxHousing");
@@ -98,19 +106,24 @@ describe("эскизы операций «Надеть» и «Монтаж ко�
   const sizes = (svg: string) => [...svg.matchAll(/font-size="([\d.]+)"/g)].map((match) => Number(match[1]));
 
   it.each([["ТУТ", tube, "tube", "Надеть: ТУТ 4/2мм, черная × 2"], ["втулка", sleeve, "sleeve", "Надеть: втулка экрана × 2"]])(
-    "%s: оба конца со своими разъёмами, знак разрыва, стрелка со свободного конца", (_name, operation, part, title) => {
+    "%s: оба разделанных конца без контакта, знак разрыва, стрелка со свободного конца", (_name, operation, part, title) => {
       const svg = etkFigure(operation);
       expect(texts(svg)).toEqual(expect.arrayContaining([title, "Сторона А — SMA-Male (вилка)", "Сторона В — SMA-Female bulkhead (розетка)",
-        "контакт, припой", "оплётка", "диэлектрик", "надвинуть со свободного конца"]));
+        "жила", "оплётка", "диэлектрик", "надвинуть со свободного конца"]));
+      expect(svg).not.toContain("контакт, припой");
+      expect(svg).not.toContain('data-part="contact"');
       expect(svg.match(/data-part="break"/g)).toHaveLength(2);
       expect(svg.match(new RegExp(`data-part="${part}"`, "g"))).toHaveLength(2);
       expect(texts(svg).filter((text) => text === "отодвинуть от торца оболочки")).toHaveLength(2);
+      expect(svg).not.toContain("stroke-dasharray");
       expect(Math.min(...sizes(svg))).toBeGreaterThanOrEqual(12);
     });
 
-  it("расстояние от торца оболочки — числом, когда оно есть в данных", () => {
+  it("расстояние от торца оболочки — числом на размерной линии, когда оно есть в данных", () => {
     const withOffset = { ...tube, fields: { ...(tube.fields as object), coaxParts: { ...(tube.fields as { coaxParts: object }).coaxParts, offset: "15" } } };
-    expect(texts(etkFigure(withOffset))).toContain("отодвинуть на 15 мм от торца оболочки");
+    const svg = etkFigure(withOffset);
+    expect(svg).toMatch(/<g data-role="dimension">(?:(?!<\/g>).)*>15<\/text><\/g>/);
+    expect(texts(svg)).toContain("мм от торца оболочки");
   });
 
   it("без данных о концах (выданный до 19.10 ЭТК без чтения) — прежний эскиз, а не пустота", () => {
@@ -118,31 +131,37 @@ describe("эскизы операций «Надеть» и «Монтаж ко�
     expect(etkFigure(old)).toContain("до монтажа корпусов, отодвинуть от концов");
   });
 
-  it("монтаж корпуса: у вилки накидная гайка, у розетки резьбовой корпус; контакт в изоляторе, оплётка по хвостовику", () => {
+  it("монтаж корпуса SMA: у вилки накидная гайка и штырь, у розетки корпус с резьбой и гнездо; подписи короткими названиями", () => {
     const [a, b] = housings.map((operation) => etkFigure(operation));
-    expect(a).toContain('data-part="male-body"');
-    expect(b).toContain('data-part="female-body"');
-    expect(a).not.toContain("female-body");
-    expect(texts(a)).toEqual(expect.arrayContaining(["Сторона А — SMA-Male (вилка), SMA-C174P", "накидная гайка", "изолятор", "контакт входит в изолятор",
-      "Корпус надвинуть до упора: контакт зафиксирован в изоляторе", "оплётка расправлена по хвостовику,", "внутрь не завёрнута"]));
-    expect(texts(b)).toEqual(expect.arrayContaining(["Сторона В — SMA-Female bulkhead (розетка), SMA-C316F", "резьбовой корпус", "изолятор"]));
+    expect(a).toContain('data-geometry="section"');
+    expect(a).toContain('data-family="sma"');
+    expect(a).toMatch(/data-part="contact" data-state="pin"/);
+    expect(b).toMatch(/data-part="contact" data-state="socket"/);
+    expect(texts(a)).toEqual(expect.arrayContaining(["Сторона А — SMA-Male (вилка), SMA-C174P", "накидная гайка", "изолятор", "штырь", "оплётка",
+      "Корпус надвинуть до упора: контакт зафиксирован в изоляторе", "Разрез SMA, без масштаба"]));
+    expect(texts(b)).toEqual(expect.arrayContaining(["Сторона В — SMA-Female bulkhead (розетка), SMA-C316F", "корпус с резьбой", "изолятор", "гнездо"]));
+    expect(a).not.toMatch(/расправлена по хвостовику|stroke-dasharray/);
     expect(Math.min(...sizes(a), ...sizes(b))).toBeGreaterThanOrEqual(12);
   });
 
-  it("заглубление контакта: размер со стороны корпуса и увеличенный вид А; нет значения — ничего не рисуется (угловые без значения)", () => {
+  it("заглубление контакта: выносной элемент «А» без числового масштаба, число — на размерной линии; нет значения — ничего", () => {
     const withDepth = (operation: Record<string, unknown>, depth: string) => {
       const fields = operation.fields as { coaxEnd: object };
       return etkFigure({ ...operation, fields: { ...fields, coaxEnd: { ...fields.coaxEnd, contactDepth: depth } } });
     };
     const [a, b] = housings;
-    expect(texts(withDepth(a, "0,38…1,14"))).toEqual(expect.arrayContaining(["заглубление контакта 0,38…1,14 мм", "А (10:1)", "вид А увеличен, не в масштабе"]));
-    expect(texts(withDepth(b, "1,88…2,41"))).toContain("заглубление контакта 1,88…2,41 мм");
-    expect(withDepth(a, "0,38-1,14")).toContain("заглубление контакта 0,38…1,14 мм");
-    expect(withDepth(a, "не менее 2,50")).toContain("заглубление контакта не менее 2,50 мм");
-    expect(withDepth(a, "не более 2.65")).toContain("заглубление контакта не более 2,65 мм");
-    expect(withDepth(a, "9,14 (номинал)")).toContain("заглубление контакта 9,14 мм (номинал)");
-    for (const svg of [etkFigure(a), etkFigure(b), withDepth(a, ""), withDepth(a, "по КД"), withDepth(a, "не менее")]) expect(svg).not.toContain("заглубление");
-    expect(Math.min(...sizes(withDepth(a, "0,38…1,14")))).toBeGreaterThanOrEqual(12);
-    expect(withDepth(a, "0,38…1,14")).not.toMatch(/undefined|NaN/);
+    const svg = withDepth(a, "0,38…1,14");
+    expect(texts(svg)).toEqual(expect.arrayContaining(["Заглубление контакта 0,38…1,14 мм", "Вид А — без масштаба", "0,38…1,14"]));
+    expect(svg).not.toMatch(/\(\d+:\d+\)|увеличен, не в масштабе/);
+    expect(svg).toMatch(/data-role="detail-origin"[^>]*stroke-width/);
+    expect(svg).not.toMatch(/data-role="detail-origin"[^>]*dasharray/);
+    expect(texts(withDepth(b, "1,88…2,41"))).toContain("Заглубление контакта 1,88…2,41 мм");
+    expect(withDepth(a, "0,38-1,14")).toContain("Заглубление контакта 0,38…1,14 мм");
+    expect(texts(withDepth(a, "не менее 2,50"))).toEqual(expect.arrayContaining(["Заглубление контакта не менее 2,50 мм", "≥ 2,50"]));
+    expect(texts(withDepth(a, "не более 2.65"))).toEqual(expect.arrayContaining(["Заглубление контакта не более 2,65 мм", "≤ 2,65"]));
+    expect(withDepth(a, "9,14 (номинал)")).toContain("Заглубление контакта 9,14 мм (номинал)");
+    for (const drawing of [etkFigure(a), etkFigure(b), withDepth(a, ""), withDepth(a, "по КД"), withDepth(a, "не менее")]) expect(drawing).not.toMatch(/аглубление/);
+    expect(Math.min(...sizes(svg))).toBeGreaterThanOrEqual(12);
+    expect(svg).not.toMatch(/undefined|NaN/);
   });
 });

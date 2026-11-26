@@ -454,7 +454,7 @@ def test_new_vk_archives_inspected_line_and_opens_revision_in_transit():
     assert revision.shipping_document_url == "https://files.test/upd.pdf"
     assert revision.series == "LOT-1"
     assert revision.verdict is None
-    assert revision.grn is None
+    assert revision.grn == archived.grn
     assert revision.document_quantity is None
     assert revision.fact_quantity is None
     assert revision.accepted_quantity is None
