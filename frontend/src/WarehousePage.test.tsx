@@ -955,7 +955,7 @@ it("a damaged or old saved set gives the default order; a column the saved order
   await screen.findByText("GHR-04V-S");
   // The name cannot be hidden by a saved set; the unknown ones are dropped, the missing ones follow in the default order;
   // «Свободно» and «Места» never stand right of the name.
-  expect(headerNames()).toEqual(["Склад", "Наименование", "Свободно", "Места", "ГРН", "Резерв", "Партий", "Артикул номенклатуры"]);
+  expect(headerNames()).toEqual(["Склад", "Свободно", "Места", "Наименование", "ГРН", "Резерв", "Партий", "Артикул номенклатуры"]);
 });
 
 it("the first column stays in view when the table is scrolled sideways: Тип, or ГРН when the rows are grouped by type", async () => {

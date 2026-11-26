@@ -226,3 +226,28 @@ describe("etkPfArt — эскиз полуфабриката в схеме ПФ"
     expect(svg).toMatch(new RegExp(`<line [^>]*stroke="${green}"`));
   });
 });
+
+describe("compact cutting ПФ (non-coax, review #1037)", () => {
+  it("cut wires: a compact card-size picture; an empty quantity prints no «× »", () => {
+    const operation = { position: 1, type: "cutWire", code: "CUT_WIRE_auto", fields: { wires: [
+      { name: "ПВАМ 0,5 черный", art: "ПВАМ 0,5 черный", qty: "", length: 300 }, { name: "ПВАМ 0,5 красный", art: "ПВАМ 0,5 красный", qty: 4, length: 150 },
+    ] } };
+    const art = etkPfArt({ group: group(), operations: [operation], document: {} })!;
+    const svg = art.main && "svg" in art.main ? art.main.svg : "";
+    expect(svg).toContain("etk-pf-compact");
+    expect(svg).toContain('viewBox="0 0 320');
+    expect(svg).toContain("ПВАМ 0,5 черный · 300 мм");
+    expect(svg).not.toContain("черный × ");
+    expect(svg).toContain("ПВАМ 0,5 красный × 4 · 150 мм");
+    expect(Math.min(...[...svg.matchAll(/font-size="([\d.]+)"/g)].map((match) => Number(match[1])))).toBeGreaterThanOrEqual(11);
+  });
+
+  it("cut tubes: compact rows with kind, count and length", () => {
+    const operation = { position: 1, type: "cutTut", code: "CUT_TUT_short", result: [{ name: "Трубки нарезаны: ТТК 8/2мм, черная — 3 шт по 15 мм; ТТК 12/4мм, черная — 2 шт по 25 мм" }] };
+    const art = etkPfArt({ group: group(), operations: [operation], document: {} })!;
+    const svg = art.main && "svg" in art.main ? art.main.svg : "";
+    expect(svg).toContain("etk-pf-compact");
+    expect(svg).toContain("ТТК 8/2мм ×3 · 15 мм");
+    expect(svg).toContain("ТТК 12/4мм ×2 · 25 мм");
+  });
+});

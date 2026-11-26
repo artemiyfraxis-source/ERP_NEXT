@@ -2517,6 +2517,16 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
   .tcgen .manual-text { grid-template-columns: minmax(0, 1fr); }
 }
 
+/* КОАКС: ввод одной компактной колонкой — данные листа (по высоте содержимого) с действием, кабель, стороны А | В рядом,
+   маркировка, контроль КСВН (владелец 26.11). */
+.tcgen .gen-grid.gen-coax { grid-template-columns: minmax(0, 1fr); }
+.tcgen .gen-grid.gen-coax > .gen-sheet { contain: none; align-self: start; min-height: 0; overflow: visible; grid-template-rows: none; }
+.tcgen .gen-grid.gen-coax > .gen-sheet .gtable-wrap { overflow: auto; max-height: 260px; }
+.tcgen .coax-reseed { display: grid; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.tcgen .coax-reseed .gsec-head { min-height: 0; }
+.tcgen .coax-sides { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: stretch; }
+@container (min-width: 760px) { .tcgen .coax-sides { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.tcgen .coax-sides > .ep-side { align-self: stretch; }
 /* Тон — после всех правил секций, чтобы перекрыть их цвет. */
 .tcgen .tone-ok { color: var(--tone-ok); }
 .tcgen .tone-warn { color: var(--tone-warn); }

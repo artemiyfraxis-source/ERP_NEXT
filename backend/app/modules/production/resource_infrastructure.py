@@ -8,12 +8,15 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, Uuid, delete, select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.shared.advisory_lock import lock_key
 from app.shared.persistence import Base
 
-from .resource_claims import ResourceConflict, ResourceKey, ResourceKind, ResourceOwner, ResourceWindow, instant
+from .resource_claims import (
+    ResourceConflict, ResourceKey, ResourceKind, ResourceOwner, ResourceWindow, ResourcesBusy, instant,
+)
 
 
 # A machine resource is a БД.ОБ unit (0172): its key is the unit's canonical UUID and `machine_id` the same unit as a
@@ -69,6 +72,13 @@ class ResourceGenerationRow(Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+# Longest legitimate hold: autoplan preview/apply runs the planner inside the production UoW (~3 s on 90 operations,
+# before any DB work). Far past that, the holder is stuck (prod 23.11: a request waiting for itself) — answer 503.
+LOCK_WAIT = "30s"
+BUSY = "Производство занято другим запросом — повторите позже"
+LOCK_NOT_AVAILABLE = "55P03"
+
+
 def _owned(model, owner):
     return (model.owner_kind == owner.kind, model.owner_id == owner.id)
 
@@ -83,18 +93,33 @@ class SqlAlchemyResourceClaims:
 
     def __init__(self, session: Session):
         self.session = session
+        self._held_in = None  # the session transaction that already holds the lock: no repeated round-trips
 
     def acquire(self):
         """Call at command transaction entry, before any production task/session row locks.
 
         All writers follow this ordering. Internal calls only retain the already held lock.
         Do not hold it across network requests. SQLite UOWs begin IMMEDIATE before reads.
+        A wait longer than LOCK_WAIT raises ResourcesBusy (HTTP 503) instead of queueing every production request
+        behind a stuck holder; the caller's transaction is then aborted. The limit covers only this lock: the
+        transaction's previous lock_timeout is restored for its row locks.
         """
         if self.session.get_bind().dialect.name == "postgresql":
+            if self._held_in is not None and self._held_in is self.session.get_transaction():
+                return  # the transaction-level lock lasts until this transaction ends
             with self.session.no_autoflush:
-                self.session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {
-                    "key": lock_key("production-resources", "generation"),
-                })
+                previous = self.session.scalar(text("SELECT current_setting('lock_timeout')"))
+                self.session.execute(text("SELECT set_config('lock_timeout', :wait, true)"), {"wait": LOCK_WAIT})
+                try:
+                    self.session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {
+                        "key": lock_key("production-resources", "generation"),
+                    })
+                except DBAPIError as error:
+                    if getattr(error.orig, "sqlstate", None) == LOCK_NOT_AVAILABLE:
+                        raise ResourcesBusy(BUSY) from error
+                    raise
+                self.session.execute(text("SELECT set_config('lock_timeout', :value, true)"), {"value": previous})
+            self._held_in = self.session.get_transaction()
 
     def generation(self) -> int:
         self.acquire()
