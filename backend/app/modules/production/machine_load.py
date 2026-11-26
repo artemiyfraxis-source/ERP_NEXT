@@ -52,6 +52,12 @@ class MachineStep:
     setup_seconds: Decimal
     unit_seconds: Decimal  # машинное время на штуку; нет — штучное время операции
     code: str = ""  # «ОБ.098»; пусто — ключ и есть номер
+    unknown: bool = False  # нормы времени нет (и машинного времени тоже): занятость — известная часть, «время не задано»
+
+
+def unknown_time_steps(steps: Mapping[UUID, Sequence[MachineStep]]) -> int:
+    """Сколько операций ЭТК занимают станок без нормы времени (учтены известной частью — «время не задано»)."""
+    return sum(1 for own in steps.values() for step in own if step.unknown)
 
 
 @dataclass(frozen=True)
@@ -182,6 +188,7 @@ def task_steps(
                 part.position, stage_name(part.stage) or step.stage, machine.key, machine.label, step.setup_seconds,
                 machine_seconds if machine_seconds > 0 else step.seconds_per_unit,
                 machine.code if machine.code != machine.key else "",
+                unknown=machine_seconds <= 0 and step.unknown_operations > 0,
             ))
         if steps:
             result[operation.id] = tuple(steps)

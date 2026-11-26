@@ -58,7 +58,7 @@ from .domain import (
     add_work_seconds,
     next_working_moment,
 )
-from .launchable import route_from_document, stage_name
+from .launchable import route_from_document, stage_name, unknown_time_warning
 from .equipment_catalog import EMPTY, EquipmentCatalog
 from .machine_load import MachineStep, _machine, code_mismatch_text, lay_out, operation_occupancies, planned_windows
 from .machine_load import inventory_prefix  # noqa: F401 — номер модели «ОБ.027» для читателей автоплана
@@ -285,6 +285,9 @@ class AutoplanInput:
     steps: Mapping[UUID, tuple[MachineStep, ...]] = field(default_factory=dict)
     cutting_groups: tuple[tuple[UUID, ...], ...] = ()
     operator_options: Mapping[UUID, frozenset[UUID]] = field(default_factory=dict)
+    # Операции без нормы времени в ЭТК (launchable.unknown_time_operations): ставятся с известной частью (часто 0 с),
+    # считаются отдельно и не выдаются за посчитанные.
+    unknown: frozenset[UUID] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -312,6 +315,7 @@ class AutoplanResult:
     placements: tuple[Placement, ...]
     unplaced: tuple[Unplaced, ...]
     warnings: tuple[str, ...]
+    unknown_time: int = 0  # расставленные операции, у которых в ЭТК не задана норма времени
 
     @property
     def changeovers(self) -> int:
@@ -787,7 +791,10 @@ def plan(data: AutoplanInput, *, batching: bool = True) -> AutoplanResult:
         (Unplaced(planner.task_of[operation_id].id, operation_id, reason) for operation_id, reason in planner.unplaced.items()),
         key=lambda item: planner.priority(item.operation_id),
     )
-    return AutoplanResult(tuple(ordered), tuple(unplaced), tuple(warnings))
+    unknown = sum(1 for item in placed if item in data.unknown)
+    if unknown:
+        warnings.append(unknown_time_warning(unknown, "запланированы"))
+    return AutoplanResult(tuple(ordered), tuple(unplaced), tuple(warnings), unknown)
 
 
 @dataclass(frozen=True)

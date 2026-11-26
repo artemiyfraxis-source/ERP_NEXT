@@ -168,7 +168,9 @@ def test_a_card_built_before_etk_version_4_differs_only_by_the_setup_in_its_norm
     document["schema_version"] = 3
     for operation in document["operations"]:
         for row in operation.get("time") or []:
-            row["norm"] = str(Decimal(str(row["norm"]).replace(",", ".")) + 5).replace(".", ",")
+            if str(row["norm"]).strip():  # an unknown norm (blank) has no setup inside it
+                row["norm"] = str(Decimal(str(row["norm"]).replace(",", ".")) + 5).replace(".", ",")
+    assert any(str(row["norm"]).strip() for operation in document["operations"] for row in operation.get("time") or [])
     world.patch(card, document=document)
     report = world.run()
     assert verdicts(report) == {DRIFT: 1}

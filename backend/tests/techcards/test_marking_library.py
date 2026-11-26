@@ -23,6 +23,10 @@ NAMES = {
     "MARK_CONN_TAPE": "Цветовая маркировка разъёмов цветной лентой",
 }
 PREP_CODES = {"INS_FAKRA_ST_PREP", "INS_FAKRA_RA_PREP"}
+# 23.11.2026 (docs/data/operation-templates-etk-readability): the steps of MARK_CONN_PAINT were rewritten without the
+# «Вход:» / «Результат:» pseudo-steps, and its marker rows say «по ЭТК / КД» instead of «BOM»; the rest is this delivery.
+READABLE = {item["code"]: item for item in json.loads(
+    (ROOT / "docs/data/operation-templates-etk-readability/payload.json").read_text(encoding="utf-8"))}
 NEUTRAL_LINE = ("Если кабель уже разделан при резке, надеть предварительные детали, не нарушая оплётку "
                 "и не повреждая уплотнение; сохранить ориентацию деталей.")
 
@@ -33,11 +37,13 @@ def test_payload_matches_the_seed_card_and_has_stable_identity(item):
     edit = normalize_record_edit(item["record"])
     card = CARDS[item["code"]]
     assert card.source_id == make_template_id(f"{item['code']} | {edit.name}", ())
+    readable = normalize_record_edit(READABLE[item["code"]]["record"]) if item["code"] in READABLE else edit
     assert (card.name, card.safety, card.defects, card.revision, card.steps, card.tooling) == (
-        edit.name, edit.safety, edit.defects, edit.revision, edit.steps, edit.tooling,
+        edit.name, edit.safety, edit.defects, edit.revision, readable.steps, readable.tooling,
     )
-    assert card.steps[0].text.startswith("Вход: ")
-    assert card.steps[-1].text.startswith("Результат: ")
+    if item["code"] not in READABLE:
+        assert card.steps[0].text.startswith("Вход: ")
+        assert card.steps[-1].text.startswith("Результат: ")
     assert {"Инструмент", "Оборудование", "Расходники"} <= {tool.section for tool in card.tooling}
     assert all(step.tolerance for step in card.steps)
     assert set(item["create"]["row"]["norms"].values()) == {""}

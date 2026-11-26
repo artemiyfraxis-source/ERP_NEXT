@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { initState, makeGen, type GenData } from "./tcGenLogic";
+import { initState, makeGen, markPhaseConflict, type GenData } from "./tcGenLogic";
 import {
   markLabel, markMaterialSource, markMatsFromRecords, markPlaceText, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness,
   markSpecs, markTargets, mergeMarkRows, newMarkRow, productMarkRow, markTubeShrinks,
@@ -189,4 +189,34 @@ it("«По разъёмам» on 713К.4 КБ1: each mark gets its own kit tube 
   // Метки состава без надписи — как раньше: один материал на все строки, у бирки длины нет.
   const tags = markRowsByConnectors([{ name: "X1", art: "DB-9F" }], "Бирка ТМ", [{ art: "Бирка ТМ", name: "Бирка ТМ" }]);
   expect(tags.map((row) => [row.material, row.len])).toEqual([["Бирка ТМ", undefined]]);
+});
+
+it("a marking installation with a printer card is reported; with an installation card in the library a stuck one is re-picked (ETK audit 23.11, A4)", () => {
+  const PRINTER = "ins-mark-tube-auto-печать-и-резка-маркировочной-трубки";
+  const S0 = fullHarness();
+  const S = { ...S0, markRows: [...S0.markRows, newMarkRow({ target: "Изделие КБ1", text: "КБ1", material: "Хлястик", place: "item" })] };
+  const mark = makeGen(DSA, S).getActiveOps().find((o) => o.opKey === "insMark")!;
+  expect(mark.markPhase).toBe("install");
+  const conflict = `«${mark.label}»: для монтажа меток выбрана карта печати PRINT_MARK_TUBE — выберите карту монтажа.`;
+  const stuck = { ...S, selectedTemplates: { ...S.selectedTemplates, insMark: PRINTER } };
+  // No installation card in this library: the printer card stays, visibly.
+  expect(makeGen(DSA, stuck).templateIdFor(mark)).toBe(PRINTER);
+  expect(makeGen(DSA, stuck).validate().warnings).toContain(conflict);
+  // With an installation card the stuck printer card is replaced; a hand-picked one stays and is reported.
+  const withCard = { ...DSA, templates: [...(DSA.templates || []), { id: "ins-mark", title: "INS_MARK | Монтаж маркировки", category: "Монтаж маркировки" }] };
+  const fixed = makeGen(withCard, stuck);
+  const repicked = fixed.getActiveOps().find((o) => o.opKey === "insMark")!;
+  expect(fixed.templateIdFor(repicked)).toBe("ins-mark");
+  expect(fixed.validate().warnings).not.toContain(conflict);
+  const byHand = makeGen(withCard, { ...stuck, manualTemplates: ["insMark"] });
+  expect(byHand.templateIdFor(repicked)).toBe(PRINTER);
+  expect(byHand.validate().warnings.some((text) => text.includes("карта печати PRINT_MARK_TUBE"))).toBe(true);
+});
+
+it("only an installation phase conflicts with a printer card", () => {
+  expect(markPhaseConflict("install", "PRINT_MARK_TUBE")).toBe(true);
+  expect(markPhaseConflict("install", " print_mark_label ")).toBe(true);
+  expect(markPhaseConflict("install", "INS_MARK")).toBe(false);
+  expect(markPhaseConflict("print", "PRINT_MARK_TUBE")).toBe(false);
+  expect(markPhaseConflict(undefined, "PRINT_MARK_TUBE")).toBe(false);
 });
