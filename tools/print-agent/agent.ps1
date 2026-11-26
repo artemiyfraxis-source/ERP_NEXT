@@ -38,7 +38,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.12.0'
+$script:AgentVersion = '2.12.1'
 $script:VnaIdnNextProbe = [datetime]::MinValue
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
@@ -3545,6 +3545,9 @@ function Invoke-S2Command {
             Invoke-S2Io $scpi 'MMEMory.LOAD.STATe' set $owner.state_path
             # CDST contains the measurement/calibration; restore the store mode changed to create it.
             Set-S2Checked $scpi 'MMEMory.STORe.STYPe' $owner.original.values.'MMEMory.STORe.STYPe'
+            # 2.12.1: the state file does not carry the sweep trigger; restore stopped it above (26.11 СИ.002 readback failure).
+            Set-S2Checked $scpi 'TRIGger.SEQuence.SOURce' $owner.original.values.'TRIGger.SEQuence.SOURce'
+            Set-S2Checked $scpi 'INITiate(1).CONTinuous' $owner.original.values.'INITiate(1).CONTinuous'
             Assert-VnaEqual (Get-S2State $scpi) $owner.original 'восстановленное состояние и назначения набора'
             $verifyKitPath = $owner.kit_path + '.verify'
             Invoke-S2KitFile $scpi STORe ([int]$owner.slot) $verifyKitPath
