@@ -359,11 +359,12 @@ def _prepare(
         card = cards.get(card_key(task.project, task.item))
         if card is not None:
             used_cards[str(card.id)] = card.version
-        task_keys, task_warnings = operation_keys(task, card.document if card is not None else None, equipment)
+        task_keys, task_warnings = operation_keys(task, card.document_for(task) if card is not None else None, equipment)
         keys.update(task_keys)
         # Станки по операциям ЭТК; код, разошедшийся с техкартой, уже в предупреждениях наладки.
-        steps.update(task_steps(task, card.document if card is not None else None, equipment)[0])
-        unknown |= unknown_time_operations(task, card.document if card is not None else None)
+        document = card.document_for(task) if card is not None else None
+        steps.update(task_steps(task, document, equipment)[0])
+        unknown |= unknown_time_operations(task, document)
         if task.id in free_tasks:
             warnings.extend(task_warnings)
     machines = machine_names(keys, steps)

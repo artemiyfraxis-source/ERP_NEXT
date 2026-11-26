@@ -150,7 +150,8 @@ def test_keys_fall_back_to_the_operation_code_when_the_card_does_not_match():
 
     assert keys[current.operations[0].id].family[1:] == ("A19", "T-1")
     assert keys[current.operations[1].id].family == ("ASM",)
-    assert warnings == ("ПЗ-0001 · этап 2: код ASM не совпадает с техкартой (OTHER) — наладка по коду операции",)
+    assert len(warnings) == 1 and warnings[0].startswith("ПЗ-0001 · этап 2:")
+    assert "(код ASM)" in warnings[0] and "(код OTHER)" in warnings[0] and "Перезапустите этап из актуальной ЭТК" in warnings[0]
     assert all(key.family == (item.code,) for item, key in zip(current.operations, (missing[item.id] for item in current.operations)))
     assert "техкарта 708К КБ1 не найдена" in missing_warnings[0]
 
