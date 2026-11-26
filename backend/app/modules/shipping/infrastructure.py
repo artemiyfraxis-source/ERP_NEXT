@@ -11,7 +11,7 @@ from hashlib import sha256
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
-    JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, Uuid,
+    JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, Uuid,
     and_, delete, func, or_, select, text,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validates
@@ -40,6 +40,12 @@ FINISHED_GOODS_CHECKS = {
 class FinishedGoodRow(Base):
     __tablename__ = "finished_goods"
     __table_args__ = (
+        ForeignKeyConstraint(["grn_id", "grn_category", "grn"],
+                             ["warehouse_grn_registry.id", "warehouse_grn_registry.category", "warehouse_grn_registry.number"],
+                             name="fk_finished_goods_grn_identity", ondelete="RESTRICT"),
+        ForeignKeyConstraint(["grn_id", "material_owner_id"],
+                             ["warehouse_grn_registry.id", "warehouse_grn_registry.owner_id"],
+                             name="fk_finished_goods_grn_owner", ondelete="RESTRICT"),
         Index("ux_finished_goods_project_item", "project", "item_index", unique=True),
         *(CheckConstraint(sql, name=name) for name, sql in FINISHED_GOODS_CHECKS.items()),
     )
@@ -57,11 +63,13 @@ class FinishedGoodRow(Base):
     shipped: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     received_at: Mapped[date | None] = mapped_column(Date(), nullable=True)
     grn: Mapped[str | None] = mapped_column(String(32), nullable=True, unique=True)
-    grn_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), index=True)
+    grn_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("warehouse_grn_registry.id", name="fk_finished_goods_grn", ondelete="RESTRICT"), index=True)
     grn_category: Mapped[str | None] = mapped_column(String(3))
     grn_context: Mapped[dict | None] = mapped_column(JSON)
     grn_contract_version: Mapped[int | None] = mapped_column(Integer)
-    material_owner_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    material_owner_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("warehouse_material_owners.id", name="fk_finished_goods_material_owner", ondelete="RESTRICT"))
     quality_state: Mapped[str | None] = mapped_column(String(16))
     quality_basis: Mapped[str | None] = mapped_column(Text)
     quality_decided_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
@@ -250,7 +258,15 @@ class FinishedGoodsActRow(Base):
     (`SqlAlchemyFinishedGoodsRepository.record_act`); Σ штук актов КБ = Σ ходов «принято» − отгружено до ERP."""
 
     __tablename__ = "finished_goods_acts"
-    __table_args__ = (CheckConstraint("quantity > 0", name="ck_finished_goods_acts_quantity"),)
+    __table_args__ = (
+        CheckConstraint("quantity > 0", name="ck_finished_goods_acts_quantity"),
+        ForeignKeyConstraint(["grn_id", "grn_category", "grn"],
+                             ["warehouse_grn_registry.id", "warehouse_grn_registry.category", "warehouse_grn_registry.number"],
+                             name="fk_finished_goods_acts_grn_identity", ondelete="RESTRICT"),
+        ForeignKeyConstraint(["grn_id", "material_owner_id"],
+                             ["warehouse_grn_registry.id", "warehouse_grn_registry.owner_id"],
+                             name="fk_finished_goods_acts_grn_owner", ondelete="RESTRICT"),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     finished_good_id: Mapped[UUID] = mapped_column(
@@ -260,11 +276,13 @@ class FinishedGoodsActRow(Base):
         Uuid(as_uuid=True), ForeignKey("finished_goods_moves.id", ondelete="RESTRICT"), nullable=False, unique=True,
     )
     grn: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
-    grn_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), index=True)
+    grn_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("warehouse_grn_registry.id", name="fk_finished_goods_acts_grn", ondelete="RESTRICT"), index=True)
     grn_category: Mapped[str | None] = mapped_column(String(3))
     grn_context: Mapped[dict | None] = mapped_column(JSON)
     grn_contract_version: Mapped[int | None] = mapped_column(Integer)
-    material_owner_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    material_owner_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("warehouse_material_owners.id", name="fk_finished_goods_acts_material_owner", ondelete="RESTRICT"))
     quality_state: Mapped[str | None] = mapped_column(String(16))
     quality_basis: Mapped[str | None] = mapped_column(Text)
     quality_decided_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))

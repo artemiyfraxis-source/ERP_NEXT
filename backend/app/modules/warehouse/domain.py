@@ -289,8 +289,8 @@ class StockLot:
 
         Historical stock keeps its existing policy. A new-contract place fails closed
         unless a recorded decision permits use; missing shipping papers are irrelevant.
-        `disposal` (scrap, supplier return, inventory loss) takes stock OUT of the building, so a quality hold,
-        a rejection or an expired shelf life must not trap it: only the place's identity is still verified.
+        `disposal` (scrap, supplier return, inventory loss) takes stock OUT of the building, so a quarantine, a
+        rejection or an expired shelf life must not trap it; an undecided (IQH) place is still blocked.
         """
         if self.grn_contract_version is None:
             return
@@ -306,7 +306,10 @@ class StockLot:
             raise WarehouseValidationError("Не заполнены категория или контекст ГРН") from error
         if self.grn_context is None or self.expiry_required is None:
             raise WarehouseValidationError("Не заполнен паспорт нового прихода")
-        if disposal:
+        today = on_date if on_date is not None else datetime.now(ZoneInfo("Europe/Moscow")).date()
+        if disposal and (self.quality_state in {"QTN", "REJECTED"}
+                         or (self.expiry_date is not None and self.expiry_date < today)):
+            # Quarantined, rejected or expired stock must be able to leave; an undecided (IQH) place must not.
             return
         if self.quality_state not in {"RELEASED", "NOT_REQUIRED"}:
             raise WarehouseValidationError(f"Партия {self.grn} заблокирована: требуется решение ОТК")
@@ -317,7 +320,6 @@ class StockLot:
             raise WarehouseValidationError("Не записаны основание, автор или дата решения ОТК")
         if self.expiry_required and self.expiry_date is None:
             raise WarehouseValidationError("Не указан обязательный срок годности")
-        today = on_date if on_date is not None else datetime.now(ZoneInfo("Europe/Moscow")).date()
         if self.expiry_date is not None and self.expiry_date < today:
             raise WarehouseValidationError("Срок годности партии истёк")
 
@@ -531,12 +533,10 @@ class StockLot:
             getattr(updated, name) != getattr(self, name) for name in LOT_ROW_QUANTITIES
         ):
             self.assert_owner(**self.owner_claim())
-        if updated.reserved > self.reserved:
+        if updated.reserved > self.reserved or updated.written_off > self.written_off:
             # A manual quantity edit must not bypass the same stock guards.
             self.assert_issuable()
             updated.assert_issuable()
-        elif updated.written_off > self.written_off:
-            self.assert_issuable(disposal=True)
         if updated.reserved > self.reserved:
             self.assert_owner()  # a reservation is for a named owner/order pair, never inferred from the place
         elif updated.written_off > self.written_off:

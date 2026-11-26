@@ -47,7 +47,7 @@ export function GrnFields({ value, onChange, disabled = false, locked = false, q
     {category === 'R&D' && <>{input('project','Проект разработки')}{input('purpose','Назначение')}</>}
     <label className="check-field"><input type="checkbox" checked={value.expiry_required ?? false} disabled={disabled || locked} onChange={event => onChange({...value, expiry_required:event.target.checked})}/>Срок годности обязателен</label>
     {quality && <><label>Решение о качестве<select disabled={disabled} value={value.quality_state ?? ''} onChange={event => onChange({...value,quality_state:(event.target.value || null) as GrnInput['quality_state']})}>
-      <option value="">По результатам ВК</option><option value="IQH">Ожидает ВК</option><option value="QTN">КАРАНТИН</option><option value="RELEASED" disabled={!canQuality}>ГОДЕН ✓</option><option value="REJECTED" disabled={!canQuality}>НЕ ГОДЕН</option>{(category==='GOS'||category==='PAM') && <option value="NOT_REQUIRED">ВК не требуется</option>}
+      <option value="">По результатам ВК</option><option value="IQH">Ожидает ВК</option><option value="QTN">КАРАНТИН</option><option value="RELEASED" disabled={!canQuality}>ГОДЕН ✓</option><option value="REJECTED" disabled={!canQuality}>НЕ ГОДЕН</option>{['GOS','PAM','FRX','R&D'].includes(category??'') && <option value="NOT_REQUIRED">ВК не требуется</option>}
     </select></label>{value.quality_state && ['RELEASED','REJECTED','NOT_REQUIRED'].includes(value.quality_state) && <label>Основание решения *<input required maxLength={2000} disabled={disabled} value={value.quality_basis ?? ''} onChange={event => onChange({...value,quality_basis:event.target.value})}/></label>}</>}
   </div>;
 }

@@ -1159,6 +1159,29 @@ def _versioned(lot_id: UUID, expected_version: int, uow: UnitOfWork) -> StockLot
 
 WRITEOFF_DEFAULT_REASON = "Выдача"
 DISPOSAL_REASONS = frozenset({"Брак", "Порча", "Недостача", "Инвентаризация"})
+
+
+def _is_disposal(reason: str, purpose: str) -> bool:
+    """Scrap/loss/inventory only, and never a way to issue: a project number or a production purpose is an issue."""
+    text = purpose.strip().casefold()
+    return reason in DISPOSAL_REASONS and not (re.match(r"\d", text) or "производ" in text)
+
+
+def _assert_csm_purpose(lot: StockLot, purpose: str, uow) -> None:
+    """Customer material issued from stock goes only to the project it was received for."""
+    if lot.grn_category != "CSM" or lot.grn_contract_version is None:
+        return
+    from app.shared.project_identity import ProjectIdentityConflict, stable_project_key
+    from app.shared.project_number import normalize_project_number, project_from_purpose
+    target = project_from_purpose(purpose)
+    try:
+        if hasattr(uow, "session") and target:
+            target = stable_project_key(uow.session, target) or target
+        expected = stable_project_key(uow.session, lot.csm_project_id) if hasattr(uow, "session") else lot.csm_project_id
+    except ProjectIdentityConflict as error:
+        raise WarehouseValidationError("Неоднозначная история проекта давальческого материала") from error
+    if not target or normalize_project_number(target) != normalize_project_number(expected or ""):
+        raise WarehouseValidationError("Давальческий материал: назначение должно быть проектом заказа клиента")
 INSTRUMENT_WRITEOFF_PREFIX = "Принадлежности СИ"
 INSTRUMENT_RETURN_MESSAGE = "Это принадлежность СИ — верните её через Качество → Средства измерения"
 
@@ -1176,8 +1199,11 @@ def write_off(command: WriteOffCommand, uow: UnitOfWork) -> StockLot:
             raise ConcurrentWarehouseUpdate("Это списание уже проведено")
         current = _versioned(command.lot_id, command.expected_version, uow)
         # Scrap, loss and inventory take stock out: a quality hold / rejection / expiry must not trap it.
+        disposal = _is_disposal(reason, purpose)
+        if not disposal:
+            _assert_csm_purpose(current, purpose, uow)
         updated = current.write_off(command.quantity, on_date=command.now.date(), **current.owner_claim(),
-                                    disposal=reason in DISPOSAL_REASONS)
+                                    disposal=disposal)
         uow.warehouse.add(updated)
         uow.writeoffs.add(replace(WriteOffEntry.for_lot(
             updated, kind="writeoff", quantity=command.quantity, reason=reason, purpose=purpose,

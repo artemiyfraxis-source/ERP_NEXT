@@ -140,7 +140,7 @@ def test_hold_survives_physical_relocation():
     assert moved.quality_state == "IQH" and moved.grn_id == stock.grn_id and moved.balance == stock.balance
 
 
-@pytest.mark.parametrize("changes", [{"reserved": "1"}])
+@pytest.mark.parametrize("changes", [{"reserved": "1"}, {"written_off": "1"}])
 def test_manual_quantity_edit_cannot_bypass_hold(changes):
     with pytest.raises(WarehouseValidationError, match="решение ОТК"):
         new_lot().edit_row(changes)
@@ -166,7 +166,7 @@ def test_historical_stock_is_not_implicitly_reclassified_or_mass_blocked():
     assert historical.grn_contract_version is None and historical.quality_state is None
 
 
-@pytest.mark.parametrize("state", ["IQH", "QTN", "REJECTED"])
+@pytest.mark.parametrize("state", ["QTN", "REJECTED"])
 def test_scrap_and_supplier_return_can_take_a_held_place_out_but_issue_cannot(state):
     held = new_lot(quality_state=state)
     assert held.write_off(Decimal("1"), on_date=TODAY, disposal=True).written_off == 1
@@ -210,5 +210,7 @@ def test_frx_and_rd_may_use_the_nonrequired_qc_decision(category, context):
     assert decided.reserve(Decimal("1"), on_date=TODAY).reserved == 1
 
 
-def test_manual_writeoff_edit_may_take_a_held_place_out():
-    assert new_lot().edit_row({"written_off": "1"}).written_off == 1
+@pytest.mark.parametrize("state", ["IQH", None])
+def test_an_undecided_place_cannot_leave_even_as_scrap(state):
+    with pytest.raises(WarehouseValidationError, match="решение ОТК"):
+        new_lot(quality_state=state).write_off(Decimal("1"), on_date=TODAY, disposal=True)

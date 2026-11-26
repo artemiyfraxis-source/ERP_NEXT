@@ -8,7 +8,7 @@ from collections.abc import Iterable, Sequence
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, Uuid, and_, case, func, or_, select, text
+from sqlalchemy import JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, Uuid, and_, case, func, or_, select, text
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validates
 
 from app.shared.identity import Actor
@@ -38,6 +38,12 @@ DEFECT_QUANTITY_CHECK = (
 class ReceivingLineRow(Base):
     __tablename__ = "receiving_lines"
     __table_args__ = (
+        ForeignKeyConstraint(["grn_id", "grn_category", "grn"],
+                             ["warehouse_grn_registry.id", "warehouse_grn_registry.category", "warehouse_grn_registry.number"],
+                             name="fk_receiving_lines_grn_identity", ondelete="RESTRICT"),
+        ForeignKeyConstraint(["grn_id", "material_owner_id"],
+                             ["warehouse_grn_registry.id", "warehouse_grn_registry.owner_id"],
+                             name="fk_receiving_lines_grn_owner", ondelete="RESTRICT"),
         Index("uq_receiving_grn_package_active", "grn", "package", unique=True,
               sqlite_where=text("status <> 'Архив ВК'"), postgresql_where=text("status <> 'Архив ВК'")),
         UniqueConstraint("revision_of_id", name="uq_receiving_lines_revision_of_id"),
@@ -91,11 +97,13 @@ class ReceivingLineRow(Base):
     accepted_quantity: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
     backorder_quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     grn: Mapped[str | None] = mapped_column(String(32))
-    grn_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), index=True)
+    grn_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("warehouse_grn_registry.id", name="fk_receiving_lines_grn", ondelete="RESTRICT"), index=True)
     grn_category: Mapped[str | None] = mapped_column(String(3))
     grn_context: Mapped[dict | None] = mapped_column(JSON)
     grn_contract_version: Mapped[int | None] = mapped_column(Integer)
-    material_owner_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    material_owner_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("warehouse_material_owners.id", name="fk_receiving_lines_material_owner", ondelete="RESTRICT"))
     quality_state: Mapped[str | None] = mapped_column(String(16))
     quality_basis: Mapped[str | None] = mapped_column(Text)
     quality_decided_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))

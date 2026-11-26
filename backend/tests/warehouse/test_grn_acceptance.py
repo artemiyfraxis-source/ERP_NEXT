@@ -345,13 +345,36 @@ def test_receiving_can_read_material_owners_but_cannot_create_them(stand):
     assert client.post("/api/stock/material-owners", json={"display_name":"Owner","legal_identity":"TEST:1"}).status_code == 403
 
 
-def test_scrap_may_take_a_held_place_out_but_issue_may_not(stand):
+def test_scrap_may_not_take_an_undecided_place_out_nor_issue_through_a_project_purpose(stand):
     client, _ = stand
     lot = _accept(client, _receipt(client)["id"]).json()["lot"]
     assert lot["quality_state"] == "IQH"
-    issued = client.post(f"/api/stock/batches/{lot['id']}/writeoff",
-                         json={"version": lot["version"], "quantity": "1", "purpose": "Цех", "reason": "Выдача в производство"})
-    assert issued.status_code == 422
-    scrapped = client.post(f"/api/stock/batches/{lot['id']}/writeoff",
-                           json={"version": lot["version"], "quantity": "1", "purpose": "Цех", "reason": "Брак"})
-    assert scrapped.status_code == 200, scrapped.text
+    body = {"version": lot["version"], "quantity": "1"}
+    assert client.post(f"/api/stock/batches/{lot['id']}/writeoff",
+                       json={**body, "purpose": "Цех", "reason": "Брак"}).status_code == 422
+    permit_quality()
+    held = quality(client, lot, state="QTN")
+    assert held.status_code == 200, held.text
+    body = {"version": held.json()["lot"]["version"], "quantity": "1"}
+    # a project number as the purpose is an issue, not scrap: the quarantined place stays blocked
+    assert client.post(f"/api/stock/batches/{lot['id']}/writeoff",
+                       json={**body, "purpose": "591К.3", "reason": "Брак"}).status_code == 422
+    assert client.post(f"/api/stock/batches/{lot['id']}/writeoff",
+                       json={**body, "purpose": "Цех", "reason": "Выдача в производство"}).status_code == 422
+    assert client.post(f"/api/stock/batches/{lot['id']}/writeoff",
+                       json={**body, "purpose": "Кладовщик", "reason": "Брак"}).status_code == 200
+
+
+def test_customer_material_is_issued_only_to_the_project_it_was_received_for(stand):
+    client, sessions = stand
+    context = csm_context(sessions)
+    lot = _accept(client, _receipt(client)["id"], grn_category="CSM", grn_context=context).json()["lot"]
+    permit_quality()
+    released = quality(client, lot)
+    assert released.status_code == 200, released.text
+    version = released.json()["lot"]["version"]
+    url = f"/api/stock/batches/{lot['id']}/writeoff"
+    base = {"version": version, "quantity": "1", "reason": "Выдача в производство"}
+    assert client.post(url, json={**base, "purpose": "999К.9"}).status_code == 422
+    assert client.post(url, json={**base, "purpose": "Цех"}).status_code == 422
+    assert client.post(url, json={**base, "purpose": "591К.3 · КБ1"}).status_code == 200

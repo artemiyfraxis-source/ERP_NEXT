@@ -344,7 +344,7 @@ class QualityDecisionPayload(BaseModel):
     version: int = Field(ge=1)
     quality_version: int = Field(ge=1)
     state: str
-    basis: str = Field(min_length=1, max_length=4096)
+    basis: str = Field(min_length=1, max_length=2000)
 
 
 class MaterialOwnerPayload(BaseModel):

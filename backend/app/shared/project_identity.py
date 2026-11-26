@@ -36,10 +36,10 @@ def project_aliases(session: Session) -> tuple[dict[str, str], dict[str, str]]:
         end = index
         while end < len(renames) and renames[end][0] == renames[index][0]:
             end += 1
-        pending = renames[index:end]
+        pending = sorted(renames[index:end], key=lambda item: (item[1], item[2]))  # not by random event ids
         while pending:
             news = {new for _, _, new in pending}
-            pick = next((item for item in pending if item[1] not in news), pending[0])
+            pick = next((item for item in pending if item[1] not in news), pending[0])  # a cycle: smallest name first
             pending.remove(pick)
             ordered.append(pick)
         index = end
@@ -74,7 +74,8 @@ def stable_project_key(session: Session, value: str | None) -> str | None:
     if not value:
         return value
     _, backward = project_aliases(session)
-    return _follow(backward, normalize_project_number(value))
+    key = normalize_project_number(value)
+    return backward.get(key, key)
 
 
 def current_project_name(session: Session, value: str | None) -> str | None:
@@ -96,6 +97,6 @@ def display_grn_context(session: Session, context: dict | None) -> dict:
 def project_alias_keys(session: Session, value: str) -> set[str]:
     """Every old and current key of one identity, for ambiguous snapshot checks."""
     _, backward = project_aliases(session)
-    key = _follow(backward, normalize_project_number(value))
+    key = backward.get(normalize_project_number(value), normalize_project_number(value))
     result = {key} | {name for name, origin in backward.items() if origin == key}
     return result
