@@ -1,3 +1,6 @@
+import { GRN_CATEGORIES, type GrnCategory } from "./grn";
+import { PrintOutcome, type PrintResult } from "./LabelPrint";
+import "./grn.css";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import "./labelDesigner.css";
 import { api, ApiError, failureText, isAborted } from "./api";
@@ -18,18 +21,27 @@ export type TemplateElement = {
 };
 export type LabelTemplate = { elements: TemplateElement[] };
 export type TemplateVersion = number | string | null;
-export type FormatTemplate = { template: LabelTemplate; is_default: boolean; version: TemplateVersion };
+export type FormMetadata = { form_id: string; form_revision: string; form_effective_date: string };
+export type TemplateScope = { category?: GrnCategory | ""; printer_name?: string };
+export type FormatTemplate = { form?: FormMetadata | null; template: LabelTemplate; is_default: boolean; version: TemplateVersion };
 export type LabelField = { key: string; label: string };
 export type TemplatesAnswer = { kind: LabelKind; fields: LabelField[]; formats: Record<LabelFormat, FormatTemplate>; current_format: LabelFormat };
 
-const path = (kind: LabelKind, format?: LabelFormat) => `/api/stock/labels/templates/${kind}${format ? `/${format}` : ""}`;
+const path = (kind: LabelKind, format?: LabelFormat, scope: TemplateScope = {}, action = "", version?: TemplateVersion) => {
+  const query = new URLSearchParams();
+  if (scope.category && kind !== "instrument") query.set("category", scope.category);
+  if (scope.printer_name && kind !== "instrument") query.set("printer_name", scope.printer_name);
+  if (version != null) query.set("version", String(version));
+  return `/api/stock/labels/templates/${kind}${format ? `/${format}` : ""}${action}${query.size ? `?${query}` : ""}`;
+};
 export const templatesApi = {
-  load: (kind: LabelKind) => api<TemplatesAnswer>(path(kind)),
-  save: (kind: LabelKind, format: LabelFormat, template: LabelTemplate, version: TemplateVersion) =>
-    api<FormatTemplate>(path(kind, format), { method: "PUT", body: JSON.stringify({ template, version }) }),
-  reset: (kind: LabelKind, format: LabelFormat) => api<FormatTemplate>(path(kind, format), { method: "DELETE" }),
-  preview: (kind: LabelKind, format: LabelFormat, template: LabelTemplate, signal: AbortSignal) =>
-    api<Blob>(`${path(kind, format)}/preview`, { method: "POST", body: JSON.stringify({ template, sample: null }), safe: true, blob: true, signal }),
+  load: (kind: LabelKind, scope: TemplateScope = {}) => api<TemplatesAnswer>(path(kind, undefined, scope)),
+  save: (kind: LabelKind, format: LabelFormat, template: LabelTemplate, version: TemplateVersion, scope: TemplateScope = {}, form?: FormMetadata | null) =>
+    api<FormatTemplate>(path(kind, format, scope), { method: "PUT", body: JSON.stringify({ template, version, ...(form !== undefined ? {form} : {}) }) }),
+  reset: (kind: LabelKind, format: LabelFormat, scope: TemplateScope = {}, version?: TemplateVersion) => api<FormatTemplate>(path(kind, format, scope, "", scope.category ? version : undefined), { method: "DELETE" }),
+  preview: (kind: LabelKind, format: LabelFormat, template: LabelTemplate, signal: AbortSignal, scope: TemplateScope = {}, form?: FormMetadata | null) =>
+    api<Blob>(path(kind, format, scope, "/preview"), { method: "POST", body: JSON.stringify({ template, sample: null, ...(form !== undefined ? {form} : {}) }), safe: true, blob: true, signal }),
+  test: (kind: LabelKind, format: LabelFormat, scope: TemplateScope) => api<PrintResult>(path(kind, format, scope, "/test"), {method: "POST", body: JSON.stringify({copies: 1})}),
 };
 
 export const PREVIEW_DELAY_MS = 500;
@@ -93,14 +105,14 @@ export function elementCaption(element: TemplateElement, fields: LabelField[]) {
   const field = fields.find((item) => item.key === element.field)?.label ?? (element.field ? "поле не найдено" : "поле не выбрано");
   if (element.kind === "field") return field;
   if (element.kind === "text") return textShown(element.text ?? "", fields).trim() || "Пустой текст";
-  if (element.kind === "qr" || element.kind === "code128") return `${KIND_NAMES[element.kind]}: ${field}`;
+  if (element.kind === "qr" || element.kind === "code128") return `${KIND_NAMES[element.kind]}: ГРН`;
   return KIND_NAMES[element.kind];
 }
 
-type Slot = { saved: LabelTemplate; draft: LabelTemplate; version: TemplateVersion; isDefault: boolean };
-const slotKey = (kind: LabelKind, format: LabelFormat) => `${kind}|${format}`;
-const same = (a: LabelTemplate, b: LabelTemplate) => JSON.stringify(a) === JSON.stringify(b);
-const asSlot = (answer: FormatTemplate): Slot => ({ saved: answer.template, draft: answer.template, version: answer.version, isDefault: answer.is_default });
+type Slot = { saved: LabelTemplate; draft: LabelTemplate; version: TemplateVersion; isDefault: boolean; savedForm: FormMetadata | null; form: FormMetadata | null };
+const slotKey = (kind: string, format: LabelFormat) => `${kind}|${format}`;
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+const asSlot = (answer: FormatTemplate): Slot => ({ saved: answer.template, draft: answer.template, version: answer.version, isDefault: answer.is_default, form: answer.form ?? null, savedForm: answer.form ?? null });
 
 /** The canvas's px per mm: fits the measured width and at most CANVAS_MAX_H high. */
 function useScale(format: LabelFormat) {
@@ -133,16 +145,24 @@ async function dataUrl(blob: Blob) {
 
 /** «Шаблон этикетки»: kind and format tabs, the label canvas with element boxes, the palette, the properties.
  *  The API owns the effective format per kind; printer settings updates invalidate those cached answers. */
-export function LabelDesigner({ initialKind, usedFormat = null, settingsVersion = 0, readOnly = false, onDirty }: {
-  initialKind: LabelKind; usedFormat?: LabelFormat | null; settingsVersion?: number; readOnly?: boolean; onDirty?: (dirty: boolean) => void;
+export function LabelDesigner({ initialKind, usedFormat = null, settingsVersion = 0, readOnly = false, onDirty, initialCategory = "", printerName = "" }: {
+  initialKind: LabelKind; usedFormat?: LabelFormat | null; settingsVersion?: number; readOnly?: boolean; onDirty?: (dirty: boolean) => void; initialCategory?: GrnCategory | ""; printerName?: string;
 }) {
   const [kind, setKind] = useState<LabelKind>(initialKind);
+  const [category, setCategory] = useState<GrnCategory | "">(initialCategory);
+  // The API takes a printer profile only together with a GRN category (422 otherwise): historical and instrument
+  // labels use the shared printer settings.
+  const grnScope = kind !== "instrument" && Boolean(category);
+  const scope: TemplateScope = {category: grnScope ? category : "", printer_name: grnScope ? printerName : ""};
+  const scopeKey = `${kind}|${scope.category}|${scope.printer_name}`;
+  const [testResult, setTestResult] = useState<PrintResult | null>(null);
+  const [testing, setTesting] = useState(false);
   const [format, setFormat] = useState<LabelFormat>(usedFormat ?? "58x40");
   const formatChosen = useRef(false);
   const settingsKey = `${settingsVersion}:${usedFormat ?? ""}`;
-  const [effectiveFormats, setEffectiveFormats] = useState<Partial<Record<LabelKind, { format: LabelFormat; settingsKey: string }>>>({});
-  const currentFormat = effectiveFormats[kind]?.settingsKey === settingsKey ? effectiveFormats[kind]?.format : null;
-  const [fields, setFields] = useState<Partial<Record<LabelKind, LabelField[]>>>({});
+  const [effectiveFormats, setEffectiveFormats] = useState<Partial<Record<string, { format: LabelFormat; settingsKey: string }>>>({});
+  const currentFormat = effectiveFormats[scopeKey]?.settingsKey === settingsKey ? effectiveFormats[scopeKey]?.format : null;
+  const [fields, setFields] = useState<Partial<Record<string, LabelField[]>>>({});
   const [slots, setSlots] = useState<Record<string, Slot>>({});
   const [loadError, setLoadError] = useState("");
   const [selected, setSelected] = useState("");
@@ -161,25 +181,25 @@ export function LabelDesigner({ initialKind, usedFormat = null, settingsVersion 
     if (currentFormat) return;
     let cancelled = false;
     setLoadError("");
-    templatesApi.load(kind).then((answer) => {
+    templatesApi.load(kind, scope).then((answer) => {
       if (cancelled) return;
-      setEffectiveFormats((current) => ({ ...current, [kind]: { format: answer.current_format ?? usedFormat ?? "58x40", settingsKey } }));
-      setFields((current) => ({ ...current, [kind]: answer.fields ?? [] }));
+      setEffectiveFormats((current) => ({ ...current, [scopeKey]: { format: answer.current_format ?? usedFormat ?? "58x40", settingsKey } }));
+      setFields((current) => ({ ...current, [scopeKey]: answer.fields ?? [] }));
       setSlots((current) => {
         const next = { ...current };
-        for (const item of LABEL_FORMATS) if (answer.formats?.[item] && !next[slotKey(kind, item)]) next[slotKey(kind, item)] = asSlot(answer.formats[item]);
+        for (const item of LABEL_FORMATS) if (answer.formats?.[item] && !next[slotKey(scopeKey, item)]) next[slotKey(scopeKey, item)] = asSlot(answer.formats[item]);
         return next;
       });
     }, (reason) => { if (!cancelled) setLoadError(failureText(reason, "Шаблоны этикеток не загрузились")); });
     return () => { cancelled = true; };
-  }, [kind, settingsKey, currentFormat, usedFormat]);
+  }, [scopeKey, settingsKey, currentFormat, usedFormat]);
 
-  const slot = slots[slotKey(kind, format)];
-  const kindFields = useMemo(() => fields[kind] ?? [], [fields, kind]);
+  const slot = slots[slotKey(scopeKey, format)];
+  const kindFields = useMemo(() => fields[scopeKey] ?? [], [fields, scopeKey]);
   const elements = slot?.draft.elements ?? [];
   const current = elements.find((element) => element.id === selected) ?? null;
-  const dirty = Boolean(slot && !same(slot.draft, slot.saved));
-  const anyDirty = Object.values(slots).some((item) => !same(item.draft, item.saved));
+  const dirty = Boolean(slot && (!same(slot.draft, slot.saved) || !same(slot.form, slot.savedForm)));
+  const anyDirty = Object.values(slots).some((item) => (!same(item.draft, item.saved) || !same(item.form, item.savedForm)));
   useEffect(() => { onDirty?.(anyDirty); }, [anyDirty, onDirty]);
   const [width, height] = formatSize(format);
 
@@ -190,7 +210,7 @@ export function LabelDesigner({ initialKind, usedFormat = null, settingsVersion 
     if (!draftText || readOnly) return;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      templatesApi.preview(kind, format, JSON.parse(draftText) as LabelTemplate, controller.signal).then(dataUrl).then((url) => {
+      templatesApi.preview(kind, format, JSON.parse(draftText) as LabelTemplate, controller.signal, scope, slot?.form).then(dataUrl).then((url) => {
         if (!controller.signal.aborted) setPreview({ url, error: "" });
       }, (reason) => {
         if (controller.signal.aborted || isAborted(reason)) return;
@@ -198,12 +218,12 @@ export function LabelDesigner({ initialKind, usedFormat = null, settingsVersion 
       });
     }, PREVIEW_DELAY_MS);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [kind, format, draftText, readOnly]);
+  }, [scopeKey, format, draftText, readOnly, JSON.stringify(slot?.form)]);
 
   function setDraft(change: (elements: TemplateElement[]) => TemplateElement[]) {
     setSlots((all) => {
-      const target = all[slotKey(kind, format)];
-      return target ? { ...all, [slotKey(kind, format)]: { ...target, draft: { ...target.draft, elements: change(target.draft.elements) } } } : all;
+      const target = all[slotKey(scopeKey, format)];
+      return target ? { ...all, [slotKey(scopeKey, format)]: { ...target, draft: { ...target.draft, elements: change(target.draft.elements) } } } : all;
     });
     setNotice("");
   }
@@ -257,9 +277,9 @@ export function LabelDesigner({ initialKind, usedFormat = null, settingsVersion 
   async function reloadFormat() {
     setBusy("reload"); setError(""); setNotice("");
     try {
-      const answer = await templatesApi.load(kind);
-      setFields((all) => ({ ...all, [kind]: answer.fields ?? [] }));
-      setSlots((all) => ({ ...all, [slotKey(kind, format)]: asSlot(answer.formats[format]) }));
+      const answer = await templatesApi.load(kind, scope);
+      setFields((all) => ({ ...all, [scopeKey]: answer.fields ?? [] }));
+      setSlots((all) => ({ ...all, [slotKey(scopeKey, format)]: asSlot(answer.formats[format]) }));
       setSelected("");
     } catch (reason) {
       setError(failureText(reason, "Шаблон не загрузился"));
@@ -268,10 +288,11 @@ export function LabelDesigner({ initialKind, usedFormat = null, settingsVersion 
 
   async function save() {
     if (!slot) return;
+    if (slot.form && Object.values(slot.form).some(value => !value.trim())) {setError("Заполните все реквизиты формы или уберите их"); return;}
     setBusy("save"); setError(""); setNotice("");
     try {
-      const answer = await templatesApi.save(kind, format, slot.draft, slot.version);
-      setSlots((all) => ({ ...all, [slotKey(kind, format)]: asSlot(answer) }));
+      const answer = await templatesApi.save(kind, format, slot.draft, slot.version, scope, slot.form);
+      setSlots((all) => ({ ...all, [slotKey(scopeKey, format)]: asSlot(answer) }));
       setNotice("Шаблон сохранён");
     } catch (reason) {
       setError(reason instanceof ApiError && reason.status === 409 ? STALE : failureText(reason, "Шаблон не сохранился"));
@@ -282,8 +303,8 @@ export function LabelDesigner({ initialKind, usedFormat = null, settingsVersion 
     setConfirmReset(false);
     setBusy("reset"); setError(""); setNotice("");
     try {
-      const answer = await templatesApi.reset(kind, format);
-      setSlots((all) => ({ ...all, [slotKey(kind, format)]: asSlot(answer) }));
+      const answer = await templatesApi.reset(kind, format, scope, slot.version);
+      setSlots((all) => ({ ...all, [slotKey(scopeKey, format)]: asSlot(answer) }));
       setSelected("");
       setNotice("Шаблон сброшен к стандартному");
     } catch (reason) {
@@ -291,12 +312,26 @@ export function LabelDesigner({ initialKind, usedFormat = null, settingsVersion 
     } finally { setBusy(""); }
   }
 
-  const switchKind = (next: LabelKind) => { setKind(next); setSelected(""); setError(""); setNotice(""); setPreview({ url: "", error: "" }); };
-  const switchFormat = (next: LabelFormat) => { formatChosen.current = true; setFormat(next); setSelected(""); setError(""); setNotice(""); setPreview({ url: "", error: "" }); };
-  const dirtyIn = (item: LabelFormat) => { const other = slots[slotKey(kind, item)]; return Boolean(other && !same(other.draft, other.saved)); };
+  const switchKind = (next: LabelKind) => { if(next===kind)return; setTestResult(null); setKind(next); setSelected(""); setError(""); setNotice(""); setPreview({ url: "", error: "" }); };
+  const switchFormat = (next: LabelFormat) => { formatChosen.current = true; if(next===format)return; setTestResult(null); setFormat(next); setSelected(""); setError(""); setNotice(""); setPreview({ url: "", error: "" }); };
+  const dirtyIn = (item: LabelFormat) => { const other = slots[slotKey(scopeKey, item)]; return Boolean(other && (!same(other.draft, other.saved) || !same(other.form, other.savedForm))); };
 
+  async function testPrint() {
+    setTesting(true); setError(""); setTestResult(null);
+    try { setTestResult(await templatesApi.test(kind, format, scope)); }
+    catch(reason) { setError(failureText(reason, "Пробная этикетка не отправлена")); }
+    finally { setTesting(false); }
+  }
+  const setForm = (field: keyof FormMetadata, value: string) => setSlots(all => {
+    const target = all[slotKey(scopeKey,format)];
+    return target ? {...all,[slotKey(scopeKey,format)]: {...target,form:{form_id:"",form_revision:"",form_effective_date:"",...target.form,[field]:value}}} : all;
+  });
   return <section className="label-designer" aria-label="Шаблон этикетки" onKeyDown={keyDown}>
     <div className="ld-bar">
+      {kind !== "instrument" && <label className="ld-category">Категория ГРН<select aria-label="Категория ГРН" value={category} disabled={Boolean(busy) || testing}
+        onChange={(event) => { if (event.target.value === category) return; setCategory(event.target.value as GrnCategory | ""); setSelected(""); setError(""); setNotice(""); setPreview({ url: "", error: "" }); setTestResult(null); }}>
+        <option value="">Исторические этикетки (ГП, OLD)</option>{GRN_CATEGORIES.map(([code, name]) => <option key={code} value={code}>{name} · {code}</option>)}
+      </select></label>}
       <div className="seg-tabs" role="tablist" aria-label="Какая этикетка">
         {LABEL_KINDS.map(([key, label]) => <button key={key} type="button" role="tab" aria-selected={kind === key} className={kind === key ? "on" : undefined}
           onClick={() => switchKind(key)}>{label}</button>)}
@@ -307,11 +342,20 @@ export function LabelDesigner({ initialKind, usedFormat = null, settingsVersion 
       </div>
       {slot && <span className="ld-state muted">{slot.isDefault ? "Стандартный шаблон" : "Свой шаблон"}{dirty ? " · не сохранено" : ""}</span>}
       {!readOnly && slot && <div className="ld-actions">
-        <button type="button" className="secondary small" disabled={!dirty || Boolean(busy)} onClick={() => { setDraft(() => slot.saved.elements); setSelected(""); }}>Отменить изменения</button>
+        <button type="button" className="secondary small" disabled={!dirty || Boolean(busy)} onClick={() => { setSlots(all => ({...all,[slotKey(scopeKey,format)]:{...slot,draft:slot.saved,form:slot.savedForm}})); setSelected(""); }}>Отменить изменения</button>
         <button type="button" className="secondary small" disabled={slot.isDefault || Boolean(busy)} onClick={() => setConfirmReset(true)}>Сбросить к стандартному</button>
         <button type="button" className="primary small" disabled={!dirty || Boolean(busy)} onClick={() => void save()}>{busy === "save" ? "Сохраняю…" : "Сохранить"}</button>
+        <button type="button" className="secondary small" disabled={dirty || Boolean(busy) || testing || Boolean(preview.error)} onClick={() => void testPrint()}
+          title={dirty ? "Сначала сохраните шаблон" : "Пробная этикетка этой категории и размера"}>{testing ? "Отправляю…" : "Пробная по шаблону"}</button>
       </div>}
     </div>
+    {slot && category && <div className="grn-form-metadata">
+      <label>Номер утверждённой формы<input disabled={readOnly} maxLength={128} value={slot.form?.form_id ?? ""} onChange={event=>setForm("form_id",event.target.value)}/></label>
+      <label>Редакция формы<input disabled={readOnly} maxLength={64} value={slot.form?.form_revision ?? ""} onChange={event=>setForm("form_revision",event.target.value)}/></label>
+      <label>Дата введения формы<input disabled={readOnly} type="date" value={slot.form?.form_effective_date ?? ""} onChange={event=>setForm("form_effective_date",event.target.value)}/></label>
+      {!readOnly && slot.form && <button type="button" className="secondary small" onClick={()=>setSlots(all=>({...all,[slotKey(scopeKey,format)]:{...slot,form:null}}))}>Убрать реквизиты формы</button>}
+    </div>}
+    <PrintOutcome result={testResult} error=""/>
     {error && <div className="error-banner" role="alert">{error}{error === STALE && <button type="button" className="secondary small ld-reload" disabled={Boolean(busy)} onClick={() => void reloadFormat()}>Обновить</button>}</div>}
     {notice && <div className="success-banner" role="status">{notice}</div>}
     {loadError ? <div className="error-banner" role="alert">{loadError}</div> : !slot ? <div className="empty">Загрузка…</div> :

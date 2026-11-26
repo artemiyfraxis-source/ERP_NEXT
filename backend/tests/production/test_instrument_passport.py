@@ -77,6 +77,18 @@ def test_capture_date_takes_precedence_over_earlier_calibration_date():
     assert characterization(file).measurement_date == "Замер 17.11.26"
 
 
+@pytest.mark.parametrize("captured", ["2026-10-31T22:30:00+00:00", "2026-10-31T22:30:00Z",
+                                       "2026-11-01T01:30:00+03:00", "2026-11-01T01:30:00"])
+def test_capture_date_uses_moscow_day_and_preserves_naive_local_time(captured):
+    file = measured_file(header=f"! calibration=2026-10-30T12:00:00; captured={captured}\n")
+    assert characterization(file).measurement_date == "Замер 01.11.26"
+
+
+def test_capture_date_outside_moscow_datetime_range_keeps_legacy_date_fallback():
+    file = measured_file(header="! captured=9999-12-31T23:30:00+00:00\n")
+    assert characterization(file).measured_on.isoformat() == "9999-12-31"
+
+
 def test_explicit_offline_synthetic_marker_is_never_a_measurement():
     assert characterization(measured_file(header="! SYNTHETIC OFFLINE DATA - NOT A MEASUREMENT\n")) is None
 

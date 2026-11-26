@@ -259,7 +259,10 @@ def test_only_the_warehouse_on_edit_writes_off(machines_api, as_person):
     storekeeper = as_person({"warehouse": "edit"})
     listed = storekeeper.get(BASE).json()
     assert (listed["can_edit"], listed["can_issue"], listed["can_decide"]) == (False, True, True)
-    assert storekeeper.get(f"{BASE}/options").status_code == 403  # starting a job stays Производство / Задания
+    # The storekeeper reads «Оборудование» (the label-printer card), so the read-only options open; starting a job
+    # stays Производство / Задания.
+    assert storekeeper.get(f"{BASE}/options").status_code == 200
+    assert storekeeper.post(BASE, json={}).status_code == 403
     done = storekeeper.post(f"{BASE}/{second['id']}/material/issue", json=issue)
     assert done.status_code == 200, done.text
     assert _writeoffs(sessions)[0].actor_name == "Кладовщик Тест"

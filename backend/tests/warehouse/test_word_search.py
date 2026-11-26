@@ -51,8 +51,8 @@ def test_a_word_without_digits_matches_from_a_word_start():
 
 
 def _add(client):
-    response = client.post("/api/stock/batches", json={"items": [{
-        "warehouse": "ЦАР", "article": "0430250600", "name": "Разъём Molex", "quantity": "2",
+    response = client.post("/api/stock/batches", json={"operation_id": "7d0a5a11-0000-4000-8000-000000000003", "items": [{
+        "grn_category": "PPM", "warehouse": "ЦАР", "article": "0430250600", "name": "Разъём Molex", "quantity": "2",
         "storage_location": "2A1",
     }]})
     assert response.status_code == 200, response.text

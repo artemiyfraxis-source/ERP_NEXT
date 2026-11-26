@@ -267,7 +267,7 @@ def test_finished_good_partial_shipment_and_close_gates(shipping_api):
     closed = client.post(f"/api/shipping/shipments/{shipment['id']}/ship", json={"version": shipment["version"]})
 
     assert created.status_code == 200
-    assert good["grn"] == "ГП.26.0000001"
+    assert good["grn"] == "FRX.26.000001"
     assert shipment["lines"][0]["requested"] == "10"
     assert shipment["lines"][0]["picked"] == "6"
     assert shipment["lines"][0]["shortage"] == "4"
@@ -436,7 +436,7 @@ def test_creating_shipment_picks_available_stock_and_packs_documents_at_once(shi
     assert made.status_code == 200
     assert shipment["status"] == "Упакована"
     assert shipment["lines"][0]["picked"] == "4"
-    assert shipment["lines"][0]["grn"] == "ГП.26.0000001"
+    assert shipment["lines"][0]["grn"] == "FRX.26.000001"
     assert shipment["pl_number"] == "PL591К.3-1"
     assert shipment["dn_number"] == "DN591К.3-1"
     assert shipment["packed_at"] == "2026-09-22"

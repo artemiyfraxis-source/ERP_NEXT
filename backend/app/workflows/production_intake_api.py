@@ -36,6 +36,7 @@ def list_intake(
     intake: Annotated[Callable[[], object], Depends(_intake)],
 ) -> dict:
     """КБ открытых проектов, пока заказанное не уехало целиком; `remaining` — сдано цехом и ещё не принято."""
+    from .receiving_stock import GRN_FIELDS, json_value
     return {"rows": [{
         "project": row.project, "customer": row.customer,
         "deadline": row.deadline.isoformat() if row.deadline else None,
@@ -53,6 +54,7 @@ def list_intake(
         "good_id": str(row.good.id) if row.good else None, "good_version": row.good.version if row.good else None,
         "grn": row.good.grn if row.good else None, "location": row.location,
         "acts": [{
+            **{name: json_value(getattr(act, name)) for name in GRN_FIELDS},
             "grn": act.grn, "quantity": _number(act.net), "received_at": act.received_at.isoformat(), "location": act.location,
             "actor": act.actor,
         } for act in row.acts],

@@ -192,6 +192,13 @@ class InspectionInput:
     # КОЛ-ВО БРАКА (owner 24.10.2026): how many pieces of the fact are defective — a record for «Брак, ₽», it never
     # changes the accepted quantity or stock. Required with «Механическое повреждение / брак», absent without it.
     defect_quantity: Decimal | None = None
+    grn_category: str | None = None
+    grn_context: dict | None = None
+    expiry_required: bool = False
+    quality_state: str | None = None
+    quality_basis: str = ""
+    quality_authorized: bool = False  # Internal capability supplied by the authenticated API.
+    historical_verdict: bool = False
 
 
 # RC-9: акты приёмки (Config.gs DOC_TYPES): вид → (префикс номера, заголовок).
@@ -504,6 +511,18 @@ class ReceivingLine:
     # КОЛ-ВО БРАКА of the last ВК (InspectionInput.defect_quantity); NULL on a brak line inspected before 24.10.2026.
     defect_quantity: Decimal | None = None
 
+    grn_id: UUID | None = None
+    grn_category: str | None = None
+    grn_context: dict | None = None
+    grn_contract_version: int | None = None
+    material_owner_id: UUID | None = None
+    quality_state: str | None = None
+    quality_basis: str | None = None
+    quality_decided_by: UUID | None = None
+    quality_decided_at: datetime | None = None
+    quality_version: int | None = None
+    expiry_required: bool | None = None
+
     @property
     def shipping_document_pending(self) -> bool:
         """Inspected without УПД (no file, no №) — non-blocking note until «Внести УПД» adds it."""
@@ -769,6 +788,14 @@ class ReceivingLine:
             shipping_document_url=self.shipping_document_url,
             revision_of_id=self.id,
             revision_root_id=self.lineage_root_id,
+            supplier_returns=self.supplier_returns,
+            grn=self.grn, package=self.package,
+            grn_id=self.grn_id, grn_category=self.grn_category, grn_context=self.grn_context,
+            grn_contract_version=self.grn_contract_version, material_owner_id=self.material_owner_id,
+            quality_state="IQH" if self.grn_contract_version else None,
+            quality_version=(self.quality_version or 0) + 1 if self.grn_contract_version else None,
+            expiry_required=self.expiry_required, expiry_date=self.expiry_date,
+            order_number=self.order_number,
         )
         return archived, revision
 
@@ -805,6 +832,14 @@ class ReceivingLine:
             nonconformity_description=f"{previous}; {basis}" if previous else basis,
             supplier_returns=self.supplier_returns + 1,
             warehouse_event_emitted=False if wait else self.warehouse_event_emitted,
+            # A replacement is a new physical receipt, even though it reuses the purchase line.
+            **({"grn": None, "grn_id": None, "grn_category": None, "grn_context": None,
+                "grn_contract_version": None, "material_owner_id": None, "quality_state": None,
+                "quality_version": None, "quality_basis": None, "quality_decided_by": None,
+                "quality_decided_at": None, "expiry_required": None,
+                "vk_act_number": "", "vk_act_date": None, "nc_act_number": "", "nc_act_date": None,
+                "complaint_act_number": "", "complaint_act_date": None,
+                "use_permit_number": "", "use_permit_date": None, "storage_location": None} if wait else {}),
         )
 
     def _split_copy(self, *, legacy_id: str, now: datetime, key: str) -> ReceivingLine:
@@ -912,6 +947,7 @@ class ReceivingLine:
     def ready_for_warehouse(self) -> bool:
         return bool(
             self.status is ReceivingStatus.ACCEPTED
+            and (self.grn_contract_version is None or self.quality_state in {"RELEASED", "NOT_REQUIRED"})
             and self.grn
             and self.storage_location
             and self.accepted_quantity

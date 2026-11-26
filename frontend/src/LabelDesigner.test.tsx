@@ -33,10 +33,10 @@ function stage(routes: Record<string, (call: Call) => Response> = {}) {
     calls.push(call);
     const route = routes[`${call.method} ${call.path}`];
     if (route) return route(call);
-    const template = call.path.match(/^\/api\/stock\/labels\/templates\/(\w+)(?:\/([\dx]+))?(\/preview)?$/);
+    const template = call.path.split("?")[0].match(/^\/api\/stock\/labels\/templates\/(\w+)(?:\/([\dx]+))?(\/preview)?$/);
     if (template && call.method === "GET" && !template[2]) return json(answer(template[1]));
     if (template?.[3] && call.method === "POST") return new Response(new TextEncoder().encode("png"), { headers: { "Content-Type": "image/png" } });
-    if (template && call.method === "PUT") return json({ template: call.body?.template, is_default: false, version: 4 });
+    if (template && call.method === "PUT") return json({ template: call.body?.template, form:call.body?.form, is_default: false, version: 4 });
     if (template && call.method === "DELETE") return json(DEFAULT);
     if (call.path === "/api/stock/labels/settings") return json({ settings: SETTINGS, code_types: { qr: "QR-код", code128: "Штрихкод Code128", both: "QR и Code128" }, copies_max: 50 });
     if (call.path === "/api/stock/labels/agent/status") return json(AGENT);
@@ -100,27 +100,17 @@ it("follows the effective format of each kind, including cached instrument defau
   expect(calls.filter((call) => call.path === "/api/stock/labels/templates/instrument")).toHaveLength(1);
 });
 
-it("refreshes effective formats after saving unchanged printer dimensions and preserves explicit draft choice", async () => {
+it("refreshes effective formats after printer settings change and preserves an explicit draft choice", async () => {
   let saved = false;
-  stage({
-    "GET /api/stock/labels/templates/instrument": () => json({ ...answer("instrument"), current_format: saved ? "58x40" : "58x30" }),
-    "PUT /api/stock/labels/settings": () => { saved = true; return json({ settings: SETTINGS }); },
-  });
-  render(<PrintSetupWindow kind="instrument" close={() => undefined} />);
-  await screen.findByRole("status", { name: "Агент печати" });
-  fireEvent.click(screen.getByRole("tab", { name: "Шаблон этикетки" }));
-  await waitFor(() => expect(screen.getByRole("tab", { name: /58 × 30/ })).toHaveTextContent("используется"));
-  fireEvent.click(screen.getByRole("tab", { name: /58 × 30/ }));
-  fireEvent.click(screen.getByRole("button", { name: "+ Текст" }));
-  expect(screen.getByRole("button", { name: "Текст: Текст" })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("tab", { name: "Принтер" }));
-  fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
-  await waitFor(() => expect(saved).toBe(true));
-  fireEvent.click(screen.getByRole("tab", { name: "Шаблон этикетки" }));
-  await waitFor(() => expect(screen.getByRole("tab", { name: /58 × 40/ })).toHaveTextContent("используется"));
-  expect(screen.getByRole("tab", { name: /58 × 30/ })).toHaveAttribute("aria-selected", "true");
-  expect(screen.getByRole("button", { name: "Текст: Текст" })).toBeInTheDocument();
-  expect(screen.getByText(/не сохранено/)).toBeInTheDocument();
+  stage({"GET /api/stock/labels/templates/instrument": () => json({...answer("instrument"),current_format:saved?"58x40":"58x30"})});
+  const view = render(<LabelDesigner initialKind="instrument" settingsVersion={0}/>);
+  await waitFor(()=>expect(screen.getByRole("tab",{name:/58 × 30/})).toHaveTextContent("используется"));
+  fireEvent.click(screen.getByRole("tab",{name:/58 × 30/}));
+  fireEvent.click(screen.getByRole("button",{name:"+ Текст"}));
+  saved=true;view.rerender(<LabelDesigner initialKind="instrument" settingsVersion={1}/>);
+  await waitFor(()=>expect(screen.getByRole("tab",{name:/58 × 40/})).toHaveTextContent("используется"));
+  expect(screen.getByRole("tab",{name:/58 × 30/})).toHaveAttribute("aria-selected","true");
+  expect(screen.getByRole("button",{name:"Текст: Текст"})).toBeInTheDocument();
 });
 
 it("snaps to 0.5 mm and makes new elements inside the label", () => {
@@ -193,7 +183,7 @@ it("edits properties and «Сохранить» sends the template with its vers
   expect(await screen.findByText("Шаблон сохранён")).toBeInTheDocument();
   const put = calls.find((call) => call.method === "PUT")!;
   expect(put.path).toBe("/api/stock/labels/templates/lot/58x40");
-  expect(put.body).toEqual({ template: { elements: [{ ...GRN, font_mm: 6.5, h_mm: 38, align: "center", bold: false, fit: "ellipsis", max_lines: 4 }] }, version: 3 });
+  expect(put.body).toEqual({ form:null, template: { elements: [{ ...GRN, font_mm: 6.5, h_mm: 38, align: "center", bold: false, fit: "ellipsis", max_lines: 4 }] }, version: 3 });
   expect(screen.getByRole("button", { name: "Сохранить" })).toBeDisabled();
 
   // The next save carries the version the server returned.
@@ -290,8 +280,7 @@ async function openTemplateTab() {
   const dialog = within(await screen.findByRole("dialog", { name: "Настройка печати этикеток" }));
   expect(await dialog.findByRole("region", { name: "Печать этикеток ГРН" })).toBeInTheDocument();
   expect(await dialog.findByRole("status", { name: "Агент печати" })).toHaveTextContent("принтер TSC MB341");
-  fireEvent.click(dialog.getByRole("tab", { name: "Шаблон этикетки" }));
-  await dialog.findByRole("button", { name: "Поле: ГРН" });
+  expect(dialog.getByRole("link",{name:"Шаблоны этикеток в карточке принтера"})).toBeInTheDocument();
   return dialog;
 }
 
@@ -299,8 +288,7 @@ it("«Склад» → «Настройка печати»: the printer and the 
   stage();
   render(<WarehousePage />);
   const dialog = await openTemplateTab();
-  expect(dialog.getByRole("tab", { name: "Партия склада" })).toHaveAttribute("aria-selected", "true");
-  expect(dialog.getByRole("tab", { name: /58 × 40/ })).toHaveTextContent("используется");
+  expect(dialog.getByRole("link",{name:"Шаблоны этикеток в карточке принтера"})).toHaveAttribute("href",expect.stringContaining("printer=labels"));
 });
 
 const keeper = (permissions: Principal["permissions"]) => ({
@@ -312,8 +300,7 @@ it("«Приёмка с производства» → «Настройка пе
   stage();
   const { unmount } = render(<ProductionIntakePage principal={keeper({ shipping_goods: "edit", warehouse: "edit" })} />);
   const dialog = await openTemplateTab();
-  expect(dialog.getByRole("tab", { name: "Приёмка с производства" })).toHaveAttribute("aria-selected", "true");
-  expect(calls.some((call) => call.path === "/api/stock/labels/templates/intake")).toBe(true);
+  expect(dialog.getByRole("link",{name:"Шаблоны этикеток в карточке принтера"})).toHaveAttribute("href",expect.stringContaining("label_kind=intake"));
   unmount();
 
   render(<ProductionIntakePage principal={keeper({ shipping_goods: "edit" })} />);
@@ -321,18 +308,14 @@ it("«Приёмка с производства» → «Настройка пе
   expect(screen.queryByRole("button", { name: "Настройка печати" })).not.toBeInTheDocument();
 });
 
-it("closing with unsaved template edits asks first", async () => {
-  stage();
-  render(<WarehousePage />);
-  const dialog = await openTemplateTab();
-  fireEvent.click(dialog.getByRole("button", { name: "+ Линия" }));
-  fireEvent.click(dialog.getByRole("button", { name: "Закрыть" }));
-  const ask = within(await screen.findByRole("dialog", { name: "Несохранённый шаблон" }));
-  fireEvent.click(ask.getByRole("button", { name: "Вернуться к шаблону" }));
-  expect(screen.getByRole("dialog", { name: "Настройка печати этикеток" })).toBeInTheDocument();
-  fireEvent.click(dialog.getByRole("button", { name: "Закрыть" }));
-  fireEvent.click(within(await screen.findByRole("dialog", { name: "Несохранённый шаблон" })).getByRole("button", { name: "Закрыть без сохранения" }));
-  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Настройка печати этикеток" })).not.toBeInTheDocument());
+it("reports unsaved edits to the equipment card so it can guard closing", async () => {
+  stage(); const onDirty=vi.fn();
+  render(<LabelDesigner initialKind="lot" onDirty={onDirty}/>);
+  await screen.findByRole("button",{name:"Поле: ГРН"});
+  fireEvent.click(screen.getByRole("button",{name:"+ Линия"}));
+  await waitFor(()=>expect(onDirty).toHaveBeenLastCalledWith(true));
+  fireEvent.click(screen.getByRole("button",{name:"Отменить изменения"}));
+  await waitFor(()=>expect(onDirty).toHaveBeenLastCalledWith(false));
 });
 
 it("«Оборудование» keeps the ТСД card; the label printer is gone from it", async () => {
@@ -359,4 +342,49 @@ it("grows a text box to hold its «Строк», and says when a box is too low 
   expect(props().getByRole("status")).toHaveTextContent("В высоту 8 мм помещается строк: 1 из 2");
   fireEvent.click(props().getByRole("button", { name: "Подогнать высоту" }));
   expect(props().getByLabelText("Высота, мм")).toHaveValue("14");
+});
+
+it("scopes drafts, metadata, preview, reset and test print by category and printer", async () => {
+  stage();
+  render(<LabelDesigner initialKind="lot" initialCategory="PPM" printerName="TSC MB341"/>);
+  await screen.findByRole("button",{name:"Поле: ГРН"});
+  fireEvent.click(screen.getByRole("button",{name:"+ Текст"}));
+  fireEvent.change(screen.getByLabelText("Категория ГРН",{exact:true}),{target:{value:"R&D"}});
+  await waitFor(()=>expect(calls.some(call=>new URL(call.path,"http://test").searchParams.get("category")==="R&D")).toBe(true));
+  await screen.findByRole("button",{name:"Поле: ГРН"});
+  expect(screen.queryByRole("button",{name:"Текст: Текст"})).toBeNull();
+  fireEvent.change(screen.getByLabelText("Номер утверждённой формы"),{target:{value:"Ф-1"}});
+  fireEvent.change(screen.getByLabelText("Редакция формы"),{target:{value:"2"}});
+  fireEvent.change(screen.getByLabelText("Дата введения формы"),{target:{value:"2026-11-23"}});
+  fireEvent.click(screen.getByRole("button",{name:"Сохранить"}));
+  await screen.findByText("Шаблон сохранён");
+  const saved=calls.find(call=>call.method==="PUT")!;
+  expect(new URL(saved.path,"http://test").searchParams.get("category")).toBe("R&D");
+  expect(new URL(saved.path,"http://test").searchParams.get("printer_name")).toBe("TSC MB341");
+  expect(saved.body?.form).toEqual({form_id:"Ф-1",form_revision:"2",form_effective_date:"2026-11-23"});
+  fireEvent.change(screen.getByLabelText("Редакция формы"),{target:{value:"3"}});
+  fireEvent.click(screen.getByRole("button",{name:"Отменить изменения"}));
+  expect(screen.getByLabelText("Редакция формы")).toHaveValue("2");
+  await waitFor(()=>expect(calls.some(call=>new URL(call.path,"http://test").pathname.endsWith("/preview")&&new URL(call.path,"http://test").searchParams.get("category")==="R&D")).toBe(true));
+  fireEvent.click(screen.getByRole("button",{name:"Пробная по шаблону"}));
+  await waitFor(()=>expect(calls.some(call=>new URL(call.path,"http://test").pathname.endsWith("/test")&&new URL(call.path,"http://test").searchParams.get("category")==="R&D")).toBe(true));
+  fireEvent.click(screen.getByRole("button",{name:"Сбросить к стандартному"}));
+  fireEvent.click(within(await screen.findByRole("dialog",{name:"Сбросить шаблон"})).getByRole("button",{name:"Сбросить"}));
+  await screen.findByText("Шаблон сброшен к стандартному");
+  const reset=calls.find(call=>call.method==="DELETE")!;
+  expect(new URL(reset.path,"http://test").searchParams.get("version")).toBe("4");
+  expect(new URL(reset.path,"http://test").searchParams.get("category")).toBe("R&D");
+  fireEvent.change(screen.getByLabelText("Категория ГРН",{exact:true}),{target:{value:"PPM"}});
+  expect(await screen.findByRole("button",{name:"Текст: Текст"})).toBeInTheDocument();
+});
+
+it("historical labels load without a printer profile: the API takes one only with a GRN category", async () => {
+  stage();
+  render(<LabelDesigner initialKind="lot" initialCategory="PPM" printerName="TSC MB341"/>);
+  await screen.findByRole("button",{name:"Поле: ГРН"});
+  fireEvent.change(screen.getByLabelText("Категория ГРН",{exact:true}),{target:{value:""}});
+  await waitFor(()=>expect(calls.some(call=>call.method==="GET"&&!new URL(call.path,"http://test").searchParams.has("category"))).toBe(true));
+  const historical=calls.filter(call=>!new URL(call.path,"http://test").searchParams.has("category"));
+  expect(historical.every(call=>!new URL(call.path,"http://test").searchParams.has("printer_name"))).toBe(true);
+  expect(screen.queryByLabelText("Номер утверждённой формы")).toBeNull();
 });

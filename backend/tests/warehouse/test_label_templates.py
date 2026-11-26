@@ -24,9 +24,11 @@ from tests.view_access import as_viewer
 from tests.warehouse.test_api import warehouse_api  # noqa: F401 — fixture
 
 LOT_KEYS = ["grn", "quantity", "name", "article", "place", "warehouse", "place_warehouse", "manufacturer_place",
-            "received", "series", "received_series", "manufacturer", "purpose"]
+            "received", "series", "received_series", "manufacturer", "purpose", "category", "expiry", "quality",
+            "quality_basis", "owner", "context", "form_footer", "passport", "receipt_quality", "article_quantity"]
 INTAKE_KEYS = ["grn", "quantity", "name", "project", "item_index", "project_item", "place", "warehouse",
-               "place_warehouse", "received"]
+               "place_warehouse", "received", "category", "expiry", "quality", "quality_basis", "owner", "context",
+               "form_footer", "passport", "receipt_quality", "article", "manufacturer", "series", "purpose", "article_quantity"]
 
 
 def element(**values) -> dict:

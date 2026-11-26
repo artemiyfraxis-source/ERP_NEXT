@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from app.modules.shipping.api import _good_result, _number, _run
+from app.modules.shipping.api import _good_result as _base_good_result, _number, _run
 from app.modules.shipping.domain import GOODS_STATE_LABELS, MOVE_KIND_LABELS, GoodsState
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, shipping_view_principal, shipping_warehouse_principal
@@ -35,6 +35,23 @@ from .finished_goods import (
 
 router = APIRouter(prefix="/api/shipping", tags=["shipping"])
 Quantity = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
+
+
+def _good_result(good):
+    from .receiving_stock import GRN_FIELDS, json_value
+    return {**_base_good_result(good), **{name: json_value(getattr(good, name)) for name in GRN_FIELDS}}
+
+
+@router.get("/finished-goods/{good_id}/acts")
+def acceptance_acts(good_id: UUID, request: Request,
+                    _principal: Annotated[Principal, Depends(shipping_view_principal)]) -> dict:
+    from .receiving_stock import GRN_FIELDS, json_value
+    with _flow(request)() as uow:
+        if uow.goods.get(good_id) is None:
+            raise HTTPException(status_code=404, detail="Позиция готовой продукции не найдена")
+        return {"acts": [{"id": str(act.id), "grn": act.grn, "quantity": _number(act.net),
+                          **{name: json_value(getattr(act, name)) for name in GRN_FIELDS}}
+                         for act in uow.goods.acts([good_id]).get(good_id, ())]}
 
 
 class AcceptOnePayload(BaseModel):
