@@ -103,7 +103,7 @@ export const REQUIRED_STOCK_COLUMNS: readonly ColumnKey[] = ["name", "available"
 /** «Свободно» and the place never sit right of «Наименование»: on a 16" screen a wide personal view ends near the name,
  *  and the stock must stay in the first screen (owner, prod check 26.11.2026). Earlier positions are kept. */
 export function stockInView(order: ColumnKey[]): ColumnKey[] {
-  const late = order.slice(order.indexOf("name") + 1).filter((key) => key === "available" || key === "place");
+  const late: ColumnKey[] = order.slice(order.indexOf("name") + 1).filter((key) => key === "available" || key === "place");
   if (!order.includes("name") || !late.length) return order;
   const rest = order.filter((key) => !late.includes(key));
   const at = rest.indexOf("name") + 1;
