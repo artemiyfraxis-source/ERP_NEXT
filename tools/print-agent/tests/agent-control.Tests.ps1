@@ -43,7 +43,10 @@ function Invoke-FakeS2Io {
         if ($Path -eq $script:rejectPath) { return }
         if ($Path -eq 'MMEMory.STORe.STATe') { [IO.File]::WriteAllText($Value,'original state'); return }
         if ($Path -eq 'MMEMory.LOAD.STATe') {
+            # Like S2VNA 26.2.2 (СИ.002, 26.11): a state file does not carry the sweep trigger — it keeps the current one.
+            $trigger = @{}; foreach ($key in 'INITiate(1).CONTinuous','TRIGger.SEQuence.SOURce') { $trigger[$key] = $script:ioValues[$key] }
             $script:ioValues = $script:originalValues.Clone(); $script:selected = 2
+            foreach ($key in $trigger.Keys) { $script:ioValues[$key] = $trigger[$key] }
             return
         }
         $script:ioValues[$Path] = $Value; return

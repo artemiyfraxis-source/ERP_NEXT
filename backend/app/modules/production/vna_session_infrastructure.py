@@ -272,6 +272,14 @@ class VnaSessionRepository:
             self._abort(row, now)
         elif action == "recover" and row.state == "recovery_required":
             self._abort(row, now)
+        elif action == "release_unrestored" and row.state == "recovery_required" and protocol(row) == 2:
+            # Admin escape when restoring keeps failing: the agent stops controlling the VNA without loading the
+            # operator's backup (its settings are checked by hand); the session ends `aborted` on the receipt.
+            self._change(row, now, state="aborting", error="")
+            self.session.execute(update(VnaCommandRow).where(
+                VnaCommandRow.session_id == row.id, VnaCommandRow.status.in_(("pending", "claimed")),
+            ).values(status="cancelled", finished_at=now))
+            self._enqueue(row, "release", {"screen_hash": None}, now)
         else:
             raise domain.SessionConflict("Действие недоступно на текущем шаге")
 
@@ -360,7 +368,7 @@ class VnaSessionRepository:
             if command.result_hash != digest:
                 raise domain.SessionConflict("Повторный ответ отличается от сохранённого")
             return None  # Lost HTTP acknowledgement: no state mutation, no second artifact or execution.
-        if command.status != "claimed" or (row.state == "aborting" and command.op not in ("abort", "restore")):
+        if command.status != "claimed" or (row.state == "aborting" and command.op not in ("abort", "restore", "release")):
             raise domain.SessionConflict("Команда не ожидает результат")
         self.expect(row, version, step)
         state = row.state

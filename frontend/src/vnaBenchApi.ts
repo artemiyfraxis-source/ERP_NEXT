@@ -191,6 +191,10 @@ export interface VnaBenchSession {
   state?: string;
   /** Сеанс открыл этот пользователь: управлять им может только он. */
   owned?: boolean;
+  /** Остановить или восстановить сеанс может открывший его или администратор (чужой сеанс — с записью в журнал). */
+  can_recover?: boolean;
+  /** Администратор: закрыть сеанс без восстановления настроек S2VNA, когда восстановление не проходит. */
+  can_release_unrestored?: boolean;
   error?: string | null;
   started_at: string;
   operator: string | null;
@@ -303,6 +307,9 @@ export const vnaBenchApi = {
     post<VnaBenchState>(`/sessions/${id(sessionId)}/checks/${id(checkId)}/next`, { version }),
   /** Прервать текущую команду и вернуть прибор оператору. */
   abort: (sessionId: string, version: number) => post<VnaBenchState>(`/sessions/${id(sessionId)}/abort`, { version }),
+  /** Администратор: освободить ВАЦ без загрузки резервной копии оператора (восстановление не проходит). */
+  releaseUnrestored: (sessionId: string, version: number) =>
+    post<VnaBenchState>(`/sessions/${id(sessionId)}/release-unrestored`, { version }),
   /** «Показать на ВАЦ»: сохранённый экран — на S2VNA в откалиброванном сеансе, без развёртки; калибровка остаётся. */
   showScreen: (sessionId: string, version: number, screenId: string) =>
     post<VnaBenchState>(`/sessions/${id(sessionId)}/screen`, { version, screen_id: screenId }),

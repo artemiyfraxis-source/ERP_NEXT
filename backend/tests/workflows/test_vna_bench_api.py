@@ -17,7 +17,7 @@ from app.modules.production.rf_infrastructure import RfRepository
 from app.modules.production.rf_interfaces import RfDetails, RfInterface
 from app.modules.production.vna_check_infrastructure import VnaCheckRow
 from app.modules.production.vna_checks import KitStandard, kit_response
-from app.modules.production.vna_session_infrastructure import VnaBenchItemRow, VnaSessionRow
+from app.modules.production.vna_session_infrastructure import VnaBenchItemRow, VnaCommandRow, VnaSessionRow
 from app.modules.warehouse.devices import DeviceRow, VnaBindingRow, VnaControlRow
 from app.modules.warehouse.scan_agents import ScanAgentRow
 from app.shared.http_auth import Principal, authenticated_principal
@@ -733,6 +733,72 @@ def test_abort_returns_the_device_and_frees_the_lease(env):
     with env["sessions"]() as session:
         assert session.scalar(select(VnaSessionRow.state)) == "aborted"
     assert post(env, "/sessions")["session"]["status"] == "open"
+
+
+def _stuck(env, view, operator_id=None):
+    with env["sessions"]() as session:
+        row = session.get(VnaSessionRow, UUID(view["session"]["id"]))
+        row.state, row.error = "recovery_required", "Ответ ВАЦ потерян; требуется остановка и восстановление"
+        if operator_id is not None:
+            row.operator_id = operator_id
+        session.commit()
+    return state(env)
+
+
+def _events(env, event_type):
+    with env["sessions"]() as db:
+        return db.scalar(select(func.count()).select_from(AuditEventRow).where(AuditEventRow.event_type == event_type))
+
+
+def test_a_failing_restore_is_closed_without_restoring_by_an_admin(env):
+    """26.11 СИ.002: restore failed its readback, the session fell back to recovery_required and «Восстановить»
+    would loop. The admin closes it without loading the backup; the agent releases the VNA, the bench is free."""
+    view = _stuck(env, calibrate(env))
+    assert view["session"]["can_release_unrestored"] is True
+    env["stub"].errors["restore"] = "ВАЦ: проверка чтением не совпала: восстановленное состояние и назначения набора"
+    post(env, session_path(view, "/abort"), {"version": view["session"]["version"]})
+    env["stub"].drive()
+    view = state(env)
+    assert view["session"]["state"] == "recovery_required" and "проверка чтением" in view["session"]["error"]
+    post(env, session_path(view, "/release-unrestored"), {"version": view["session"]["version"]})
+    with env["sessions"]() as session:
+        command = session.scalars(select(VnaCommandRow).where(VnaCommandRow.status == "pending")).one()
+        assert (command.op, command.args["screen_hash"]) == ("release", None)
+    env["stub"].drive()
+    assert state(env)["session"] is None
+    with env["sessions"]() as session:
+        assert session.scalar(select(VnaSessionRow.state)) == "aborted"
+    assert _events(env, "production.vna_bench_closed_unrestored") == 1
+    assert post(env, "/sessions")["session"]["status"] == "open"
+
+
+def test_only_an_admin_closes_without_restoring_and_only_a_stuck_session(env, monkeypatch):
+    view = calibrate(env)
+    refused = post(env, session_path(view, "/release-unrestored"), {"version": view["session"]["version"]}, expect=409)
+    assert refused["detail"]["code"] == "stale"
+    view = _stuck(env, view)
+    with monkeypatch.context() as patch:
+        patch.setitem(app.dependency_overrides, authenticated_principal, lambda: Principal(
+            actor=Actor(id=uuid4(), name="Контролёр", department="ОТК"), email="qc@example.test",
+            roles=frozenset({"qc"}), permissions={"quality": "edit"}))
+        # Someone else's session is invisible to a controller: neither recovery nor the escape.
+        for tail in ("/abort", "/release-unrestored"):
+            assert env["admin"].post(URL + session_path(view, tail), json={"version": view["session"]["version"]},
+                                     headers=_csrf(env["admin"])).status_code == 404
+    assert _events(env, "production.vna_bench_closed_unrestored") == 0
+
+
+def test_an_admin_recovers_someone_elses_stuck_session_once(env):
+    """The opener is away: an administrator recovers the session (journaled); a double click is refused as stale."""
+    view = _stuck(env, calibrate(env), operator_id=uuid4())
+    assert view["session"]["owned"] is False and view["session"]["can_recover"] is True
+    version = view["session"]["version"]
+    post(env, session_path(view, "/abort"), {"version": version})
+    refused = post(env, session_path(view, "/abort"), {"version": version}, expect=409)
+    assert refused["detail"]["code"] == "stale"
+    assert _events(env, "production.vna_bench_session_stopped_by_admin") == 1
+    env["stub"].drive()
+    assert state(env)["session"] is None
 
 
 def test_a_lost_device_answer_is_recovered_from_the_card(env):
