@@ -477,20 +477,25 @@ def _record_command(command, uow, kind, lines, delivery_id=None):
                  "delivery_id": str(delivery_id) if delivery_id else None}))
 
 
+NO_QC_CATEGORIES = frozenset({"GOS", "PAM", "FRX", "R&D"})  # mirrors warehouse.grn.NO_QC_CATEGORIES
+
+
 def _quality(line, data, actor, now):
     if line.grn_contract_version is None:
         return line
-    state = data.quality_state or (
-        "RELEASED" if data.quality_authorized and line.status is ReceivingStatus.ACCEPTED
-        and not line.defect_quantity and not (line.expiry_required and line.expiry_date is None)
-        and not (line.expiry_date and line.expiry_date < now.date()) else "IQH")
-    basis = data.quality_basis.strip() or (f"Акт ВК {line.vk_act_number}" if state == "RELEASED"
-                                         and data.quality_authorized and data.quality_state is None else "")
+    # The ВК hold is for PPM/CSM/SUB only (owner); GOS/PAM/FRX/R&D start as «ВК не требуется» on the route's basis.
+    # An inspection act alone never releases a held place: release is an explicit ОТК decision (quality_state).
+    routed = (data.quality_state is None and line.grn_category in NO_QC_CATEGORIES
+              and line.status is ReceivingStatus.ACCEPTED and not line.defect_quantity
+              and not (line.expiry_required and line.expiry_date is None)
+              and not (line.expiry_date and line.expiry_date < now.date()))
+    state = data.quality_state or ("NOT_REQUIRED" if routed else "IQH")
+    basis = data.quality_basis.strip() or (f"ВК не требуется: маршрут {line.grn_category}" if routed else "")
     if state not in {"IQH", "QTN", "RELEASED", "REJECTED", "NOT_REQUIRED"}:
         raise ReceivingValidationError("Неизвестное решение ОТК")
     decided = state in {"RELEASED", "REJECTED", "NOT_REQUIRED"}
     if state == "NOT_REQUIRED":
-        if line.grn_category not in {"PAM", "GOS"}:
+        if line.grn_category not in NO_QC_CATEGORIES:
             raise ReceivingValidationError("Для этой категории входной контроль обязателен")
     elif state != "IQH" and not data.quality_authorized:
         raise ReceivingValidationError("Решение по качеству требует права на раздел «ОТК»")

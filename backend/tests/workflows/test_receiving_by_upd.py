@@ -403,7 +403,7 @@ def test_proposal_and_acceptance_of_a_upd_over_two_orders_keep_the_scan_and_reac
     scan = _scan(sessions)
     ticked = [item for item in body["lines"] if item["ticked"]]
     accepted = client.post("/api/receiving/upd/accept", json={
-        "lines": [{"grn_category": "PPM", "id": item["line"]["id"], "version": item["line"]["version"],
+        "lines": [{"grn_category": "PPM", "quality_state": "RELEASED", "quality_basis": "ОТК: годен", "id": item["line"]["id"], "version": item["line"]["version"],
                    "document_quantity": item["document_quantity"], "storage_location": "1F4"} for item in ticked],
         "document_number": "771", "document_date": "2026-10-20", "warehouse": "ЦАР", "scan_file": scan,
         "recognised": RECOGNISED,
@@ -460,7 +460,7 @@ def test_two_texts_of_one_supplier_are_accepted_together(stand):  # noqa: F811
     second = _waiting(sessions, 2, article="PH-3", supplier="ООО «Элитан»", order="З-2")
 
     accepted = client.post("/api/receiving/upd/accept", json={
-        "lines": [{"grn_category": "PPM", "id": str(first), "version": 1}, {"grn_category": "PPM", "id": str(second), "version": 1}], "recognised": RECOGNISED,
+        "lines": [{"grn_category": "PPM", "quality_state": "RELEASED", "quality_basis": "ОТК: годен", "id": str(first), "version": 1}, {"grn_category": "PPM", "quality_state": "RELEASED", "quality_basis": "ОТК: годен", "id": str(second), "version": 1}], "recognised": RECOGNISED,
         "document_number": "771", "document_date": "2026-10-20"})
 
     assert accepted.status_code == 200, accepted.text

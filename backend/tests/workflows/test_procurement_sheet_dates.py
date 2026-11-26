@@ -74,6 +74,7 @@ def inspect_on(db, line, quantity, day):
             inspection=InspectionInput(
                 grn_category="PPM",
                 quality_authorized=True,
+                quality_state="RELEASED", quality_basis="ОТК: годен",
                 fact_quantity=Decimal(quantity),
                 document_quantity=Decimal(quantity),
                 ordered_quantity=Decimal("0"),

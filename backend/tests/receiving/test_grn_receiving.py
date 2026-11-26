@@ -44,7 +44,7 @@ def test_new_receipt_requires_explicit_category_and_rolls_back(erp):
 def test_receiver_gets_identity_but_only_qc_can_release_without_upd(erp):
     receiving, warehouse, _ = erp
     line = consume_receiving_expected(expected_message(), receiving())
-    held = inspect_receiving(inspect_command(line, quality_authorized=False, shipping_document_url=None), receiving())
+    held = inspect_receiving(inspect_command(line, quality_authorized=False, quality_state=None, quality_basis="", shipping_document_url=None), receiving())
     assert held.grn == "PPM.26.000001" and held.grn_id
     assert held.quality_state == "IQH" and held.status is ReceivingStatus.WAITING
     assert counts(receiving) == (1, 0)
@@ -140,7 +140,7 @@ def test_no_release_of_expired_unknown_or_partially_defective_place(erp, changes
 def test_invalid_second_delivery_line_rolls_back_numbers_and_stock_events(erp):
     receiving, _, _ = erp
     lines = [consume_receiving_expected(expected_message(i), receiving()) for i in (1, 2)]
-    cmd = AcceptDeliveryCommand(tuple(DeliveryLineInput(line.id, 1, grn_category="PPM",
+    cmd = AcceptDeliveryCommand(tuple(DeliveryLineInput(line.id, 1, grn_category="PPM", quality_state="RELEASED", quality_basis="ОТК",
         storage_location="1F4" if i == 0 else "33A1") for i, line in enumerate(lines)),
         "", None, RECEIVER, NOW, quality_authorized=True)
     with pytest.raises(ReceivingValidationError):
@@ -195,3 +195,26 @@ def test_http_receiver_cannot_forge_quality_capability_and_admin_can_decide(rece
     principal = replace(principal, roles=frozenset({"admin"}), permissions={})
     released = client.post(f"/api/receiving/{line.id}/inspect", json=payload)
     assert released.status_code == 200 and released.json()["line"]["quality_state"] == "RELEASED"
+
+
+def test_inspection_act_alone_never_releases_a_ppm_place(erp):
+    receiving, _, _ = erp
+    line = consume_receiving_expected(expected_message(), receiving())
+    held = inspect_receiving(inspect_command(line, quality_state=None, quality_basis=""), receiving())
+    assert held.quality_state == "IQH" and held.status is ReceivingStatus.WAITING
+    assert not (held.quality_basis or "").startswith("Акт ВК")
+
+
+@pytest.mark.parametrize("category,context", [
+    ("GOS", {"purpose": "Уборка цеха"}),
+    ("PAM", {"equipment": "ОБ.099"}),
+    ("FRX", {"production_order": "ORDER-1", "acceptance_document": "ACT-1"}),
+])
+def test_routes_without_vk_start_as_not_required_not_as_a_hold(erp, category, context):
+    receiving, _, _ = erp
+    message = expected_message()
+    line = consume_receiving_expected(replace(message, payload={**message.payload, "order_number": "ORDER-1"}), receiving())
+    result = inspect_receiving(inspect_command(line, grn_category=category, grn_context=context,
+                                               quality_state=None, quality_basis=""), receiving())
+    assert result.quality_state == "NOT_REQUIRED" and result.status is ReceivingStatus.ACCEPTED
+    assert result.quality_basis.startswith("ВК не требуется") and result.quality_decided_by == RECEIVER.id

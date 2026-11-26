@@ -27,6 +27,8 @@ class GrnCategory(StrEnum):
 
 
 MAX_SERIAL = 999999
+# Owner: the ВК hold applies to PPM/CSM/SUB only; for these routes «ВК не требуется» is the starting decision.
+NO_QC_CATEGORIES = frozenset({"GOS", "PAM", "FRX", "R&D"})
 
 
 class GrnConflict(ValueError):

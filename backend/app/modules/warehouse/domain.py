@@ -10,7 +10,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
-from .grn import GrnCategory, GrnContext
+from .grn import NO_QC_CATEGORIES, GrnCategory, GrnContext
 
 from app.shared.warehouse_location import (
     existing_storage_location,
@@ -284,11 +284,13 @@ class StockLot:
     def available(self) -> Decimal:
         return self.balance - self.reserved
 
-    def assert_issuable(self, *, on_date: date | None = None) -> None:
+    def assert_issuable(self, *, on_date: date | None = None, disposal: bool = False) -> None:
         """Recheck the whole place on every reserve/issue, including an earlier reservation.
 
         Historical stock keeps its existing policy. A new-contract place fails closed
         unless a recorded decision permits use; missing shipping papers are irrelevant.
+        `disposal` (scrap, supplier return, inventory loss) takes stock OUT of the building, so a quality hold,
+        a rejection or an expired shelf life must not trap it: only the place's identity is still verified.
         """
         if self.grn_contract_version is None:
             return
@@ -304,9 +306,11 @@ class StockLot:
             raise WarehouseValidationError("Не заполнены категория или контекст ГРН") from error
         if self.grn_context is None or self.expiry_required is None:
             raise WarehouseValidationError("Не заполнен паспорт нового прихода")
+        if disposal:
+            return
         if self.quality_state not in {"RELEASED", "NOT_REQUIRED"}:
             raise WarehouseValidationError(f"Партия {self.grn} заблокирована: требуется решение ОТК")
-        if self.quality_state == "NOT_REQUIRED" and category not in {GrnCategory.GOS, GrnCategory.PAM}:
+        if self.quality_state == "NOT_REQUIRED" and category.value not in NO_QC_CATEGORIES:
             raise WarehouseValidationError("Для этой категории требуется решение ОТК")
         if (not str(self.quality_basis or "").strip() or self.quality_decided_by is None
                 or self.quality_decided_at is None or (self.quality_version or 0) < 1):
@@ -333,6 +337,14 @@ class StockLot:
         elif self.material_owner_id is not None or owner_id is not None:
             raise WarehouseValidationError("Владелец давальческого материала допустим только для CSM")
 
+    def owner_claim(self) -> dict:
+        """The owner/order pair recorded on the place itself, for commands that move stock out of it without a
+        customer-side caller (write-off, return, edit): `assert_owner` still checks the place is consistent."""
+        if self.grn_contract_version is None or self.grn_category != GrnCategory.CSM:
+            return {}
+        return dict(owner_id=self.material_owner_id, customer_order=(self.grn_context or {}).get("customer_order"),
+                    project_id=self.csm_project_id)
+
     def reserve(self, quantity: Decimal, *, owner_id: UUID | None = None,
                 customer_order: str | None = None, project_id: str | None = None,
                 on_date: date | None = None) -> StockLot:
@@ -351,8 +363,8 @@ class StockLot:
 
     def write_off(self, quantity: Decimal, *, owner_id: UUID | None = None,
                   customer_order: str | None = None, project_id: str | None = None,
-                  on_date: date | None = None) -> StockLot:
-        self.assert_issuable(on_date=on_date)
+                  on_date: date | None = None, disposal: bool = False) -> StockLot:
+        self.assert_issuable(on_date=on_date, disposal=disposal)
         self.assert_owner(owner_id=owner_id, customer_order=customer_order, project_id=project_id)
         amount = _quantity(quantity, "Списание")
         if amount > self.balance:
@@ -394,7 +406,7 @@ class StockLot:
             raise WarehouseValidationError("Неизвестное решение ОТК")
         if not str(basis or "").strip():
             raise WarehouseValidationError("Укажите основание решения ОТК по всему месту")
-        if state == "NOT_REQUIRED" and self.grn_category not in {"PAM", "GOS"}:
+        if state == "NOT_REQUIRED" and self.grn_category not in NO_QC_CATEGORIES:
             raise WarehouseValidationError("Для этой категории требуется решение ОТК")
         updated = replace(self, quality_state=state, quality_basis=basis.strip(), quality_decided_by=actor_id,
                           quality_decided_at=now, quality_version=(self.quality_version or 0) + 1,
@@ -518,12 +530,17 @@ class StockLot:
         if self.grn_category == "CSM" and self.grn_contract_version is not None and any(
             getattr(updated, name) != getattr(self, name) for name in LOT_ROW_QUANTITIES
         ):
-            self.assert_owner()
-        if updated.reserved > self.reserved or updated.written_off > self.written_off:
+            self.assert_owner(**self.owner_claim())
+        if updated.reserved > self.reserved:
             # A manual quantity edit must not bypass the same stock guards.
             self.assert_issuable()
             updated.assert_issuable()
-            self.assert_owner()
+        elif updated.written_off > self.written_off:
+            self.assert_issuable(disposal=True)
+        if updated.reserved > self.reserved:
+            self.assert_owner()  # a reservation is for a named owner/order pair, never inferred from the place
+        elif updated.written_off > self.written_off:
+            self.assert_owner(**self.owner_claim())
         unit = f" {self.unit}" if self.unit else ""
         if updated.balance < 0:
             raise WarehouseValidationError(

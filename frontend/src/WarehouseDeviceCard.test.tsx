@@ -22,7 +22,7 @@ const MFP: MachineRow = { ...BASE, key: "device:pc:scan:wia", kind: "device", na
   state: { text: "Подключён", tone: "ok" }, station: { kind: "mfp", machine_id: "pc", scanners: ["wia"], printers: ["Pantum BM2300 Series"] } };
 
 const LABELS: LabelPrinterView = {
-  now: "2026-11-20T10:00:05+03:00", online: true,
+  now: "2026-11-20T10:00:05+03:00", online: true, template_printer: "TSC MB341",
   agent: { last_seen: "2026-11-20T10:00:03+03:00", host: "DESKTOP-F40DLD9", printer: "TSC MB341", queue: 0, last_error: null },
   jobs: [
     { id: "j1", kind: "lot", what: "ГРН 1234/2", article: "DF13-2S", name: "Разъём Hirose", warehouse: "ЦАР", lot_id: "lot-1", copies: 2,

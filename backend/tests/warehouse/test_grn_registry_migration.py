@@ -218,32 +218,41 @@ def test_proven_receiving_packages_and_outbox_alias_share_one_identity(database)
         assert not db.execute("PRAGMA foreign_key_check").fetchall()
 
 
-@pytest.mark.parametrize("problem", ["duplicate", "capacity", "orphan"])
+@pytest.mark.parametrize("problem", ["capacity", "orphan"])
 def test_reconciliation_blockers_fail_before_creating_schema(database, problem):
     with sqlite3.connect(database) as db:
-        if problem == "duplicate":
-            lot(db, "PPM.26.000001")
-            receiving(db, "PPM.26.000001")
-        elif problem == "capacity":
+        if problem == "capacity":
             lot(db, "PAM.26.1000000")
         else:
             lot(db, "PPM.26.000001", source_receiving_ids=json.dumps([str(uuid4())]))
         before = snapshot(db)
-    with pytest.raises(RuntimeError, match={"duplicate": "ambiguous", "capacity": "capacity blocker", "orphan": "orphan"}[problem]):
+    with pytest.raises(RuntimeError, match={"capacity": "capacity blocker", "orphan": "orphan"}[problem]):
         command.upgrade(config(database), REVISION)
     with sqlite3.connect(database) as db:
         assert snapshot(db) == before
         assert db.execute("SELECT version_num FROM alembic_version").fetchone()[0] == PARENT
 
 
-@pytest.mark.parametrize("kind", ["batch", "revision"])
-def test_batch_and_replacement_lineage_does_not_prove_same_receipt(database, kind):
+@pytest.mark.parametrize("shape", ["packages", "both_warehouses", "manual_only"])
+def test_one_legacy_number_on_several_places_is_one_identity(database, shape):
+    """A legacy number is ONE identity (UNIQUE number): package split, ЦАР + ЖУК, two places with only «manual:» tokens."""
+    number = "PPM.26.000001"
     with sqlite3.connect(database) as db:
-        original = receiving(db, "PPM.26.000001", package="1")
-        link = {"split_of_id": original} if kind == "batch" else {"revision_of_id": original, "revision_root_id": original}
-        receiving(db, "PPM.26.000001", package="2", **link, source_idempotency_key=f"receiving:{UUID(original)}:{kind}:2")
-    with pytest.raises(RuntimeError, match="ambiguous"):
-        command.upgrade(config(database), REVISION)
+        if shape == "packages":
+            lot(db, number, package="1")
+            lot(db, number, package="2")
+        elif shape == "both_warehouses":
+            lot(db, number, warehouse="ЦАР")
+            lot(db, number, warehouse="ЖУК")
+        else:
+            for package in ("", "2"):
+                lot(db, number, package=package, source_receiving_ids=json.dumps([f"manual:{uuid4()}"]))
+        before = snapshot(db)
+    command.upgrade(config(database), REVISION)
+    with sqlite3.connect(database) as db:
+        unchanged(db, before)
+        assert db.execute("SELECT count(*) FROM warehouse_grn_registry WHERE number = ?", (number,)).fetchone()[0] == 1
+        assert db.execute("SELECT count(DISTINCT grn_id) FROM warehouse_lots").fetchone()[0] == 1
 
 
 def test_backfilled_identity_survives_existing_repository_reservation(database):

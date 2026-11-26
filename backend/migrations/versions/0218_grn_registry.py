@@ -146,8 +146,8 @@ Same text, article, delivery header or procurement line alone is NOT lineage evi
                 grouped[row["grn"]].append((table, _id(row["id"])))
     identities = []
     for number, references in sorted(grouped.items()):
-        if len({root(node) for node in references}) != 1:
-            raise RuntimeError(f"0218 ambiguous legacy GRN {number!r}: {references}; reconcile origins before cutover")
+        # One legacy number is ONE identity (UNIQUE number): package splits, one GRN in ЦАР and ЖУК, several places
+        # with only «manual:» tokens all share it. Contradicting receipt tokens already abort above.
         match = NUMBER.fullmatch(number)
         category, year = None, None
         if match:

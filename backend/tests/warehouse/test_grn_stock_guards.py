@@ -74,8 +74,6 @@ def test_nonrequired_qc_uses_a_recorded_basis_without_requiring_upd(category, co
     ("PPM", {}),
     ("CSM", {"owner_id": str(OWNER), "customer_order": "order:1", "transfer_document": "Акт 1"}),
     ("SUB", {"subcontractor": "contractor:1", "production_order": "order:1", "acceptance_document": "Акт 1"}),
-    ("FRX", {"production_order": "order:1", "acceptance_document": "Акт 1"}),
-    ("R&D", {"project": "project:1", "purpose": "Испытания"}),
 ])
 def test_required_routes_cannot_use_nonrequired_qc(category, context):
     stock = released(grn_category=category, grn_context=context, quality_state="NOT_REQUIRED")
@@ -142,13 +140,13 @@ def test_hold_survives_physical_relocation():
     assert moved.quality_state == "IQH" and moved.grn_id == stock.grn_id and moved.balance == stock.balance
 
 
-@pytest.mark.parametrize("changes", [{"reserved": "1"}, {"written_off": "1"}])
+@pytest.mark.parametrize("changes", [{"reserved": "1"}])
 def test_manual_quantity_edit_cannot_bypass_hold(changes):
     with pytest.raises(WarehouseValidationError, match="решение ОТК"):
         new_lot().edit_row(changes)
 
 
-@pytest.mark.parametrize("field", ["reserved", "written_off"])
+@pytest.mark.parametrize("field", ["reserved"])
 @pytest.mark.parametrize("expiry", [None, date(2000, 1, 1)])
 def test_quantity_and_expiry_edit_cannot_consume_the_resulting_blocked_place(field, expiry):
     stock = released(expiry_required=True, expiry_date=date.today() + timedelta(days=30))
@@ -166,3 +164,51 @@ def test_historical_stock_is_not_implicitly_reclassified_or_mass_blocked():
     reserved = historical.reserve(Decimal("2"))
     assert reserved.issue_reserved(Decimal("2")).balance == 8
     assert historical.grn_contract_version is None and historical.quality_state is None
+
+
+@pytest.mark.parametrize("state", ["IQH", "QTN", "REJECTED"])
+def test_scrap_and_supplier_return_can_take_a_held_place_out_but_issue_cannot(state):
+    held = new_lot(quality_state=state)
+    assert held.write_off(Decimal("1"), on_date=TODAY, disposal=True).written_off == 1
+    with pytest.raises(WarehouseValidationError, match="решение ОТК"):
+        held.write_off(Decimal("1"), on_date=TODAY)
+
+
+def test_scrap_works_after_the_shelf_life_expired():
+    expired = released(expiry_required=True, expiry_date=TODAY - timedelta(days=1))
+    assert expired.write_off(Decimal("1"), on_date=TODAY, disposal=True).balance == 9
+    with pytest.raises(WarehouseValidationError, match="Срок годности"):
+        expired.write_off(Decimal("1"), on_date=TODAY)
+
+
+CSM_CONTEXT = {"owner_id": str(OWNER), "customer_order": "order:1", "transfer_document": "Акт 1"}
+
+
+def csm_lot(**changes):
+    return released(**({"grn": "CSM.26.000001", "grn_category": "CSM", "grn_context": CSM_CONTEXT,
+                        "material_owner_id": OWNER, "csm_project_id": "order:1"} | changes))
+
+
+def test_csm_place_can_be_written_off_returned_and_edited_with_its_own_owner_checks():
+    stock = csm_lot()
+    off = stock.write_off(Decimal("1"), on_date=TODAY, **stock.owner_claim())
+    assert off.return_writeoff(Decimal("1"), **off.owner_claim()).written_off == stock.written_off
+    assert stock.edit_row({"written_off": Decimal("4")}).written_off == 4
+
+
+def test_csm_place_with_a_broken_owner_pair_still_refuses():
+    broken = csm_lot(material_owner_id=None)
+    with pytest.raises(WarehouseValidationError, match="владелец"):
+        broken.write_off(Decimal("1"), on_date=TODAY, **broken.owner_claim())
+
+
+@pytest.mark.parametrize("category,context", [("FRX", {"production_order": "o:1", "acceptance_document": "A"}),
+                                              ("R&D", {"project": "p:1", "purpose": "Испытания"})])
+def test_frx_and_rd_may_use_the_nonrequired_qc_decision(category, context):
+    stock = new_lot(grn=f"{category}.26.000001", grn_category=category, grn_context=context)
+    decided = stock.decide_quality("NOT_REQUIRED", "Маршрут без ВК", INSPECTOR, DECIDED_AT)
+    assert decided.reserve(Decimal("1"), on_date=TODAY).reserved == 1
+
+
+def test_manual_writeoff_edit_may_take_a_held_place_out():
+    assert new_lot().edit_row({"written_off": "1"}).written_off == 1

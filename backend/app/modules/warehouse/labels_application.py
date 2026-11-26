@@ -204,7 +204,7 @@ def label_of(lot, received: datetime | None) -> GrnLabelData:
         expiry_date=getattr(lot, "expiry_date", None), quality_state=getattr(lot, "quality_state", None),
         quality_basis=getattr(lot, "quality_basis", None) or "", context=getattr(lot, "grn_context", None) or {},
         owner=str(getattr(lot, "material_owner_id", None) or ""),
-        package=lot.package,
+        package=lot.package, expiry_required=bool(getattr(lot, "expiry_required", False)),
     )
 
 

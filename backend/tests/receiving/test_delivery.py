@@ -41,7 +41,9 @@ def expect(receiving, *suffixes, **payload):
 
 
 def item(line, **values):
-    return DeliveryLineInput(line_id=line.id, expected_version=line.version, grn_category="PPM", **values)
+    return DeliveryLineInput(line_id=line.id, expected_version=line.version, grn_category="PPM",
+        **({} if values.get("deviation", "no_quality_doc") != "no_quality_doc"
+           else {"quality_state": "RELEASED", "quality_basis": "ОТК: годен"}) | values)
 
 
 def deliver(receiving, items, **values):
@@ -172,7 +174,7 @@ def test_backordered_remainder_cannot_be_accepted_again_on_the_line(api):
         f"/api/receiving/{line.id}/inspect",
         json={
             "version": accepted.version,
-            "grn_category": "PPM", "document_quantity": "10",
+            "grn_category": "PPM", "quality_state": "RELEASED", "quality_basis": "ОТК: годен", "document_quantity": "10",
             "shipping_document_url": "https://files.test/upd.pdf",
         },
     )
@@ -186,7 +188,7 @@ def test_backordered_remainder_cannot_be_accepted_again_on_the_line(api):
         json={
             "document_number": "УПД-78",
             "document_date": "2026-09-21",
-            "lines": [{"id": str(line.id), "version": accepted.version, "grn_category": "PPM", "document_quantity": "4"}],
+            "lines": [{"id": str(line.id), "version": accepted.version, "grn_category": "PPM", "quality_state": "RELEASED", "quality_basis": "ОТК: годен", "document_quantity": "4"}],
         },
     )
     assert again.status_code == 422
@@ -241,7 +243,7 @@ def test_delivery_without_upd_matches_a_single_vk_without_upd(erp):
             line_id=by_vk.id,
             expected_version=by_vk.version,
             inspection=InspectionInput(
-            grn_category="PPM", quality_authorized=True,
+            grn_category="PPM", quality_authorized=True, quality_state="RELEASED", quality_basis="ОТК: годен",
                 fact_quantity=by_vk.ordered_quantity,
                 document_quantity=by_vk.ordered_quantity,
                 ordered_quantity=by_vk.ordered_quantity,
@@ -281,7 +283,7 @@ def test_delivery_without_upd_over_http(api):
 
     response = client.post(
         "/api/receiving/deliveries",
-        json={"lines": [{"grn_category": "PPM", "id": str(line.id), "version": line.version}]},
+        json={"lines": [{"grn_category": "PPM", "quality_state": "RELEASED", "quality_basis": "ОТК: годен", "id": str(line.id), "version": line.version}]},
     )
 
     assert response.status_code == 200, response.text
@@ -396,7 +398,7 @@ def test_api_delivery_returns_the_lines(api):
             "document_number": "УПД-77",
             "document_date": "2026-09-20",
             "warehouse": "ЦАР",
-            "lines": [{"grn_category": "PPM", "id": str(line.id), "version": line.version, "storage_location": "1f4", "series": "L-1"}],
+            "lines": [{"grn_category": "PPM", "quality_state": "RELEASED", "quality_basis": "ОТК: годен", "id": str(line.id), "version": line.version, "storage_location": "1f4", "series": "L-1"}],
         },
     )
 

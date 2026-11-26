@@ -66,7 +66,9 @@ def test_package_suffix_roundtrips_without_normalizing_grn(category):
     ("REJECTED", "НЕ ГОДЕН"), ("RELEASED", "ГОДЕН ✓"), ("NOT_REQUIRED", "ВК не требуется")])
 def test_expiry_and_quality_are_stored_facts_not_guesses(state, expected):
     content = lot_content(replace(SAMPLE, category="PPM", quality_state=state, expiry_date=None))
-    assert content.value("expiry") == "Годен до: неизвестно"
+    assert content.value("expiry") == "Годен до: не ограничен"  # no shelf life: not a missing fact
+    assert lot_content(replace(SAMPLE, category="PPM", quality_state=state, expiry_date=None, expiry_required=True)
+                       ).value("expiry") == "Годен до: неизвестно"
     assert content.value("quality") == expected
     content = lot_content(replace(SAMPLE, category="PPM", expiry_date=date(2027, 11, 22)))
     assert content.value("expiry") == "Годен до: 22.11.2027"

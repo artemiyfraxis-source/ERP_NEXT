@@ -592,7 +592,7 @@ def _rehearse(shop: Shop, export_dir: Path, *, synthetic: bool) -> None:
         json={"lines": [{"project": PROJECT, "item_index": ASSEMBLY, "quantity": last_box["quantity"]}]},
     )
     assert Decimal(accepted["goods"][0]["accepted"]) == KITS
-    assert accepted["goods"][0]["grn"].startswith("ГП.26.")
+    assert accepted["goods"][0]["grn"].startswith(("FRX.26.", "PPM.26."))  # GRN contract: own production is numbered by category
 
     # Старый клиент не может оприходовать ту же коробку повторно или менять её родословную.
     def intake_snapshot():

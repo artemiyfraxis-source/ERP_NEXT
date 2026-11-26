@@ -36,7 +36,7 @@ from .domain import (
     normalize_location_code,
 )
 from .item_types import canonical_item_type
-from .grn import GrnCategory, GrnContext, GrnRequest, fingerprint_body
+from .grn import NO_QC_CATEGORIES, GrnCategory, GrnContext, GrnRequest, fingerprint_body
 from .acceptance import (
     allocator_in, check_owner, claim_quick_acceptance, lot_by_grn, lot_for_identity, quick_result, quick_result_id,
 )
@@ -438,7 +438,7 @@ def dispatch_next_supplier_return(now: datetime, uow: UnitOfWork) -> StockLot | 
             if current is None:
                 label = grn + (f" (пакет {package})" if package else "")
                 raise WarehouseValidationError(f"Партии {label} нет на складе {warehouse}")
-            updated = current.write_off(quantity)
+            updated = current.write_off(quantity, disposal=True, **current.owner_claim())
         except WarehouseValidationError as error:
             uow.outbox.mark_failed(message.id, now, str(error))
             uow.commit()
@@ -677,10 +677,10 @@ def place_manual_lots(
         grn = identity.number
         lot = replace(draft, grn=grn, grn_id=identity.id,
                       source_receiving_ids=(f"{identity.source_kind}:{identity.source_op_id}",))
-        if identity.category in {GrnCategory.GOS, GrnCategory.PAM}:
+        if identity.category.value in NO_QC_CATEGORIES:
             lot = replace(lot, quality_state="NOT_REQUIRED",
-                          quality_basis=f"ВК не требуется: маршрут {identity.category}; "
-                                        f"{identity.context.purpose or identity.context.equipment}",
+                          quality_basis=f"ВК не требуется: маршрут {identity.category.value}; "
+                                        f"{identity.context.purpose or identity.context.equipment or identity.context.project or identity.context.production_order or ''}",
                           quality_decided_by=actor.id, quality_decided_at=now)
         uow.warehouse.add(lot)
         uow.audit.add(
@@ -1158,6 +1158,7 @@ def _versioned(lot_id: UUID, expected_version: int, uow: UnitOfWork) -> StockLot
 
 
 WRITEOFF_DEFAULT_REASON = "Выдача"
+DISPOSAL_REASONS = frozenset({"Брак", "Порча", "Недостача", "Инвентаризация"})
 INSTRUMENT_WRITEOFF_PREFIX = "Принадлежности СИ"
 INSTRUMENT_RETURN_MESSAGE = "Это принадлежность СИ — верните её через Качество → Средства измерения"
 
@@ -1174,7 +1175,9 @@ def write_off(command: WriteOffCommand, uow: UnitOfWork) -> StockLot:
         if command.source_key is not None and uow.writeoffs.by_source_key(command.source_key) is not None:
             raise ConcurrentWarehouseUpdate("Это списание уже проведено")
         current = _versioned(command.lot_id, command.expected_version, uow)
-        updated = current.write_off(command.quantity, on_date=command.now.date())
+        # Scrap, loss and inventory take stock out: a quality hold / rejection / expiry must not trap it.
+        updated = current.write_off(command.quantity, on_date=command.now.date(), **current.owner_claim(),
+                                    disposal=reason in DISPOSAL_REASONS)
         uow.warehouse.add(updated)
         uow.writeoffs.add(replace(WriteOffEntry.for_lot(
             updated, kind="writeoff", quantity=command.quantity, reason=reason, purpose=purpose,
@@ -1246,7 +1249,7 @@ def return_writeoff(command: ReturnWriteOffCommand, uow: UnitOfWork) -> StockLot
                 " — вернуть можно только их. Если это НЕ возврат, а новый приход, заведи позицию через"
                 " «Внести позиции»."
             )
-        updated = current.return_writeoff(command.quantity)
+        updated = current.return_writeoff(command.quantity, **current.owner_claim())
         uow.warehouse.add(updated)
         uow.writeoffs.add(WriteOffEntry.for_lot(
             updated, kind="return", quantity=command.quantity, reason=reason, purpose=source,
@@ -1799,10 +1802,10 @@ def undo_last_movement(command: UndoLastCommand, uow: UnitOfWork) -> tuple[Stock
             if event.event_type == "warehouse.written_off":
                 if quantity > current.written_off:
                     raise WarehouseValidationError("Списанное уже изменилось — отмена невозможна.")
-                updated = current.return_writeoff(quantity)
+                updated = current.return_writeoff(quantity, **current.owner_claim())
                 kind, reason, event_type = "return", UNDO_WRITEOFF_REASON, "warehouse.writeoff_returned"
             else:
-                updated = current.write_off(quantity)
+                updated = current.write_off(quantity, disposal=True, **current.owner_claim())
                 kind, reason, event_type = "writeoff", UNDO_RETURN_REASON, "warehouse.written_off"
             uow.writeoffs.add(WriteOffEntry.for_lot(
                 updated, kind=kind, quantity=quantity, reason=reason, purpose=purpose,

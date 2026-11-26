@@ -125,7 +125,8 @@ def test_failed_acceptance_rolls_back_identity_counter_stock_and_job(stand, monk
     assert _accept(client, receipt["id"]).json()["lot"]["grn"] == "PPM.26.000001"
 
 
-@pytest.mark.parametrize("category,context", [("GOS", {"purpose": "Уборка"}), ("PAM", {"equipment": "ОБ.1"})])
+@pytest.mark.parametrize("category,context", [("GOS", {"purpose": "Уборка"}), ("PAM", {"equipment": "ОБ.1"}),
+    ("FRX", {"production_order": "ORDER-1", "acceptance_document": "ACT-1"})])
 def test_nonrequired_routes_record_basis_without_shipping_papers(stand, category, context):
     client, _ = stand
     receipt = _receipt(client, upd_number="", invoice_number="")
@@ -342,3 +343,15 @@ def test_receiving_can_read_material_owners_but_cannot_create_them(stand):
     response = client.get("/api/stock/material-owners")
     assert response.status_code == 200 and len(response.json()["owners"]) == 1
     assert client.post("/api/stock/material-owners", json={"display_name":"Owner","legal_identity":"TEST:1"}).status_code == 403
+
+
+def test_scrap_may_take_a_held_place_out_but_issue_may_not(stand):
+    client, _ = stand
+    lot = _accept(client, _receipt(client)["id"]).json()["lot"]
+    assert lot["quality_state"] == "IQH"
+    issued = client.post(f"/api/stock/batches/{lot['id']}/writeoff",
+                         json={"version": lot["version"], "quantity": "1", "purpose": "Цех", "reason": "Выдача в производство"})
+    assert issued.status_code == 422
+    scrapped = client.post(f"/api/stock/batches/{lot['id']}/writeoff",
+                           json={"version": lot["version"], "quantity": "1", "purpose": "Цех", "reason": "Брак"})
+    assert scrapped.status_code == 200, scrapped.text

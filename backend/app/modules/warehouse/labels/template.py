@@ -346,7 +346,8 @@ def _grn_values(data: GrnLabelData) -> dict[str, str]:
                          if data.context.get(key))
     return {
         "category": data.category,
-        "expiry": "Годен до: " + (data.expiry_date.strftime("%d.%m.%Y") if data.expiry_date else "неизвестно"),
+        "expiry": "Годен до: " + (data.expiry_date.strftime("%d.%m.%Y") if data.expiry_date
+                                  else "неизвестно" if data.expiry_required else "не ограничен"),
         "quality": quality, "quality_basis": data.quality_basis, "owner": data.owner,
         "context": context, "form_footer": "",
         "passport": " · ".join(part for part in (data.manufacturer, f"Партия: {data.manufacturer_batch}"

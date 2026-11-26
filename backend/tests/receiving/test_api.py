@@ -102,7 +102,7 @@ def test_receiving_queue_has_stable_cursor_pages(receiving_api):
 def test_documents_are_derived_from_urls_and_accepted_line_is_placed(receiving_api):
     client, line = receiving_api
     base = {
-        "grn_category": "PPM", "fact_quantity": "10",
+        "grn_category": "PPM", "quality_state": "RELEASED", "quality_basis": "ОТК: годен", "fact_quantity": "10",
         "document_quantity": "10",
         "expiry_date": "2027-01-01",
     }
@@ -174,7 +174,7 @@ def test_receiving_rejects_non_http_document_urls(receiving_api, document_url):
         f"/api/receiving/{line.id}/inspect",
         json={
             "version": line.version,
-            "grn_category": "PPM", "fact_quantity": "10",
+            "grn_category": "PPM", "quality_state": "RELEASED", "quality_basis": "ОТК: годен", "fact_quantity": "10",
             "document_quantity": "10",
             "shipping_document_url": document_url,
         },
@@ -185,7 +185,7 @@ def test_receiving_rejects_non_http_document_urls(receiving_api, document_url):
 
 def test_new_vk_archives_line_and_queue_shows_both_rows(receiving_api):
     client, line = receiving_api
-    base = {"grn_category": "PPM", "fact_quantity": "10", "document_quantity": "10", "expiry_date": "2027-01-01"}
+    base = {"grn_category": "PPM", "quality_state": "RELEASED", "quality_basis": "ОТК: годен", "fact_quantity": "10", "document_quantity": "10", "expiry_date": "2027-01-01"}
     early = client.post(f"/api/receiving/{line.id}/vk-revision", json={"version": line.version})
     assert early.status_code == 422
     assert "ещё не проведён ВК" in early.json()["detail"]
@@ -267,7 +267,7 @@ def test_putaway_sheet_shows_accepted_unplaced_lines_only(receiving_api):
     """WH-6: печатный лист перемещения — только «Принято» без места; поставленное на место пропадает.
     Тот же печатный механизм, что и FF-8 (app.shared.print_sheet + frontend/src/print.ts)."""
     client, line = receiving_api
-    base = {"grn_category": "PPM", "fact_quantity": "10", "document_quantity": "10", "expiry_date": "2027-01-01"}
+    base = {"grn_category": "PPM", "quality_state": "RELEASED", "quality_basis": "ОТК: годен", "fact_quantity": "10", "document_quantity": "10", "expiry_date": "2027-01-01"}
 
     empty = client.get("/api/receiving/putaway-sheet")
     assert empty.status_code == 422, empty.text
@@ -335,7 +335,7 @@ def test_upd_file_is_stored_in_erp_and_its_link_passes_the_inspection(receiving_
 
     accepted = client.post(
         f"/api/receiving/{line.id}/inspect",
-        json={"version": line.version, "grn_category": "PPM", "fact_quantity": "10", "document_quantity": "10", "shipping_document_url": url},
+        json={"version": line.version, "grn_category": "PPM", "quality_state": "RELEASED", "quality_basis": "ОТК: годен", "fact_quantity": "10", "document_quantity": "10", "shipping_document_url": url},
     )
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["line"]["status"] == "Принято"
@@ -430,7 +430,7 @@ def test_bulk_upd_blank_fields_keep_existing_values(receiving_api):
 
 def test_bulk_upd_is_attached_to_accepted_line_on_stock_and_clears_the_note(receiving_api):
     client, first = receiving_api
-    base = {"grn_category": "PPM", "fact_quantity": "10", "document_quantity": "10", "expiry_date": "2027-01-01"}
+    base = {"grn_category": "PPM", "quality_state": "RELEASED", "quality_basis": "ОТК: годен", "fact_quantity": "10", "document_quantity": "10", "expiry_date": "2027-01-01"}
     accepted = client.post(
         f"/api/receiving/{first.id}/inspect", json={**base, "version": first.version}
     ).json()["line"]
@@ -457,7 +457,7 @@ def test_bulk_upd_is_attached_to_accepted_line_on_stock_and_clears_the_note(rece
 def test_bulk_upd_rejects_archived_vk_line_and_applies_nothing(receiving_api):
     client, first = receiving_api
     second = _second_line()
-    base = {"grn_category": "PPM", "fact_quantity": "10", "document_quantity": "10", "expiry_date": "2027-01-01"}
+    base = {"grn_category": "PPM", "quality_state": "RELEASED", "quality_basis": "ОТК: годен", "fact_quantity": "10", "document_quantity": "10", "expiry_date": "2027-01-01"}
     accepted = client.post(
         f"/api/receiving/{second.id}/inspect",
         json={**base, "version": second.version, "shipping_document_url": "https://files.test/x.pdf"},

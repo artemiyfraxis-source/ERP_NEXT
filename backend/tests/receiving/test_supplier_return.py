@@ -74,6 +74,7 @@ def expected_message(suffix: int = 1) -> OutboxMessage:
 def inspection(fact: str = "10") -> InspectionInput:
     return InspectionInput(
             grn_category="PPM", quality_authorized=True,
+        quality_state="RELEASED", quality_basis="ОТК: годен",  # release is an explicit ОТК decision, never implied
         fact_quantity=Decimal(fact),
         document_quantity=Decimal("10"),
         ordered_quantity=Decimal("10"),

@@ -44,7 +44,8 @@ BRAK = (MECHANICAL_DAMAGE,)
 
 def brak(fact: str = "10", defect: str | None = "3", **values):
     return replace(
-        inspection(fact), manual_nonconformities=BRAK, defect_quantity=Decimal(defect) if defect else None, **values
+        inspection(fact), manual_nonconformities=BRAK, defect_quantity=Decimal(defect) if defect else None,
+        quality_state=None, quality_basis="", **values
     )
 
 

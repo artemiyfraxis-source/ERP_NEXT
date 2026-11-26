@@ -59,7 +59,7 @@ def test_receiving_to_warehouse_is_transactional_and_persistent():
             line_id=line.id,
             expected_version=line.version,
             inspection=InspectionInput(
-            grn_category="PPM", quality_authorized=True,
+            grn_category="PPM", quality_authorized=True, quality_state="RELEASED", quality_basis="ОТК: годен",
                 fact_quantity=Decimal("10"),
                 document_quantity=Decimal("10"),
                 ordered_quantity=Decimal("999"),
@@ -230,7 +230,7 @@ def test_vk_revision_persists_and_one_procurement_line_has_one_live_receiving_li
             line_id=line.id,
             expected_version=line.version,
             inspection=InspectionInput(
-            grn_category="PPM", quality_authorized=True,
+            grn_category="PPM", quality_authorized=True, quality_state="RELEASED", quality_basis="ОТК: годен",
                 fact_quantity=Decimal("10"),
                 document_quantity=Decimal("10"),
                 ordered_quantity=Decimal("10"),

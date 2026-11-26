@@ -61,6 +61,7 @@ class GrnLabelData:
     context: dict = field(default_factory=dict)
     owner: str = ""
     package: str = ""
+    expiry_required: bool = False  # no date + not required = the item has no shelf life
 
 
 @dataclass(frozen=True)
