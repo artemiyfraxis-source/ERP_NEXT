@@ -487,7 +487,7 @@ unknown) → 422; no references factory → 503; neither parameter → 422:
   wire, wire_name, wire_title, length_mm, planned, done, left,
   strip_a, strip_a_mode (full|partial|null), strip_a_program (confirmed|unconfirmed|absent; wires: null),
   strip_b, strip_b_mode, strip_b_program, diameters, laser_mark, marking_mode (full|ends|null),
-  operator_ids, operator_names, warnings, blocked, setup_change, setup_text}]}
+  operator_ids, operator_names, warnings, blocked, setup_change, setup_text, setup_key}]}
 ```
 
 `wire` is the article (always full). `wire_name` is for display: a name up to 40 characters as is, a longer one (supplier
@@ -496,8 +496,21 @@ sort/grouping uses the full name. The setup text names the article in full.
 
 Decimals are strings (`length_mm` mm; `planned`/`done`/`left` in PF units, `done` = good + defect). `strip_*` is `null`
 when that side is not stripped; coax values are the confirmed program boundaries from the conductor tip, else L1/L2/L3.
-`version` is a digest of (row, left, task version, group state, machine, machines, length, setup text, warnings,
-blocked) for change detection. `project` is the issued ETK's spelling (`row_project`), the same in the «Готово» notice.
+`version` is a digest of the whole rows (every shown field: names, assignees, warnings, blocks, setup values), so the
+screen keeps its rows while it is unchanged. `setup_key` is an opaque digest of the row's setup key: a client filtering
+rows marks `setup_change` again over its own list. `project` is the issued ETK's spelling (`row_project`), the same in
+the «Готово» notice.
+
+`GET /api/production/cutting-queue?machine_id=all&snapshot=true` (myops view; only with `machine_id=all`, otherwise
+422): the «Все станки» answer plus `machines` (exactly the `/machines` list) from one read — `{machine_id: "all",
+equipment_id: null, version, rows, machines}`. The «Очередь резки» screen polls only this: one machine's list is the
+rows whose `machines` name it (that machine becomes the row's `machine_id`/`machine_name`), the bucket — rows with empty
+`machines`, setup changes marked again; equal to the per-machine route.
+
+Reads are batched (owner 23.11 «почему это так висит»: 40 rows cost 371 SQL statements): running tasks are hydrated in
+four reads per 500 tasks, and the whole-group site check (`check_access`) runs over the members and tasks already read
+(`check_group_sites`) plus one batched read of members' tasks that are not listed (handed over, done) — a constant
+number of statements (13 on the 40-row fixture) whatever the number of rows.
 
 `GET /api/production/cutting-queue/machines` (myops view): `{machines: [{machine_id, machine_name, rows, left, projects}]}`
 — «Все станки» (`machine_id: "all"`, every row once) first, then machines with open cut work by catalog code, label and

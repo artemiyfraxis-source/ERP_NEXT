@@ -287,13 +287,18 @@ def queue_rows(principal: Annotated[Principal, Depends(production_view_principal
                techcards_factory: Annotated[Callable | None, Depends(techcards_uow_factory)],
                references_factory: Annotated[Callable | None, Depends(references_uow_factory)],
                machine_id: Annotated[str | None, Query(min_length=1, max_length=64)] = None,
-               equipment_id: UUID | None = None):
+               equipment_id: UUID | None = None, snapshot: bool = False):
     """`machine_id=none` — cuts whose card names no machine («Станок не указан»); `machine_id=all` — «Все станки»,
-    every row once. `equipment_id` — a physical unit: its own rows plus the pool rows of its model («любой свободный»)."""
+    every row once. `equipment_id` — a physical unit: its own rows plus the pool rows of its model («любой свободный»).
+    `snapshot=true` (only with `machine_id=all`) — the same rows plus `machines` (the /machines choices) from one read."""
     machine = (machine_id or "").strip()
     if not machine and equipment_id is None:
         raise HTTPException(422, "Нужен станок: machine_id или equipment_id")
+    if snapshot and (machine != cutting_queue.ALL_MACHINES or equipment_id is not None):
+        raise HTTPException(422, "Снимок очереди — только для machine_id=all")
     catalog = _catalog(references_factory)
+    if snapshot:
+        return cutting_queue.snapshot(_queue(principal, factory, techcards_factory, machine, catalog=catalog), catalog)
     unit = None
     if equipment_id is not None:
         try:

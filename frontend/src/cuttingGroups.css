@@ -12,3 +12,11 @@
 .cutting-instruction-picker select { width: auto; max-width: 100%; }
 /* Число станка из карточки ОБ.019 подставлено в «Сдать группу» (Ob019RunJob.tsx). */
 .cutting-machine-count { margin: 0 0 8px; padding: 6px 10px; border-left: 3px solid var(--primary); background: var(--accent); }
+/* Group face (owner 23.11): label counters and the per-project split hint; КБ detail lives behind «Подробно». */
+.cutting-totals { display: flex; flex-wrap: wrap; gap: 4px 24px; margin: 8px 0 0; }
+.cutting-totals div { display: flex; align-items: baseline; gap: 8px; }
+.cutting-totals dt { color: var(--muted-foreground); font-size: 13px; }
+.cutting-totals dd { margin: 0; font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.cutting-split { margin-top: 8px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.cutting-split ul { margin: 4px 0 0; padding-left: 16px; }
+.cutting-group > .data-table { max-width: 720px; }
