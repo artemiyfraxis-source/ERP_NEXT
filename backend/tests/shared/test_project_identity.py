@@ -68,3 +68,15 @@ def test_finished_goods_hand_in_with_a_conflicting_rename_history_is_422_not_a_c
     with pytest.raises(ShippingValidationError, match="неоднозначна"):
         finished_goods.allocate_production_act(session, SimpleNamespace(project="102-1"),
                                                [SimpleNamespace(kind=MoveKind.ACCEPT, id=uuid4())])
+
+
+def test_customer_material_purpose_must_be_the_current_project_name_not_a_reused_former_one():
+    from types import SimpleNamespace
+    from app.modules.warehouse.application import _assert_csm_purpose
+    from app.modules.warehouse.domain import WarehouseValidationError
+    session = session_with(("101-1", "102-1"))
+    uow = SimpleNamespace(session=session)
+    lot = SimpleNamespace(grn_category="CSM", grn_contract_version=1, csm_project_id="101-1")
+    _assert_csm_purpose(lot, "102-1 · КБ1", uow)  # the current name of the received-for project
+    with pytest.raises(WarehouseValidationError, match="актуальный проект"):
+        _assert_csm_purpose(lot, "101-1", uow)  # the former name: it may now belong to another project

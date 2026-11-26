@@ -345,24 +345,38 @@ def test_receiving_can_read_material_owners_but_cannot_create_them(stand):
     assert client.post("/api/stock/material-owners", json={"display_name":"Owner","legal_identity":"TEST:1"}).status_code == 403
 
 
-def test_scrap_may_not_take_an_undecided_place_out_nor_issue_through_a_project_purpose(stand):
-    client, _ = stand
+def _journal(sessions):
+    from app.modules.warehouse.infrastructure import WriteOffEntryRow
+    with sessions() as session:
+        return [(row.reason, row.purpose) for row in session.scalars(select(WriteOffEntryRow).order_by(WriteOffEntryRow.occurred_at))]
+
+
+def test_disposal_is_decided_by_the_reason_with_a_fixed_destination_never_by_the_purpose_text(stand):
+    client, sessions = stand
     lot = _accept(client, _receipt(client)["id"]).json()["lot"]
     assert lot["quality_state"] == "IQH"
-    body = {"version": lot["version"], "quantity": "1"}
-    assert client.post(f"/api/stock/batches/{lot['id']}/writeoff",
-                       json={**body, "purpose": "Цех", "reason": "Брак"}).status_code == 422
+    url = f"/api/stock/batches/{lot['id']}/writeoff"
+    # An undecided (IQH) place cannot leave at all, whatever the reason.
+    assert client.post(url, json={"version": lot["version"], "quantity": "1", "reason": "Брак"}).status_code == 422
     permit_quality()
     held = quality(client, lot, state="QTN")
     assert held.status_code == 200, held.text
-    body = {"version": held.json()["lot"]["version"], "quantity": "1"}
-    # a project number as the purpose is an issue, not scrap: the quarantined place stays blocked
-    assert client.post(f"/api/stock/batches/{lot['id']}/writeoff",
-                       json={**body, "purpose": "591К.3", "reason": "Брак"}).status_code == 422
-    assert client.post(f"/api/stock/batches/{lot['id']}/writeoff",
-                       json={**body, "purpose": "Цех", "reason": "Выдача в производство"}).status_code == 422
-    assert client.post(f"/api/stock/batches/{lot['id']}/writeoff",
-                       json={**body, "purpose": "Кладовщик", "reason": "Брак"}).status_code == 200
+    version = held.json()["lot"]["version"]
+    # An issue (any reason that is not scrap/loss/inventory) of a quarantined place stays blocked, «Цех» or not.
+    for purpose in ("Цех", "Иванов", "591К.3", "Станок"):
+        assert client.post(url, json={"version": version, "quantity": "1", "purpose": purpose,
+                                      "reason": "Выдача в производство"}).status_code == 422
+    # «Брак производителя» is a note, not a reason: it is an issue as well.
+    assert client.post(url, json={"version": version, "quantity": "1", "purpose": "Цех",
+                                  "reason": "Брак производителя"}).status_code == 422
+    # Scrap: the server fixes the destination; whatever purpose text came with it is not used.
+    for reason, purpose, fixed in (("Брак", "Цех", "Утилизация — брак"), ("Порча", "Иванов", "Утилизация — порча"),
+                                   ("Инвентаризация", "26.11 инвентаризация", "Инвентаризация")):
+        done = client.post(url, json={"version": version, "quantity": "1", "purpose": purpose, "reason": reason})
+        assert done.status_code == 200, done.text
+        version = done.json()["lot"]["version"]
+        assert _journal(sessions)[-1] == (reason, fixed)
+
 
 
 def test_customer_material_is_issued_only_to_the_project_it_was_received_for(stand):
@@ -374,7 +388,15 @@ def test_customer_material_is_issued_only_to_the_project_it_was_received_for(sta
     assert released.status_code == 200, released.text
     version = released.json()["lot"]["version"]
     url = f"/api/stock/batches/{lot['id']}/writeoff"
-    base = {"version": version, "quantity": "1", "reason": "Выдача в производство"}
-    assert client.post(url, json={**base, "purpose": "999К.9"}).status_code == 422
-    assert client.post(url, json={**base, "purpose": "Цех"}).status_code == 422
-    assert client.post(url, json={**base, "purpose": "591К.3 · КБ1"}).status_code == 200
+    base = {"version": version, "quantity": "1"}
+    # every non-disposal write-off is an issue and must name the lot's own project, whatever the reason says
+    for reason in ("Выдача в производство", "Брак производителя", ""):
+        for purpose in ("999К.9", "Цех", "Иванов"):
+            assert client.post(url, json={**base, "purpose": purpose, "reason": reason}).status_code == 422
+    done = client.post(url, json={**base, "purpose": "591К.3 · КБ1", "reason": "Выдача в производство"})
+    assert done.status_code == 200, done.text
+    # scrap of customer material cannot be pointed at another project: the destination is the fixed one
+    scrapped = client.post(url, json={"version": done.json()["lot"]["version"], "quantity": "1",
+                                      "purpose": "999К.9", "reason": "Брак"})
+    assert scrapped.status_code == 200, scrapped.text
+    assert _journal(sessions)[-1] == ("Брак", "Утилизация — брак")

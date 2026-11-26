@@ -633,7 +633,7 @@ def _write_off(uow, lot, purpose, reason):
 @pytest.mark.parametrize(("purpose", "reason", "stored"), [
     ("FRX.001", "", {"purpose": "FRX.001", "reason": "Выдача"}),
     ("  Иванов ", "   ", {"purpose": "Иванов", "reason": "Выдача"}),
-    ("FRX.001", " Брак ", {"purpose": "FRX.001", "reason": "Брак"}),
+    ("FRX.001", " Брак ", {"purpose": "Утилизация — брак", "reason": "Брак"}),  # scrap: the destination is fixed
 ])
 def test_writeoff_keeps_its_purpose_and_defaults_the_basis_to_issue(purpose, reason, stored):
     uow = Uow(message())

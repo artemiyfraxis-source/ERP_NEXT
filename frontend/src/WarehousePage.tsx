@@ -1190,6 +1190,8 @@ function LotRowEditForm({ lot, disabled, mutate, onClose, onSaved }: {
 
 // SUPPLYMAP wh05Writeoff / wh05Return: the basis is picked from a list — it tells later whether the stock went to
 // production, was scrapped or recounted. A return basis starts with «Возврат» (return_reason on the server).
+// Scrap, loss and inventory take stock out: the server fixes the destination by the reason, the typed purpose is not used.
+const DISPOSAL_DESTINATIONS: Record<string, string> = { "Брак": "Утилизация — брак", "Порча": "Утилизация — порча", "Недостача": "Недостача", "Инвентаризация": "Инвентаризация" };
 const WRITEOFF_REASONS = ["Выдача в производство", "Выдача по заявке", "Брак", "Недостача", "Порча", "Инвентаризация"];
 const RETURN_REASONS = ["Возврат: не израсходовано", "Возврат: ошибочное списание", "Возврат: замена позиции", "Возврат: из брака (годное)"];
 
@@ -1286,11 +1288,12 @@ function WriteoffDialog({ lot, disabled, mutate, onClose }: {
   const [purpose, setPurpose] = useState("");
   const [date, setDate] = useState(() => new Date().toLocaleDateString("sv-SE"));
   const [error, setError] = useState("");
+  const fixedDestination = DISPOSAL_DESTINATIONS[reason];
 
   function submit(event: FormEvent) {
     event.preventDefault();
     setError("");
-    mutate(lot.id, () => warehouseApi.writeOff(lot.id, lot.version, quantity, purpose.trim(), reason, date || undefined))
+    mutate(lot.id, () => warehouseApi.writeOff(lot.id, lot.version, quantity, fixedDestination ? "" : purpose.trim(), reason, date || undefined))
       .then(onClose, (reason) => setError(dialogError(reason, "Списание не выполнено")));
   }
 
@@ -1299,7 +1302,7 @@ function WriteoffDialog({ lot, disabled, mutate, onClose }: {
       <div className="move-grid two">
         <label>Количество, {lot.unit || "шт"}<input aria-label="Количество" type="number" min="0.000001" step="any" required autoFocus placeholder={`остаток ${lot.balance}`} value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
         <label>Основание<select aria-label="Основание" value={reason} onChange={(event) => setReason(event.target.value)}>{WRITEOFF_REASONS.map((item) => <option key={item}>{item}</option>)}</select></label>
-        <label>Назначение<SuggestInput aria-label="Назначение списания" options={projects} placeholder="проект или фамилия" required pattern=".*\S.*" title="Номер проекта или фамилия ответственного" value={purpose} onChange={setPurpose} /></label>
+        {fixedDestination ? <label>Назначение<input aria-label="Назначение списания" readOnly value={fixedDestination} title="Назначение задаёт основание: списание не является выдачей" /></label> : <label>Назначение<SuggestInput aria-label="Назначение списания" options={projects} placeholder="проект или фамилия" required pattern=".*\S.*" title="Номер проекта или фамилия ответственного" value={purpose} onChange={setPurpose} /></label>}
         <label>Дата<input aria-label="Дата списания" type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
       </div>
       {error && <div className="error-banner" role="alert">{error}</div>}
