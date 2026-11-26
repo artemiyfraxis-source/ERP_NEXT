@@ -123,7 +123,7 @@ def _registry_doc(client, sessions, link) -> UpdDocumentRow:
     receipt = client.post("/api/stock/receipts", json={**HEADER, "supplier": SELLER, "scan_file": link,
                                                        "invoice_number": "512", "upd_number": "1187"})
     assert receipt.status_code == 200, receipt.text
-    accepted = client.post(f"/api/stock/receipts/{receipt.json()['id']}/accept", json=LINE)
+    accepted = client.post(f"/api/stock/receipts/{receipt.json()['id']}/accept", json={**LINE, "acceptance_id": str(uuid4())})
     assert accepted.status_code == 200, accepted.text
     with sessions() as session:
         return session.get(UpdDocumentRow, f"wh-{link.rsplit('/', 1)[1]}")

@@ -1,3 +1,4 @@
+import { QualityChip } from "./GrnFields";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { InlineField } from "./InlineField";
 import { CopyButton, IntakeShipmentInfo } from "./IntakeShipmentInfo";
@@ -49,12 +50,12 @@ const TAB_COLUMNS: Record<Tab, string[]> = {
   waiting: ["kb", "name", "needed"],
   production: ["kb", "name", "needed", "launched", "left", "action", "tasks"],
   ready: ["kb", "name", "needed", "action", "tasks"],
-  accepted: ["kb", "name", "kbStatus", "quantity", "action", "grn", "received", "label", "packStatus", "packPermission", "packedTotal"],
+  accepted: ["kb", "name", "kbStatus", "quantity", "action", "grn", "quality", "received", "label", "packStatus", "packPermission", "packedTotal"],
   // Отгрузка — одной кнопкой в шапке отправки (владелец 26.11, v2): у строк КБ — только их статус и штуки.
   packed: ["kb", "name", "kbStatus", "grn", "quantity"],
   to_ship: ["kb", "name", "kbStatus", "grn", "quantity"],
   shipped: ["kb", "name", "kbStatus", "grn", "quantity"],
-  all: ["kb", "name", "kbStatus", "quantity", "needed", "launched", "left", "action", "stage", "grn", "received", "label", "tasks", "packStatus", "packPermission", "packedTotal"],
+  all: ["kb", "name", "kbStatus", "quantity", "needed", "launched", "left", "action", "stage", "grn", "quality", "received", "label", "tasks", "packStatus", "packPermission", "packedTotal"],
 };
 const ACTION_TITLE: Partial<Record<Tab, string>> = { production: "Принять досрочно", ready: "Можно принять", accepted: "Упаковать", all: "Действие" };
 /** Статус КБ в отправке — виден у каждой строки без раскрытия (владелец 26.11): набрано / упаковано / отгружено. */
@@ -447,6 +448,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
         ? <button type="button" className="link-button intake-act-open" title="Карточка акта приёмки: откат"
           aria-label={`Акт приёмки ${line.act.grn}`} onClick={() => setRollingBack({ row: line.kb, act: line.act!, onStock: line.quantity })}>{line.act.grn}</button>
         : line.grns.join(", ") },
+    { key: "quality", title: "Качество", value: line => line.act?.quality_state ?? "", render: line => line.act?.grn_contract_version === 1 || line.act?.quality_state ? <QualityChip passport={line.act} /> : dash },
     { key: "received", title: "Дата приёмки", width: 104, value: (line) => line.act?.received_at ?? "", render: (line) => line.act ? formatDay(line.act.received_at) : dash },
     { key: "label", title: "Этикетка", width: 88, export: false, value: () => "", render: (line) => canWarehouse && line.stage === "accepted" && !line.shipment && line.grns.length === 1
       ? <button type="button" className="link-button intake-grn-print" title="Печать этикетки ГРН" aria-label={`Печать этикетки ${line.grns[0]}`}

@@ -25,7 +25,7 @@ from app.shared.notifications import (
 from .domain import (
     ADDRESSEE_CARD_FIELDS, ItemAddressee, item_delivery,
     HISTORY_CORRECTION_LIMITS, AcceptanceAct, ActStock, DeliveryTerms, GoodLots, FinishedGood, GoodMove, GoodsState, MoveContext, MoveKind, PackPermission, ProjectAddressee, ProjectAssembly, Shipment, ShipmentLine,
-    ShipmentStatus, ShippingValidationError, StoredFile, UpdType, check_boxes, effective_address, packed_by_index,
+    ShipmentStatus, ShippingValidationError, StoredFile, UpdType, balance_moves, check_boxes, effective_address, packed_by_index,
     no_upd_offered, shipping_gaps, plan_project_queue, whole_order_accepted,
 )
 
@@ -51,8 +51,8 @@ class FinishedGoodsRepository(Protocol):
     def by_key(self, project: str, item_index: str) -> FinishedGood | None: ...
     def list(self, limit: int = 500) -> Sequence[FinishedGood]: ...
     def add(self, good: FinishedGood, move: MoveContext | None = None) -> tuple[GoodMove, ...]: ...
-    def reserve_grn(self, year: int) -> str: ...
-    def record_act(self, good: FinishedGood, moves: tuple[GoodMove, ...]) -> AcceptanceAct | None: ...
+    def prepare_act(self, good: FinishedGood, moves: tuple[GoodMove, ...]) -> AcceptanceAct | None: ...
+    def record_act(self, good: FinishedGood, moves: tuple[GoodMove, ...], act: AcceptanceAct | None = None) -> AcceptanceAct | None: ...
     def acts(self, good_ids: Sequence[UUID]) -> dict[UUID, tuple[AcceptanceAct, ...]]: ...
     def act_owner(self, grn: str) -> UUID | None: ...
     def move_exists(self, move_id: UUID) -> bool: ...
@@ -496,9 +496,13 @@ def accept_into_stock(
             f"{good.project} {good.item_index}: {limit_basis} {_plain(limit)} {good.unit}, уже принято "
             f"{_plain(good.accepted)} — принять можно ещё {_plain(left)}"
         )
-    updated = good.accept(amount, received_at, good.grn or uow.goods.reserve_grn(now.year), location)
-    # Акт приёмки со своим ГРН (владелец 19.10.2026): первый — ГРН КБ, каждая следующая часть — новый номер.
-    act = uow.goods.record_act(updated, uow.goods.add(updated, _context(actor, now, reason=reason, id_seed=id_seed)))
+    context = _context(actor, now, reason=reason, id_seed=id_seed or uuid5(good.id, f"accept:v{good.version}"))
+    updated = good.accept(amount, received_at, good.grn or "GRN.pending", location)
+    act = uow.goods.prepare_act(updated, balance_moves(good, updated, context, normalize_project_number(good.project)))
+    if good.grn is None:
+        from app.workflows.receiving_stock import GRN_FIELDS
+        updated = replace(updated, grn=act.grn, **{name: getattr(act, name) for name in GRN_FIELDS})
+    uow.goods.record_act(updated, uow.goods.add(updated, context), act)
     _audit(good.id, "shipping.good_accepted", actor, now, {
         "quantity": str(amount), "grn": act.grn, **({"reason": reason} if reason else {}),
         **({"location": updated.location} if updated.location != good.location else {}),
@@ -844,7 +848,8 @@ def _good_lots(goods: dict[UUID, FinishedGood], chosen: dict[UUID, str], uow: Un
     for good_id, good in goods.items():
         ordered = sorted(acts.get(good_id, ()), key=lambda act: (act.received_at, act.created_at, act.grn))
         entries = tuple(
-            ActStock(act.id, act.grn, max(act.net - taken.get(act.id, Decimal("0")), Decimal("0"))) for act in ordered
+            ActStock(act.id, act.grn, max(act.net - taken.get(act.id, Decimal("0")), Decimal("0")))
+            for act in ordered if act.released
         )
         first = next((entry for entry in entries if entry.grn == good.grn), entries[0] if entries else None)
         fallback = first or ActStock(None, good.grn or "", Decimal("0"))
@@ -855,9 +860,18 @@ def _good_lots(goods: dict[UUID, FinishedGood], chosen: dict[UUID, str], uow: Un
                 raise ShippingValidationError(f"{good.item_index}: ГРН {wanted} — не акт приёмки этой КБ")
             if entry.free <= 0:
                 raise ShippingValidationError(f"{good.item_index}: по ГРН {wanted} свободных штук нет")
-            stock[good_id] = GoodLots(acts=(entry,), fallback=entry)
+            stock[good_id] = GoodLots(acts=(entry,), fallback=entry, available=entry.free)
         else:
-            stock[good_id] = GoodLots(acts=entries, fallback=fallback)
+            available = None
+            if any(act.grn_contract_version for act in ordered):
+                available = sum((entry.free for entry in entries), Decimal("0"))
+                # Only historical stock may have units predating the acceptance-act register.
+                if good.grn_contract_version is None:
+                    represented = sum((max(act.net - taken.get(act.id, Decimal("0")), Decimal("0"))
+                                       for act in ordered), Decimal("0"))
+                    available += max(good.remaining - represented, Decimal("0"))
+                    fallback = ActStock(None, good.grn or "", Decimal("0"))
+            stock[good_id] = GoodLots(acts=entries, fallback=fallback, available=available)
     return stock
 
 
@@ -888,6 +902,9 @@ def _pick(
         for good_id, good in typed.items()
     }
     stock = _good_lots(typed, chosen, uow)
+    for good_id, lots in stock.items():
+        if lots.available is not None:
+            taking[good_id] = min(taking[good_id], lots.available)
     for good_id in chosen:
         if good_id in stock:
             taking[good_id] = min(taking[good_id], stock[good_id].fallback.free)
@@ -1355,6 +1372,12 @@ def _mark_shipped(
     shipment: Shipment, actor: Actor, now: datetime, uow: UnitOfWork, *,
     missing_reason: str | None = None, day: date | None = None,
 ) -> ShippedResult:
+    acts = uow.goods.acts([line.finished_good_id for line in shipment.lines])
+    for line in shipment.lines:
+        selected = {lot.act_id for lot in line.lots}
+        for act in acts.get(line.finished_good_id, ()):
+            if act.id in selected or (not selected and act.net > 0):
+                act.assert_released()
     gaps = shipping_gaps(shipment) if missing_reason is not None else ()
     if missing_reason is not None and no_upd_offered(shipment):
         # Владелец 18.11.2026: полный доступ с причиной разрешает «без УПД» этой же отгрузкой, без PIN.

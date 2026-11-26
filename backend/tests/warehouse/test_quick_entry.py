@@ -1,8 +1,10 @@
 """SK-10: «Внести позиции» row by row — a bad row is skipped and reported as {i, error}, the good ones are
 entered (stock05Add_, Stock05.gs:734-794)."""
 
+from tests.warehouse.test_api import quick_payload
 from datetime import datetime
 from decimal import Decimal
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
@@ -14,28 +16,31 @@ from app.modules.warehouse.application import (
     add_manual_stock,
 )
 from app.modules.warehouse.domain import WarehouseValidationError
+from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseUnitOfWork
+from app.modules.warehouse.grn_registry import GrnCounterRow
 from app.shared.persistence import AuditEventRow
 from tests.factories import Actor
 from tests.warehouse.test_api import warehouse_api  # noqa: F401 — fixture
-from tests.warehouse.test_application import Uow, message
+from tests.warehouse.test_application import Uow, message, manual_sessions  # noqa: F401
 
 ROW = {"warehouse": "ЦАР", "article": "CON-001", "quantity": "1", "storage_location": "2A1"}
 
 
 def _command(*items):
     return AddManualStockCommand(
+        operation_id=uuid4(),
         items=items, actor=Actor(name="Кладовщик", department="Склад"), now=datetime(2026, 9, 22, 12, 0),
     )
 
 
 def _item(**fields):
     base = dict(warehouse="ЦАР", name="", item_type="", purpose="", unit="", quantity="1",
-                storage_location="1F4", article="CON-001")
+                storage_location="1F4", article="CON-001", grn_category="PPM")
     return ManualStockItem(**{**base, **fields})
 
 
-def test_bad_rows_are_skipped_and_the_good_ones_get_consecutive_numbers():
-    uow = Uow(message())
+def test_bad_rows_are_skipped_and_the_good_ones_get_consecutive_numbers(manual_sessions):
+    uow = SqlAlchemyWarehouseUnitOfWork(manual_sessions)
 
     result = add_manual_stock(_command(
         _item(article="A-1"),
@@ -49,8 +54,8 @@ def test_bad_rows_are_skipped_and_the_good_ones_get_consecutive_numbers():
     ), uow)
 
     assert [(row.i, row.lot.grn, row.lot.article, row.lot.inbound) for row in result.assigned] == [
-        (0, "OLD.26.0000001", "A-1", Decimal("1")),
-        (7, "OLD.26.0000002", "A-2", Decimal("2.5")),
+        (0, "PPM.26.000001", "A-1", Decimal("1")),
+        (7, "PPM.26.000002", "A-2", Decimal("2.5")),
     ]
     assert [(row.i, row.error) for row in result.errors] == [
         (1, "пустой артикул"),
@@ -60,22 +65,28 @@ def test_bad_rows_are_skipped_and_the_good_ones_get_consecutive_numbers():
         (5, "укажи стеллаж, полку и № на полке"),
         (6, "Места 33A1 нет: проверь номер стеллажа и полку."),
     ]
-    assert [event.details["grn"] for event in uow.audit.items] == ["OLD.26.0000001", "OLD.26.0000002"]
-    assert uow.commits == 1
+    with manual_sessions() as session:
+        assert len(session.scalars(select(AuditEventRow).where(
+            AuditEventRow.event_type == "warehouse.manually_received")).all()) == 2
+    assert uow.committed
 
 
-def test_all_bad_rows_commit_nothing_and_reserve_no_number():
-    uow = Uow(message())
+def test_all_bad_rows_record_retry_fingerprint_but_reserve_no_number(manual_sessions):
+    uow = SqlAlchemyWarehouseUnitOfWork(manual_sessions)
 
     result = add_manual_stock(_command(_item(quantity="-1"), _item(article="", name=" ")), uow)
 
     assert result.assigned == ()
     assert [row.i for row in result.errors] == [0, 1]
-    assert (uow.commits, uow.audit.items, uow.warehouse.sequence) == (0, [], 0)
+    with manual_sessions() as session:
+        assert session.query(GrnCounterRow).count() == 0
+        assert {row.event_type for row in session.scalars(select(AuditEventRow))} == {
+            "grn.quick_acceptance", "grn.quick_accepted"}
 
 
-def test_empty_article_takes_the_name_and_empty_defaults_follow_supplymap():
-    result = add_manual_stock(_command(_item(article="  ", name=" Разъём ", warehouse="")), Uow(message()))
+def test_empty_article_takes_the_name_and_empty_defaults_follow_supplymap(manual_sessions):
+    result = add_manual_stock(_command(_item(article="  ", name=" Разъём ", warehouse="")),
+                              SqlAlchemyWarehouseUnitOfWork(manual_sessions))
 
     [lot] = result.lots
     assert (lot.article, lot.name, lot.warehouse, lot.unit, lot.purpose) == ("Разъём", "Разъём", "ЦАР", "шт", "Склад")
@@ -89,8 +100,8 @@ def test_more_than_200_rows_refuse_the_whole_batch():
     assert uow.commits == 0
 
 
-def test_quantity_finer_than_the_stock_column_is_the_row_error():
-    result = add_manual_stock(_command(_item(quantity="0.0000001")), Uow(message()))
+def test_quantity_finer_than_the_stock_column_is_the_row_error(manual_sessions):
+    result = add_manual_stock(_command(_item(quantity="0.0000001")), SqlAlchemyWarehouseUnitOfWork(manual_sessions))
 
     assert [row.error for row in result.errors] == ["кол-во — не больше 6 знаков после запятой"]
 
@@ -106,32 +117,32 @@ def _manual_audit():
 def test_http_mixed_batch_returns_assigned_and_errors_and_journals_only_the_entered(warehouse_api):  # noqa: F811
     client, _ = warehouse_api
 
-    response = client.post("/api/stock/batches", json={"items": [
+    response = client.post("/api/stock/batches", json=quick_payload({"items": [
         ROW,
         {**ROW, "article": "", "name": ""},
         {**ROW, "article": "", "name": "Корпус", "quantity": 3},
         {**ROW, "storage_location": "99A1"},
-    ]})
+    ]}))
 
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["added"] == 2
     assert [(row["i"], row["grn"], row["article"], row["quantity"]) for row in body["assigned"]] == [
-        (0, "OLD.26.0000001", "CON-001", "1"),
-        (2, "OLD.26.0000002", "Корпус", "3"),
+        (0, "PPM.26.000001", "CON-001", "1"),
+        (2, "PPM.26.000002", "Корпус", "3"),
     ]
     assert body["errors"] == [
         {"i": 1, "error": "пустой артикул"},
         {"i": 3, "error": "Места 99A1 нет: проверь номер стеллажа и полку."},
     ]
     assert [lot["name"] for lot in body["lots"]] == ["", "Корпус"]
-    assert _manual_audit() == ["OLD.26.0000001", "OLD.26.0000002"]
+    assert _manual_audit() == ["PPM.26.000001", "PPM.26.000002"]
 
 
 def test_http_all_bad_rows_answer_200_with_errors_only(warehouse_api):  # noqa: F811
     client, _ = warehouse_api
 
-    response = client.post("/api/stock/batches", json={"items": [{**ROW, "quantity": "0"}]})
+    response = client.post("/api/stock/batches", json=quick_payload({"items": [{**ROW, "quantity": "0"}]}))
 
     assert response.status_code == 200, response.text
     assert response.json() == {
@@ -143,7 +154,7 @@ def test_http_all_bad_rows_answer_200_with_errors_only(warehouse_api):  # noqa: 
 def test_http_more_than_200_rows_is_422(warehouse_api):  # noqa: F811
     client, _ = warehouse_api
 
-    response = client.post("/api/stock/batches", json={"items": [ROW] * 201})
+    response = client.post("/api/stock/batches", json=quick_payload({"items": [ROW] * 201}))
 
     assert response.status_code == 422
     assert _manual_audit() == []
@@ -152,17 +163,17 @@ def test_http_more_than_200_rows_is_422(warehouse_api):  # noqa: F811
 def test_http_200_rows_are_entered(warehouse_api):  # noqa: F811
     client, _ = warehouse_api
 
-    response = client.post("/api/stock/batches", json={"items": [ROW] * 200})
+    response = client.post("/api/stock/batches", json=quick_payload({"items": [ROW] * 200}))
 
     assert response.status_code == 200, response.text
     assert response.json()["added"] == 200
-    assert response.json()["assigned"][-1]["grn"] == "OLD.26.0000200"
+    assert response.json()["assigned"][-1]["grn"] == "PPM.26.000200"
 
 
 def test_http_whitespace_article_with_a_name_enters_the_name_as_article(warehouse_api):  # noqa: F811
     client, _ = warehouse_api
 
-    response = client.post("/api/stock/batches", json={"items": [{**ROW, "article": "   ", "name": "Разъём"}]})
+    response = client.post("/api/stock/batches", json=quick_payload({"items": [{**ROW, "article": "   ", "name": "Разъём"}]}))
 
     assert response.status_code == 200, response.text
     assert (response.json()["lots"][0]["article"], response.json()["lots"][0]["name"]) == ("Разъём", "Разъём")

@@ -101,7 +101,7 @@ def test_boxes_are_checked_pack_the_shipment_and_print_pl_per_box_and_one_dn(shi
     assert packed["places"] == 2 and packed["weight"] == "14" and packed["tk_note"] == "Не кантовать"
     assert [box["gross"] for box in packed["boxes"]] == ["12,5", "1,5"]
     assert len(pl) == 2
-    assert [(row["part"], row["quantity"], row["batch"]) for row in pl[0]["rows"]] == [("КБ1 A-КБ1", "10", "ГП.26.0000001")]
+    assert [(row["part"], row["quantity"], row["batch"]) for row in pl[0]["rows"]] == [("КБ1 A-КБ1", "10", "FRX.26.000001")]
     assert (pl[1]["place"], pl[1]["places"], pl[1]["package"]) == ("2", "2", "Пакет")
     assert [(row["part"], row["boxes"]) for row in dn[0]["rows"]] == [("КБ1 A-КБ1", "BXN 1"), ("КБ2 A-КБ2", "BXN 2")]
     assert (dn[0]["places"], dn[0]["gross"], dn[0]["tk_note"]) == ("2", "14", "Не кантовать")

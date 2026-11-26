@@ -1,3 +1,4 @@
+import type { GrnPassport } from "./grn";
 import { api, DELIVERY_FIELDS, type DeliveryValues, type ItemAddressee, type ProjectAddressee, type Shipment } from "./api";
 import type { PrintResult } from "./LabelPrint";
 
@@ -6,7 +7,7 @@ import type { PrintResult } from "./LabelPrint";
 export interface IntakeTask { number: string; status: string; site: string; quantity: number | string; delivered: string }
 
 /** Акт приёмки КБ складом: свой ГРН, штуки с учётом откатов, дата, место и кто принял. */
-export interface IntakeAct { grn: string; quantity: string; received_at: string; location: string; actor?: string }
+export interface IntakeAct extends GrnPassport { grn: string; quantity: string; received_at: string; location: string; actor?: string }
 
 export interface IntakeRow {
   project: string;

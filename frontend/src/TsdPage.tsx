@@ -1,3 +1,4 @@
+import { QualityChip } from "./GrnFields";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   ApiError,
@@ -30,7 +31,7 @@ export const AUTO_SUBMIT_MS = 400;
 /** With the on-screen keyboard: long enough to type a package suffix after the ГРН by hand. */
 export const AUTO_SUBMIT_TYPED_MS = 1500;
 /** ГРН «FRX.26.0000001», with a package «-П2» or without; typed on the Russian layout too («АКЧю26ю0000001»). */
-const GRN_COMPLETE = /^(R&D|[A-Za-zА-Яа-яЁё]{3})[.юЮ]\d{2}[.юЮ]\d{7}([\s\-/_]*[A-Za-zА-Яа-я]{1,2}\d{1,3})?$/;
+const GRN_COMPLETE = /^(R&D|[A-Za-zА-Яа-яЁё]{3})[.юЮ]\d{2}[.юЮ]\d{6,7}([\s\-/_]*[A-Za-zА-Яа-я]{1,2}\d{1,3})?$/;
 
 type Action = "writeoff" | "return" | "move" | "label";
 
@@ -330,7 +331,7 @@ function TsdLot({ lot, readOnly, who, setWho, onChanged, onBack, onDone }: {
 
   return <div className="tsd-card" role="region" aria-label={`Партия ${lotTitle(lot)}`}>
     {onBack && <button type="button" className="tsd-help-link tsd-back" onClick={onBack}>← К списку</button>}
-    <div className="tsd-grn mono">{lotTitle(lot)}</div>
+    <div className="tsd-grn mono">{lotTitle(lot)}</div><QualityChip passport={lot} quietLegacy />
     <div className="tsd-title">{lot.name || lot.article}</div>
     <div className="muted">
       {lot.name && lot.article !== lot.name ? `${lot.article} · ` : ""}

@@ -22,7 +22,7 @@ const MFP: MachineRow = { ...BASE, key: "device:pc:scan:wia", kind: "device", na
   state: { text: "Подключён", tone: "ok" }, station: { kind: "mfp", machine_id: "pc", scanners: ["wia"], printers: ["Pantum BM2300 Series"] } };
 
 const LABELS: LabelPrinterView = {
-  now: "2026-11-20T10:00:05+03:00", online: true,
+  now: "2026-11-20T10:00:05+03:00", online: true, template_printer: "TSC MB341",
   agent: { last_seen: "2026-11-20T10:00:03+03:00", host: "DESKTOP-F40DLD9", printer: "TSC MB341", queue: 0, last_error: null },
   jobs: [
     { id: "j1", kind: "lot", what: "ГРН 1234/2", article: "DF13-2S", name: "Разъём Hirose", warehouse: "ЦАР", lot_id: "lot-1", copies: 2,
@@ -49,6 +49,10 @@ function page(calls: { url: string; init?: RequestInit }[]) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = decodeURIComponent(String(input));
     calls.push({ url, init });
+    if (url.includes("/labels/templates/") && !init?.method) {
+      const format={template:{elements:[]},version:null,is_default:true,form:null};
+      return json({kind:"lot",fields:[],current_format:"100x50",formats:{"58x30":format,"58x40":format,"100x50":format}});
+    }
     if (url.endsWith("/api/stock/devices/labels")) return json(LABELS);
     if (url.includes("/label") && init?.method === "POST") return json({ status: "queued" });
     if (url.endsWith("/api/stock/devices/mfp/pc")) return json(mfp());
@@ -167,4 +171,21 @@ it("MFP: an old agent says what to update, and no link stops both actions", () =
   expect(screen.getByText("Нет связи с ПК").className).toContain("tone-danger");
   expect((screen.getByRole("button", { name: "Сканировать" }) as HTMLButtonElement).disabled).toBe(true);
   expect(screen.getByText("Сканировать нельзя: нет связи с ПК")).toBeTruthy();
+});
+
+it("the old printer-template link opens the TSC equipment card and guards its drafts",async()=>{
+  window.history.replaceState({},"","/?section=machines&printer=labels&templates=1");
+  const calls:{url:string;init?:RequestInit}[]=[];page(calls);
+  render(<MachinesPage/>);
+  const card=within(await screen.findByRole("dialog",{name:"Принтер этикеток TSC MB341"}));
+  await card.findByRole("region",{name:"Шаблоны этикеток"});
+  const category=await card.findByLabelText("Категория ГРН",{exact:true});
+  expect(category).toHaveValue("PPM");
+  await waitFor(()=>expect(calls.some(call=>call.url.includes("category=PPM")&&call.url.includes("printer_name=TSC+MB341"))).toBe(true));
+  fireEvent.click(await card.findByRole("button",{name:"+ Текст"}));
+  fireEvent.click(card.getByRole("button",{name:"Закрыть"}));
+  expect(await screen.findByRole("dialog",{name:"Несохранённый шаблон"})).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button",{name:"Вернуться к шаблонам"}));
+  expect(card.getByRole("button",{name:"Текст: Текст"})).toBeInTheDocument();
+  window.history.replaceState({},"","/");
 });

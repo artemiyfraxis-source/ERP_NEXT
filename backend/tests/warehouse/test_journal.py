@@ -163,7 +163,7 @@ def test_journal_endpoint_reads_real_movements_once_newest_first(journal_api):
 
     assert [(row["kind"], row["lot"], row["event"]) for row in body["rows"]] == [
         ("Событие", "FRX.26.0000001", "Перемещение: 1F4 → 1F5"),
-        ("Списание", "FRX.26.0000001", "−2 шт · Брак · FRX.001 · проведено"),
+        ("Списание", "FRX.26.0000001", "−2 шт · Брак · Утилизация — брак · проведено"),
     ]  # the same minute: events before write-offs; the write-off's own audit event is not listed twice
     assert body["rows"][0]["name"] == "Разъём" and body["rows"][0]["warehouse"] == "ЦАР"
     assert (body["total"], body["truncated"]) == (2, 0)
