@@ -8,7 +8,7 @@
 import { connectorFace, connectorFaceUnits, topFeature, wireColorKnown, type TopFeature } from "./connectorArt";
 import { connectorTopView } from "./connectorTopView";
 import { twistedPairSvg } from "./twistArt";
-import { etkCutEnds, etkDrawHarness, etkDrawLabelPrint, etkFigure, etkWireColor, type CutEndKind, type EtkHousing, type EtkTopologyData } from "./etkDraw";
+import { etkCutEnds, etkDrawHarness, etkDrawLabelPrint, etkFigure, etkMarkText, etkTubePieces, etkWireColor, type CutEndKind, type EtkHousing, type EtkTopologyData } from "./etkDraw";
 import { formatMinutes, type EtkPfGroup } from "./etkRoute";
 import type { WireBlankEnd } from "./harness/WireBlankCatalog";
 import { coreColor } from "./pinoutCheck";
@@ -389,8 +389,8 @@ export function pfBranchSvg(branch: PfBranch): string {
   };
   const dimension = (xa: number, xb: number, text: string) => {
     const yd = cy + 46, top = Math.max(cy + 22, faceBottom + 2);
-    body += `<line x1="${xa.toFixed(1)}" y1="${top.toFixed(1)}" x2="${xa.toFixed(1)}" y2="${yd + 6}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +
-      `<line x1="${xb.toFixed(1)}" y1="${cy + 16}" x2="${xb.toFixed(1)}" y2="${yd + 6}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +
+    body += `<line x1="${xa.toFixed(1)}" y1="${top.toFixed(1)}" x2="${xa.toFixed(1)}" y2="${yd + 6}" stroke="#55666b" stroke-width=".7" data-role="extension"/>` +
+      `<line x1="${xb.toFixed(1)}" y1="${cy + 16}" x2="${xb.toFixed(1)}" y2="${yd + 6}" stroke="#55666b" stroke-width=".7" data-role="extension"/>` +
       `<line x1="${xa.toFixed(1)}" y1="${yd}" x2="${xb.toFixed(1)}" y2="${yd}" stroke="${INK}" stroke-width="1"/>` +
       `<path d="M${xa.toFixed(1)},${yd} l10,-4 v8 z M${xb.toFixed(1)},${yd} l-10,-4 v8 z" fill="${INK}"/>` +
       `<rect x="${((xa + xb) / 2 - 58).toFixed(1)}" y="${yd - 11}" width="116" height="22" fill="#fff"/>` +
@@ -508,6 +508,54 @@ function harnessTubeArt(operations: Row[], source: (operation: Row) => Row, conf
   return drawn(harnessTubeDrawing(left, right, tube, /^\d/.test(len) ? len : ""));
 }
 
+// ── Компактные рисунки ПФ резки (ревью 23.11, S8): полуфабрикат на карточке — состояние, а не ужатый эскиз операции 640 px
+// с цепочками размеров. Холст 320 = ширина карточки, подписи не мельче 11; полный эскиз остаётся у операции.
+
+const COMPACT = 320;
+const compactSvg = (height: number, body: string) =>
+  `<svg class="etk-svg etk-pf-svg etk-pf-compact" viewBox="0 0 ${COMPACT} ${height.toFixed(1)}" width="100%" preserveAspectRatio="xMinYMin meet" xmlns="http://www.w3.org/2000/svg">${body}</svg>`;
+
+/** Нарезанные провода: на провод строка «марка × шт · длина» и планка его цвета (длина планки — по длине провода), концы —
+ *  медью (зачищен), серым (облужен) или колодкой (терминал). До 6 строк, остальное — «и ещё N». */
+export function compactCutWires(operation: Row): string {
+  const wires = rows(obj(operation.fields).wires);
+  if (!wires.length || !/^cutWire/.test(str(operation.type))) return "";
+  const ends = etkCutEnds(operation), shown = wires.slice(0, 6), longest = Math.max(1, ...shown.map((wire) => num(wire.length)));
+  const tip = (kind: CutEndKind, x: number, y: number, dir: 1 | -1) => kind === "crimp"
+    ? `<rect x="${(dir > 0 ? x : x - 14).toFixed(1)}" y="${y - 6}" width="14" height="12" rx="2" fill="#c9ced3" stroke="${INK}" stroke-width=".7"/>`
+    : kind === "strip" || kind === "tin" ? `<rect x="${(dir > 0 ? x : x - 10).toFixed(1)}" y="${y - 2}" width="10" height="4" fill="${kind === "tin" ? "#c9ced3" : "#e08a2c"}" stroke="${INK}" stroke-width=".5"/>` : "";
+  let body = "", y = 4;
+  shown.forEach((wire) => {
+    const name = str(wire.art || wire.name), len = num(wire.length), w = len > 0 ? 150 + 120 * len / longest : 270;
+    const x1 = 22, x2 = x1 + w - 28, cy = y + 22;
+    body += `<text x="8" y="${y + 12}" font-size="11" font-weight="600" fill="${INK}">${esc(cut(`${name} × ${str(wire.qty)}${len > 0 ? ` · ${formatMinutes(len)} мм` : ""}`, 48))}</text>` +
+      `<rect x="${x1}" y="${cy - 4}" width="${(x2 - x1).toFixed(1)}" height="8" rx="2" fill="${etkWireColor(name)}" stroke="${INK}" stroke-width=".7"/>` +
+      tip(ends.a.kind, x1, cy, -1) + tip(ends.b.kind, x2, cy, 1);
+    y += 34;
+  });
+  if (wires.length > shown.length) { body += `<text x="8" y="${y + 10}" font-size="11" fill="${MUTED}">и ещё ${wires.length - shown.length}</text>`; y += 16; }
+  return compactSvg(y + 2, body);
+}
+
+/** Нарезанные трубки: на вид строка «трубка ×шт · длина» и отрезок; маркировочная трубка — светлым отрезком с надписью. */
+export function compactTubeCut(operation: Row): string {
+  const pieces = etkTubePieces(operation);
+  if (!pieces.length) return "";
+  const printed = /^(PRINT_MARK_TUBE|INS_MARK_TUBE_AUTO)/i.test(str(operation.code) || str(operation.tmplHint));
+  const shown = pieces.slice(0, 6), longest = Math.max(1, ...shown.map((piece) => num(piece.len)));
+  let body = "", y = 4;
+  shown.forEach((piece) => {
+    const w = num(piece.len) > 0 ? 40 + 100 * num(piece.len) / longest : 90, text = etkMarkText(piece.label);
+    const count = Number.isInteger(piece.count) ? String(piece.count) : String(piece.count).replace(".", ",");
+    body += `<text x="8" y="${y + 12}" font-size="11" font-weight="600" fill="${INK}">${esc(cut(`${piece.label} ×${count}${piece.len ? ` · ${piece.len} мм` : ""}`, 48))}</text>` +
+      `<rect x="8" y="${y + 17}" width="${w.toFixed(1)}" height="14" rx="4" fill="${printed ? "#fbfaf5" : "#3b4147"}" stroke="${printed ? "#8a8f94" : INK}" stroke-width=".8"/>` +
+      (printed && text ? `<text x="${(8 + w / 2).toFixed(1)}" y="${y + 28}" text-anchor="middle" font-size="11" font-weight="700" fill="${INK}">${esc(cut(text, 14))}</text>` : "");
+    y += 38;
+  });
+  if (pieces.length > shown.length) { body += `<text x="8" y="${y + 10}" font-size="11" fill="${MUTED}">и ещё ${pieces.length - shown.length}</text>`; y += 16; }
+  return compactSvg(y + 2, body);
+}
+
 /** Эскиз ПФ. `operations` — операции ПФ в порядке работы; `inputs` — что приходит из других ПФ (текст стрелок);
  *  `pins` — распиновка по узлу схемы (для изделия); `image` — своя картинка технолога у операции. */
 export function etkPfArt({ group, operations, inputs = [], document, pins = {}, batch = 1, image = () => "" }: {
@@ -523,7 +571,7 @@ export function etkPfArt({ group, operations, inputs = [], document, pins = {}, 
   const printed = operations.map(etkDrawLabelPrint);
   if (printed.length && printed.every(Boolean)) return { main: { svg: printed.join("") }, layers: "" };
   // Коаксиальная сборка: конец кабеля, собранный конец и вся сборка — свои рисунки на размер карточки (владелец 19.10).
-  const coaxArt = coaxPfArt(group, operations, config);
+  const coaxArt = coaxPfArt(group, operations, config, obj(document));
   if (coaxArt) return { main: { svg: coaxArt }, layers: "" };
   const kinds = operations.map(kindOf);
   const figures = operations.map((operation) => etkFigure(operation));
@@ -553,7 +601,9 @@ export function etkPfArt({ group, operations, inputs = [], document, pins = {}, 
   // Иначе — рисунок последней операции, у которой он есть: состояние ПФ на выходе.
   for (let index = operations.length - 1; !main && index >= 0; index -= 1) {
     const cable = etkCutCable(operations[index], config);
+    const compact = figures[index] ? compactCutWires(operations[index]) || compactTubeCut(operations[index]) : "";
     if (cable) main = { cable };
+    else if (compact) main = { svg: compact };
     else if (figures[index]) main = { svg: figures[index] };
   }
   // Слои на пучке — от операций без своего эскиза; у сростка его трубки уже на рисунке.
