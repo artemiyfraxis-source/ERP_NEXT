@@ -177,6 +177,8 @@ def task_progress(task, document: Mapping | None, serial_range, counts: Counter)
     """Printed / remaining KB items: an item (serial) is printed when all its numbered labels are; without numbered
     labels — whole sets of the fixed labels. `remaining_labels` — label pieces still to print, numbered and fixed
     (what «Печатать оставшиеся» would print); 0 when the task released its serials (printing unavailable).
+    `total_labels` / `printed_labels` — label pieces of the ETK over the serial range and those of them printed (the group
+    card counters, owner 23.11): the same rows and matching as `remaining_labels`, printed = total − remaining.
     `label_size` / `sizes_differ` — the label size of the ETK marks; `wire_mm` — the ETK wire diameters (plan 21.11)."""
     size, differ = document_label_size(document)
     view = {"task_id": str(task.id), "task_number": task.number, "item": task.item, "quantity": task.quantity,
@@ -184,12 +186,14 @@ def task_progress(task, document: Mapping | None, serial_range, counts: Counter)
             "serial_first": serial_range[0] if serial_range else None,
             "serial_last": serial_range[1] if serial_range else None,
             "printed": 0, "remaining": task.quantity, "printed_serials": [], "remaining_serials": [],
-            "remaining_labels": 0}
+            "remaining_labels": 0, "total_labels": 0, "printed_labels": 0}
     if serial_range is None or not document:
         return view
     rows = labels(document, task, serial_range)
     left = remaining_rows(rows, counts, fixed_keys(document, task), numbered_keys(document, task, serial_range))
     view["remaining_labels"] = sum(int(row["quantity"]) for row in left)
+    view["total_labels"] = sum(int(row["quantity"]) for row in rows)
+    view["printed_labels"] = view["total_labels"] - view["remaining_labels"]
     serials = range(serial_range[0], serial_range[1] + 1)
     numbered = [row for row in rows if row.get("serial") is not None]
     if numbered:
