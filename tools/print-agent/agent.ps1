@@ -38,7 +38,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.12.1'
+$script:AgentVersion = '2.12.2'
 $script:VnaIdnNextProbe = [datetime]::MinValue
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
@@ -2468,6 +2468,15 @@ function Get-S2ProfileWrites {
     $writes['CALCulate(1).FSIMulator.STATe'] = $false
     return $writes
 }
+function Test-S2Slope {
+    param($Scpi, [string]$Path)
+    # 2.12.2: S2VNA 26.2.2 at СИ.002 has no per-port power slope — SOURce(1).POWer.PORT(n).LEVel exposes only IMMediate;
+    # reading the path gives null, writing threw «The property 'STATe' cannot be found» and failed every apply_profile.
+    # The slope write/check runs only where the instrument has it; no other missing property is tolerated.
+    $parent = $Path.Substring(0, $Path.LastIndexOf('.'))
+    try { $node = Invoke-S2Io $Scpi $parent } catch { return $false }
+    return $null -ne $node -and @($node | Get-Member -Name 'STATe' -ErrorAction SilentlyContinue).Count -gt 0
+}
 function Assert-S2Profile {
     param($Scpi, $Profile, [switch]$Apply)
     if ($Profile.sweep -cne 'LIN' -or $Profile.impedance_ohm -ne 50 -or $Profile.averaging -ne $false -or
@@ -2489,6 +2498,7 @@ function Assert-S2Profile {
     }
     $writes = Get-S2ProfileWrites $Profile
     foreach ($path in $writes.Keys) {
+        if ($path -like '*.LEVel.SLOPe.STATe' -and -not (Test-S2Slope $Scpi $path)) { continue }
         if ($Apply) { Set-S2Checked $Scpi $path $writes[$path] }
         else { Assert-VnaEqual (Invoke-S2Io $Scpi $path) $writes[$path] $path }
     }
