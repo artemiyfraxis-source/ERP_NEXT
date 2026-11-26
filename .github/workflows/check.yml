@@ -19,9 +19,14 @@ concurrency:
 
 jobs:
   # Backend and frontend run side by side; `check` below is the one status to read before a merge.
+  # Backend tests in 4 parallel shards (ERP_TEST_SHARD, scripts/run-backend-tests.mjs): ~4x shorter wall time.
   backend:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -38,10 +43,14 @@ jobs:
         run: |
           node --check scripts/run-backend-tests.mjs
       - name: Deploy scripts (update protocol)
+        if: matrix.shard == 1
         run: npm run test:deploy
       - name: Architecture tests
+        if: matrix.shard == 1
         run: npm test
-      - name: Backend tests
+      - name: Backend tests (shard ${{ matrix.shard }}/4)
+        env:
+          ERP_TEST_SHARD: ${{ matrix.shard }}/4
         run: npm run test:backend
 
   frontend:

@@ -3,7 +3,7 @@
    равно проверяет схему при сборке (422 «Схема полуфабрикатов: …»). Операции — по номерам (1 = первая в ЭТК). */
 
 import type { EtkRouteBlock, EtkRouteEdge } from "./api";
-import { etkRouteOf } from "./etkRoute";
+import { etkRouteOf, operationTimeSummary } from "./etkRoute";
 
 /** Правимая часть `document.route` — то, что уходит в `build_config.route` (итоги считаются заново). */
 export type RouteBlock = Pick<EtkRouteBlock, "key" | "name" | "ops" | "final" | "components" | "kit">;
@@ -17,6 +17,7 @@ export type Route = { blocks: RouteBlock[]; edges: RouteEdge[] };
 export type RouteOp = {
   position: number; key: string; type: string; code: string; label: string; minutes: number | null; number?: number; codeNote?: string;
   side?: "A" | "B";
+  unknownTime?: boolean;
 };
 
 export type BlockTotals = {
@@ -25,6 +26,8 @@ export type BlockTotals = {
   rolled: number | null;    // на штуку, со всеми входами: unit + Σ per_unit × rolled входа
   inputs: number;           // входящих полуфабрикатов на один: Σ per_unit входящих стрелок
   opCount: number;          // операций в блоке и во всех блоках до него
+  unknownOperations?: number;
+  rolledUnknownOperations?: number;
 };
 
 /** Отрезки трубок ждут операцию, которая их надевает: «Надеть ТУТ», заделку свободного конца, «Монтаж ТУТ» коаксиала
@@ -239,6 +242,7 @@ export function routeTotals(route: Route, ops: RouteOp[], quantity: number): Map
   const batch = quantity > 0 ? quantity : 1;
   const timed = ops.some((op) => op.minutes != null);
   const minutes = new Map(ops.map((op) => [op.position, op.minutes ?? 0]));
+  const unknown = new Set(ops.filter((op) => op.minutes == null || op.unknownTime).map((op) => op.position));
   const byKey = new Map(route.blocks.map((block) => [block.key, block]));
   const totals = new Map<string, BlockTotals>();
   const upstream = new Map<string, Set<number>>();
@@ -248,12 +252,16 @@ export function routeTotals(route: Route, ops: RouteOp[], quantity: number): Map
     const own = block.ops.reduce((sum, position) => sum + (minutes.get(position) ?? 0), 0);
     const unit = own / batch;
     upstream.set(key, new Set([...block.ops, ...incoming.flatMap((edge) => [...(upstream.get(edge.from) ?? [])])]));
+    const unknownOperations = block.ops.filter((position) => unknown.has(position)).length;
+    const rolledUnknownOperations = [...upstream.get(key)!].filter((position) => unknown.has(position)).length;
     totals.set(key, {
       minutes: timed ? own : null,
       unit: timed ? unit : null,
       rolled: timed ? unit + incoming.reduce((sum, edge) => sum + edge.per_unit * (totals.get(edge.from)!.rolled ?? 0), 0) : null,
       inputs: incoming.reduce((sum, edge) => sum + edge.per_unit, 0),
       opCount: upstream.get(key)!.size,
+      ...(unknownOperations ? { unknownOperations } : {}),
+      ...(rolledUnknownOperations ? { rolledUnknownOperations } : {}),
     });
   }
   return totals;
@@ -537,7 +545,7 @@ export function sortedRoute(route: Route): Route {
 }
 
 /** Нормы операций ЭТК, минут на партию (как `_operation_minutes` на сервере); документ не от этих же операций — null. */
-export function documentMinutes(document: Record<string, unknown> | null | undefined, types: string[]): { minutes: number[]; quantity: number } | null {
+export function documentMinutes(document: Record<string, unknown> | null | undefined, types: string[]): { minutes: number[]; quantity: number; unknown?: boolean[] } | null {
   const list = document && Array.isArray(document.operations) ? document.operations as Array<Record<string, unknown>> : null;
   if (!list || list.length !== types.length || list.some((item, index) => !item || String(item.type ?? "") !== types[index])) return null;
   const num = (value: unknown) => { const n = Number(String(value ?? "").replace(",", ".")); return Number.isFinite(n) ? n : 0; };
@@ -545,11 +553,7 @@ export function documentMinutes(document: Record<string, unknown> | null | undef
   const kit = (document!.kit && typeof document!.kit === "object" ? document!.kit : {}) as Record<string, unknown>;
   const quantity = num(config.partQty) || num(kit.part_quantity);
   const batch = quantity > 0 ? quantity : 1;
-  const minutes = list.map((item) => {
-    const rows = (Array.isArray(item.time) ? item.time : []).filter((row) => row && typeof row === "object") as Array<Record<string, unknown>>;
-    if (rows.length) return rows.reduce((sum, row) => sum + num(row.norm), 0);
-    const times = (item.times && typeof item.times === "object" ? item.times : {}) as Record<string, unknown>;
-    return (num(times.operation_seconds) * batch) / 60;
-  });
-  return { minutes, quantity: batch };
+  const timing = list.map((item) => operationTimeSummary(item, batch));
+  return { minutes: timing.map((item) => item.minutes), quantity: batch,
+    ...(timing.some((item) => item.unknown) ? { unknown: timing.map((item) => item.unknown) } : {}) };
 }

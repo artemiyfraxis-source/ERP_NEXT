@@ -3,13 +3,23 @@ import { afterEach, expect, it, vi } from "vitest";
 import { ReferencesPage } from "./ReferencesPage";
 import { EquipmentForm } from "./EquipmentForm";
 import { EQUIPMENT_TABS } from "./referenceTabs";
-import type { Principal, TechOperationRecord } from "./api";
+import type { Principal, ReferenceInstrumentsResult, TechOperationRecord } from "./api";
 
 const principal: Principal = {
   user: { id: "tester", email: "test@example.test", name: "Технолог", department: "ERP" },
   roles: ["admin"], access_level: "admin", permissions: { erpref: "edit" },
 };
 const json = (body: unknown) => new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } });
+// Since 0217 «Средства измерений» reads the single СИ registry (/api/references/instruments), not a БД.ОБ catalog.
+const instruments: ReferenceInstrumentsResult = {
+  instruments: [{
+    id: "canonical", legacy_unit_id: null, version: 1, inventory_number: "СИ.001", name: "Линейка",
+    instrument_type: "Линейный", kind: "Средство измерений", parent_id: null, serial_number: "Л-1", manufacturer: "",
+    doc_designation: "", quantity: 1, storage_location: "ОТК", warehouse_grn: "", verification_number: null,
+    verified_at: null, verification_due: null, status: "Поверка не подтверждена", files: [], custom_fields: {},
+  }],
+  count: 1, quantity: 1, custom_columns: [], can_edit_identity: false, can_edit_custom: true,
+};
 afterEach(() => { vi.restoreAllMocks(); localStorage.clear(); history.replaceState({}, "", "/"); });
 
 it("shows bound verification fields from the registry and never from stale catalog copies", () => {
@@ -32,12 +42,15 @@ it("six catalogs keep columns and counts separate, add/remove columns in the sel
     },
   }));
   const calls: Array<{ path: string; method: string; body: unknown }> = [];
+  const reads: string[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const path = String(input);
     if (init?.method && init.method !== "GET") {
       calls.push({ path, method: init.method, body: init.body ? JSON.parse(String(init.body)) : null });
       return json({ name: "Новый столбец" });
     }
+    reads.push(path);
+    if (path === "/api/references/instruments") return json(instruments);
     if (path.includes("tech-operations?")) {
       const params = new URL(path, "http://localhost").searchParams;
       const tab = params.get("tab");
@@ -51,6 +64,14 @@ it("six catalogs keep columns and counts separate, add/remove columns in the sel
   render(<ReferencesPage principal={principal} initialTab="ob" />);
   for (const [tab, label] of Object.entries(EQUIPMENT_TABS)) {
     fireEvent.click(await screen.findByRole("button", { name: new RegExp(`^${label}(?: |$)`) }));
+    if (tab === "ob_measuring") {
+      // The СИ tab is the registry: its own columns and «записей · шт.», none of the БД.ОБ catalog columns.
+      expect(await screen.findByRole("columnheader", { name: "Зав. №" })).toBeInTheDocument();
+      expect(screen.queryAllByRole("columnheader", { name: /^Поле / })).toHaveLength(0);
+      expect(screen.getAllByText("1 записей · 1 шт.").length).toBeGreaterThan(0);
+      expect(reads.some((path) => path.includes("tab=ob_measuring"))).toBe(false);
+      continue;
+    }
     expect(await screen.findByRole("columnheader", { name: `Поле ${tab}` })).toBeInTheDocument();
     for (const other of Object.keys(EQUIPMENT_TABS).filter((key) => key !== tab)) {
       expect(screen.queryByRole("columnheader", { name: `Поле ${other}` })).toBeNull();
@@ -77,7 +98,7 @@ it("hides the previous catalog while the next catalog is loading", async () => {
   const record = { id: "one", tab: "ob", display_text: "Станок", source_sheet: "", fields: { "Наименование": "Станок", "Инв. номер": "ОБ.1" } };
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    if (path.includes("tab=ob_measuring")) return new Promise<Response>((resolve) => { resolveMeasuring = resolve; });
+    if (path === "/api/references/instruments") return new Promise<Response>((resolve) => { resolveMeasuring = resolve; });
     if (path.includes("tab=ob")) return json({ metadata: null, records: [record] });
     if (path.includes("tech-operations?")) return json({ metadata: null, records: [] });
     if (path.endsWith("/maps")) return json({ suppliers: [], countries: [], gost_awg: [] });
@@ -88,8 +109,10 @@ it("hides the previous catalog while the next catalog is loading", async () => {
   fireEvent.click(screen.getByRole("button", { name: /^Средства измерений/ }));
   expect(screen.queryByText("ОБ.1")).toBeNull();
   expect(screen.queryByRole("button", { name: "+ Новая запись" })).toBeNull();
-  resolveMeasuring!(json({ metadata: null, records: [], columns: ["Заводской номер"] }));
-  expect(await screen.findByRole("columnheader", { name: "Заводской номер" })).toBeInTheDocument();
+  await waitFor(() => expect(resolveMeasuring).toBeDefined());
+  resolveMeasuring!(json(instruments));
+  expect(await screen.findByText("СИ.001")).toBeInTheDocument();
+  expect(screen.queryByText("ОБ.1")).toBeNull();
 });
 
 it.each(["Наменование", "Наименование"])("preserves a name stored only under %s when another field changes", async (nameKey) => {

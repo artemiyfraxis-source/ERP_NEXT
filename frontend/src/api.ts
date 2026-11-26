@@ -1067,6 +1067,7 @@ export interface WorkloadKb {
   remaining: number;
   hours: number;
   unit_hours: number;
+  unknown_operations?: number;
   site: string;
   site_note: string;
   by_kind: Record<string, number>;
@@ -1077,6 +1078,7 @@ export interface WorkloadProject {
   customer: string;
   deadline: string | null;
   hours: number;
+  unknown_operations?: number;
   by_site: Record<string, number>;
   by_kind: Record<string, number>;
   ready: string | null;
@@ -1634,6 +1636,11 @@ export interface InstrumentFile {
 
 export interface ProductionInstrument {
   id: string;
+  legacy_unit_id?: string | null;
+  custom_fields?: Record<string, string>;
+  article?: string;
+  notes?: string;
+  measurement_category?: string;
   version: number;
   inventory_number: string;
   name: string;
@@ -1656,7 +1663,28 @@ export interface ProductionInstrument {
   files: InstrumentFile[];
 }
 
-export type InstrumentInput = Omit<ProductionInstrument, "id" | "version" | "files" | "warehouse_writeoff_id" | "suggested_serial_number">;
+export type InstrumentInput = Omit<ProductionInstrument, "id" | "version" | "files" | "warehouse_writeoff_id" | "suggested_serial_number" | "legacy_unit_id">;
+
+export interface ReferenceInstrumentsResult {
+  instruments: ProductionInstrument[];
+  count: number;
+  quantity: string | number;
+  custom_columns: string[];
+  can_edit_identity: boolean;
+  can_edit_custom: boolean;
+}
+
+export interface InstrumentHistory {
+  instrument_id: string;
+  events: Array<{
+    id: string;
+    aggregate_id: string;
+    event_type: string;
+    actor_name: string;
+    occurred_at: string;
+    details: Record<string, unknown>;
+  }>;
+}
 export interface RfInterface {
   series: string;
   body: string;
@@ -2398,6 +2426,9 @@ export interface EtkRouteBlock {
   unit_minutes: number;
   rolled_minutes: number;
   rolled_ops: number;
+  /** Numeric times are lower bounds when an operation has no norm. */
+  unknown_operations?: number;
+  rolled_unknown_operations?: number;
   /** ПФ-комплект («Сложная сборка», 16.10): резка, трубки, оплётка, маркировка для нескольких ПФ — один на изделие. */
   kit?: boolean;
   /** Уровень на схеме: «2» — один блок на уровне, «2.1» — первый из нескольких (считает сервер). */
@@ -4643,6 +4674,14 @@ export const shippingApi = {
 };
 
 export const referencesApi = {
+  instruments: () => visitRead<ReferenceInstrumentsResult>("/api/references/instruments"),
+  instrument: (id: string) => api<{ instrument: ProductionInstrument }>(`/api/references/instruments/${encodeURIComponent(id)}`),
+  updateInstrument: (id: string, payload: Partial<InstrumentInput> & { version: number }) =>
+    api<{ instrument: ProductionInstrument }>(`/api/references/instruments/${encodeURIComponent(id)}`, {
+      method: "PATCH", body: JSON.stringify(payload),
+    }),
+  instrumentHistory: (id: string) => api<InstrumentHistory>(`/api/references/instruments/${encodeURIComponent(id)}/history`),
+  instrumentFileUrl: (id: string, fileId: string) => `/api/references/instruments/${encodeURIComponent(id)}/files/${encodeURIComponent(fileId)}`,
   // The lists of «База данных» are visit reads (`visitRead`): one download per visit, fresh after a write.
   bases: () => visitRead<BasesResult>("/api/references/bases"),
   cables: () => visitRead("/api/references/cables", () => api<CablesResult>("/api/references/cables").then(withConnectors)),

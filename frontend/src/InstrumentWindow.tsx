@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
-  ApiError, failureText, productionApi, warehouseApi,
+  ApiError, failureText, productionApi, referencesApi, warehouseApi,
   type InstrumentFileKind, type InstrumentInput, type InstrumentKind, type ProductionInstrument, type WarehouseLot,
 } from "./api";
 import { DataTable, type DataColumn } from "./DataTable";
-import { formatDay, formatNumber } from "./format";
+import { formatDay, formatMoment, formatNumber } from "./format";
 import { PageWindow } from "./PageWindow";
 import { InstrumentRfInterfaces } from "./InstrumentRfInterfaces";
 import { InstrumentMatings } from "./InstrumentMatings";
@@ -26,6 +26,8 @@ function initialDraft(instrument: ProductionInstrument | null, kind: InstrumentK
     verification_number: instrument?.verification_number ?? null, verified_at: instrument?.verified_at?.slice(0, 10) ?? null,
     verification_due: instrument?.verification_due?.slice(0, 10) ?? null,
     status: instrument?.status ?? (kind === "Принадлежность" ? "Действует" : "Поверка не подтверждена"),
+    custom_fields: instrument?.custom_fields ?? {},
+    article: instrument?.article ?? "", notes: instrument?.notes ?? "", measurement_category: instrument?.measurement_category ?? "",
   };
 }
 
@@ -39,7 +41,9 @@ function fileBase64(file: File): Promise<string> {
   });
 }
 
-export function InstrumentWindow({ instrument, kind, parentId, instruments, close, onChanged, onAccessory }: {
+export function InstrumentWindow({ instrument, kind, parentId, instruments, close, onChanged, onAccessory,
+  source = "production", canEditIdentity = true, canEditCustom = false, customColumns = [], referenceLink,
+}: {
   instrument: ProductionInstrument | null;
   kind: InstrumentKind;
   parentId: string | null;
@@ -47,6 +51,11 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
   close: () => void;
   onChanged: () => Promise<void>;
   onAccessory: (parentId: string) => void;
+  source?: "production" | "references";
+  canEditIdentity?: boolean;
+  canEditCustom?: boolean;
+  customColumns?: string[];
+  referenceLink?: string;
 }) {
   const [record, setRecord] = useState(instrument);
   const [draft, setDraft] = useState(() => initialDraft(instrument, kind, parentId));
@@ -66,9 +75,16 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
   const [labels, setLabels] = useState(false);
   const [fileKind, setFileKind] = useState<InstrumentFileKind>("Паспорт");
   const [numberAttempt, setNumberAttempt] = useState(0);
+  const [history, setHistory] = useState<Awaited<ReturnType<typeof referencesApi.instrumentHistory>> | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
+  const productionActions = source === "production" && canEditIdentity;
+  const identityReason = "Паспорт СИ изменяет сотрудник с правом правки ОТК";
   const verificationInput = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const dirty = rfDirty || matingsDirty || JSON.stringify(draft) !== JSON.stringify(baseline);
+  const editingIdentity = canEditIdentity && (!record || Object.entries(draft).some(([key, value]) =>
+    key !== "custom_fields" && value !== baseline[key as keyof InstrumentInput]));
   const accessory = draft.kind === "Принадлежность";
   const showVnaApp = !accessory && (Boolean(draft.vna_app) || /ВАЦ|VNA|векторн.*анализ|анализ.*(?:векторн|цеп)/i.test(`${draft.instrument_type} ${draft.name}`));
   const parents = instruments.filter((item) => item.kind === "Средство измерений" && item.id !== record?.id && !isDescendant(item, record?.id, instruments));
@@ -100,7 +116,7 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
     if (!busy && !rfBusy && !matingsBusy && (!dirty || window.confirm("Закрыть без сохранения изменений?"))) close();
   }
   const field = <K extends keyof InstrumentInput>(key: K, value: InstrumentInput[K]) => setDraft((current) => ({ ...current, [key]: value }));
-  const text = (key: "inventory_number" | "name" | "instrument_type" | "serial_number" | "manufacturer" | "doc_designation" | "storage_location" | "warehouse_grn", label: string, required = false) =>
+  const text = (key: "inventory_number" | "name" | "instrument_type" | "serial_number" | "manufacturer" | "doc_designation" | "storage_location" | "warehouse_grn" | "article" | "notes" | "measurement_category", label: string, required = false) =>
     <label>{label}<input name={key} autoComplete="off" required={required} value={draft[key]} onChange={(event) => field(key, event.target.value)} /></label>;
 
   function accept(saved: ProductionInstrument) {
@@ -122,25 +138,27 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
 
   async function save(event: FormEvent) {
     event.preventDefault();
+    if (!canEditIdentity && !canEditCustom) return;
     const quantity = Number(draft.quantity);
     const payload: InstrumentInput = { ...draft, quantity, name: draft.name.trim(), inventory_number: draft.inventory_number.trim() };
-    if (accessory && !payload.instrument_type.trim()) payload.instrument_type = "Принадлежность";
-    if (accessory || payload.status === "Поверка не подтверждена") {
+    if (editingIdentity && accessory && !payload.instrument_type.trim()) payload.instrument_type = "Принадлежность";
+    if (editingIdentity && (accessory || payload.status === "Поверка не подтверждена")) {
       payload.verification_number = null; payload.verified_at = null; payload.verification_due = null;
     }
-    if (!payload.inventory_number || !payload.name || !Number.isFinite(quantity) || quantity <= 0 ||
-      (!accessory && !payload.instrument_type.trim())) {
+    if (editingIdentity && (!payload.inventory_number || !payload.name || !Number.isFinite(quantity) || quantity <= 0 ||
+      (!accessory && !payload.instrument_type.trim()))) {
       setError("Заполните инвентарный номер, наименование, тип и количество."); return;
     }
-    if (!accessory && payload.status === "Действует" && (!payload.verification_number?.trim() || !payload.verified_at || !payload.verification_due)) {
+    if (editingIdentity && !accessory && payload.status === "Действует" && (!payload.verification_number?.trim() || !payload.verified_at || !payload.verification_due)) {
       setError("Укажите номер свидетельства и даты поверки."); return;
     }
-    if (payload.verified_at && payload.verification_due && payload.verification_due < payload.verified_at) {
+    if (editingIdentity && payload.verified_at && payload.verification_due && payload.verification_due < payload.verified_at) {
       setError("Срок поверки не может быть раньше даты поверки."); return;
     }
     await run(async () => {
       const changes = Object.fromEntries(Object.entries(payload).filter(([key, value]) => value !== baseline[key as keyof InstrumentInput]));
-      const result = record ? await productionApi.updateInstrument(record.id, { version: record.version, ...changes }) : await productionApi.registerInstrument(payload);
+      const editable = canEditIdentity ? changes : { custom_fields: payload.custom_fields };
+      const result = record ? await (source === "references" ? referencesApi : productionApi).updateInstrument(record.id, { version: record.version, ...editable }) : await productionApi.registerInstrument(payload);
       accept(result.instrument);
       setNotice("Запись сохранена");
       await onChanged();
@@ -159,9 +177,11 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
   return <PageWindow label={record ? `Средство измерений: ${record.name}` : `Добавить: ${kind.toLocaleLowerCase("ru")}`} width={1120} close={requestClose}>
     <div className="panel instrument-window" aria-busy={busy}>
       <header className="page-head"><h2>{record ? `${record.inventory_number} · ${record.name}` : `Новое: ${kind.toLocaleLowerCase("ru")}`}</h2>
-        <div className="header-actions">{record && <a className="primary small instrument-passport" href={productionApi.instrumentPassportUrl(record.id)}
+        <div className="header-actions">{referenceLink && <a className="secondary small" href={referenceLink}>Открыть в базе данных</a>}
+          {record && source === "references" && canEditIdentity && <a className="secondary small" href={`?section=quality&tab=instruments&si=${encodeURIComponent(record.inventory_number)}`}>Открыть в ОТК</a>}
+          {record && source === "production" && <a className="primary small instrument-passport" href={productionApi.instrumentPassportUrl(record.id)}
           target="_blank" rel="noopener noreferrer">Паспорт (PDF)</a>}
-          {record && <button type="button" className="secondary small" disabled={busy || rfBusy || dirty || conflict}
+          {record && source === "production" && <button type="button" className="secondary small" disabled={busy || rfBusy || dirty || conflict}
           title={dirty ? "Сначала сохраните изменения" : undefined} onClick={() => setLabels(true)}>Печать этикетки</button>}
           <button type="button" className="secondary small" disabled={busy || rfBusy} onClick={requestClose}>Закрыть</button></div></header>
       {error && <div className="error-banner" role="alert">{error}</div>}
@@ -169,16 +189,18 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
       {conflict && <button className="secondary small" disabled={busy} onClick={() => {
         if (dirty && !window.confirm("Обновить запись и заменить несохранённые изменения?")) return;
         void run(async () => {
-          const result = await productionApi.instruments();
-          const fresh = result.instruments.find((item) => item.id === record?.id);
+          if (!record) return;
+          const fresh = source === "references" ? (await referencesApi.instrument(record.id)).instrument
+            : (await productionApi.instruments()).instruments.find((item) => item.id === record.id);
           if (!fresh) throw new Error("Запись не найдена — обновите реестр");
           accept(fresh); await onChanged();
         });
       }}>Обновить запись</button>}
       {numberLoading && <div className="empty">Получение инвентарного номера…</div>}
       {!record && error && !draft.inventory_number && !numberLoading && <button className="secondary small" onClick={() => setNumberAttempt((value) => value + 1)}>Повторить получение номера</button>}
-      <form onSubmit={(event) => void save(event)}>
-        <fieldset disabled={busy || rfBusy} className="instrument-fields">
+      {!canEditIdentity && <p className="warning-inline" id="instrument-identity-reason">{identityReason}</p>}
+      <form noValidate={!editingIdentity} onSubmit={(event) => void save(event)}>
+        <fieldset disabled={busy || rfBusy || !canEditIdentity} aria-describedby={!canEditIdentity ? "instrument-identity-reason" : undefined} className="instrument-fields">
           <section><h3>Прибор</h3><div className="form-grid">
             {text("inventory_number", "Инв. №", true)}{text("name", "Наименование", true)}{text("instrument_type", "Тип", !accessory)}
             <label>Вид<input name="kind" readOnly value={draft.kind} /></label>
@@ -186,8 +208,9 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
               <option value="">Не указана</option><option>S2VNA</option><option>Arinst VL</option>
             </select></label>}
             {text("doc_designation", "Обозначение для документов")}
+            {source === "references" && <>{text("article", "Артикул")}{text("measurement_category", "Категория измерений")}</>}
             <div className="instrument-serial"><label>Зав. №<input name="serial_number" autoComplete="off" value={draft.serial_number} onChange={(event) => field("serial_number", event.target.value)} /></label>
-              {record && !record.serial_number.trim() && !draft.serial_number.trim() && record.suggested_serial_number && <button type="button" className="secondary small"
+              {record && productionActions && !record.serial_number.trim() && !draft.serial_number.trim() && record.suggested_serial_number && <button type="button" className="secondary small"
                 disabled={busy || rfBusy || dirty || conflict} title={dirty ? "Сначала сохраните изменения" : undefined} onClick={() => void run(async () => {
                   const result = await productionApi.assignInstrumentSerial(record.id, record.version);
                   accept(result.instrument); setNotice("Номер присвоен"); await onChanged();
@@ -211,9 +234,17 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
             </div> : <p className="muted-text">Поверка не подтверждена</p>}
           </section>}
           <section><h3>Хранение</h3><div className="form-grid">{text("storage_location", "Место хранения")}{text("warehouse_grn", "ГРН")}</div></section>
-          <div className="form-actions"><button className="primary small" type="submit" disabled={numberLoading || conflict}>{busy ? "Сохранение…" : "Сохранить"}</button>
-            {record?.kind === "Принадлежность" && record.warehouse_writeoff_id && record.status === "Действует" &&
-              <button type="button" className="secondary" disabled={conflict} onClick={() => {
+          {source === "references" && <section><h3>Примечание</h3>{text("notes", "Примечание")}</section>}
+        </fieldset>
+        {customColumns.length > 0 && <section><h3>Дополнительные сведения</h3>
+          {!canEditCustom && !canEditIdentity && <p className="warning-inline">Собственные столбцы изменяет сотрудник с правом правки базы данных</p>}
+          <div className="form-grid">{customColumns.map((column) => <label key={column}>{column}<input name={`custom:${column}`} autoComplete="off"
+            disabled={busy || (!canEditCustom && !canEditIdentity)} value={draft.custom_fields?.[column] ?? ""}
+            onChange={(event) => field("custom_fields", { ...draft.custom_fields, [column]: event.target.value })} /></label>)}</div>
+        </section>}
+          <div className="form-actions"><button className="primary small" type="submit" disabled={busy || rfBusy || numberLoading || conflict || (!canEditIdentity && !canEditCustom)}>{busy ? "Сохранение…" : "Сохранить"}</button>
+            {productionActions && record?.kind === "Принадлежность" && record.warehouse_writeoff_id && record.status === "Действует" &&
+              <button type="button" className="secondary" disabled={busy || rfBusy || conflict} onClick={() => {
                 if (!window.confirm("Вернуть принадлежность на склад и отметить «Не используется»?")) return;
                 if (dirty && !window.confirm("Несохранённые изменения будут потеряны. Продолжить?")) return;
                 void run(async () => {
@@ -221,52 +252,64 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
                   accept(result.instrument); setNotice("Принадлежность возвращена на склад"); await onChanged();
                 });
               }}>Вернуть на склад</button>}
-            {record && record.status !== "Не используется" && <button type="button" className="danger small" disabled={conflict} onClick={() => {
+            {productionActions && record && record.status !== "Не используется" && <button type="button" className="danger small" disabled={busy || rfBusy || conflict} onClick={() => {
               if (!window.confirm("Списать прибор / отметить «Не используется»?")) return;
               if (dirty && !window.confirm("Несохранённые изменения будут потеряны. Продолжить?")) return;
               void run(async () => { const result = await productionApi.updateInstrument(record.id, { version: record.version, status: "Не используется" }); accept(result.instrument); setNotice("Прибор не используется"); await onChanged(); });
             }}>Списать / Не используется</button>}
           </div>
-        </fieldset>
       </form>
-      <InstrumentRfInterfaces instrumentId={record?.id} locked={busy} onDirty={setRfDirty} onBusy={setRfBusy}
+      {source === "production" && <InstrumentRfInterfaces instrumentId={record?.id} locked={busy || !canEditIdentity} onDirty={setRfDirty} onBusy={setRfBusy}
         onSaved={async (suggestion) => {
           if (suggestion !== undefined) setRecord((current) => current ? { ...current, suggested_serial_number: suggestion } : current);
           setRfRevision((value) => value + 1);
           await onChanged();
-        }} />
-      {record && <InstrumentMatings instrumentId={record.id} locked={busy || rfBusy} refreshKey={rfRevision} onChanged={onChanged}
+        }} />}
+      {record && source === "production" && <InstrumentMatings instrumentId={record.id} locked={busy || rfBusy || !canEditIdentity} refreshKey={rfRevision} onChanged={onChanged}
         onDirty={setMatingsDirty} onBusy={setMatingsBusy} />}
-      {record && <InstrumentVnaChecks instrumentId={record.id} refreshKey={rfRevision} />}
+      {record && source === "production" && <InstrumentVnaChecks instrumentId={record.id} refreshKey={rfRevision} />}
       <section className="instrument-files"><h3>Файлы</h3>
         {record ? <>
-          <div className="instrument-upload"><label>Вид файла<select disabled={busy} value={fileKind} onChange={(event) => setFileKind(event.target.value as InstrumentFileKind)}>{fileKinds.map((value) => <option key={value}>{value}</option>)}</select></label>
+          {source === "references" && <p className="muted-text">Документы СИ изменяются в ОТК.</p>}
+          {productionActions && <div className="instrument-upload"><label>Вид файла<select disabled={busy} value={fileKind} onChange={(event) => setFileKind(event.target.value as InstrumentFileKind)}>{fileKinds.map((value) => <option key={value}>{value}</option>)}</select></label>
             <div><button type="button" className="secondary small" disabled={busy} onClick={() => fileInput.current?.click()}>Загрузить файл…</button>
               <input ref={fileInput} type="file" hidden aria-label="Загрузить файл" disabled={busy} onChange={(event) => {
               const file = event.target.files?.[0]; event.target.value = "";
               if (file) void run(async () => { await productionApi.uploadInstrumentFile(record.id, { kind: fileKind, file_name: file.name, content_base64: await fileBase64(file) }); setNotice("Файл загружен"); await refreshFiles(); });
             }} /></div>
-          </div>
+          </div>}
           {fileKinds.map((value) => <div className="instrument-file-group" key={value}><h4>{value}</h4>
             {!(record.files ?? []).some((file) => file.kind === value) && <span className="muted-text">Файлов нет</span>}
             {(record.files ?? []).filter((file) => file.kind === value).map((file) => <div className="instrument-file" key={file.id}>
-              <a href={productionApi.instrumentFileUrl(record.id, file.id)} target="_blank" rel="noopener noreferrer">{file.file_name}</a>
+              <a href={(source === "references" ? referencesApi : productionApi).instrumentFileUrl(record.id, file.id)} target="_blank" rel="noopener noreferrer">{file.file_name}</a>
               <span>{formatNumber(file.size)} байт · {formatDay(file.uploaded_at)} · {file.uploaded_by_name}</span>
               {file.is_reference && <span className="tone-ok instrument-file-reference">Эталонная кривая</span>}
-              {!file.is_reference && /\.s2p$/i.test(file.file_name) && <button type="button" className="secondary small" disabled={busy}
+              {productionActions && !file.is_reference && /\.s2p$/i.test(file.file_name) && <button type="button" className="secondary small" disabled={busy}
                 aria-label={`Сделать эталонной кривой: ${file.file_name}`} onClick={() => {
                   const current = (record.files ?? []).find((item) => item.is_reference);
                   if (current && !window.confirm(`Эталонной кривой сейчас назначен «${current.file_name}». Заменить на «${file.file_name}»?`)) return;
                   void run(async () => { await productionApi.setInstrumentReferenceCurve(record.id, file.id); setNotice("Эталонная кривая назначена"); await refreshFiles(); });
                 }}>Сделать эталонной кривой</button>}
-              <button className="danger small" disabled={busy} aria-label={`Удалить файл ${file.file_name}`} onClick={() => {
+              {productionActions && <button className="danger small" disabled={busy} aria-label={`Удалить файл ${file.file_name}`} onClick={() => {
                 if (window.confirm(`Удалить файл «${file.file_name}»?`)) void run(async () => { await productionApi.deleteInstrumentFile(record.id, file.id); setNotice("Файл удалён"); await refreshFiles(); });
-              }}>Удалить</button>
+              }}>Удалить</button>}
             </div>)}
           </div>)}
         </> : <p className="muted-text">Сохраните запись, чтобы прикрепить файлы.</p>}
       </section>
-      {record && !accessory && <div className="form-actions"><button className="secondary small" disabled={busy} onClick={() => {
+      {record && source === "references" && <section><h3>История</h3>
+        <button type="button" className="secondary small" disabled={historyLoading} onClick={() => {
+          setHistoryLoading(true); setHistoryError("");
+          void referencesApi.instrumentHistory(record.id).then(setHistory)
+            .catch((reason) => setHistoryError(failureText(reason, "Не удалось загрузить историю")))
+            .finally(() => setHistoryLoading(false));
+        }}>{historyLoading ? "Загрузка…" : history ? "Обновить историю" : "Показать историю"}</button>
+        {historyError && <p className="error-banner" role="alert">{historyError}</p>}
+        {history && <div aria-live="polite">{history.events.length ? history.events.map((event) => <p key={event.id}>
+          <span className="tnum">{formatMoment(event.occurred_at)}</span> · {event.actor_name || "Сотрудник"} · Изменение записи
+        </p>) : <p className="muted-text">Изменений нет</p>}</div>}
+      </section>}
+      {record && productionActions && !accessory && <div className="form-actions"><button className="secondary small" disabled={busy} onClick={() => {
         if (!dirty || window.confirm("Открыть принадлежность без сохранения изменений?")) onAccessory(record.id);
       }}>+ Принадлежность</button><button className="secondary small" disabled={busy} onClick={() => setStock(true)}>+ Со склада</button></div>}
     </div>

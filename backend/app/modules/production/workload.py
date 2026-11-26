@@ -32,7 +32,7 @@ from decimal import Decimal
 from typing import Iterable, Mapping, Sequence
 
 from .domain import ProductionValidationError, WorkShift, unit_factors
-from .launchable import RouteStep, launch_operations
+from .launchable import RouteStep, preview_operations
 
 ZERO = Decimal(0)
 HOUR = Decimal(3600)
@@ -86,7 +86,7 @@ def unit_hours(steps: Sequence[RouteStep]) -> dict[str, Decimal]:
     Схема не собирается в операции — штук на изделие 1 у каждого шага."""
     factors: dict[int, Decimal] = {}
     try:
-        operations = launch_operations(steps, 1)
+        operations = preview_operations(steps, 1)
     except ProductionValidationError:
         operations = ()
     by_id = unit_factors(operations) if operations else {}
@@ -128,6 +128,7 @@ class KbLoad:
     site: str
     per_unit: Mapping[str, Decimal]  # нормочасы на изделие по видам
     site_note: str = ""
+    unknown_operations: int = 0
 
     @property
     def remaining(self) -> Decimal:

@@ -293,6 +293,16 @@ def test_grade_warnings_and_old_snapshots():
     assert print_card(fresh) is fresh
 
 
+def test_stable_operation_identity_keeps_td_grades_and_sto_sections():
+    key = "PRS_TERMINAL_auto::op:coaxPinCrimpA::A"
+    operation = _operation(operation_key=key, connector="8")
+    snapshot = with_td_ops({"document": {"operations": [operation]}}, REFERENCE)
+    assert set(snapshot["td_ops"]) == {key}
+    assert snapshot["td_ops"][key]["grade"] == "3"
+    assert key in sto_sections(snapshot)
+    assert sto_sections(snapshot)[key]["norms"]
+
+
 def test_every_audited_template_code_resolves_to_sto_sections_with_norms():
     codes = [item["code"] for item in json.loads(TEMPLATES_AFTER.read_text(encoding="utf-8"))]
     assert len(codes) >= 100

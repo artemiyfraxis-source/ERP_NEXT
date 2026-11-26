@@ -165,6 +165,9 @@ class EquipmentRecordRow(AbstractConcreteBase, Base):
                                  name=f"fk_{cls.__tablename__}_owner", deferrable=True, initially="DEFERRED"),
             Index(f"ix_{cls.__tablename__}_sort", "sort_key", "id"),
             Index(f"ix_{cls.__tablename__}_model", "equipment_model_id"),
+            *((ForeignKeyConstraint(["id"], ["equipment_instrument_bindings.unit_id"],
+                                    name="fk_measuring_unit_canonical_instrument", deferrable=True,
+                                    initially="DEFERRED"),) if tab == "ob_measuring" else ()),
         )
 
 
@@ -182,6 +185,12 @@ class EquipmentMachineRow(EquipmentRecordRow):
 class EquipmentMeasuringRow(EquipmentRecordRow):
     __tablename__ = "equipment_measuring_units"
     __mapper_args__ = {"polymorphic_identity": "ob_measuring", "concrete": True, "exclude_properties": ["type"]}
+
+
+@event.listens_for(EquipmentMeasuringRow, "before_update")
+@event.listens_for(EquipmentMeasuringRow, "before_delete")
+def _frozen_measuring_snapshot(_mapper, _connection, _target):
+    raise ReferenceValidationError("Снимок старого каталога СИ неизменяем; используйте единый реестр СИ")
 
 
 class EquipmentSupportRow(EquipmentRecordRow):
@@ -212,6 +221,8 @@ Base.registry.configure()
 class EquipmentInstrumentBindingRow(Base):
     """A passport link, never verification evidence; unresolved instruments remain unbound."""
     __tablename__ = "equipment_instrument_bindings"
+    __table_args__ = (ForeignKeyConstraint(["unit_id"], ["equipment_measuring_units.id"],
+        name="fk_instrument_binding_measuring_unit", ondelete="RESTRICT", deferrable=True, initially="DEFERRED"),)
     unit_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("equipment_units.id", ondelete="RESTRICT"), primary_key=True)
     instrument_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("production_instruments.id", ondelete="RESTRICT"), unique=True, nullable=False)
 
@@ -518,6 +529,8 @@ class SqlAlchemyTechOperationRepository:
         row = self._row(record_id)
         if row is None:
             return
+        if row.tab == "ob_measuring":
+            raise ReferenceValidationError("СИ хранится в едином реестре; удалять старый экземпляр нельзя")
         if row.tab in _STABLE_TABS:
             identity.check_deletable(self.session, {row.id})
             identity.forget(self.session, {row.id})
@@ -566,6 +579,9 @@ class SqlAlchemyTechOperationRepository:
 
     def _put(self, record, *, row=None):
         from . import equipment_identity as identity
+        if (record.tab == TechOperationTab.MEASURING or (row is not None and row.tab == "ob_measuring")
+                or (record.tab in EQUIPMENT_TABS and equipment_tab(record.fields) == TechOperationTab.MEASURING)):
+            raise ReferenceValidationError("СИ хранится в едином реестре; используйте карточку СИ")
         if record.tab in MATERIAL_TABS:
             return self._put_material(record, row)
         if record.tab in EQUIPMENT_TABS:
@@ -663,6 +679,10 @@ class SqlAlchemyTechOperationRepository:
     def replace(self, records, *, schema_version, source_updated_at, imported_at, keep_tabs=(), preserve_erp_edits=False,
                 keep_mirror_keys=frozenset()):
         from . import equipment_identity as identity
+        # Frozen pre-cutover snapshots must neither be overwritten nor deleted by any mirror.
+        records = tuple(record for record in records if record.tab != TechOperationTab.MEASURING
+                        and not (record.tab in EQUIPMENT_TABS and equipment_tab(record.fields) == TechOperationTab.MEASURING))
+        keep_tabs = (*keep_tabs, TechOperationTab.MEASURING)
         rows = [*self.session.scalars(select(TechOperationRecordRow).where(
                     TechOperationRecordRow.tab != "ob", TechOperationRecordRow.material_archived.is_(False))),
                 *self.session.scalars(select(EquipmentRecordRow)),

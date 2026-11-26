@@ -98,6 +98,7 @@ from .workflows import vna_bench_api, vna_measurement_api, vna_screens_api
 from .workflows import receiving_by_upd_api
 from .workflows import shipping_upd_scan_api
 from .workflows import scan_agent_install
+from .workflows.instrument_catalog_api import router as instrument_catalog_router
 from .modules.purchasing import api_upd as purchasing_upd_api
 
 app = FastAPI(
@@ -183,6 +184,7 @@ app.include_router(assembly_api.router)
 app.include_router(harness_api.router)
 app.include_router(shipping_api.router)
 app.include_router(references_api.router)
+app.include_router(instrument_catalog_router)
 app.include_router(references_wire_dia_api.router)
 app.include_router(references_import_api.router)
 app.include_router(operations_api.router)

@@ -18,7 +18,7 @@ import {
 import { DataTable } from "./DataTable";
 import { ETK_CONNECTION_COLUMNS, ETK_TUBE_COLUMNS, ETK_NOT_SET, etkDocumentConnectionRows, etkPhysicalConfig, etkTubePlacementRows, etkContactSpecs, etkDrawHarness, etkDrawTubeCut, etkFigure, etkParams, type EtkParams, type EtkTopologyData } from "./etkDraw";
 import { poolSetupParts, setupUnitLabel } from "./equipmentPool";
-import { etkMarkLabelsPage, etkPrintPages } from "./etkPrint";
+import { etkMarkLabelsPage, etkPrintPages, operationKeyOf } from "./etkPrint";
 import { hasMarkSerial, markLabelList, markSerialTemplate, type MarkSerialRange } from "./markSerial";
 import { etkPartSource, etkRouteOf, etkSemiSource, etkSourceLines, formatMinutes, type EtkPfGroup } from "./etkRoute";
 import { etkConfigOp, etkPfArt } from "./etkPfArt";
@@ -26,7 +26,7 @@ import { etkDocOperations, etkTitle, harnessPins, navSub, opCode } from "./etkDo
 import { EtkRouteDiagram } from "./EtkRouteDiagram";
 import { defectGroupCode, defectOperationCode } from "./etkDefectArt";
 import { DefectPicture, useStdFigures } from "./EtkStdFigure";
-import { ETK_TOOLING_SECTIONS, etkLabelResult, etkToleranceLines, etkToleranceParts, parseDefects, solderMode, shrinkRequirementLines, toolingSections, type SolderMode } from "./etkOperation";
+import { ETK_TOOLING_SECTIONS, etkLabelResult, etkTimeRows, etkToleranceLines, etkToleranceParts, parseDefects, solderMode, shrinkRequirementLines, toolingSections, type SolderMode } from "./etkOperation";
 import { countLabel, formatDateTime, formatNumber, formatQty } from "./format";
 import { openPrintDocument } from "./print";
 import { useCanPrint } from "./rights";
@@ -224,13 +224,14 @@ function ResultView({ label, result = [], time = [], figure = "" }: { label: str
   const byName = new Map(time.map((row) => [row.name || "", row.norm || ""]));
   const perRow = time.length > 1 && result.length === time.length && result.every((row) => byName.has(row.name || ""));
   const total = time.reduce((sum, row) => sum + minutes(row.norm), 0);
+  const missingTime = time.some((row) => !row.norm?.trim());
   const hours = hoursText(total);
   const timeKv = time.length > 0 && <div className="etk-time" aria-label="Расчётное время">
     <dt>{perRow || time.length > 1 ? "Расчётное время, итого" : "Расчётное время"}</dt>
-    <dd>{formatMinutes(total)} <span>мин{hours ? ` · ${hours}` : ""}</span></dd>
+    <dd>{missingTime ? "не задано" : <>{formatMinutes(total)} <span>мин{hours ? ` · ${hours}` : ""}</span></>}</dd>
   </div>;
   const detail = !perRow && time.length > 1 && <ul className="etk-time-list">{time.map((row, index) =>
-    <li key={`${row.name}:${index}`}><span>{row.name}</span><span className="num">{row.norm}</span></li>)}</ul>;
+    <li key={`${row.name}:${index}`}><span>{row.name}</span><span className="num">{row.norm || "не задано"}</span></li>)}</ul>;
   // Нарезанные трубки — рисунком планок (etkDrawTubeCut): что и сколько получилось, видно без чтения строки.
   const art = figure && <div className="etk-result-art" aria-hidden="true" dangerouslySetInnerHTML={{ __html: figure }} />;
   if (result.length === 1) {
@@ -251,7 +252,7 @@ function ResultView({ label, result = [], time = [], figure = "" }: { label: str
       <tbody>{result.map((row, index) => <tr key={`${row.name}:${index}`}>
         <td><ProductText text={row.name || "—"} /></td>
         <td className="num">{quantity(row)}</td>
-        {perRow && <td className="num">{formatNumber(byName.get(row.name || ""))}</td>}
+        {perRow && <td className="num">{byName.get(row.name || "") ? formatNumber(byName.get(row.name || "")) : "не задано"}</td>}
       </tr>)}</tbody>
     </table>}
     {timeKv && <dl className="etk-kv">{timeKv}</dl>}
@@ -307,7 +308,7 @@ function MarkText({ text, batch }: { text?: string; batch?: string }) {
   return <><b>{markSerialTemplate(text)}</b> <span className="etk-mark-serial">— номер по заданию{batch ? `, ${formatNumber(batch)} шт.` : ""}</span></>;
 }
 
-/** Метки по КД в «Ходе операции» маркировки: монтажник видит, какую надпись, чем и где делать, сколько штук. */
+/** Метки по КД в «Результате»: какие надписи должны получиться, их размещение и количество. */
 function MarksView({ marks, batch }: { marks: EtkMark[]; batch: string }) {
   const serial = useContext(MarkSerialContext);
   const lengths = marks.some((mark) => mark.length);
@@ -357,7 +358,7 @@ function EtkOperationCard({ operation, number, total, batch = "", route = null, 
   const resultLabel = String(raw.result_label || "") || "Результат";
   const marks = operation.fields?.marks ?? [];
   const hasInput = Boolean(operation.components?.length || operation.semis?.length);
-  const hasResult = Boolean(labelResult || operation.result?.length || operation.time?.length);
+  const hasResult = Boolean(labelResult || marks.length || operation.result?.length || operation.time?.length);
   // Номера разделов подряд по показанным блокам (эскиза бывает нет).
   let shown = 0;
   const next = () => ++shown;
@@ -392,8 +393,7 @@ function EtkOperationCard({ operation, number, total, batch = "", route = null, 
       <ToolingBySection tooling={tooling} fixed unit={units?.find((item) => item.etk_position === (operation.position || number))}
         poolUnits={setupUnits?.filter((item) => item.etk_position === (operation.position || number))} />
     </EtkSection>
-    {operation.card?.steps?.length || marks.length ? <EtkSection label="Ход операции" number={next()}>
-      {marks.length > 0 && <MarksView marks={marks} batch={batch} />}
+    {operation.card?.steps?.length ? <EtkSection label="Ход операции" number={next()}>
       {operation.card?.steps?.length ? <ol className="etk-steps">{operation.card.steps.map((step, index) =>
         <li key={`${step.number}:${index}`} className={step.kind && step.kind !== "Операция" ? "ctl" : ""}>
           <div className="etk-step"><div className="etk-step-text">{step.kind && step.kind !== "Операция" && <span>{step.kind}</span>}{step.text}</div>
@@ -408,7 +408,8 @@ function EtkOperationCard({ operation, number, total, batch = "", route = null, 
       </div>
     </EtkSection>}
     {hasResult && <EtkSection label="Результат" number={next()}>
-      <ResultView label={resultLabel} result={labelResult ? [labelResult] : operation.result} time={operation.time} figure={etkDrawTubeCut(raw)} />
+      <ResultView label={resultLabel} result={labelResult ? [labelResult] : operation.result} time={etkTimeRows(raw)} figure={etkDrawTubeCut(raw)} />
+      {marks.length > 0 && <MarksView marks={marks} batch={batch} />}
     </EtkSection>}
   </article>;
 }
@@ -459,7 +460,7 @@ export function DefectsView({ text, code, number, alwaysOpen = false }: { text: 
 
 /** Same key as backend project_cards.operation_key: code::connector::side. */
 function etkOperationKey(operation: EtkOperation): string {
-  return `${String(operation.code ?? "").trim()}::${String(operation.connector ?? "").trim()}::${String(operation.side ?? "").trim()}`;
+  return operationKeyOf(operation);
 }
 
 function toolSub(tool: EtkTool): string {
@@ -555,6 +556,7 @@ function editContext(operation: EtkOperation, batch: string, sketchUrl: string):
   const figure = etkFigure(raw);
   const params = etkParams(raw);
   const labelResult = etkLabelResult(raw);
+  const marks = operation.fields?.marks ?? [];
   return {
     chips: <EtkParamBlock params={params} />,
     input: operation.components?.length || operation.semis?.length
@@ -563,8 +565,9 @@ function editContext(operation: EtkOperation, batch: string, sketchUrl: string):
       {figure && <div className="etk-fig" dangerouslySetInnerHTML={{ __html: figure }} />}
       {sketchUrl && <div className="etk-sketch"><img src={sketchUrl} alt="Эскиз операции" /></div>}
     </div> : undefined,
-    result: operation.result?.length || operation.time?.length
-      ? <ResultView label={String(raw.result_label || "") || "Результат"} result={labelResult ? [labelResult] : operation.result} time={operation.time} figure={etkDrawTubeCut(raw)} /> : undefined,
+    result: labelResult || marks.length || operation.result?.length || operation.time?.length
+      ? <><ResultView label={String(raw.result_label || "") || "Результат"} result={labelResult ? [labelResult] : operation.result} time={etkTimeRows(raw)} figure={etkDrawTubeCut(raw)} />
+        {marks.length > 0 && <MarksView marks={marks} batch={batch} />}</> : undefined,
   };
 }
 

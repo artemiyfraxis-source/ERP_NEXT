@@ -9,6 +9,7 @@ import { connectorTopView } from "./connectorTopView";
 import { pinCoreColor, pinCoreName } from "./etkCoreColors";
 import { wireEndArt } from "./etkDefectArt";
 import { solderMode } from "./etkOperation";
+import { wrapSvgText } from "./etkPfCoaxArt";
 export { coaxEndNames, coaxEndTitle, coaxKindTitle };
 
 type Row = Record<string, unknown>;
@@ -656,6 +657,45 @@ export function etkTubePieces(operation: Row): EtkTubePiece[] {
  *  Выпущенные ЭТК хранят прежний код INS_MARK_TUBE_AUTO — рисунок узнаёт оба. */
 const MARK_PRINT_CODE = /^(PRINT_MARK_TUBE|INS_MARK_TUBE_AUTO)/;
 
+/** Printed tape is a set of separate labels; mounting labels still uses the cable sketch. */
+export function etkDrawLabelPrint(operation: Row): string {
+  const print = [operation.code, operation.tmplHint, operation.opNumber].some((value) => /^PRINT_MARK_LABEL(?:_|$)/.test(str(value).toUpperCase()))
+    || operation.opKey === "coaxPrintLabel";
+  if (!print) return "";
+  const fields = obj(operation.fields);
+  let marks = list(fields.marks).length ? list(fields.marks) : list(fields.coaxMarks).length ? list(fields.coaxMarks) : list(operation.marks);
+  if (!marks.length && operation.type === "cutTut") {
+    // Wire-label printing stores the text and batch quantity in its output rows, not in coax fields.
+    // Unlike tube article names, a wire label must retain every word and connection identifier.
+    const printedText = (name: string) => /^Маркировка\s+[«"]/.test(name) ? etkMarkText(name) : name;
+    marks = list(operation.result).flatMap((row) => {
+      const text = printedText(str(row.name).trim().replace(/\s+—\s+[\d.,]+\s+мм$/, ""));
+      return text && num(row.norm) > 0 ? [{ text, qty: row.norm }] : [];
+    });
+    if (!marks.length) marks = list(fields.tutParts).flatMap((part) => {
+      const text = str(part.text) || etkMarkText(str(part.art || part.name));
+      return text && num(part.count) > 0 ? [{ text, qty: part.count }] : [];
+    });
+  }
+  if (!marks.length) return svg(320, 32, '<text x="8" y="20" font-size="12" fill="#5f7470">Надписи этикеток не заданы</text>');
+  const columns = Math.min(3, marks.length), gap = 8, width = (320 - gap * (columns + 1)) / columns;
+  const lines = marks.map((mark) => wrapSvgText(str(mark.text) || "Не задано", Math.max(1, Math.floor((width - 12) / 7.2))));
+  let body = "", y = 8;
+  for (let start = 0; start < marks.length; start += columns) {
+    const row = marks.slice(start, start + columns);
+    const height = Math.max(...row.map((_, index) => lines[start + index].length)) * 15 + 16;
+    row.forEach((mark, index) => {
+      const x = gap + index * (width + gap), text = str(mark.text), count = str(mark.qty || mark.count || 1).replace(".", ",");
+      body += `<g data-mark-label="${start + index + 1}" aria-label="${esc(text)}"><title>${esc(text)}</title>` +
+        `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="3" fill="#fffef6" stroke="#8a8f94" stroke-width="1"/>` +
+        lines[start + index].map((line, at) => `<text x="${x + width / 2}" y="${y + 19 + at * 15}" text-anchor="middle" font-size="12" font-weight="600" fill="#17272b" textLength="${Math.min(width - 12, Array.from(line).length * 7.2)}" lengthAdjust="spacingAndGlyphs">${esc(line)}</text>`).join("") +
+        `<text x="${x + width / 2}" y="${y + height + 17}" text-anchor="middle" font-size="12" fill="#17272b">×${esc(count)}</text></g>`;
+    });
+    y += height + 32;
+  }
+  return svg(320, y, body);
+}
+
 /** Текст на отрезке маркировки: «Маркировка «I3»» → «I3»; без кавычек — пусто. */
 export function etkMarkText(label: string): string {
   return label.match(/[«"]([^»"]+)[»"]/)?.[1].trim() ?? "";
@@ -1010,7 +1050,7 @@ export function etkDrawTwist(operation: Row): string {
 
 /** Эскиз операции — первый подходящий, в порядке renderEtk_/etkPrintHtml_. */
 export function etkFigure(operation: Row): string {
-  return etkDrawWires(operation) || etkDrawTubeCut(operation) || etkDrawCoax(operation) || etkDrawCoaxOp(operation) || (operation.type !== "prsTerm" ? etkDrawPinout(operation) : "") ||
+  return etkDrawLabelPrint(operation) || etkDrawWires(operation) || etkDrawTubeCut(operation) || etkDrawCoax(operation) || etkDrawCoaxOp(operation) || (operation.type !== "prsTerm" ? etkDrawPinout(operation) : "") ||
     etkDrawCrimp(operation) || etkDrawTwist(operation);
 }
 

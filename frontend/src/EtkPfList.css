@@ -12,11 +12,11 @@
 .etk-pf-bar > small { color: var(--muted-foreground); font-size: 12px; }
 .etk-pf-group { display: grid; gap: 4px; padding: 7px 8px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-soft); }
 .etk-pf-group.on { border-color: color-mix(in srgb, var(--primary) 55%, var(--border)); }
-.etk-pf-head { display: flex; align-items: baseline; gap: 6px; font-size: 13px; }
-.etk-pf-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.etk-pf-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; font-size: 13px; }
+.etk-pf-name { flex: 1 1 120px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .etk-pf-name b { color: var(--primary); }
 .etk-pf-final { padding: 0 6px; border-radius: 999px; background: var(--accent); color: var(--muted-foreground); font-size: 11px; font-style: normal; }
-.etk-pf-norm { color: var(--foreground); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.etk-pf-norm { max-width: 100%; color: var(--foreground); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .etk-pf-in, .etk-pf-ops { display: grid; gap: 3px; margin: 0; padding: 0; list-style: none; }
 .etk-pf-in li, .etk-pf-out { display: flex; justify-content: space-between; gap: 8px; color: var(--muted-foreground); font-size: 12px; line-height: 1.35; }
 .etk-pf-in li > span:first-child, .etk-pf-out > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -3,6 +3,7 @@ import { DataTable, SearchSeedContext, type DataColumn, type DataPreset } from "
 import { hasAccess, urlParam } from "./navigation";
 import { EquipmentCards } from "./EquipmentCards";
 import { EquipmentForm } from "./EquipmentForm";
+import { ReferenceInstrumentRegistry } from "./ReferenceInstrumentRegistry";
 import { applicatorTokens, groupModels } from "./equipmentModel";
 import { TechcardsPage } from "./TechcardsPage";
 import { ConnectorGallery } from "./ConnectorGallery";
@@ -203,6 +204,8 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   const [cableDia, setCableDia] = useState<CableDia>({});
   const [equipmentFamily, setEquipmentFamily] = useState<TechOperationRecord[]>([]);
   const [equipmentReady, setEquipmentReady] = useState(false);
+  const [instrumentCount, setInstrumentCount] = useState<{ count: number; quantity: number } | null>(null);
+  const [instrumentRevision, setInstrumentRevision] = useState(0);
   const techRequest = useRef(0);
   const [obOps, setObOps] = useState<TechOperationRecord[]>([]);
   // БД.ТЕР «Аппликатор»: code → the БД.ОБ record that owns it (a link to its card); the card to open after the jump.
@@ -231,7 +234,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   const [editing, setEditing] = useState<{ id: string | null; values: Record<string, string>; moveTo?: TechOperationTab } | null>(null);
   const matTab = isMaterialTab(tab) ? tab : null;
   const techTab: TechOperationTab | null = matTab ? "mat"
-    : !isMapTab(tab) && !isCableTab(tab) && !isMaterialTab(tab) && tab !== "templates" && tab !== "connectors" && tab !== "gauges" && tab !== "cov" && tab !== "heat_shrink" ? tab : null;
+    : !isMapTab(tab) && !isCableTab(tab) && !isMaterialTab(tab) && tab !== "templates" && tab !== "connectors" && tab !== "gauges" && tab !== "cov" && tab !== "heat_shrink" && tab !== "ob_measuring" ? tab : null;
   // «Терминалы» и «Наконечники» — каждая своя база (миграция 0165): ter и lug.
   const lugTab = tab === "lug";
   const contactTab = tab === "ter";
@@ -353,6 +356,8 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function count(def: TabDef): number | string | null {
+    if (def.id === "ob_measuring") return instrumentCount
+      ? `${instrumentCount.count} записей · ${instrumentCount.quantity} шт.` : bases.tabs?.ob_measuring ?? null;
     if (isEquipmentTab(def.id)) {
       const rows = equipmentFamily.filter((record) => record.tab === def.id);
       // until an equipment tab loads the family, the chip shows the summary's unit count, not nothing
@@ -573,7 +578,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   return <SearchSeedContext.Provider value={seed}><section className="page references-page">
     <header className="page-head"><h1>База данных</h1>{!stockLog && current && count(current) !== null && <span className="page-count">{count(current)}</span>}
       <div className="page-actions">
-        {!stockLog && <ReferenceRoundtrip tab={tab} principal={principal} onApplied={() => { if (techTab) void loadTech(techTab); if (tab === "cov" || tab === "heat_shrink") { setCoveringRevision((value) => value + 1); setCoveringCounts({}); } if (cables !== null) void loadCables(); referencesApi.maps().then(applyMaps).catch(() => undefined); loadBases(); }} />}
+        {!stockLog && <ReferenceRoundtrip tab={tab} principal={principal} onApplied={() => { if (techTab) void loadTech(techTab); if (tab === "ob_measuring") setInstrumentRevision((value) => value + 1); if (tab === "cov" || tab === "heat_shrink") { setCoveringRevision((value) => value + 1); setCoveringCounts({}); } if (cables !== null) void loadCables(); referencesApi.maps().then(applyMaps).catch(() => undefined); loadBases(); }} />}
         <button type="button" className={stockLog ? "secondary small active" : "secondary small"} aria-pressed={stockLog} onClick={() => setStockLog((value) => !value)}>Журнал «Склад → база»</button>
       </div>
     </header>
@@ -597,6 +602,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
 
     {tab === "templates" && <TechcardsPage principal={principal} view="templates" embedded />}
     {tab === "connectors" && <ConnectorGallery canEdit={canEdit} />}
+    {tab === "ob_measuring" && <ReferenceInstrumentRegistry key={instrumentRevision} onCount={(count, quantity) => setInstrumentCount({ count, quantity })} />}
     {(tab === "cov" || tab === "heat_shrink") && <CoveringsTable key={tab} tab={tab} revision={coveringRevision} canEdit={canEdit}
       onCount={(value) => setCoveringCounts((current) => ({ ...current, [tab]: value }))}
       onChanged={() => { setCoveringCounts({}); loadBases(); void loadMaterialIndex(); }} />}

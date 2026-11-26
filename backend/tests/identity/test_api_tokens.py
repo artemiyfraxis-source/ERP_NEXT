@@ -444,6 +444,11 @@ def test_a_token_passes_only_routes_whose_own_gate_names_its_scope(tokens_api):
         ("GET", "/api/references/import/{table}/file/fields"),
         ("GET", "/api/references/import/{table}/schema"),
         ("POST", "/api/references/import/{table}/file/export"),
+        # The single СИ registry (0217) read through «Справочник»: list, card, history, documents.
+        ("GET", "/api/references/instruments"),
+        ("GET", "/api/references/instruments/{record_id}"),
+        ("GET", "/api/references/instruments/{record_id}/files/{file_id}"),
+        ("GET", "/api/references/instruments/{record_id}/history"),
         ("GET", "/api/references/stock-links"),
         ("GET", "/api/references/tech-operations"),
         ("GET", "/api/references/tech-operations/crimp-codes"),
@@ -454,6 +459,8 @@ def test_a_token_passes_only_routes_whose_own_gate_names_its_scope(tokens_api):
         ("POST", "/api/references/technology/resolve-terminal"),
     ]
     writes = [
+        # A `refs:write` token fills only the registry's own «Справочник» columns of a СИ (the passport stays ОТК's).
+        ("PATCH", "/api/references/instruments/{record_id}"),
         ("PATCH", "/api/references/tech-operations/{record_id}"),
         ("POST", "/api/references/import/{table}"),
         ("POST", "/api/references/import/{table}/file"),
