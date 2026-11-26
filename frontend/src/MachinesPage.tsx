@@ -47,12 +47,44 @@ function searchText(row: MachineRow): string {
     row.site, row.family, ...(row.operations ?? [])].join(" ").toLocaleLowerCase("ru");
 }
 
+/** Операции резки из БД.ОБ → что станок умеет сверх резки (владелец 23.11.2026: «Резка + разделка, маркировка» вместо
+ *  «Резка, Резка с разделкой, Резка с разделкой+ маркир…»). Только известные названия; прочие идут как есть. */
+const CUT_EXTRAS: Record<string, string[]> = {
+  "резка": [],
+  "резка с разделкой": ["разделка"],
+  "резка с разделкой + маркировка": ["разделка", "маркировка"],
+  "резка с маркировкой": ["маркировка"],
+  // ОБ.019 режет и трубки — это та же резка; станок, который режет только трубки и оплётки, так и называется.
+  "резка линейных материалов": [],
+};
+const LINEAR = "резка линейных материалов";
+const operationKey = (name: string) => name.toLocaleLowerCase("ru").replace(/ё/g, "е").replace(/\s*\+\s*/g, " + ").replace(/\s+/g, " ").trim();
+
+/** Короткая строка возможностей плитки: резка одним «Резка + …», остальные операции без повторов, в исходном порядке. */
+export function shortOperations(operations: string[]): string {
+  const parts: string[] = [], extras: string[] = [], seen = new Set<string>();
+  let cut = -1, cutName = "";
+  for (const name of operations) {
+    const key = operationKey(name);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    const known = CUT_EXTRAS[key];
+    if (!known) { parts.push(name.trim()); continue; }
+    if (cut < 0) { cut = parts.length; parts.push(""); }
+    cutName = cutName && cutName !== name.trim() ? "Резка" : name.trim();
+    for (const extra of known) if (!extras.includes(extra)) extras.push(extra);
+  }
+  if (cut >= 0) parts[cut] = extras.length ? `Резка + ${extras.join(", ")}` : operationKey(cutName) === LINEAR ? cutName : "Резка";
+  return parts.join(", ");
+}
+
 function MachineTile({ row, open }: { row: MachineRow; open: (row: MachineRow) => void }) {
   const absent = row.link.code === "not_installed" || row.link.code === "not_connected";
   const seen = row.pc && row.last_seen ? formatMoment(row.last_seen) : "";
   const place = row.pc ? [row.pc, row.ip].filter(Boolean).join(" · ") : "ПК не известен";
   const model = [row.article || (row.kind !== "machine" ? row.device : ""), row.site].filter(Boolean).join(" · ");
   const operations = (row.operations ?? []).join(", ");
+  const short = shortOperations(row.operations ?? []);
   const pending = row.pending_setup ?? 0;
   const setup = row.setup?.code ? row.setup : null;
   const kind = row.station?.kind === "labels" ? "Принтер этикеток"
@@ -66,7 +98,7 @@ function MachineTile({ row, open }: { row: MachineRow; open: (row: MachineRow) =
     </span>
     <span className="machine-tile-name" title={row.name}>{text(row.name)}</span>
     <span className="machine-tile-article machine-mono" title={model}>{model}</span>
-    <span className="machine-tile-ops" title={operations}>{operations}</span>
+    <span className="machine-tile-ops" title={operations}>{short}</span>
     <span className="machine-tile-device" title={[known(row.state.text) ? row.state.text : "", row.device].filter(Boolean).join(" · ")}>
       {known(row.state.text) && <span className={`machine-tile-state ${toneClass(row.state.tone)}`}>{row.state.text}</span>}
     </span>
@@ -311,7 +343,7 @@ export function MachinesPage({ setupViewer = false, canWrite = false, canQuality
     {/* Карточка по признакам строки, без пересечений: живая ОБ.019 → станок маркировки → анализатор цепей → принтер или МФУ склада → паспорт. */}
     {opened?.card && opened.equipment_id
       ? <Ob019Card key={`${opened.equipment_id}:${route}`} incoming={incoming ?? undefined} equipmentId={opened.equipment_id} title={[titleOf(opened), opened.article].filter(Boolean).join(" · ")}
-        close={closeMachine} openJournal={() => setJournalOf(opened)}
+        close={closeMachine} openJournal={() => setJournalOf(opened)} canWrite={canWrite}
         actions={<>
           <button type="button" className="secondary small machine-manual" onClick={() => setSetupOf(opened)}>
             Наладка{opened.pending_setup ? " · ждёт" : ""}</button>

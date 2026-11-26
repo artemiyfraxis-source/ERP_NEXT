@@ -138,20 +138,20 @@ export function Ob019CardView({ card, controls = false, header, incoming }: {
   </>;
 }
 
-export function Ob019Card({ equipmentId, title, close, actions, incoming, openJournal }: { equipmentId: string; title: string; close: () => void; actions?: ReactNode; incoming?: import("./machinesApi").MachineTaskContext; openJournal?: () => void }) {
+/** `openJournal` — старый вход в журнал работ; обе живые карточки открывают свой «Журнал» сами. `canWrite` — право
+ *  записывать наладку (карточка пресса). */
+export function Ob019Card({ equipmentId, title, close, actions, incoming, canWrite }: { equipmentId: string; title: string; close: () => void; actions?: ReactNode; incoming?: import("./machinesApi").MachineTaskContext; openJournal?: () => void; canWrite?: boolean }) {
   const load = useCallback((signal: AbortSignal) => machinesApi.card(equipmentId, signal), [equipmentId]);
   const { data, error } = usePolled(load, undefined, "Не удалось загрузить станок");
   return <PageWindow label={title} close={close} width={1100} dismissable>
     <section className="panel machine-card">
-      {(!data || data.kind === "ob099_fins") && <header className="machine-card-head">
+      {!data && <header className="machine-card-head">
         <h2>{title}</h2>
-        {data?.kind === "ob099_fins" && actions}
-        {data?.kind === "ob099_fins" && openJournal && <button type="button" className="secondary small" onClick={openJournal}>Журнал</button>}
         <button className="secondary small" onClick={close}>Закрыть</button>
       </header>}
       {error && <div className="error-banner" role="alert">{error}</div>}
       {!data && !error && <p className="empty">Загрузка…</p>}
-      {data && (data.kind === "ob099_fins" ? <Ob099CardView card={data} incoming={incoming} />
+      {data && (data.kind === "ob099_fins" ? <Ob099CardView card={data} incoming={incoming} header={{ title, close }} canWrite={canWrite} />
         : <Ob019CardView card={data} controls incoming={incoming} header={{ title, actions, close }} />)}
     </section>
   </PageWindow>;
