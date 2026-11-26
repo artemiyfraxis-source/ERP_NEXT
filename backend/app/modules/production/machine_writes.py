@@ -584,8 +584,10 @@ def _reset_reason(reason: str, status: str) -> str:
         return reason
     if reason.startswith("reset_counters refused: state "):
         return "state " + reason.removeprefix("reset_counters refused: state ")
-    if reason.startswith("seen value changed"):
+    if reason.startswith(("seen value changed", "reset_counters refused: seen value changed")):
         return "Счётчик станка изменился — обновите карточку и подтвердите ещё раз"
+    if reason.startswith("machine not standing after counter reset"):
+        return "Счётчики обнулены, но станок уже не стоит — проверьте станок и счётчик"
     if reason == "counter reset expired":
         return "Команда обнуления опоздала — повторите"
     if reason.startswith("counter reset not confirmed"):

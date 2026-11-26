@@ -104,7 +104,8 @@ export function zeroedLive(live: Ob019Live, commands: MachineCommand[], reported
 }
 
 /** «Обнулить» у «Сделано … из …», когда тираж сделан и станок стоит: одно подтверждение «Сделано N → 0, пучок M → 0»,
- *  итог — рядом с кнопкой. Только D649 и D645; тираж D22 остаётся (новое задание — «Новый тираж»). */
+ *  итог — рядом с кнопкой. Только D649 и D645; тираж D22 остаётся — его заново начнёт кнопка «Пуск» на самом станке
+ *  («Пуск» ERP без задания отказывает); новое задание — «Новый тираж». */
 export function Ob019ZeroCounters({ card, live, control }: { card: MachineCard; live: Ob019Live; control: MachineControl }) {
   const [asking, setAsking] = useState(false);
   const [sent, setSent] = useState<string | null>(null);
@@ -119,7 +120,9 @@ export function Ob019ZeroCounters({ card, live, control }: { card: MachineCard; 
   const shown = control.can_edit && card.link.code === "ok" && finished && total !== null && batch !== null
     && (total > 0 || batch > 0) && state !== null && RESET_STATES.includes(state);
   const note = refused ? `отказ: ${refused}` : row ? (row.status === "done" ? "обнулено"
-    : row.status === "queued" || row.status === "taken" ? "обнуляется…" : `не обнулено: ${operatorText(row.error || row.status_text)}`) : "";
+    : row.status === "queued" || row.status === "taken" ? "обнуляется…"
+    : row.status === "unknown" ? "результат неизвестен — проверьте счётчик на станке"
+    : `не обнулено: ${operatorText(row.error || row.status_text)}`) : "";
   async function send() {
     if (total === null || batch === null) return;
     setBusy(true); setRefused("");
@@ -140,7 +143,7 @@ export function Ob019ZeroCounters({ card, live, control }: { card: MachineCard; 
       <section className="panel machine-card">
         <h2>Обнулить счётчик</h2>
         <p><strong className="tnum">{resetCountersText(total, batch)}</strong></p>
-        {set !== null && set > 0 && <p>Тираж {formatNumber(set)} шт остаётся на станке: «Пуск» начнёт его заново. Другое задание — «Новый тираж».</p>}
+        {set !== null && set > 0 && <p>Кнопка «Пуск» на станке начнёт тираж {formatNumber(set)} шт заново. Другое задание — «Новый тираж».</p>}
         <div className="machine-actions">
           <button type="button" className="secondary" disabled={busy} onClick={() => setAsking(false)}>Отмена</button>
           <button type="button" className="primary" disabled={busy} onClick={() => void send()}>Обнулить</button>

@@ -56,6 +56,7 @@ if (-not $BridgeScript) { $BridgeScript = Join-Path (Split-Path -Parent $MyInvoc
 # 1.5.2 (23.11.2026): kind reset_counters zeroes D645..646 / D649..650 through mbd 1.5.2 'reset_counters' (zeros only).
 $script:RunnerVersion = '1.5.2'
 $script:ResetMbd = '1.5.2'
+$script:ResetStates = @(100, 102, 106, 107)
 $script:CorrectionAlarm = $script:Json.DeserializeObject('"\u041d\u0430 \u0441\u0442\u0430\u043d\u043a\u0435 \u0430\u0432\u0430\u0440\u0438\u044f D782={0} \u2014 \u0441\u043d\u0430\u0447\u0430\u043b\u0430 \u0441\u0431\u0440\u043e\u0441\u044c\u0442\u0435"')
 $script:CorrectionAlarmUnreadable = $script:Json.DeserializeObject('"\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u0442\u044c \u0430\u0432\u0430\u0440\u0438\u044e \u0441\u0442\u0430\u043d\u043a\u0430 D782 \u2014 \u043e\u0431\u043d\u043e\u0432\u0438\u0442\u0435 \u0434\u0430\u043d\u043d\u044b\u0435"')
 $script:CorrectionUnconfirmed = $script:Json.DeserializeObject('"\u041f\u043e\u043f\u0440\u0430\u0432\u043a\u0430 \u043d\u0435 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u0430 \u0441\u0442\u0430\u043d\u043a\u043e\u043c"')
@@ -277,12 +278,12 @@ function Invoke-LengthCorrection($Command, [Diagnostics.Stopwatch]$Since) {
 # Kind reset_counters (23.11.2026): "Obnulit schetchiki" / "Novyi tirazh" with zeroing. `reset` = the counter blocks
 # (D645 and/or D649, each exactly [0, 0]), `seen` = D645/646/649/650 the operator confirmed, `blocks` / `bits` =
 # optional ordinary words and switch bits written after the zeroing (the new batch: D22 target, cleared job texts,
-# marking off). Order: version, panel, state, seen counters, then mbd 'reset_counters' (mbd re-checks the state and
-# accepts zeros only), then the words, then the bits.
+# marking off). Order: version, panel, state, seen counters, the words, the bits, then mbd 'reset_counters' LAST (mbd
+# re-checks the state and the seen counters in its own session, accepts zeros only and reads D766 again after).
 # `before` / readback carry D645..650, so ERP journals the history D647..648 too.
 function Invoke-CounterReset($Command, [Diagnostics.Stopwatch]$Since) {
     $result = @{ ok = $false; readback = @{}; before = @{}; error = ''; outcome = 'failed' }
-    $sent = $false
+    $sent = $false; $confirmed = $false
     try {
         $reset = @($Command['reset'] | Where-Object { $_ -ne $null })
         $blocks = @($Command['blocks'] | Where-Object { $_ -ne $null })
@@ -314,29 +315,14 @@ function Invoke-CounterReset($Command, [Diagnostics.Stopwatch]$Since) {
         if (-not (Test-MbdCurrent $version $script:ResetMbd)) { throw ('mbd outdated: ' + $(if ($version) { $version } else { 'no version' }) + ', need ' + $script:ResetMbd) }
         $state = [int](Read-Range 766 1)[0]
         if ($states -notcontains $state) { throw ('state ' + $state) }
-        $read = @(Read-Range 645 6)
-        if ($read.Count -ne 6) { throw 'short counter read' }
+        $read = Read-Range 645 6
+        if (@($read).Count -ne 6) { throw 'short counter read' }
         for ($i = 0; $i -lt 6; $i++) { $result['before'][[string](645 + $i)] = [int]$read[$i] }
         foreach ($key in @('645', '646', '649', '650')) {
             if ([int]$result['before'][$key] -ne [int]$seen[$key]) { throw ('seen value changed D' + $key) }
         }
-        if (Test-HmiOpen) { throw 'PXS_HMI is running' }
-        if ($Since.ElapsedMilliseconds -ge $deadline) { throw 'counter reset expired' }
-        $sent = $true
-        $line = ConvertTo-JsonLite @{ cmd = 'reset_counters'; blocks = @($reset | ForEach-Object { @{ addr = [int]$_['addr']; values = @(0, 0) } }) }
-        $reply = $script:Json.DeserializeObject((Invoke-MbdLine $line))
-        if (-not $reply['ok']) {
-            $message = [string]$reply['error']
-            # mbd refuses before any write (panel open, wrong state, not a zero): nothing happened.
-            if ($message -like 'busy:*' -or $message -like 'reset_counters refused*') { $sent = $false }
-            throw $message
-        }
-        $after = @($reply['result']['readback'])
-        if ($after.Count -ne 6) { throw 'counter reset not confirmed' }
-        for ($i = 0; $i -lt 6; $i++) { $result['readback'][[string](645 + $i)] = [int]$after[$i] }
-        foreach ($a in $targets) {
-            if ([int]$after[$a - 645] -ne 0 -or [int]$after[$a - 644] -ne 0) { throw ('counter reset not confirmed D' + $a) }
-        }
+        # The new batch first (target D22 = 0, cleared texts, marking off): if the zeroing below then fails, the old
+        # target is already disarmed and the counters stay as they were - a safe state, reported as failed.
         foreach ($block in $blocks) {
             $values = [int[]]@($block['values'] | ForEach-Object { [int]$_ })
             $reply = $script:Json.DeserializeObject((Invoke-MbdLine (ConvertTo-JsonLite @{ cmd = 'write'; addr = [int]$block['addr']; values = $values })))
@@ -349,10 +335,35 @@ function Invoke-CounterReset($Command, [Diagnostics.Stopwatch]$Since) {
             if (-not $reply['ok']) { throw ([string]$reply['error']) }
             $result['readback'][[string]([int]$bit['addr'])] = [int](@($reply['result']['readback'])[0])
         }
+        if (Test-HmiOpen) { throw 'PXS_HMI is running' }
+        if ($Since.ElapsedMilliseconds -ge $deadline) { throw 'counter reset expired' }
+        # The zeroing last; mbd re-checks the state and the seen counters in the same COM8 session.
+        $sent = $true
+        $line = ConvertTo-JsonLite @{ cmd = 'reset_counters'; seen = @{ '645' = [int]$seen['645']; '646' = [int]$seen['646']; '649' = [int]$seen['649']; '650' = [int]$seen['650'] }
+            blocks = @($reset | ForEach-Object { @{ addr = [int]$_['addr']; values = @(0, 0) } }) }
+        $reply = $script:Json.DeserializeObject((Invoke-MbdLine $line))
+        if (-not $reply['ok']) {
+            $message = [string]$reply['error']
+            # mbd refuses before any write (panel open, wrong state, counters moved, not a zero): nothing happened.
+            if ($message -like 'busy:*' -or $message -like 'reset_counters refused*') { $sent = $false }
+            throw $message
+        }
+        $after = @($reply['result']['readback'])
+        if ($after.Count -ne 6) { throw 'counter reset not confirmed' }
+        $confirmed = $true
+        for ($i = 0; $i -lt 6; $i++) { $result['readback'][[string](645 + $i)] = [int]$after[$i] }
+        foreach ($a in $targets) {
+            if ([int]$after[$a - 645] -ne 0 -or [int]$after[$a - 644] -ne 0) { throw ('counter reset not confirmed D' + $a) }
+        }
+        $stateAfter = $reply['result']['state_after']
+        if (-not ($stateAfter -is [int]) -or $script:ResetStates -notcontains $stateAfter) {
+            $result['outcome'] = 'unknown'
+            throw ('machine not standing after counter reset: state ' + $stateAfter)
+        }
         $result['ok'] = $true; $result['outcome'] = 'done'
     } catch {
         $result['error'] = $_.Exception.Message
-        if ($sent -and $result['readback'].Count -eq 0) { $result['outcome'] = 'unknown' }
+        if ($sent -and -not $confirmed) { $result['outcome'] = 'unknown' }
     }
     return $result
 }

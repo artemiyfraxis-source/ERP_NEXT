@@ -32,6 +32,7 @@ it("asks once with the counters shown and posts exactly them", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Обнулить" }));
   const dialog = await screen.findByRole("dialog", { name: "Обнулить счётчик" });
   expect(within(dialog).getByText("Сделано 2056 → 0, пучок 6 → 0")).toBeVisible();
+  expect(within(dialog).getByText(/^Кнопка «Пуск» на станке начнёт тираж 2\D?058 шт заново/)).toBeVisible();
   expect(posts).toEqual([]);
   fireEvent.click(within(dialog).getByRole("button", { name: "Отмена" }));
   expect(posts).toEqual([]);
@@ -58,4 +59,17 @@ it("shows 0 after a done reset until a newer snapshot arrives", () => {
   expect(zeroedLive(LIVE, [RESET], "2026-11-23T10:00:05+03:00").job.total_finished).toBe(2056);
   expect(zeroedLive(LIVE, [{ ...RESET, status: "failed", reset_counters: { ...RESET.reset_counters!, after: null } }],
     "2026-11-23T10:00:00+03:00").job.total_finished).toBe(2056);
+});
+
+it("says the result is unknown instead of «не обнулено» when the agent did not confirm", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ ...RESET, status: "queued" }),
+    { status: 200, headers: { "Content-Type": "application/json" } }));
+  const { rerender } = render(<Ob019ZeroCounters card={CARD} live={LIVE} control={CONTROL} />);
+  fireEvent.click(screen.getByRole("button", { name: "Обнулить" }));
+  fireEvent.click(within(await screen.findByRole("dialog", { name: "Обнулить счётчик" })).getByRole("button", { name: "Обнулить" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Обнулить счётчик" })).toBeNull());
+  const unknown = { ...RESET, status: "unknown" as const, error: "Результат обнуления неизвестен — проверьте счётчик на станке" };
+  rerender(<Ob019ZeroCounters card={CARD} live={LIVE} control={{ ...CONTROL, commands: [unknown] }} />);
+  expect(screen.getByRole("status")).toHaveTextContent("результат неизвестен — проверьте счётчик на станке");
+  expect(screen.queryByText(/не обнулено/)).toBeNull();
 });

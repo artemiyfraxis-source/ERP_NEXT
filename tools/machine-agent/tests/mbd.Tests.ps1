@@ -42,15 +42,17 @@ Describe 'version' {
     }
 }
 
+$script:Seen = @{ '645' = 6; '646' = 0; '649' = 2056; '650' = 0 }
 Describe 'reset_counters (1.5.2)' {
     BeforeEach {
         $script:mockR = @{ 766 = 107; 645 = 6; 646 = 0; 647 = 1234; 648 = 1; 649 = 2056; 650 = 0 }
     }
     It 'writes exactly 0 to D645..646 and D649..650 and keeps the history D647..648' {
-        $result = Invoke-Request @{ cmd = 'reset_counters'; blocks = @(@{ addr = 645; values = @(0, 0) }, @{ addr = 649; values = @(0, 0) }) }
+        $result = Invoke-Request @{ cmd = 'reset_counters'; seen = $script:Seen; blocks = @(@{ addr = 645; values = @(0, 0) }, @{ addr = 649; values = @(0, 0) }) }
         ($result['before'] -join ',') | Should Be '6,0,1234,1,2056,0'
         ($result['readback'] -join ',') | Should Be '0,0,1234,1,0,0'
         $result['state'] | Should Be 107
+        $result['state_after'] | Should Be 107
         $script:mockR[647] | Should Be 1234
         $script:mockR[648] | Should Be 1
     }
@@ -62,7 +64,7 @@ Describe 'reset_counters (1.5.2)' {
             @(@{ addr = 649; values = @(0, 0) }, @{ addr = 649; values = @(0, 0) }), @()
         )
         foreach ($blocks in $bad) {
-            { Invoke-Request @{ cmd = 'reset_counters'; blocks = $blocks } } | Should Throw 'reset_counters refused'
+            { Invoke-Request @{ cmd = 'reset_counters'; seen = $script:Seen; blocks = $blocks } } | Should Throw 'reset_counters refused'
         }
         $script:mockR[649] | Should Be 2056
         $script:mockR[645] | Should Be 6
@@ -71,15 +73,24 @@ Describe 'reset_counters (1.5.2)' {
     It 'refuses while the machine runs or pauses' {
         foreach ($state in @(101, 103, 104, 105)) {
             $script:mockR[766] = $state
-            { Invoke-Request @{ cmd = 'reset_counters'; blocks = @(@{ addr = 649; values = @(0, 0) }) } } | Should Throw ('state ' + $state)
+            { Invoke-Request @{ cmd = 'reset_counters'; seen = $script:Seen; blocks = @(@{ addr = 649; values = @(0, 0) }) } } | Should Throw ('state ' + $state)
             $script:mockR[649] | Should Be 2056
         }
     }
     It 'allows each stand-still state' {
         foreach ($state in @(100, 102, 106, 107)) {
-            $script:mockR[766] = $state; $script:mockR[649] = 9
-            (Invoke-Request @{ cmd = 'reset_counters'; blocks = @(@{ addr = 649; values = @(0, 0) }) })['readback'][4] | Should Be 0
+            $script:mockR[766] = $state; $script:mockR[649] = 2056
+            (Invoke-Request @{ cmd = 'reset_counters'; seen = $script:Seen; blocks = @(@{ addr = 649; values = @(0, 0) }) })['readback'][4] | Should Be 0
         }
+    }
+    It 'refuses inside the session when the counters moved since the confirmation, and without seen' {
+        $script:mockR[649] = 2057
+        { Invoke-Request @{ cmd = 'reset_counters'; seen = $script:Seen; blocks = @(@{ addr = 649; values = @(0, 0) }) } } | Should Throw 'seen value changed D649'
+        $script:mockR[649] | Should Be 2057
+        { Invoke-Request @{ cmd = 'reset_counters'; blocks = @(@{ addr = 649; values = @(0, 0) }) } } | Should Throw 'reset_counters refused: seen'
+        $partial = @{ '645' = 6; '646' = 0; '649' = 2057 }
+        { Invoke-Request @{ cmd = 'reset_counters'; seen = $partial; blocks = @(@{ addr = 649; values = @(0, 0) }) } } | Should Throw 'seen D650 missing'
+        $script:mockR[649] | Should Be 2057
     }
     It 'keeps the counters out of the general write list' {
         foreach ($a in 645..650) {

@@ -175,3 +175,17 @@ def test_new_batch_reset_needs_the_shown_counters(wire_world):
     changed = admin.post(CARD + "/run/reset", headers=_csrf(admin),
                          json={**body, "seen_total": 2000, "seen_batch": 6})
     assert changed.status_code == 409 and "Счётчик станка изменился" in changed.json()["detail"]
+
+
+@pytest.mark.parametrize("error,status,text", [
+    ("reset_counters refused: seen value changed D649", "failed", "Счётчик станка изменился — обновите карточку"),
+    ("machine not standing after counter reset: state 103", "unknown", "Счётчики обнулены, но станок уже не стоит"),
+    ("no valid echo writing D22", "failed", "Счётчики не обнулены: no valid echo writing D22"),
+])
+def test_runner_refusals_read_in_operator_words(machine, error, status, text):
+    _sessions, _clock, admin, _equipment, bridge = machine
+    ask(admin)
+    claimed = claim(bridge)
+    answer = report(bridge, claimed["id"], ok=False, outcome="unknown" if status == "unknown" else "failed",
+                    readback=AFTER if status == "unknown" else {}, error=error).json()
+    assert answer["status"] == status and answer["error"].startswith(text)
