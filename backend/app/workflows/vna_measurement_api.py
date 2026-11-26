@@ -16,8 +16,8 @@ from starlette.concurrency import run_in_threadpool
 from app.modules.production.api import production_uow_factory, techcards_uow_factory
 from app.modules.production.autoplan_api import references_uow_factory
 from app.modules.production.rf_infrastructure import RfRepository
-from app.modules.production.vna_bench_protocol import V2_OPS
-from app.modules.production.vna_session_infrastructure import VnaArtifactRow, VnaSessionRepository, VnaSessionRow
+from app.modules.production.vna_bench_protocol import ARINST_WIRE_OPS, V2_OPS
+from app.modules.production.vna_session_infrastructure import VnaArtifactRow, VnaCommandRow, VnaSessionRepository, VnaSessionRow, protocol
 from app.modules.production.vna_sessions import TERMINAL, Override, SessionConflict, StrictModel, ordered_steps, resolved_profile
 from app.modules.production.vswr import RecordVswrCommand, VswrFileInput, VswrVerdict, record_vswr
 from app.modules.warehouse import devices, vna_jobs
@@ -28,7 +28,7 @@ from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, production_quality_principal
 from app.shared.stored_files import file_response
 from .coax_vswr_api import CoaxRefs, _measurement_result, _task_etk, task_norm
-from .vna_capture_instrument import capture_instrument
+from .vna_capture_instrument import arinst_station, capture_instrument
 from .vna_plan_api import vna_plan
 
 router = APIRouter(tags=["production"])
@@ -199,6 +199,8 @@ def _session_files(repository, completed):
     """Compose P4 inputs from durable capture receipts, including one-port reversal."""
     commands = {command["id"]: command for command in completed["commands"]}
     snapshot = completed["snapshot"]
+    if snapshot.get("source") == "arinst":
+        raise ValueError("Сохранение Arinst заблокировано: сетка, исходная коррекция и независимая проверка не подтверждены")
     files, mappings = [], []
     for metadata in completed["artifacts"]:
         artifact = repository.session.get(VnaArtifactRow, UUID(metadata["id"]))
@@ -255,6 +257,8 @@ def record_session(session_id: UUID, payload: RecordInput, principal: Person, no
         repository = VnaSessionRepository(uow.session)
         row = repository.get(session_id)
         repository.lock(row)
+        if protocol(row) == 3:
+            raise SessionConflict("Сохранение Arinst заблокировано до подтверждения сетки, коррекции и проверки калибровки")
         if row.state == "recorded":
             # A lost response is retried with the review version; a refreshed client has the recorded version.
             if payload.expected_version not in (row.version - 1, row.version):
@@ -323,20 +327,32 @@ def claim_session_command(factory, machine_id, observed_serial, now):
     except SessionConflict as error:
         raise ScanJobClosed(str(error)) from error
     with factory() as uow:
-        devices.control_capability(uow.session, machine_id, now)
         repository = VnaSessionRepository(uow.session)
-        command = repository.pending(machine_id)
+        command = repository.pending(machine_id, observed_serial)
         if command is None:
+            if (repository.pending(machine_id) is not None
+                    and uow.session.get(devices.VnaControlRow, (machine_id, observed_serial)) is None):
+                raise ScanJobClosed("Перед командой прочитайте серийный номер подключённого ВАЦ; он не совпадает с сессией")
             return None
         row = repository.get(command.session_id)
         if observed_serial != row.instrument_serial:
             raise ScanJobClosed("Перед командой прочитайте серийный номер подключённого ВАЦ; он не совпадает с сессией")
+        # One worker lease per PC, even when several physical identities are polled.
+        uow.session.execute(update(ScanAgentRow).where(ScanAgentRow.machine_id == machine_id).values(machine_id=machine_id))
+        other_claim = uow.session.scalar(select(VnaCommandRow.id).join(VnaSessionRow).where(
+            VnaSessionRow.machine_id == machine_id, VnaCommandRow.status == "claimed", VnaCommandRow.id != command.id))
+        if other_claim is not None:
+            return None
         methods = {s["args"]["method"] for s in row.steps if s["op"] == "begin_calibration"}
         recovery = command.op in ("abort", "restore")
         # A bench session (protocol 2) goes only to an agent advertising version 2 and this very op.
         ops = None if row.purpose != "bench" else set() if recovery or command.op not in V2_OPS else {command.op}
-        vna_jobs.control_station(uow.session, row.instrument_serial, now, machine_id=machine_id,
-                                methods=methods if not recovery else None, ops=ops)
+        if protocol(row) == 3:
+            arinst_station(uow.session, row.instrument_id, row.instrument_serial, now, machine_id=machine_id,
+                           op=ARINST_WIRE_OPS.get(command.op, command.op))
+        else:
+            vna_jobs.control_station(uow.session, row.instrument_serial, now, machine_id=machine_id,
+                                    methods=methods if not recovery else None, ops=ops, source="s2vna")
         try:
             envelope = repository.claim(command, now)
         except SessionConflict as error:
@@ -361,13 +377,14 @@ def agent_session_status(session_id: UUID, request: Request,
         with uow_factory() as uow:
             repository = VnaSessionRepository(uow.session)
             row = repository.get(session_id)
-            view = repository.view(row)
+            commands = uow.session.execute(select(VnaCommandRow.id, VnaCommandRow.status,
+                VnaCommandRow.expected_version, VnaCommandRow.expected_step).where(VnaCommandRow.session_id == row.id)).all()
             return dict(session_id=str(row.id), state=row.state, version=row.version, step=row.step,
                 lease_held=row.state not in TERMINAL, instrument_id=str(row.instrument_id),
-                instrument_serial=row.instrument_serial, kit_definitions=row.snapshot["kit_definitions"],
-                commands=[dict(command_id=c["command_id"], status=c["status"],
-                               expected_version=c["expected_version"], expected_step=c["expected_step"])
-                          for c in view["commands"]])
+                instrument_serial=row.instrument_serial, kit_definitions=row.snapshot.get("kit_definitions", {}),
+                commands=[dict(command_id=str(c.id), status=c.status,
+                               expected_version=c.expected_version, expected_step=c.expected_step)
+                          for c in commands])
 
 
 @router.post("/api/stock/vna/commands/{command_id}/result")

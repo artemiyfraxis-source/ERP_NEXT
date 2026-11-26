@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta
 import hashlib
+import json
 from uuid import UUID, uuid4
 
 from sqlalchemy import (JSON, CheckConstraint, DateTime, ForeignKey, Index, Integer, LargeBinary,
@@ -11,7 +12,7 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 from app.shared.persistence import Base
 from . import vna_bench as bench
 from . import vna_sessions as domain
-from .vna_bench_protocol import OPS_V2, command_args, validate_result_v2
+from .vna_bench_protocol import ARINST_WIRE_OPS, OPS_V2, command_args, validate_result_v2, validate_result_v3
 from .vna_screen_infrastructure import VnaScreenRepository
 
 ACTIVE_SQL = "state NOT IN ('recorded','failed','aborted')"
@@ -172,7 +173,7 @@ class VnaBenchItemRow(Base):
 
 def protocol(row) -> int:
     """Bench sessions speak protocol v2; the one-position ОТК session stays on v1."""
-    return 2 if row.purpose == "bench" else 1
+    return 3 if row.snapshot.get("source") == "arinst" else 2 if row.purpose == "bench" else 1
 
 
 class VnaSessionRepository:
@@ -259,11 +260,14 @@ class VnaSessionRepository:
             self._change(row, now, state=self._executing(row, current["op"]))
             self._enqueue(row, current["op"], current["args"], now)
         elif is_bench and action == "recalibrate" and row.state == "ready":
+            if protocol(row) == 3:
+                raise domain.SessionConflict("Для Arinst используйте шаги SOL/THRU")
             # СТО ФРАК-002-2026 п. 11.5: a lost calibration is redone in the same session; nothing of the old one stays.
             self.append(row, bench.calibration_steps(row.snapshot, load=VnaScreenRepository(self.session).default("load")),
                         now, **bench.UNCALIBRATED)
         elif is_bench and action == "close" and row.state == "ready":
-            self.append(row, [bench.release_step(bench.last_screen_hash(row.steps))], now)
+            closing = bench.arinst_step("release") if protocol(row) == 3 else bench.release_step(bench.last_screen_hash(row.steps))
+            self.append(row, [closing], now)
         elif is_bench and action == "cancel_item" and row.state in ("awaiting_standard", "awaiting_dut"):
             # The human step was never sent to the agent: drop it and the rest of its item.
             self._change(row, now, steps=row.steps[:row.step])
@@ -299,7 +303,12 @@ class VnaSessionRepository:
             )) is not None
         # Review is reached only after the final restore receipt has been accepted.
         local_abort = row.state in ("draft", "planned", "review") or prepare_unclaimed
-        self._change(row, now, state="aborted" if local_abort else "aborting", error="")
+        if protocol(row) == 3:
+            self._change(row, now, snapshot=bench.arinst_invalidated(row.snapshot, "Сеанс остановлен оператором"))
+        # Protocol 3 has only close: the existing agent fences Planar's `aborting`
+        # state to abort/restore wire ops. Use the honest releasing state for Arinst.
+        closing_state = "releasing" if protocol(row) == 3 else "aborting"
+        self._change(row, now, state="aborted" if local_abort else closing_state, error="")
         self.session.execute(update(VnaCommandRow).where(
             VnaCommandRow.session_id == row.id, VnaCommandRow.status.in_(("pending", "claimed")),
         ).values(status="cancelled", finished_at=now))
@@ -318,7 +327,8 @@ class VnaSessionRepository:
         for command in list(self.session.scalars(query)):
             row = self.get(command.session_id)
             self.expect(row, command.expected_version, command.expected_step)
-            self._change(row, now, state="recovery_required", error="Ответ ВАЦ потерян; требуется остановка и восстановление")
+            changes = dict(snapshot=bench.arinst_invalidated(row.snapshot, "Исход команды неизвестен")) if protocol(row) == 3 else {}
+            self._change(row, now, state="recovery_required", error="Ответ ВАЦ потерян; требуется остановка и восстановление", **changes)
             command.status, command.finished_at = "uncertain", now
         self.session.flush()
 
@@ -336,11 +346,14 @@ class VnaSessionRepository:
                                                           "настройки оператора на ВАЦ не восстанавливались")
         self.session.flush()
 
-    def pending(self, machine_id):
-        return self.session.scalar(select(VnaCommandRow).join(VnaSessionRow).where(
+    def pending(self, machine_id, serial=None):
+        query = select(VnaCommandRow).join(VnaSessionRow).where(
             VnaSessionRow.machine_id == machine_id, VnaCommandRow.status.in_(("pending", "claimed")),
             VnaSessionRow.state.not_in((*domain.TERMINAL, "recovery_required")),
-        ).order_by(VnaCommandRow.created_at, VnaCommandRow.id).limit(1))
+        )
+        if serial is not None:
+            query = query.where(VnaSessionRow.instrument_serial == serial)
+        return self.session.scalar(query.order_by(VnaCommandRow.created_at, VnaCommandRow.id).limit(1))
 
     def claim(self, command, now):
         row = self.get(command.session_id)
@@ -385,15 +398,26 @@ class VnaSessionRepository:
             # Only a completed prepare failure explicitly preceding backup can release the physical lease.
             # Missing information, timeouts, cancelled commands and later operations remain conservative.
             state = "failed" if command.op == "prepare" and backup_saved is False else "recovery_required"
+        elif protocol(row) == 3:
+            saved, artifacts = validate_result_v3(command.op, command.args, row.instrument_serial, result), []
         elif protocol(row) == 2:
             saved, artifacts = validate_result_v2(command.op, command.args, row.instrument_serial, result)
         else:
             saved, artifacts = domain.validate_result(command.op, command.args, row.instrument_serial, result)
         # CAS the session before writing a receipt/evidence. A competing abort rolls everything back.
-        self._change(row, now, state=state, error=error or "")
+        changes = {}
+        if protocol(row) == 3 and error:
+            changes["snapshot"] = bench.arinst_invalidated(row.snapshot, error)
+        self._change(row, now, state=state, error=error or "", **changes)
         command.status, command.finished_at = ("failed" if error else "done"), now
         command.result, command.result_hash = saved, digest
         self.session.flush()
+        if protocol(row) == 3 and not error:
+            self.store_artifact(row, command, "arinst-receipt.json", saved,
+                dict(source="arinst", serial=row.instrument_serial, hardware_uid=saved["hardware_uid"],
+                     firmware=saved["firmware"], profile=saved["profile"],
+                     orientation=command.args.get("orientation"), raw_sha256=saved["raw_sha256"],
+                     correction_origin="unknown", acceptance_eligible=False), now)
         for artifact, content in artifacts:
             self.session.add(VnaArtifactRow(id=uuid4(), session_id=row.id, command_id=command.id,
                 file_name=artifact.file_name, content=content, sha256=hashlib.sha256(content).hexdigest(),
@@ -404,7 +428,9 @@ class VnaSessionRepository:
         self.session.flush()
         if error:
             return None
-        if row.state == "aborting":
+        if protocol(row) == 3 and command.op == "abort":
+            self._change(row, now, state="aborted", error="")
+        elif row.state == "aborting":
             if command.op == "abort":
                 self._enqueue(row, "restore", {}, now)
             else:
@@ -414,6 +440,19 @@ class VnaSessionRepository:
         else:
             return command
         return None
+
+    def store_artifact(self, row, command, name, payload, evidence, now):
+        """Immutable bounded JSON beside the ordinary Planar trace artifacts."""
+        content = json.dumps(payload, ensure_ascii=False, sort_keys=True, allow_nan=False,
+                             separators=(",", ":")).encode()
+        if not 0 < len(content) <= domain.ARTIFACT_LIMIT:
+            raise ValueError("Артефакт Arinst превышает 2 МиБ")
+        artifact = VnaArtifactRow(id=uuid4(), session_id=row.id, command_id=command.id,
+            file_name=name, content=content, sha256=hashlib.sha256(content).hexdigest(),
+            evidence=evidence, created_at=now)
+        self.session.add(artifact)
+        self.session.flush()
+        return artifact
 
     # ---- bench sessions: the workflow judges each receipt, then continues ----------------------------------------
 
@@ -470,8 +509,11 @@ class VnaSessionRepository:
         query = query.join(VnaCommandRow, VnaCommandRow.id == VnaBenchItemRow.command_id)
         return list(self.session.scalars(query.order_by(VnaCommandRow.expected_version)))
 
-    def artifact(self, command_id) -> VnaArtifactRow:
-        artifact = self.session.scalar(select(VnaArtifactRow).where(VnaArtifactRow.command_id == command_id))
+    def artifact(self, command_id, file_name=None) -> VnaArtifactRow:
+        query = select(VnaArtifactRow).where(VnaArtifactRow.command_id == command_id)
+        if file_name is not None:
+            query = query.where(VnaArtifactRow.file_name == file_name)
+        artifact = self.session.scalar(query)
         if artifact is None:
             raise ValueError("Замер не сохранён")
         if hashlib.sha256(bytes(artifact.content)).hexdigest() != artifact.sha256:
@@ -506,7 +548,9 @@ class VnaSessionRepository:
         return dict(id=str(command.id), command_id=str(command.id), kind="vna_control", protocol_version=protocol(row),
                     session_id=str(row.id), expected_version=command.expected_version,
                     expected_step=command.expected_step, instrument_id=str(row.instrument_id),
-                    instrument_serial=row.instrument_serial, op=command.op, args=command.args)
+                    instrument_serial=row.instrument_serial,
+                    op=ARINST_WIRE_OPS.get(command.op, command.op) if protocol(row) == 3 else command.op,
+                    args=command.args, **({"source": "arinst"} if protocol(row) == 3 else {}))
 
     def view(self, row):
         commands = list(self.session.scalars(select(VnaCommandRow).where(
@@ -524,9 +568,22 @@ class VnaSessionRepository:
                     operation_id=str(row.operation_id) if row.operation_id else None,
                     product_position=row.product_position, snapshot=row.snapshot, steps=row.steps, error=row.error,
                     recorded_reference=row.recorded_reference, **bench_view,
-                    commands=[dict(**self.command_view(c, row), status=c.status, result=c.result) for c in commands],
+                    commands=[dict(**self.command_view(c, row), status=c.status,
+                                   result=self.result_view(c, row)) for c in commands],
                     artifacts=[dict(id=str(a.id), command_id=str(a.command_id), file_name=a.file_name,
                                     sha256=a.sha256, metadata=a.evidence) for a in artifacts])
+
+    @staticmethod
+    def result_view(command, row):
+        if protocol(row) != 3:
+            return command.result
+        # Full wire bytes/samples are downloadable immutable artifacts. Polling
+        # the session must not retransmit every historical sweep's byte stream.
+        result = {k: v for k, v in command.result.items() if k not in ("raw_evidence", "acquisition")}
+        acquisition = command.result.get("acquisition")
+        if acquisition:
+            result["acquisition"] = {k: v for k, v in acquisition.items() if k != "data"}
+        return result
 
     @staticmethod
     def item_view(item: VnaBenchItemRow) -> dict:

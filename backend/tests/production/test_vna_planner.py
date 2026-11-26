@@ -141,6 +141,21 @@ def test_one_port_sol_and_explicit_load_kit_are_allowed_but_reference_kit_is_not
     assert all(o["termination"]["load_id"] != str(kit.id) for o in result["orientations"])
 
 
+@pytest.mark.parametrize("state", [("load_kit", "SMA-MF06-loads"), ("solt_kit", "SMA-MF06-characterized")])
+def test_sma_mf06_loads_stay_dut_terminations_after_the_kit_is_activated(state):
+    """Activation turns СИ.004 into a characterized SOL kit for Arinst; its 50-ohm loads remain DUT terminations,
+    and the characterized kit never becomes a Planar SOLT calibration kit."""
+    vna, cable, adapter, load, kit, _ = one_port_fixture("TNC")
+    role, definition = state
+    mf06 = replace(load, rf=replace(load.rf, role=role, kit_definition=definition), label="SMA-MF06")
+    result = plan(vna, (port("TNC", True),) * 2, cable, adapter, mf06, kit)
+    assert result["mode"] == "one_port_reversal"
+    assert all(o["termination"]["load_id"] == str(mf06.id) for o in result["orientations"])
+    assert all(o["calibration"]["kit_id"] == str(kit.id) for o in result["orientations"])
+    # Without the 6650F27 the activated SMA-MF06 alone is no Planar calibration kit.
+    assert plan(vna, (port("TNC", True),) * 2, cable, adapter, mf06)["status"] == "blocked"
+
+
 def test_one_port_cannot_reuse_scarce_adapter_for_far_end():
     vna, cable, adapter, load, kit, acm = one_port_fixture("BNC", adapters=1)
     result = plan(vna, (port("BNC", True),) * 2, cable, adapter, load, kit, acm)

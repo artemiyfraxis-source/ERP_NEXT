@@ -87,6 +87,8 @@ export interface VnaBenchFixture { instrument_id: string; reversed: boolean }
 export type VnaBenchTarget =
   | {
     kind: "instrument"; instrument_id: string; number: string; name: string; serial_number: string | null;
+    /** Набор мер SMA-MF06: скан ведёт в «Характеристику мер», а не в замер перехода. */
+    kit?: "SMA-MF06" | null;
     /** Цепочка оснастки и верхняя частота ниже, чем позволяют серия и норма; без них — «напрямую», по серии. */
     left?: VnaBenchFixture | null; right?: VnaBenchFixture | null; fmax_ghz?: number | null;
   }
@@ -204,7 +206,56 @@ export interface VnaBenchSession {
   view_screen_id?: string | null;
   items: VnaBenchItem[];
   checks: VnaBenchCheck[];
+  /** Сеанс «Характеристика мер» набора SMA-MF06; в обычном сеансе — null. */
+  characterization?: KitView | null;
 }
+
+/* «Характеристика мер» SMA-MF06 (СИ.004) на Planar: два прохода с калибровкой АКМ — «до 3 ГГц» и «3–6 ГГц» на сетке
+   1 МГц; меры «вилка» — через оснастку розетка–розетка, снятую на той же калибровке. Сервер хранит снятое в сеансе,
+   «Сохранить» делает неизменяемую ревизию меры, «Активировать набор» публикует все восемь сразу. */
+export type KitBand = "low" | "high";
+export type KitKind = "OPEN" | "SHORT" | "LOAD" | "THRU";
+export type KitGender = "male" | "female";
+/** нет данных / снято / проверено / действует. */
+export type KitPieceState = "none" | "captured" | "validated" | "active";
+export interface KitCapture { command_id: string; captured_at: string; summary: string; current: boolean; fixtures: string[] }
+export interface KitRevision {
+  id: string; revision: number; sha256: string; valid: boolean; reason: string | null;
+  max_residual: number | null; limit: number | null; f_min_hz: number; f_max_hz: number; points: number;
+  /** Скачок между проходами на стыке 3000 МГц и его допуск (только у мер, снятых в обоих проходах). */
+  join_step?: number | null; join_limit?: number | null;
+  created_at: string; created_by: string; download: string;
+}
+export interface KitPiece {
+  id: string; label: string; kind: KitKind; gender: KitGender; gender2: KitGender | null;
+  /** «ХХ (розетка)», «Проход М–М». */
+  name: string; f_min_hz: number; f_max_hz: number; version: number;
+  /** Проходы, в которых мера снимается: ХХ/КЗ «розетка» — только «до 3 ГГц». */
+  bands: KitBand[]; fixtures_needed: 0 | 1 | 2; in_band: boolean; state: KitPieceState; active: boolean;
+  captures: Partial<Record<KitBand, KitCapture>>;
+  /** [МГц, |Γ| (для прохода — |S21|, дБ), фаза °] — до 121 точки последнего снятия. */
+  preview: { band: KitBand; points: [number, number, number][] } | null;
+  plane: string; can_save: boolean; latest_revision: KitRevision | null;
+}
+export interface KitFixtureView {
+  instrument_id: string; number: string;
+  bands: Partial<Record<KitBand, { captured_at: string; summary: string; current: boolean }>>;
+}
+export interface KitActivation { expected_kit_version: number; revisions: Record<string, string>; expected_standard_versions: Record<string, number> }
+export interface KitView {
+  kit: { id: string; number: string; name: string; version: number | null; generation: number; hash: string | null; manifest: string | null };
+  band: KitBand;
+  bands: { key: KitBand; label: string; start_mhz: number; stop_mhz: number; points: number; step_mhz: number }[];
+  torque: string;
+  pieces: KitPiece[];
+  /** Незарегистрированные меры комплекта поставщика: их вносят по маркировке. */
+  missing: { kind: KitKind; gender: KitGender; name: string; f_max_hz: number }[];
+  fixtures: KitFixtureView[];
+  fixture_choices: { instrument_id: string; number: string; name: string }[];
+  can_activate: boolean;
+  activation: KitActivation | null;
+}
+export interface KitCaptureInput { standard_id?: string; fixture_id?: string; fixtures?: { instrument_id: string; reversed?: boolean }[] }
 
 export interface VnaBenchState {
   device: VnaBenchDevice;
@@ -214,7 +265,11 @@ export interface VnaBenchState {
 }
 
 /** Тело «Открыть сеанс»: без `assembly` — сетка «ОТК — переход» (СИ и проверки); с ним — полоса ЭТК задания. */
-export interface VnaBenchSessionInput { assembly?: { task_id: string; operation_id?: string | null } }
+export interface VnaBenchSessionInput {
+  assembly?: { task_id: string; operation_id?: string | null };
+  /** «Характеристика мер»: набор SMA-MF06, сетка 1 МГц «до 3 ГГц», затем «3–6 ГГц». */
+  characterization?: { kit_id: string };
+}
 
 export interface VnaBenchCheckInput {
   kind: VnaBenchCheckKind;
@@ -277,6 +332,81 @@ const BASE = "/api/production/vna-bench";
 const post = <T>(path: string, body: unknown = {}) => api<T>(`${BASE}${path}`, { method: "POST", body: JSON.stringify(body) });
 const id = encodeURIComponent;
 
+// Protocol 3 has partial diagnostic traces, not Planar's ACM/acceptance DTO.
+export interface ArinstProfile { start_hz: number; stop_hz: number; points: number; if_bandwidth_hz: number }
+export interface ArinstOptions { scan_range_hz: [number, number]; bandwidths_hz: number[]; max_slice_points: number; raw: string }
+export interface ArinstStep {
+  op: string; human: boolean; label: string;
+  args: { standard?: "OPEN" | "SHORT" | "LOAD" | "THRU"; orientation?: "forward" | "reverse" };
+}
+export interface ArinstSession {
+  id: string; version: number; state: string; step: number; status: string; owned: boolean;
+  operator: string | null; error: string | null; steps: ArinstStep[];
+  command: { id: string; op: string; status: string } | null;
+  artifacts: { id: string; command_id: string; file_name: string; sha256: string }[];
+}
+export interface ArinstTrace {
+  command_id: string; artifact_id: string; sha256: string; profile: ArinstProfile; acceptance_eligible: false;
+  acquisition: {
+    schema: "arinst.partial.v1"; points: number; orientation: "forward" | "reverse";
+    measured_channels: ("S11" | "S21")[]; data: Partial<Record<"S11" | "S21", [number, number][]>>;
+    grid_confirmed: boolean; frequencies_hz: number[] | null; correction_origin: string;
+  };
+}
+export interface ArinstKitSet {
+  gender: KitGender; sol_mhz: [number, number]; thru_mhz: [number, number] | null;
+  pieces: { kind: KitKind; label: string; revision: number }[];
+}
+export interface ArinstKit { id: string; number: string; name: string; generation: number; hash: string | null; active: boolean; sets: ArinstKitSet[] }
+export interface ArinstBenchState {
+  source: "arinst";
+  device: {
+    instrument_id: string; inventory_number: string; serial: string; printed_serial: string | null;
+    hardware_uid: string | null; firmware: string | null; machine_id: string | null;
+    connection_ready: boolean; control_ready: boolean; reason: string | null; supported_ops: string[];
+    license: { state: "not_required" | "TRIAL" | "LOCKED" | "ACTIVATED" | "UNKNOWN"; trial_remaining_seconds: number | null; message: string };
+    options?: ArinstOptions | null;
+  };
+  profile: ArinstProfile | null;
+  calibration: { valid: boolean; status: string; reason?: string | null };
+  acceptance: { eligible: boolean; code: string; message: string };
+  /** Наборы SMA-MF06: действующее поколение характеристики и полосы мер по полу. */
+  kits?: ArinstKit[];
+  /** Калибровка идёт по поколению набора — какие меры (ревизии) взяты. */
+  calibration_kit?: {
+    kit_id: string; generation: number; hash: string; standard_gender: KitGender;
+    pieces: { kind: KitKind; label: string; revision: number; sha256: string; f_min_hz: number; f_max_hz: number }[];
+  } | null;
+  session: ArinstSession | null;
+  latest_trace: ArinstTrace | null;
+}
+
+const arinstPost = (path: string, body: unknown) => api<ArinstBenchState>(`${BASE}${path}`,
+  { method: "POST", body: JSON.stringify(body), timeoutMs: 20_000 });
+
+export const arinstBenchApi = {
+  state: (instrumentId: string, signal?: AbortSignal) =>
+    api<ArinstBenchState>(`${BASE}/state?instrument_id=${id(instrumentId)}`, { signal, timeoutMs: 15_000 }),
+  start: (instrumentId: string) => arinstPost("/sessions", { instrument_id: instrumentId }),
+  connect: (sessionId: string, version: number) =>
+    arinstPost(`/sessions/${id(sessionId)}/arinst/connect`, { version }),
+  profile: (sessionId: string, version: number, profile: ArinstProfile) =>
+    arinstPost(`/sessions/${id(sessionId)}/arinst/profile`, { version, profile }),
+  calibration: (sessionId: string, version: number, kitId: string, referencePlane: string, transmission: boolean,
+    standardGender?: KitGender) =>
+    arinstPost(`/sessions/${id(sessionId)}/arinst/calibration`,
+      { version, kit_id: kitId, reference_plane: referencePlane, transmission, orientation: "forward",
+        ...(standardGender ? { standard_gender: standardGender } : {}) }),
+  capture: (sessionId: string, version: number, orientation: "forward" | "reverse") =>
+    arinstPost(`/sessions/${id(sessionId)}/arinst/capture`, { version, orientation }),
+  confirm: (sessionId: string, version: number) =>
+    arinstPost(`/sessions/${id(sessionId)}/arinst/confirm`, { version }),
+  close: (sessionId: string, version: number) => arinstPost(`/sessions/${id(sessionId)}/close`, { version }),
+  abort: (sessionId: string, version: number) => arinstPost(`/sessions/${id(sessionId)}/abort`, { version }),
+  artifactUrl: (sessionId: string, artifactId: string) =>
+    `/api/production/vna-sessions/${id(sessionId)}/artifacts/${id(artifactId)}`,
+};
+
 export const vnaBenchApi = {
   /** Состояние рабочего места: прибор, калибровка, сроки проверок, открытый сеанс. */
   state: () => api<VnaBenchState>(`${BASE}/state`),
@@ -313,6 +443,23 @@ export const vnaBenchApi = {
   /** «Показать на ВАЦ»: сохранённый экран — на S2VNA в откалиброванном сеансе, без развёртки; калибровка остаётся. */
   showScreen: (sessionId: string, version: number, screenId: string) =>
     post<VnaBenchState>(`/sessions/${id(sessionId)}/screen`, { version, screen_id: screenId }),
+  /** «Характеристика мер»: перейти к другому проходу (новый профиль и полная калибровка АКМ). */
+  kitBand: (sessionId: string, version: number, band: KitBand) =>
+    post<VnaBenchState>(`/sessions/${id(sessionId)}/characterization/band`, { version, band }),
+  /** Снять меру (или оснастку розетка–розетка между концами кабелей) в текущем проходе. */
+  kitCapture: (sessionId: string, version: number, input: KitCaptureInput) =>
+    post<VnaBenchState>(`/sessions/${id(sessionId)}/characterization/captures`, { version, ...input }),
+  /** Сохранить меру: кривая обоих проходов — новая неизменяемая ревизия с проверкой середин. */
+  kitSave: (sessionId: string, standardId: string, version: number) =>
+    post<VnaBenchState>(`/sessions/${id(sessionId)}/characterization/pieces/${id(standardId)}/save`, { version }),
+  /** Зарегистрировать меру набора по маркировке. */
+  kitRegister: (kitId: string, body: {
+    expected_kit_version: number; piece_label: string; kind: KitKind; gender: KitGender;
+    gender2: KitGender | null; f_min_hz: number; f_max_hz: number;
+  }) => api<unknown>(`/api/production/instruments/${id(kitId)}/standards`, { method: "POST", body: JSON.stringify(body) }),
+  /** «Активировать набор»: все восемь последних проверенных ревизий — новое поколение. */
+  kitActivate: (kitId: string, activation: KitActivation) =>
+    api<unknown>(`/api/production/instruments/${id(kitId)}/standards/activate`, { method: "POST", body: JSON.stringify(activation) }),
   /** Закрыть сеанс: экран ERP и калибровка остаются на приборе для просмотра. */
   close: (sessionId: string, version: number) => post<VnaBenchState>(`/sessions/${id(sessionId)}/close`, { version }),
 };

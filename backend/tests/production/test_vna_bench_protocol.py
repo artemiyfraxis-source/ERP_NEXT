@@ -129,7 +129,7 @@ def test_screen_boundaries(screen):
 
 @pytest.mark.parametrize("protocol,op,raw", [
     (1, "apply_screen", screen_args()), (1, "device_status", {}), (1, "release", dict(screen_hash=None)),
-    (2, "raw_scpi", dict(command="*RST")), (2, "load_state", dict(path="C:/state.sta")), (3, "prepare", {}),
+    (2, "raw_scpi", dict(command="*RST")), (2, "load_state", dict(path="C:/state.sta")), (4, "prepare", {}),
 ])
 def test_unknown_ops_and_protocols_are_refused(protocol, op, raw):
     with pytest.raises(ValueError, match="не входит"):

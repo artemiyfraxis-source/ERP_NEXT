@@ -1,3 +1,4 @@
+import { MaterialOwners, LotQuality } from "./MaterialOwners";
 import { Fragment, createContext, useContext, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { LoadMore } from "./LoadMore";
 import { urlParam } from "./navigation";
@@ -69,7 +70,7 @@ export function WarehousePage({ admin = false, readOnly = false, finishedGoods =
   // the old `?section=equipment` lands on the second one). A sub-tab the viewer has no access to falls back to «Материалы».
   const [view, setView] = useState<StockView>(() => {
     const wanted = new URLSearchParams(window.location.search).get("view");
-    return wanted === "work-materials" ? "work-materials" : wanted === "goods" && finishedGoods ? "goods" : wanted === "equipment" && equipment ? "equipment" : "stock";
+    return wanted === "owners" ? "owners" : wanted === "work-materials" ? "work-materials" : wanted === "goods" && finishedGoods ? "goods" : wanted === "equipment" && equipment ? "equipment" : "stock";
   });
   const changeView = (next: StockView) => {
     const url = new URL(window.location.href);
@@ -78,6 +79,11 @@ export function WarehousePage({ admin = false, readOnly = false, finishedGoods =
     setView(next);
   };
   const views = <StockViews view={view} onChange={changeView} goods={finishedGoods} equipment={equipment} />;
+  if (view === "owners") return <section className="page stock-page">
+    <header className="page-head"><h1>Склад</h1></header>
+    {views}
+    <MaterialOwners readOnly={readOnly} />
+  </section>;
   if (view === "work-materials") return <section className="page stock-page">
     <header className="page-head"><h1>Склад</h1></header>
     {views}
@@ -96,13 +102,14 @@ export function WarehousePage({ admin = false, readOnly = false, finishedGoods =
   return <StockPage admin={admin} readOnly={readOnly} canEditReferences={canEditReferences} views={views} />;
 }
 
-type StockView = "stock" | "goods" | "equipment" | "work-materials";
+type StockView = "stock" | "goods" | "equipment" | "owners" | "work-materials";
 
 /** Stock sub-views; each preserves its existing permission gate. Work material is readable with warehouse access. */
 function StockViews({ view, onChange, goods, equipment }: { view: StockView; onChange: (view: StockView) => void; goods: boolean; equipment: boolean }) {
   const tabs: [StockView, string][] = [["stock", "Материалы и комплектующие"]];
   if (goods) tabs.push(["goods", "Готовая продукция"]);
   if (equipment) tabs.push(["equipment", "Оборудование"]);
+  tabs.push(["owners", "Владельцы материалов"]);
   tabs.push(["work-materials", "Материал работ"]);
   return <div className="seg-tabs stock-views" role="tablist" aria-label="Разделы склада">
     {tabs.map(([key, label]) =>
@@ -1183,6 +1190,8 @@ function LotRowEditForm({ lot, disabled, mutate, onClose, onSaved }: {
 
 // SUPPLYMAP wh05Writeoff / wh05Return: the basis is picked from a list — it tells later whether the stock went to
 // production, was scrapped or recounted. A return basis starts with «Возврат» (return_reason on the server).
+// Scrap, loss and inventory take stock out: the server fixes the destination by the reason, the typed purpose is not used.
+const DISPOSAL_DESTINATIONS: Record<string, string> = { "Брак": "Утилизация — брак", "Порча": "Утилизация — порча", "Недостача": "Недостача", "Инвентаризация": "Инвентаризация" };
 const WRITEOFF_REASONS = ["Выдача в производство", "Выдача по заявке", "Брак", "Недостача", "Порча", "Инвентаризация"];
 const RETURN_REASONS = ["Возврат: не израсходовано", "Возврат: ошибочное списание", "Возврат: замена позиции", "Возврат: из брака (годное)"];
 
@@ -1279,11 +1288,12 @@ function WriteoffDialog({ lot, disabled, mutate, onClose }: {
   const [purpose, setPurpose] = useState("");
   const [date, setDate] = useState(() => new Date().toLocaleDateString("sv-SE"));
   const [error, setError] = useState("");
+  const fixedDestination = DISPOSAL_DESTINATIONS[reason];
 
   function submit(event: FormEvent) {
     event.preventDefault();
     setError("");
-    mutate(lot.id, () => warehouseApi.writeOff(lot.id, lot.version, quantity, purpose.trim(), reason, date || undefined))
+    mutate(lot.id, () => warehouseApi.writeOff(lot.id, lot.version, quantity, fixedDestination ? "" : purpose.trim(), reason, date || undefined))
       .then(onClose, (reason) => setError(dialogError(reason, "Списание не выполнено")));
   }
 
@@ -1292,7 +1302,7 @@ function WriteoffDialog({ lot, disabled, mutate, onClose }: {
       <div className="move-grid two">
         <label>Количество, {lot.unit || "шт"}<input aria-label="Количество" type="number" min="0.000001" step="any" required autoFocus placeholder={`остаток ${lot.balance}`} value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
         <label>Основание<select aria-label="Основание" value={reason} onChange={(event) => setReason(event.target.value)}>{WRITEOFF_REASONS.map((item) => <option key={item}>{item}</option>)}</select></label>
-        <label>Назначение<SuggestInput aria-label="Назначение списания" options={projects} placeholder="проект или фамилия" required pattern=".*\S.*" title="Номер проекта или фамилия ответственного" value={purpose} onChange={setPurpose} /></label>
+        {fixedDestination ? <label>Назначение<input aria-label="Назначение списания" readOnly value={fixedDestination} title="Назначение задаёт основание: списание не является выдачей" /></label> : <label>Назначение<SuggestInput aria-label="Назначение списания" options={projects} placeholder="проект или фамилия" required pattern=".*\S.*" title="Номер проекта или фамилия ответственного" value={purpose} onChange={setPurpose} /></label>}
         <label>Дата<input aria-label="Дата списания" type="date" value={date} onChange={(event) => setDate(event.target.value)} /></label>
       </div>
       {error && <div className="error-banner" role="alert">{error}</div>}
@@ -1496,6 +1506,7 @@ function LotCard({ lot, busy, disabled, mutate, onMove, history, readOnly, canLi
         </div>
       </div>
       <div className="lot-card-actions">
+        <LotQuality lot={lot} onChanged={() => { void mutate(lot.id, async () => undefined); }}/>
         {!readOnly && <>
           <button className="secondary small" disabled={disabled} title="Снять количество с партии" onClick={() => setDialog("writeoff")}>− Списать</button>
           {writtenOff && <button className="secondary small" disabled={disabled} title={`Списано ${lot.written_off} ${lot.unit}`} onClick={() => setDialog("return")}>Вернуть на склад</button>}

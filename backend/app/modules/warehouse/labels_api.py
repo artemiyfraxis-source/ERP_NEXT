@@ -43,7 +43,8 @@ from .application import UnitOfWork
 from .label_jobs import JobFinished, LabelJobRow, agent_status, claim, claim_marking, report, report_marking, report_print_state
 from .printer_commands import CommandFinished, claim_command, marking_printers, report_command
 from .scan_jobs import AgentMachineRefused, AgentTokenRow, agent_machine
-from .label_templates import StaleTemplate
+from .label_templates import FormMetadata, StaleTemplate
+from .labels.defaults import GRN_DESIGN_REVISIONS
 from .labels.settings import CODE_TYPE_LABELS, PrintSettings
 from .labels.template import FORMATS, TEMPLATE_KINDS, lot_content
 from .labels_application import (
@@ -59,6 +60,8 @@ from .labels_application import (
     save_label_settings,
     save_label_template,
     templates_view,
+    sample_content,
+    _sized,
 )
 
 AGENT_SCOPE = "labels:print"
@@ -218,18 +221,43 @@ def print_lot_label(
 class TemplatePayload(BaseModel):
     template: Any = None  # checked by `parse_template`, so the 422 speaks Russian
     version: int | None = None
+    form: FormMetadata | None = None
 
 
 class PreviewPayload(BaseModel):
     template: Any = None
     sample: str | None = None  # a lot's id for kind «lot»; null — the sample label
+    form: FormMetadata | None = None
 
 
-def _kind_format(kind: str, label_format: str | None = None) -> None:
+def _kind_format(kind: str, label_format: str | None = None, category: str = "") -> None:
     if kind not in TEMPLATE_KINDS:
         raise HTTPException(status_code=404, detail=f"Нет такого вида этикетки: «{kind}» (есть «lot», «intake»)")
     if label_format is not None and label_format not in FORMATS:
         raise HTTPException(status_code=404, detail=f"Нет такого формата этикетки: «{label_format}» (есть {', '.join(FORMATS)})")
+    if category and (category not in GRN_DESIGN_REVISIONS or kind == "instrument"):
+        raise HTTPException(status_code=422, detail="Неизвестная категория или вид этикетки ГРН")
+
+
+def _designer_settings(factory, kind, category, printer_name):
+    printer_name = printer_name.strip()
+    settings = label_settings(factory(), kind)
+    if printer_name and not category:
+        raise HTTPException(status_code=422, detail="Для настройки принтера выберите категорию ГРН")
+    if printer_name:
+        settings = settings.model_copy(update={"printer_name": printer_name})
+    return settings
+
+
+@router.get("/labels/grn-templates")
+def grn_templates(
+    _principal: Annotated[Principal, Depends(warehouse_view_principal)], uow_factory: UowFactory,
+    printer_name: Annotated[str, Query(max_length=200)] = "", kind: str = "lot",
+) -> dict:
+    _kind_format(kind, category="PPM")
+    settings = _designer_settings(uow_factory, kind, "PPM", printer_name)
+    return _designed(lambda: {"printer_name": settings.printer_name, "categories": [
+        templates_view(uow_factory(), kind, settings, category) for category in GRN_DESIGN_REVISIONS]})
 
 
 def _designed(operation):
@@ -246,11 +274,13 @@ def _designed(operation):
 @router.get("/labels/templates/{kind}")
 def get_templates(
     kind: str, _principal: Annotated[Principal, Depends(warehouse_view_principal)], uow_factory: UowFactory,
+    category: str = "", printer_name: Annotated[str, Query(max_length=200)] = "",
 ) -> dict:
     """`{kind, kind_label, fields: [{key, label}], formats: {"58x30"|"58x40"|"100x50": {template, is_default, version,
     width_mm, height_mm, updated_at, updated_by}}, current_format, code_type}`."""
-    _kind_format(kind)
-    return templates_view(uow_factory(), kind, label_settings(uow_factory(), kind))
+    _kind_format(kind, category=category)
+    return _designed(lambda: templates_view(uow_factory(), kind,
+        _designer_settings(uow_factory, kind, category, printer_name), category))
 
 
 @router.put("/labels/templates/{kind}/{label_format}")
@@ -261,14 +291,26 @@ def put_template(
     principal: Annotated[Principal, Depends(warehouse_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: UowFactory,
+    category: str = "", printer_name: Annotated[str, Query(max_length=200)] = "",
 ) -> dict:
     """`{template, version}` (the version loaded, null — over the built-in one) → the saved `{template, is_default:
     false, version, …}`; 409 — saved or reset by someone since; 422 — not a valid template (Russian)."""
-    _kind_format(kind, label_format)
+    _kind_format(kind, label_format, category)
     return _designed(lambda: save_label_template(
-        uow_factory(), kind, label_format, payload.template, payload.version, label_settings(uow_factory(), kind),
-        principal.actor, now,
+        uow_factory(), kind, label_format, payload.template, payload.version,
+        _designer_settings(uow_factory, kind, category, printer_name), principal.actor, now,
+        category=category, form=payload.form,
     ))
+
+
+@router.get("/labels/templates/{kind}/{label_format}")
+def get_template(
+    kind: str, label_format: str, _principal: Annotated[Principal, Depends(warehouse_view_principal)],
+    uow_factory: UowFactory, category: str = "", printer_name: Annotated[str, Query(max_length=200)] = "",
+) -> dict:
+    _kind_format(kind, label_format, category)
+    return _designed(lambda: templates_view(uow_factory(), kind,
+        _designer_settings(uow_factory, kind, category, printer_name), category)["formats"][label_format])
 
 
 @router.delete("/labels/templates/{kind}/{label_format}")
@@ -278,10 +320,13 @@ def delete_template(
     principal: Annotated[Principal, Depends(warehouse_edit_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: UowFactory,
+    category: str = "", printer_name: Annotated[str, Query(max_length=200)] = "", version: int | None = None,
 ) -> dict:
     """Back to the built-in template → `{template, is_default: true, version: null, …}`."""
-    _kind_format(kind, label_format)
-    return reset_label_template(uow_factory(), kind, label_format, label_settings(uow_factory(), kind), principal.actor, now)
+    _kind_format(kind, label_format, category)
+    return _designed(lambda: reset_label_template(uow_factory(), kind, label_format,
+        _designer_settings(uow_factory, kind, category, printer_name), principal.actor, now,
+        category=category, expected_version=version))
 
 
 @router.post("/labels/templates/{kind}/{label_format}/preview")
@@ -291,9 +336,10 @@ def preview_template(
     payload: PreviewPayload,
     _principal: Annotated[Principal, Depends(warehouse_edit_principal)],
     uow_factory: UowFactory,
+    category: str = "", printer_name: Annotated[str, Query(max_length=200)] = "",
 ) -> Response:
     """The unsaved template as image/png, dot for dot what would print (the format's size, the settings' dpi)."""
-    _kind_format(kind, label_format)
+    _kind_format(kind, label_format, category)
 
     def content():
         if kind != "lot" or not payload.sample:
@@ -305,7 +351,21 @@ def preview_template(
         return lot_content(lot_label_data(uow_factory(), lot_id))
 
     return _png(_designed(lambda: preview_template_png(
-        payload.template, kind, label_format, label_settings(uow_factory(), kind), content())))
+        payload.template, kind, label_format, _designer_settings(uow_factory, kind, category, printer_name), content(),
+        category=category, form=payload.form)))
+
+
+@router.post("/labels/templates/{kind}/{label_format}/test")
+def test_template(
+    kind: str, label_format: str, principal: Annotated[Principal, Depends(warehouse_edit_principal)],
+    now: Annotated[datetime, Depends(moscow_now)], uow_factory: UowFactory,
+    category: str = "", printer_name: Annotated[str, Query(max_length=200)] = "",
+    payload: PrintPayload | None = None,
+) -> dict:
+    _kind_format(kind, label_format, category)
+    settings = _sized(_designer_settings(uow_factory, kind, category, printer_name), label_format)
+    return _designed(lambda: print_label(uow_factory(), sample_content(kind, category), settings,
+        (payload or PrintPayload()).copies, now, kind="sample", lot_id=None, created_by=principal.actor.name)).as_dict()
 
 
 @router.post("/labels/agent/claim")

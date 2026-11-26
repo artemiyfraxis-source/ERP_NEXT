@@ -10,6 +10,8 @@ position (12.3 through the ОТК VSWR record), and checks — bend (10.6), week
 The screen's contract is `frontend/src/vnaBenchApi.ts` (S5): every POST queues agent work and returns the state at once,
 the screen polls `GET state`; refusals are `detail: {code, message}`. Each accepted capture is judged in the agent's
 result request in the same unit of work as its receipt (journal row, matings, VSWR attempt, the session's next step).
+Arinst v3 selects a separate diagnostic state DTO and preserves raw receipt artifacts. Quality save endpoints
+remain blocked until characterized standards and an independent physical bench comparison are commissioned.
 """
 
 from __future__ import annotations
@@ -25,11 +27,14 @@ from uuid import UUID, uuid4, uuid5
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import Field
-from sqlalchemy import func, select
+from sqlalchemy import Integer, func, select
 from sqlalchemy.exc import IntegrityError
 
+from app.modules.production import kit_characterization_run as kc
 from app.modules.production import vna_bench as bench
 from app.modules.production.api import techcards_uow_factory
+from app.modules.production.arinst_calibration import CalibrationContext
+from app.modules.production.application import ConcurrentProductionUpdate
 from app.modules.production.autoplan_api import references_uow_factory
 from app.modules.production.domain import ProductionValidationError
 from app.modules.production.infrastructure import (ProductionInstrumentFileRow, ProductionInstrumentRow,
@@ -39,10 +44,14 @@ from app.modules.production.instrument_characterization import _date as _measure
 from app.modules.production.instrument_norms import loss_uncertainty_for, norm_for, uncertainty_for, vna_model
 from app.modules.production.mating_api import record_batch
 from app.modules.production.matings import end_names
-from app.modules.production.rf_infrastructure import RfRepository
+from app.modules.production.kit_characterization_data import CharacterizationCurve
+from app.modules.production.rf_infrastructure import RfDetailsRow, RfInterfaceRow, RfRepository
+from app.modules.production.rf_kit_characterization import CHARACTERIZED_DEFINITION, LOADS_DEFINITION, REQUIRED_PIECES
+from app.modules.production.rf_kit_characterization_infrastructure import (RfKitRepository, RfKitStandardRow,
+                                                                           RfStandardCharacterizationRow)
 from app.modules.production.rf_interfaces import RfDetails, parse_interfaces
 from app.modules.production.traceability import InstrumentFile, InstrumentFileKind
-from app.modules.production.vna_bench_protocol import Screen, screen_hash
+from app.modules.production.vna_bench_protocol import ArinstOptions, ArinstProfile, Screen, screen_hash
 from app.modules.production.vna_check_infrastructure import VALUE_FIELDS, VnaCheckRepository, VnaCheckRow
 from app.modules.production.vna_characterization import is_characterization_file
 from app.modules.production.vna_checks import (LOAD_LIMIT, KitTolerance, assert_confidence_points, confidence_from_receipt,
@@ -55,14 +64,14 @@ from app.modules.production.vna_session_infrastructure import VnaBenchItemRow, V
 from app.modules.production.vna_sessions import TERMINAL, Profile, SessionConflict, StrictModel, resolved_profile
 from app.modules.production.vswr import RecordVswrCommand, VswrFileInput, record_vswr
 from app.modules.warehouse import vna_jobs
-from app.modules.warehouse.devices import DeviceRow, VnaBindingRow
+from app.modules.warehouse.devices import DeviceRow, VnaBindingRow, VnaControlRow, instrument_identity
 from app.modules.warehouse.scan_agents import LIVE_FOR, ScanAgentRow
 from app.modules.warehouse.scan_jobs import ScanJobClosed
 from app.shared.clock import MOSCOW, as_utc
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 from .coax_vswr_api import CoaxRefs, _task_etk, task_norm
-from .vna_capture_instrument import capture_instrument
+from .vna_capture_instrument import arinst_station, capture_instrument
 from .vna_measurement_api import Factory, Now, Person, _expire
 from .vna_plan_api import vna_plan
 
@@ -70,7 +79,7 @@ router = APIRouter(tags=["production"])
 PREFIX = "/api/production/vna-bench"
 Techcards = Annotated[Callable | None, Depends(techcards_uow_factory)]
 Refs = Annotated[Callable | None, Depends(references_uow_factory)]
-MEASURING = ("instrument", "assembly")       # stopped by a failed weekly/monthly control (разд. 14)
+MEASURING = ("instrument", "assembly", "kit_characterization")   # stopped by a failed weekly/monthly control (разд. 14)
 ITEMS = ("instrument", "assembly")
 # "flex" stays only to show the bend checks already made (history, an old open session); it is no longer started.
 CHECKS = {"flex": "flex", "weekly": "control_standard", "monthly": "kit_standards"}
@@ -148,6 +157,10 @@ class AssemblyProfile(StrictModel):
     operation_id: UUID | None = None
 
 
+class CharacterizationTarget(StrictModel):
+    kit_id: UUID   # СИ.004 SMA-MF06
+
+
 class SessionInput(StrictModel):
     """Everything optional: by default the station is the S2VNA card with its accessories (АКМ, two test cables)."""
     agent_id: str | None = Field(default=None, min_length=1, max_length=80)
@@ -156,6 +169,9 @@ class SessionInput(StrictModel):
     cables: list[Cable] | None = Field(default=None, min_length=2, max_length=2)
     # Calibrate on the ETK band of this КБ (СТО прил. А.2); without it — the «ОТК — переход» grid (СИ and checks).
     assembly: AssemblyProfile | None = None
+    # «Характеристика мер»: the SMA-MF06 kit, calibrated on the 1 MHz grid «до 3 ГГц», then «3–6 ГГц».
+    characterization: CharacterizationTarget | None = None
+    arinst_profile: ArinstProfile | None = None
 
 
 class Version(StrictModel):
@@ -212,11 +228,12 @@ class CheckInput(Version):
 
 def _station(uow, instrument_id=None):
     """The bench ВАЦ: the given card or the S2VNA card with a serial bound to a PC (one bench in the shop)."""
-    query = select(ProductionInstrumentRow).where(ProductionInstrumentRow.vna_app == "S2VNA")
+    query = select(ProductionInstrumentRow).where(ProductionInstrumentRow.vna_app.in_(
+        ("S2VNA", "Arinst VL") if instrument_id else ("S2VNA",)))
     if instrument_id is not None:
         query = query.where(ProductionInstrumentRow.id == instrument_id)
     cards = [c for c in uow.session.scalars(query.order_by(ProductionInstrumentRow.inventory_number))
-             if (c.serial_number or "").strip()]
+             if (c.serial_number or "").strip() or c.vna_app == "Arinst VL"]
     bound = [c for c in cards if uow.session.get(VnaBindingRow, c.serial_number.strip()) is not None]
     return (bound or cards or [None])[0]
 
@@ -253,7 +270,13 @@ def _actor(snapshot) -> Actor:
 
 
 def _profile(row) -> Profile:
+    _planar_only(row)
     return Profile.model_validate(row.snapshot["profile"])
+
+
+def _planar_only(row):
+    if row.snapshot.get("source") == "arinst":
+        raise Refusal("commissioning_required", bench.ARINST_COMMISSIONING)
 
 
 def _screen(uow, purpose: str) -> ScreenDef:
@@ -583,6 +606,8 @@ def _state(uow, principal, now, vna=None, row=None):
         row = _session_row(uow, vna.id if vna else None)
     else:
         vna = uow.session.get(ProductionInstrumentRow, row.instrument_id)
+    if vna is not None and vna.vna_app == "Arinst VL":
+        return _arinst_state(uow, principal, now, vna, row)
     commands = _commands(uow, row) if row else []
     session = None
     if row is not None:
@@ -598,7 +623,9 @@ def _state(uow, principal, now, vna=None, row=None):
                        view_screen_id=_view_screen_id(row),
                        command=_command_view(row, commands),
                        items=[_item_view(uow, repository, row, r, runs, items, commands) for r in runs if r["kind"] in ITEMS],
-                       checks=[_check_view(uow, row, r, runs, items, commands) for r in runs if r["kind"] in CHECK_NAMES])
+                       checks=[_check_view(uow, row, r, runs, items, commands) for r in runs if r["kind"] in CHECK_NAMES],
+                       characterization=_kit_view(uow, row, commands)
+                       if row.snapshot.get("profile_kind") == "characterization" else None)
     return dict(device=_device(uow, vna, row, commands, now,
                              can_transfer=principal.full_access and not principal.service and principal.viewer is None),
                 calibration=_calibration(row, now),
@@ -613,16 +640,16 @@ def _view_screen_id(row) -> str | None:
 
 
 @router.get(PREFIX + "/state")
-def bench_state(principal: Person, now: Now, factory: Factory):
+def bench_state(principal: Person, now: Now, factory: Factory, instrument_id: UUID | None = None):
     with _refusals():
         with factory() as uow:
-            vna = _station(uow)
+            vna = _station(uow, instrument_id)
             row = _session_row(uow, vna.id if vna else None)
             session_id = row.id if row else None
         if session_id:
             _expire(factory, now, session_id=session_id)
         with factory() as uow:
-            return _state(uow, principal, now)
+            return _state(uow, principal, now, vna=_station(uow, instrument_id))
 
 
 def _version(row, version):
@@ -655,6 +682,313 @@ def _act(factory, session_id, principal, now, action, *, recovery=False):
 
 # ---- session ---------------------------------------------------------------------------------------------------------
 
+
+class ArinstProfileInput(Version):
+    profile: ArinstProfile
+
+
+class ArinstCalibrationInput(Version):
+    kit_id: UUID
+    orientation: Literal["forward", "reverse"] = "forward"
+    transmission: bool = True
+    reference_plane: str = Field(min_length=1, max_length=300)
+    fixture_ids: list[UUID] = Field(default_factory=list, max_length=10)
+    # A characterized SMA-MF06: the gender of the standards mating the measurement plane (female for male cable ends)
+    # and which THRU end faces port 1.
+    standard_gender: Literal["male", "female"] | None = None
+    thru_orientation: Literal["forward", "reverse"] = "forward"
+
+
+class ArinstCaptureInput(Version):
+    orientation: Literal["forward", "reverse"]
+    target: Target | None = None
+
+
+def _arinst_state(uow, principal, now, vna, row):
+    identity = instrument_identity(uow.session, vna.id)
+    serial = identity.serial if identity else ""
+    binding = uow.session.get(VnaBindingRow, serial) if serial else None
+    pc = uow.session.get(ScanAgentRow, binding.machine_id) if binding else None
+    # Connecting/closing refreshes an expired observation; only the persisted owner must be online.
+    connection_ready = bool(identity and identity.source == "arinst" and pc and not pc.legacy
+                            and pc.last_seen is not None
+                            and as_utc(bench.aware(pc.last_seen, now)) >= as_utc(now) - LIVE_FOR)
+    control = uow.session.get(VnaControlRow, (binding.machine_id, serial)) if binding else None
+    license_view = bench.arinst_license(control.license_state if control else None,
+        control.trial_remaining_seconds if control else None, control.reported_at if control else now, now)
+    repository = VnaSessionRepository(uow.session)
+    view = repository.view(row) if row else None
+    # Anchor receipts at dispatch, conservatively before the device observation.
+    # HTTP delivery can be delayed; its arrival must never renew the trial or
+    # replace a newer heartbeat observation with an older cached receipt.
+    receipts = [c for c in _commands(uow, row) if c.status == "done" and c.result.get("license")] if row else []
+    if receipts:
+        latest = receipts[-1]
+        observed = latest.claimed_at
+        if control is None or as_utc(bench.aware(observed, now)) >= as_utc(bench.aware(control.reported_at, now)):
+            license_view = bench.arinst_license(latest.result["license"]["license_state"],
+                latest.result["license"]["trial_remaining_seconds"], observed, now)
+    readiness = None
+    ops = set()
+    if identity:
+        try:
+            # Read-only state lookup: capability/presence, never the binding mutation lock.
+            from app.modules.warehouse.devices import control_ops
+            ops = control_ops(uow.session, binding.machine_id if binding else "", now, serial=serial, source="arinst")
+            device = uow.session.get(DeviceRow, (binding.machine_id, "arinst", serial)) if binding else None
+            ready = bool(ops and pc and device and device.present and not pc.legacy
+                         and as_utc(bench.aware(pc.last_seen, now)) >= as_utc(now) - LIVE_FOR
+                         and as_utc(bench.aware(device.last_seen, now)) >= as_utc(now) - LIVE_FOR
+                         and license_view["state"] in ("not_required", "TRIAL", "ACTIVATED"))
+            if not ready:
+                readiness = "Прибор или агент недоступен; проверьте подключение"
+        except ScanJobClosed as error:
+            ready, readiness = False, str(error)
+    else:
+        ready, readiness = False, "Подтвердите аппаратный UID Arinst в карточке СИ"
+    if view:
+        view.update(owned=row.operator_id == principal.actor.id,
+                    operator=row.snapshot["operator"]["name"],
+                    status="closed" if row.state in TERMINAL else "open",
+                    command=next((c for c in view["commands"] if c["status"] in ("pending", "claimed")), None))
+    acquisitions = [c for c in receipts if c.result.get("acquisition")]
+    latest_trace = None
+    if acquisitions:
+        last = acquisitions[-1]
+        artifact = next(a for a in view["artifacts"] if a["command_id"] == str(last.id)
+                        and a["file_name"] == "arinst-receipt.json")
+        latest_trace = dict(command_id=str(last.id), artifact_id=artifact["id"], sha256=artifact["sha256"],
+                            acquisition=last.result["acquisition"], profile=last.result["profile"],
+                            acceptance_eligible=False)
+    return dict(source="arinst", device=dict(instrument_id=str(vna.id), inventory_number=vna.inventory_number,
+        serial=serial, printed_serial=vna.serial_number, hardware_uid=identity.hardware_uid if identity else None,
+        firmware=row.snapshot.get("firmware") if row else identity.firmware if identity else None,
+        options=row.snapshot.get("options") if row else None,
+        machine_id=binding.machine_id if binding else None, connection_ready=connection_ready,
+        control_ready=ready, reason=readiness,
+        license=license_view, supported_ops=sorted(ops or ()), power_dbm=None, temperature_c=None, rf_stopped=None),
+        calibration=_arinst_calibration_view(uow, row),
+        kits=_arinst_kits(uow), calibration_kit=_arinst_setup_view(row),
+        profile=row.snapshot.get("profile") if row else None, session=view,
+        acceptance=dict(eligible=False, code="commissioning_required", message=bench.ARINST_COMMISSIONING),
+        due=[], supported_channels=["S11", "S21"], latest_trace=latest_trace)
+
+
+def _arinst_audit(uow, row, action, now, data):
+    uow.audit.add(AuditEvent(id=uuid4(), occurred_at=now, actor=_actor(row.snapshot),
+        event_type="production." + action, aggregate_id=row.id, details=data))
+
+
+def _open_arinst(payload, principal, now, factory):
+    if payload.acm_id or payload.cables or payload.assembly:
+        raise ValueError("Для Arinst задайте профиль; оснастку и набор выбирают в шаге SOL/THRU")
+    instrument = capture_instrument(factory(), payload.instrument_id, direct=True)
+    with factory() as uow:
+        stale = _session_row(uow, payload.instrument_id)
+        stale_id = stale.id if stale else None
+    if stale_id:
+        _expire(factory, now, session_id=stale_id)
+    with factory() as uow:
+        owner = arinst_station(uow.session, payload.instrument_id, instrument["serial"], now,
+                               machine_id=payload.agent_id)
+        if payload.arinst_profile is not None:
+            arinst_station(uow.session, payload.instrument_id, instrument["serial"], now,
+                           machine_id=owner, op="apply_profile")
+        vna_jobs.refuse_open_capture(uow.session, payload.instrument_id, instrument["serial"])
+        repository = VnaSessionRepository(uow.session)
+        if repository.active(payload.instrument_id, instrument["serial"]):
+            raise Refusal("device_busy", "Прибор занят активной сессией ВАЦ")
+        snapshot = dict(source="arinst", protocol_version=3, hardware_uid=instrument["hardware_uid"],
+            firmware=instrument["firmware"], printed_serial=instrument["printed_serial"],
+            profile=None, requested_profile=payload.arinst_profile.model_dump(mode="json") if payload.arinst_profile else None,
+            operator=dict(id=str(principal.actor.id), name=principal.actor.name, department=principal.actor.department),
+            kit_definitions={}, connection_id=str(uuid4()), calibration=dict(valid=False, status="required"))
+        try:
+            with uow.session.begin_nested():
+                row = repository.create(now=now, operator_id=principal.actor.id, machine_id=owner, purpose="bench",
+                    instrument_id=payload.instrument_id, instrument_serial=instrument["serial"], task_id=None,
+                    operation_id=None, product_position=None, snapshot=snapshot,
+                    steps=[bench.arinst_step("prepare")])
+        except IntegrityError:
+            if repository.active(payload.instrument_id, instrument["serial"]):
+                raise Refusal("device_busy", "Прибор занят активной сессией ВАЦ") from None
+            raise
+        repository.act(row, "plan", row.version, row.step, now)
+        repository.act(row, "start", row.version, row.step, now)
+        _arinst_audit(uow, row, "vna_arinst_session_opened", now, dict(serial=row.instrument_serial))
+        state = _state(uow, principal, now, row=row)
+        uow.commit()
+        return state
+
+
+def _arinst_ready(uow, row, version, now, op):
+    _version(row, version)
+    if row.snapshot.get("source") != "arinst":
+        raise ValueError("Операция доступна только для Arinst")
+    if row.state != "ready":
+        raise Refusal("device_busy", "Дождитесь завершения текущего шага")
+    arinst_station(uow.session, row.instrument_id, row.instrument_serial, now, machine_id=row.machine_id, op=op)
+
+
+@router.post(PREFIX + "/sessions/{session_id}/arinst/connect")
+def arinst_connect(session_id: UUID, payload: Version, principal: Person, now: Now, factory: Factory):
+    def action(uow, repository, row):
+        _arinst_ready(uow, row, payload.version, now, "connect")
+        snapshot = bench.arinst_invalidated(row.snapshot, "Повторное подключение требует новой калибровки")
+        snapshot["connection_id"] = str(uuid4())
+        repository.append(row, [bench.arinst_step("prepare")], now, snapshot=snapshot)
+    return _act(factory, session_id, principal, now, action)
+
+
+@router.post(PREFIX + "/sessions/{session_id}/arinst/profile")
+def arinst_profile(session_id: UUID, payload: ArinstProfileInput, principal: Person, now: Now, factory: Factory):
+    def action(uow, repository, row):
+        _arinst_ready(uow, row, payload.version, now, "apply_profile")
+        if row.snapshot.get("options"):
+            ArinstOptions.model_validate(row.snapshot["options"]).validate_profile(payload.profile)
+        snapshot = bench.arinst_invalidated(row.snapshot, "Профиль изменён; требуется новая калибровка")
+        repository.append(row, [bench.arinst_step("apply_profile", dict(profile=payload.profile.model_dump(mode="json")))],
+                          now, snapshot=snapshot)
+        _arinst_audit(uow, row, "vna_arinst_profile_requested", now, dict(profile=payload.profile.model_dump(mode="json")))
+    return _act(factory, session_id, principal, now, action)
+
+
+@router.post(PREFIX + "/sessions/{session_id}/arinst/calibration")
+def arinst_calibrate(session_id: UUID, payload: ArinstCalibrationInput, principal: Person, now: Now, factory: Factory):
+    def action(uow, repository, row):
+        _arinst_ready(uow, row, payload.version, now, "measure_standard")
+        if row.snapshot.get("profile") is None:
+            raise ValueError("Сначала задайте профиль измерения Arinst")
+        kit = uow.instruments.get(payload.kit_id)
+        rf = RfRepository(uow.session)
+        if kit is not None and rf.get(payload.kit_id).kit_definition == LOADS_DEFINITION:
+            raise ValueError("Набор SMA-MF06 ещё не охарактеризован: снимите меры на Planar («Характеристика мер») "
+                             "и активируйте набор")
+        if kit is None or rf.get(payload.kit_id).role != "solt_kit":
+            raise ValueError("Выберите зарегистрированный калибровочный набор")
+        # Loads-only SMA-MF06 is not promoted to characterized SOL standards.
+        fixtures = []
+        if len(set(payload.fixture_ids)) != len(payload.fixture_ids):
+            raise ValueError("Оснастка повторяется")
+        for identity in payload.fixture_ids:
+            card = uow.instruments.get(identity)
+            if card is None or rf.get(identity).role not in ("test_cable", "adapter"):
+                raise ValueError("Оснастка не найдена в реестре")
+            fixtures.append(dict(id=str(identity), definition=asdict(rf.get(identity))))
+        snapshot = bench.arinst_invalidated(row.snapshot, "Начата калибровка SOL/THRU")
+        run_id = str(uuid4())
+        snapshot["calibration_setup"] = dict(run_id=run_id, kit_id=str(payload.kit_id),
+            kit_definition=asdict(rf.get(payload.kit_id)), fixture_fingerprint=bench.fingerprint(fixtures),
+            fixtures=fixtures, reference_plane=payload.reference_plane, orientation=payload.orientation,
+            transmission=payload.transmission)
+        labels = None
+        if rf.get(payload.kit_id).kit_definition == CHARACTERIZED_DEFINITION:
+            labels = _arinst_characterized(uow, snapshot, kit, payload)
+        snapshot["calibration"] = dict(valid=False, status="acquiring", run_id=run_id)
+        repository.append(row, bench.arinst_calibration_steps(snapshot, orientation=payload.orientation,
+                          transmission=payload.transmission, run_id=run_id, labels=labels), now, snapshot=snapshot)
+        _arinst_audit(uow, row, "vna_arinst_calibration_started", now, snapshot["calibration_setup"])
+    return _act(factory, session_id, principal, now, action)
+
+
+@router.post(PREFIX + "/sessions/{session_id}/arinst/confirm")
+def arinst_confirm(session_id: UUID, payload: Version, principal: Person, now: Now, factory: Factory):
+    def action(uow, repository, row):
+        _version(row, payload.version)
+        if row.snapshot.get("source") != "arinst" or row.state not in ("awaiting_standard", "awaiting_dut"):
+            raise Refusal("conflict", "Нет шага, ожидающего подключения")
+        current = row.steps[row.step]
+        arinst_station(uow.session, row.instrument_id, row.instrument_serial, now, machine_id=row.machine_id,
+                       op=current["op"])
+        if current["op"] == "measure_standard" and (stale := _arinst_kit_stale(uow, row.snapshot)):
+            raise Refusal("stale", stale)
+        repository.act(row, "confirm", row.version, row.step, now)
+    return _act(factory, session_id, principal, now, action)
+
+
+@router.post(PREFIX + "/sessions/{session_id}/arinst/capture")
+def arinst_capture(session_id: UUID, payload: ArinstCaptureInput, principal: Person, now: Now, factory: Factory):
+    def action(uow, repository, row):
+        _arinst_ready(uow, row, payload.version, now, "capture")
+        if row.snapshot.get("profile") is None:
+            raise ValueError("Сначала задайте профиль измерения Arinst")
+        # A diagnostic acquisition never consumes a successful connection number or writes a quality decision.
+        if payload.target is not None:
+            raise Refusal("commissioning_required", bench.ARINST_COMMISSIONING)
+        args = dict(profile=ArinstProfile.model_validate(row.snapshot["profile"]).model_dump(mode="json"),
+                    orientation=payload.orientation)
+        snapshot = row.snapshot
+        if stale := _arinst_kit_stale(uow, snapshot):
+            snapshot = bench.arinst_invalidated(snapshot, stale)
+        setup = snapshot.get("calibration_setup", {})
+        if setup.get("orientation") != payload.orientation:
+            snapshot = bench.arinst_invalidated(snapshot, "Ориентация изменена; требуется отдельная калибровка")
+        repository.append(row, [bench.arinst_step("capture", args, human=True,
+            label="Подключите изделие" if payload.orientation == "forward" else "Переверните кабель: конец Б к порту 1",
+            item=dict(kind="arinst_diagnostic", orientation=payload.orientation))], now, snapshot=snapshot)
+    return _act(factory, session_id, principal, now, action)
+
+
+def _complete_arinst(uow, repository, row, command_id, payload, now):
+    if payload.backup_saved is not None:
+        raise ValueError("Arinst не сохраняет резервную копию настроек Planar")
+    arinst_station(uow.session, row.instrument_id, row.instrument_serial, now, machine_id=row.machine_id, op="close")
+    previous_version = row.version
+    command = repository.complete(row, command_id, payload.expected_version, payload.expected_step,
+                                  payload.result, payload.error, now, advance=False)
+    if command is None:
+        if row.version != previous_version:
+            _arinst_audit(uow, row, "vna_arinst_command_completed", now,
+                dict(command_id=str(command_id), error=payload.error, state=row.state, acceptance_eligible=False))
+        return
+    result = command.result
+    snapshot, tail, message = dict(row.snapshot), None, ""
+    snapshot["options"] = result["options"]
+    if result["firmware"] != snapshot["firmware"]:
+        snapshot = bench.arinst_invalidated(snapshot, "Прошивка прибора изменилась")
+        snapshot["firmware"] = result["firmware"]
+    if result["profile"] is not None or command.op == "device_status":
+        if snapshot["profile"] != result["profile"]:
+            snapshot = bench.arinst_invalidated(snapshot, "Фактический профиль изменился")
+        snapshot["profile"] = result["profile"]
+    if command.op == "prepare":
+        snapshot = bench.arinst_invalidated(snapshot, "Подключение требует новой калибровки")
+        license_view = result["license"]
+        if license_view["license_state"] == "LOCKED" or license_view["license_state"] == "TRIAL" and not license_view["trial_remaining_seconds"]:
+            tail, message = [], license_view["message"]
+        elif snapshot.get("requested_profile"):
+            tail = [bench.arinst_step("apply_profile", dict(profile=snapshot.pop("requested_profile")))]
+        else:
+            tail = [bench.arinst_step("device_status")]
+    if command.op == "measure_standard":
+        run_id = row.steps[row.step]["item"]["run_id"]
+        steps = [s for s in row.steps if (s.get("item") or {}).get("run_id") == run_id]
+        if result["standard"] == steps[-1]["args"]["standard"]:
+            standards = []
+            for receipt in repository.receipts(row, "measure_standard"):
+                if (row.steps[receipt.expected_step].get("item") or {}).get("run_id") == run_id:
+                    artifact = repository.artifact(receipt.id, "arinst-receipt.json")
+                    standards.append((receipt.result, str(artifact.id), artifact.sha256))
+            try:
+                if stale := _arinst_kit_stale(uow, snapshot):
+                    snapshot = bench.arinst_invalidated(snapshot, stale)
+                    raise ValueError(stale)
+                coefficients = bench.arinst_solve(snapshot, standards)
+                artifact = repository.store_artifact(row, command, "arinst-calibration.json", coefficients,
+                    dict(source="arinst", kind="coefficients", acceptance_eligible=False), now)
+                snapshot["calibration"] = dict(valid=False, status="verification_required",
+                    coefficient_artifact_id=str(artifact.id), sha256=artifact.sha256)
+            except ValueError as error:
+                message = str(error)
+                snapshot["calibration"] = dict(valid=False, status="blocked", reason=message, run_id=run_id)
+    _arinst_audit(uow, row, "vna_arinst_command_completed", now,
+                  dict(command_id=str(command.id), op=result["op"], acceptance_eligible=False))
+    if command.op == "release":
+        repository._change(row, now, snapshot=bench.arinst_invalidated(snapshot, "Сеанс закрыт"))
+        repository.finish(row, now)
+    else:
+        repository.proceed(row, now, tail=tail, snapshot=snapshot, error=message)
+
 def _vswr_operation(task):
     for operation in task.operations:
         text = f"{operation.code} {operation.description}".upper()
@@ -668,6 +1002,15 @@ def open_session(principal: Person, now: Now, factory: Factory, techcards_factor
                  payload: SessionInput | None = None):
     payload = payload or SessionInput()
     with _refusals():
+        with factory() as uow:
+            selected = _station(uow, payload.instrument_id)
+            is_arinst = selected is not None and selected.vna_app == "Arinst VL"
+        if is_arinst:
+            return _open_arinst(payload, principal, now, factory)
+        if payload.arinst_profile is not None:
+            raise ValueError("Профиль Arinst допустим только для Arinst")
+        if payload.characterization is not None and payload.assembly is not None:
+            raise ValueError("Характеристика мер — отдельный сеанс, без задания КБ")
         with factory() as uow:
             vna = _station(uow, payload.instrument_id)
             stale = _session_row(uow, vna.id if vna else None)
@@ -701,8 +1044,14 @@ def open_session(principal: Person, now: Now, factory: Factory, techcards_factor
         instrument = capture_instrument(factory(), vna_id)
         if instrument["source"] != "s2vna" or not instrument["serial"]:
             raise Refusal("station_setup", "Рабочее место ВАЦ — только для S2VNA с серийным номером")
-        assembly = None
-        if payload.assembly is None:
+        assembly, characterization = None, None
+        if payload.characterization is not None:
+            with factory() as uow:
+                kit, _ = _kit_card(uow, payload.characterization.kit_id)
+                characterization = dict(kit_id=str(kit.id), kit_number=kit.inventory_number, kit_name=kit.name,
+                                        band="low", captures=[])
+            profile = kc.band_profile("low")
+        elif payload.assembly is None:
             profile = bench.adapter_profile()
         else:
             plan = vna_plan(payload.assembly.task_id, operation_id, vna_id, principal, now, factory, techcards_factory,
@@ -743,8 +1092,9 @@ def open_session(principal: Person, now: Now, factory: Factory, techcards_factor
                     raise Refusal("station_setup", "Кабель порта не найден в реестре с ролью «Тестовый кабель»")
                 cable_view.append(dict(instrument_id=str(card.id), inventory_number=card.inventory_number, end=end))
             definition = {**asdict(rf.get(acm_id)), "serial_number": acm.serial_number.strip()}
-            snapshot = dict(profile=profile.model_dump(mode="json"), profile_kind="assembly" if assembly else "adapter",
-                            assembly=assembly, vna_model=vna_model(f"{vna.name} {vna.doc_designation or ''}") or bench.VNA_MODEL,
+            snapshot = dict(profile=profile.model_dump(mode="json"),
+                            profile_kind="assembly" if assembly else "characterization" if characterization else "adapter",
+                            assembly=assembly, **({"characterization": characterization} if characterization else {}), vna_model=vna_model(f"{vna.name} {vna.doc_designation or ''}") or bench.VNA_MODEL,
                             cables=cable_view,
                             acm=dict(id=str(acm.id), serial=acm.serial_number.strip(), inventory_number=acm.inventory_number,
                                      definition=definition),
@@ -786,6 +1136,7 @@ def run_step(session_id: UUID, key: Literal["calibration", "confidence", "load_p
     """The operator's click after connecting what the step says. Calibration and the LOAD steps confirm the waiting
     connection; the confidence test runs by itself right after the calibration (the ACM still on the cables)."""
     def action(uow, repository, row):
+        _planar_only(row)
         _version(row, payload.version)
         current = row.steps[row.step] if row.step < len(row.steps) else {}
         item = current.get("item") or {}
@@ -922,8 +1273,10 @@ def resolve(payload: ResolveInput, principal: Person, factory: Factory):
         number = f"СИ.{int(query):03d}" if query.isdigit() else query.upper().replace("CИ", "СИ")
         card = uow.instruments.by_inventory_number(number)
         if card is not None:
+            rf = RfRepository(uow.session).get(card.id)
+            kit = "SMA-MF06" if rf.kit_definition in (LOADS_DEFINITION, CHARACTERIZED_DEFINITION) else None
             candidates.append(dict(kind="instrument", instrument_id=str(card.id), number=card.inventory_number,
-                                   name=card.name, serial_number=card.serial_number or None))
+                                   name=card.name, serial_number=card.serial_number or None, kit=kit))
         task_number, position = query, None
         if match := re.fullmatch(r"(.+?)\s*/\s*(\d+)", query):
             task_number, position = match[1], int(match[2])
@@ -984,6 +1337,7 @@ TRACE_NAMES = {"SWR": "КСВН", "MLOG": "Модуль", "PHAS": "Фаза", "G
 
 
 def _plan(uow, row, target: Target) -> tuple[dict, dict | None]:
+    _planar_only(row)
     """The plan card and the run metadata; a refusal is reported in the plan, not raised."""
     profile, model = _profile(row), row.snapshot.get("vna_model") or bench.VNA_MODEL
     u_table = uncertainty_for(model)
@@ -1071,6 +1425,7 @@ def plan(session_id: UUID, payload: PlanInput, principal: Person, factory: Facto
 
 def _gates(uow, row, now, kind):
     """СТО п. 11.5 and разд. 14 before an item; the device itself is read again by the item's first step."""
+    _planar_only(row)
     if refusal := bench.calibration_refusal(row.calibrated_at, now):
         raise Refusal(bench.refusal_code(refusal), refusal)
     if row.state != "ready":
@@ -1234,6 +1589,7 @@ def record(session_id: UUID, item_id: str, payload: Version, principal: Person, 
     """«Записать в карточку» (15.1): every connection of the deciding series goes to the СИ card as its `.s2p`, so the
     passport and the label decide by the same files. A КБ is recorded in «Замеры КСВН» at its sweep already."""
     def action(uow, repository, row):
+        _planar_only(row)
         _version(row, payload.version)
         run = next((r for r in _runs(row) if r["run_id"] == item_id and r["kind"] in ITEMS), None)
         if run is None:
@@ -1313,8 +1669,11 @@ def start_check(session_id: UUID, payload: CheckInput, principal: Person, now: N
                         if rf.get(r.id).role == "solt_kit" and rf.get(r.id).kit_definition == "6650F27-full"]
                 card_id = _one(uow, kits, "Набор мер 6650F27")
             card, card_rf = _card(uow, card_id)
-            if card_rf.role != "solt_kit":
-                raise Refusal("station_setup", "Ежемесячная проверка — набором мер (роль «Набор SOLT» в карточке)")
+            # Only the full 6650F27 has the passport description the monthly check judges against; an activated
+            # SMA-MF06 is also «Набор SOLT» but its standards are the ERP's own measured curves.
+            if (card_rf.role, card_rf.kit_definition) != ("solt_kit", "6650F27-full"):
+                raise Refusal("station_setup", "Ежемесячная проверка — набором мер 6650F27 (роль «Набор SOLT», "
+                                               "состав «6650F27» в карточке)")
             vna_jobs.control_station(uow.session, row.instrument_serial, now, machine_id=row.machine_id, ops={"read_kit"})
             meta = bench.run("kit_standards", instrument_id=str(card.id), number=card.inventory_number, label=payload.label,
                              selection=payload.selection)
@@ -1378,6 +1737,8 @@ def check_next(session_id: UUID, check_id: str, payload: Version, principal: Per
 def complete_command(uow, row, command_id, payload, now):
     """The bench branch of POST /api/stock/vna/commands/{id}/result: store the receipt, judge it, continue — one UoW."""
     repository = VnaSessionRepository(uow.session)
+    if row.snapshot.get("source") == "arinst":
+        return _complete_arinst(uow, repository, row, command_id, payload, now)
     command = repository.complete(row, command_id, payload.expected_version, payload.expected_step, payload.result,
                                   payload.error, now, backup_saved=payload.backup_saved, advance=False)
     if command is None:
@@ -1407,6 +1768,11 @@ def complete_command(uow, row, command_id, payload, now):
 def _judge(uow, repository, row, command, item, now) -> dict:
     op, result = command.op, command.result
     if op == "acm_calibrate":
+        # Refuse before anything is written: record_batch also queues audit events that a savepoint rollback would
+        # not take back, so a refused calibration must not reach it.
+        if row.snapshot["profile_kind"] == "characterization" and result.get("module_min_hz", 0) > _profile(row).start_hz:
+            raise ProductionValidationError(f"АКМ калибрует от {result['module_min_hz'] / 1e6:g} МГц — сетка характеристики "
+                                            f"начинается с {_profile(row).start_hz / 1e6:g} МГц")
         acm, cables = row.snapshot["acm"], row.snapshot["cables"]
         entries = [dict(instrument_id=acm["id"], end=end, delta=1, kind="calibration") for end in ("A", "B")]
         entries += [dict(instrument_id=c["instrument_id"], end=c["end"], delta=1, kind="calibration") for c in cables]
@@ -1435,7 +1801,7 @@ def _judge(uow, repository, row, command, item, now) -> dict:
         _refused(uow, row, command, item, refusal, now)
         return dict(tail=[], error=refusal, **bench.UNCALIBRATED)
     judge = {"instrument": _instrument, "assembly": _assembly, "flex": _flex, "control_standard": _control,
-             "kit_standards": _kit}[kind]
+             "kit_standards": _kit, "kit_characterization": _kit_capture}[kind]
     return judge(uow, repository, row, command, artifact, item, data, now)
 
 
@@ -1492,6 +1858,10 @@ def _capture_entries(row, item) -> tuple[str, list[dict]]:
         if target in ("port1", "port2"):
             return "measurement", [cable(0 if target == "port1" else 1)]
         return "measurement", [cable(0), cable(1)] if target == "thru" else []   # the bent thru stays connected
+    if kind == "kit_characterization":
+        # Decided when the capture was requested (_kit_connections): only the connections that capture made.
+        return "measurement", [dict(instrument_id=m["instrument_id"], end=m["end"], delta=1, kind="measurement")
+                               for m in item.get("matings", [])]
     if kind == "kit_standards":
         if target == "thru":
             return "measurement", card(item["instrument_id"], "A", "B") + [cable(0), cable(1)]
@@ -1528,7 +1898,7 @@ def _matings(uow, source, entries, row, now):
 
 def _profile_text(row) -> str:
     p = _profile(row)
-    kind = "ОТК — переход" if row.snapshot["profile_kind"] == "adapter" else "КБ по ЭТК"
+    kind = {"adapter": "ОТК — переход", "characterization": "Характеристика мер"}.get(row.snapshot["profile_kind"], "КБ по ЭТК")
     return (f"{kind}; {p.start_hz / 1e6:g} МГц – {p.stop_hz / 1e9:g} ГГц, {p.points} т., ПЧ {p.if_bandwidth_hz:g} Гц, "
             f"{p.power_dbm:g} дБм")
 
@@ -1789,3 +2159,510 @@ def _kit(uow, repository, row, command, artifact, item, data, now):
     return {} if record_row.passed else dict(error="Меры набора вне допуска — замеры остановить до выяснения причины "
                                                    "(СТО разд. 14)")
 
+
+# ---- «Характеристика мер»: SMA-MF06 (СИ.004) on the Planar, consumed by Arinst -----------------------------------------
+# Two calibrated passes (kit_characterization_run.BANDS), every piece identified by its registered UUID. Accepted captures
+# live in the session snapshot next to their immutable raw artifacts; «Сохранить» rebuilds the curve from those artifacts
+# into an immutable revision (RfKitRepository.append_revision); activation is the kit's own transaction.
+
+class BandInput(Version):
+    band: Literal["low", "high"]
+
+
+class KitFixture(StrictModel):
+    instrument_id: UUID
+    reversed: bool = False   # port 1 side: its side 2 faces the cable; port 2 side: its side 1 faces the cable
+
+
+class KitCaptureInput(Version):
+    standard_id: UUID | None = None    # a registered piece of the session's kit …
+    fixture_id: UUID | None = None     # … or an F–F fixture itself, between the two cable ends
+    fixtures: list[KitFixture] = Field(default_factory=list, max_length=2)   # male pieces: port 1 side first
+
+
+KIT_ORDER = [("OPEN", "female"), ("SHORT", "female"), ("LOAD", "female"), ("THRU", "female"),
+             ("OPEN", "male"), ("SHORT", "male"), ("LOAD", "male"), ("THRU", "male")]
+
+
+def _kit_card(uow, kit_id):
+    card = uow.instruments.get(kit_id)
+    rf = RfRepository(uow.session).get(kit_id) if card is not None else None
+    if card is None or (rf.role, rf.kit_definition) not in (("load_kit", LOADS_DEFINITION),
+                                                             ("solt_kit", CHARACTERIZED_DEFINITION)):
+        raise Refusal("station_setup", "Характеристика мер — только для набора SMA-MF06 (СИ.004)", 422)
+    return card, rf
+
+
+def _characterization(row) -> dict:
+    if row.snapshot.get("profile_kind") != "characterization":
+        raise Refusal("other_calibration", "Меры снимают в сеансе «Характеристика мер» — откройте его для набора SMA-MF06")
+    return row.snapshot["characterization"]
+
+
+def _piece(uow, characterization, standard_id) -> RfKitStandardRow:
+    piece = uow.session.get(RfKitStandardRow, standard_id)
+    if piece is None or str(piece.kit_instrument_id) != characterization["kit_id"]:
+        raise KeyError("Мера набора не найдена")
+    return piece
+
+
+def _fixture_card(uow, instrument_id):
+    card, rf = _card(uow, instrument_id)
+    if rf.role != "adapter" or len(rf.interfaces) != 2 or any(p.body != "розетка" for p in rf.interfaces):
+        raise Refusal("station_setup", f"{card.inventory_number}: для мер «вилка» нужен переход розетка–розетка "
+                                       "(роль «Переход», оба разъёма — розетка)", 422)
+    return card
+
+
+def _kit_connections(row, characterization, arrangement: dict, inner: list[dict]) -> tuple[list[dict], dict]:
+    """10.7 for «Характеристика мер»: the connections this capture actually makes, and what then stays on the cables.
+
+    arrangement: per cable index (0 — port 1, 1 — port 2) what is on its end: None (free), "piece" (the piece itself)
+    or {instrument_id, end} — a fixture side. A fixture side already on that cable since an earlier capture under the
+    same calibration is not mated again (it stays on the cable between captures); the piece mates every time, and so
+    does the fixture side the piece is screwed onto (inner). A calibration takes everything off the cables."""
+    mounted = characterization.get("mounted") or {}
+    current = str(row.calibration_check_id) if row.calibration_check_id else None
+    before = mounted.get("cables", {}) if mounted.get("calibration_check_id") == current else {}
+    cables, matings, after = row.snapshot["cables"], [], {}
+    for index in (0, 1):
+        required = arrangement.get(index)
+        if required is None:
+            continue
+        cable = dict(instrument_id=cables[index]["instrument_id"], end=cables[index]["end"])
+        if required == "piece":
+            matings.append(cable)
+            continue
+        after[str(index)] = required
+        if before.get(str(index)) != required:
+            matings += [cable, required]
+    matings += inner
+    return matings, dict(calibration_check_id=current, cables=after)
+
+
+def _fixture_end(side: int) -> str:
+    return "A" if side == 1 else "B"   # the fixture card's interface 1 / 2 = its side 1 (marked) / 2
+
+
+def _latest(captures, key, value) -> dict:
+    """The newest accepted capture of a piece or fixture in each pass."""
+    found = {}
+    for capture in captures:
+        if capture.get(key) == value:
+            found[capture["band"]] = capture
+    return found
+
+
+def _kit_audit(uow, row, action, now, details):
+    uow.audit.add(AuditEvent(id=uuid4(), aggregate_id=row.id, event_type="production." + action, actor=_actor(row.snapshot),
+                             occurred_at=now, details=details))
+
+
+@router.post(PREFIX + "/sessions/{session_id}/characterization/band")
+def characterization_band(session_id: UUID, payload: BandInput, principal: Person, now: Now, factory: Factory):
+    """The other pass: its profile and a full new ACM calibration with confidence test and LOAD checks (11.2, 11.4)."""
+    def action(uow, repository, row):
+        _version(row, payload.version)
+        characterization = _characterization(row)
+        if row.state != "ready":
+            raise Refusal("device_busy", "Дождитесь окончания команды")
+        profile = kc.band_profile(payload.band)
+        snapshot = {**row.snapshot, "profile": profile.model_dump(mode="json"),
+                    "characterization": {**characterization, "band": payload.band}}
+        steps = [bench.step("apply_profile", dict(profile=profile)),
+                 *bench.calibration_steps(snapshot, load=_screen(uow, "load"))]
+        repository.append(row, steps, now, snapshot=snapshot, error="", **bench.UNCALIBRATED)
+        _kit_audit(uow, row, "vna_kit_characterization_band", now, dict(band=payload.band))
+    return _act(factory, session_id, principal, now, action)
+
+
+@router.post(PREFIX + "/sessions/{session_id}/characterization/captures")
+def characterization_capture(session_id: UUID, payload: KitCaptureInput, principal: Person, now: Now, factory: Factory):
+    """«Снять»: the piece (or an F–F fixture) is connected as the hint says — read the device, put the screen, sweep."""
+    def action(uow, repository, row):
+        _version(row, payload.version)
+        characterization = _characterization(row)
+        _gates(uow, row, now, "kit_characterization")
+        band = characterization["band"]
+        if kc.band_of(row.snapshot["profile"]) != band:
+            raise Refusal("profile_changed", "Профиль сеанса не совпадает с сеткой характеристики — откалибруйте заново")
+        if (payload.standard_id is None) == (payload.fixture_id is None):
+            raise ValueError("Укажите меру набора или оснастку")
+        if payload.fixture_id is not None:
+            if payload.fixtures:
+                raise ValueError("Оснастку снимают напрямую между концами кабелей")
+            card = _fixture_card(uow, payload.fixture_id)
+            matings, mounted = _kit_connections(row, characterization, {
+                0: dict(instrument_id=str(card.id), end=_fixture_end(1)),
+                1: dict(instrument_id=str(card.id), end=_fixture_end(2))}, [])
+            meta = bench.run("kit_characterization", subject="fixture", band=band, instrument_id=str(card.id),
+                             number=card.inventory_number, name=card.name, matings=matings)
+            hint = f"Оснастка {card.inventory_number} — {kc.fixture_hint()}"
+        else:
+            piece = _piece(uow, characterization, payload.standard_id)
+            if band not in kc.bands_for(piece.f_min_hz, piece.f_max_hz):
+                raise Refusal("other_calibration", f"{piece.piece_label}: полоса меры "
+                              f"{kc.band_text(piece.f_min_hz, piece.f_max_hz)} — в диапазоне «{kc.BAND_LABELS[band]}» "
+                              "её не снимают", 422)
+            if len(payload.fixtures) != kc.fixture_count(piece.kind, piece.gender):
+                raise ValueError("Мере «вилка» нужна оснастка розетка–розетка (проходу М–М — по одной на каждый кабель); "
+                                 "мера «розетка» подключается прямо к кабелю")
+            if len({f.instrument_id for f in payload.fixtures}) != len(payload.fixtures):
+                raise ValueError("Оснастки на портах 1 и 2 должны быть разными экземплярами")
+            fixtures = []
+            for fixture in payload.fixtures:
+                card = _fixture_card(uow, fixture.instrument_id)
+                found = _latest(characterization["captures"], "instrument_id", str(card.id)).get(band)
+                if found is None or found["calibration_check_id"] != str(row.calibration_check_id):
+                    raise Refusal("no_fixture_file", f"Сначала снимите оснастку {card.inventory_number} в диапазоне "
+                                                     f"«{kc.BAND_LABELS[band]}» на текущей калибровке", 422)
+                fixtures.append(dict(instrument_id=str(card.id), number=card.inventory_number, reversed=fixture.reversed,
+                                     command_id=found["command_id"], artifact_id=found["artifact_id"],
+                                     sha256=found["sha256"]))
+            arrangement, inner = {}, []
+            if not fixtures:
+                arrangement = {0: "piece", 1: "piece"} if piece.kind == "THRU" else {0: "piece"}
+            for port, fixture in enumerate(fixtures, 1):
+                facing = kc.cable_side(port, fixture["reversed"])
+                arrangement[port - 1] = dict(instrument_id=fixture["instrument_id"], end=_fixture_end(facing))
+                inner.append(dict(instrument_id=fixture["instrument_id"], end=_fixture_end(3 - facing)))
+            matings, mounted = _kit_connections(row, characterization, arrangement, inner)
+            meta = bench.run("kit_characterization", subject="piece", band=band, standard_id=str(piece.id),
+                             piece_label=piece.piece_label, piece_kind=piece.kind, piece_gender=piece.gender,
+                             fixtures=fixtures, matings=matings)
+            hint = kc.connection_hint(piece.kind, piece.gender, piece.piece_label,
+                                      [(f["number"], f["reversed"]) for f in fixtures])
+        snapshot = {**row.snapshot, "characterization": {**characterization, "mounted": mounted}}
+        repository.append(row, bench.item_steps(_profile(row), bench_screen(_screen(uow, "engineer")),
+                                                "Развёртка: " + hint, meta), now, snapshot=snapshot, error="")
+    return _act(factory, session_id, principal, now, action)
+
+
+def _capture_data(repository, capture: dict, band: str, what: str) -> TwoPort:
+    """An accepted sweep read back from its immutable artifact, on the exact pass grid."""
+    artifact = repository.artifact(UUID(capture["command_id"]))
+    if str(artifact.id) != capture["artifact_id"] or artifact.sha256 != capture["sha256"]:
+        raise ProductionValidationError(f"Замер «{what}» изменился — снимите заново")
+    return kc.snap(read_touchstone(bytes(artifact.content), artifact.file_name), band, what)
+
+
+def _piece_curve(repository, piece, raw: TwoPort, fixtures: list[dict], band: str) -> CharacterizationCurve:
+    return kc.piece_curve(piece.kind, piece.gender, raw, [
+        (_capture_data(repository, f, band, f"оснастка {f['number']}"), f["reversed"]) for f in fixtures])
+
+
+def _kit_capture(uow, repository, row, command, artifact, item, data, now):
+    """An accepted characterization sweep: on the pass grid, the piece de-embedded without an ill-conditioned point;
+    kept in the session with its preview. Nothing is published until «Сохранить»."""
+    characterization = row.snapshot["characterization"]
+    band = item["band"]
+    if characterization["band"] != band or kc.band_of(row.snapshot["profile"]) != band:
+        raise ProductionValidationError("Диапазон сеанса сменился — снимите заново")
+    raw = kc.snap(data, band, "Замер")
+    if item["subject"] == "fixture":
+        curve = CharacterizationCurve.from_two_port(raw)
+    else:
+        piece = _piece(uow, characterization, UUID(item["standard_id"]))
+        for fixture in item["fixtures"]:
+            found = next((c for c in characterization["captures"] if c["command_id"] == fixture["command_id"]), None)
+            if found is None or found["calibration_check_id"] != str(row.calibration_check_id):
+                raise ProductionValidationError(f"Оснастка {fixture['number']} снята на другой калибровке — снимите её заново")
+        curve = _piece_curve(repository, piece, raw, item["fixtures"], band)
+    entry = dict(command_id=str(command.id), artifact_id=str(artifact.id), sha256=artifact.sha256, band=band,
+                 subject=item["subject"], standard_id=item.get("standard_id"), instrument_id=item.get("instrument_id"),
+                 number=item.get("number"), fixtures=item.get("fixtures", []),
+                 calibration_check_id=str(row.calibration_check_id), calibrated_at=as_utc(row.calibrated_at).isoformat(),
+                 captured_at=as_utc(now).isoformat(), temperatures=command.result["temperatures"],
+                 summary=kc.summary(curve), preview=kc.preview(curve))
+    return dict(snapshot={**row.snapshot, "characterization": {**characterization,
+                                                                "captures": [*characterization["captures"], entry]}})
+
+
+def _flat_temperatures(temperatures: dict) -> dict:
+    flat = {f"vna_{i}_c": value for i, value in enumerate(temperatures.get("vna_c") or [], start=1)}
+    if temperatures.get("acm_c") is not None:
+        flat["acm_c"] = temperatures["acm_c"]
+    return flat
+
+
+def _kit_provenance(row, piece, entries: list[dict], curve: CharacterizationCurve) -> dict:
+    first, profile = entries[0], kc.band_profile(entries[0]["band"])
+    numbers = [f["number"] for f in first["fixtures"]]
+    return dict(
+        planar_instrument_id=str(row.instrument_id), planar_serial=row.instrument_serial, session_id=str(row.id),
+        command_id=first["command_id"], calibration_id=first["calibration_check_id"], method="ACM",
+        plane=kc.plane(piece.kind, piece.gender, numbers), operator=row.snapshot["operator"]["name"],
+        processing_version=kc.PROCESSING_VERSION, captured_at=first["captured_at"],
+        if_bandwidth_hz=profile.if_bandwidth_hz, power_dbm=profile.power_dbm,
+        temperatures=_flat_temperatures(first["temperatures"]),
+        fixtures=[dict(instrument_id=f["instrument_id"], number=f["number"], sha256=f["sha256"],
+                       orientation="reverse" if f["reversed"] else "forward", side="port1" if i == 0 else "port2",
+                       band=entry["band"], command_id=f["command_id"], artifact_id=f["artifact_id"])
+                  for entry in entries for i, f in enumerate(entry["fixtures"])],
+        acquisitions=[dict(band=e["band"], command_id=e["command_id"], artifact_id=e["artifact_id"], sha256=e["sha256"],
+                           calibration_id=e["calibration_check_id"], calibrated_at=e["calibrated_at"],
+                           captured_at=e["captured_at"], temperatures=_flat_temperatures(e["temperatures"]),
+                           grid=dict(start_hz=kc.BANDS[e["band"]][0], stop_hz=kc.BANDS[e["band"]][1],
+                                     points=kc.band_profile(e["band"]).points))
+                      for e in entries],
+        acm=dict(id=row.snapshot["acm"]["id"], serial=row.snapshot["acm"]["serial"]), cables=row.snapshot["cables"],
+        kit_id=str(piece.kit_instrument_id), standard_id=str(piece.id), piece_label=piece.piece_label,
+        torque=kc.TORQUE, stored_grid=dict(f_min_hz=curve.frequencies[0], f_max_hz=curve.frequencies[-1],
+                                           points=len(curve.frequencies), step_hz=kc.STEP_HZ,
+                                           interpolation_source_step_hz=2 * kc.STEP_HZ))
+
+
+@router.post(PREFIX + "/sessions/{session_id}/characterization/pieces/{standard_id}/save")
+def characterization_save(session_id: UUID, standard_id: UUID, payload: Version, principal: Person, now: Now,
+                          factory: Factory):
+    """«Сохранить»: the piece's curve from its latest captures of every needed pass — merged, cut to its band, checked
+    (midpoints) — becomes a new immutable revision. A failed check is kept as evidence and blocks activation."""
+    def action(uow, repository, row):
+        _version(row, payload.version)
+        characterization = _characterization(row)
+        if row.state != "ready":
+            raise Refusal("device_busy", "Дождитесь окончания команды")
+        piece = _piece(uow, characterization, standard_id)
+        latest = _latest(characterization["captures"], "standard_id", str(piece.id))
+        bands = kc.bands_for(piece.f_min_hz, piece.f_max_hz)
+        missing = [kc.BAND_LABELS[b] for b in bands if b not in latest]
+        if missing:
+            raise Refusal("not_final", f"{piece.piece_label}: снимите меру в диапазоне «{missing[0]}»", 422)
+        entries = [latest[b] for b in bands]
+        parts = {e["band"]: _piece_curve(repository, piece, _capture_data(repository, e, e["band"], piece.piece_label),
+                                         e["fixtures"], e["band"]) for e in entries}
+        curve = kc.merge(parts, piece.f_min_hz, piece.f_max_hz)
+        validation, _ = kc.evidence(curve, parts)
+        try:
+            revision = RfKitRepository(uow.session).append_revision(
+                piece.id, expected_version=piece.version, format="s2p" if piece.kind == "THRU" else "s1p",
+                content=kc.content(curve), provenance=_kit_provenance(row, piece, entries, curve), validation=validation,
+                actor=principal.actor.name, now=now, raw_artifact_id=UUID(entries[0]["artifact_id"]))
+        except ConcurrentProductionUpdate as error:
+            raise Refusal("stale", str(error)) from error
+        uow.audit.add(AuditEvent(id=uuid4(), aggregate_id=piece.kit_instrument_id,
+                                 event_type="production.rf_kit_revision_saved",
+                                 actor=Actor(id=principal.actor.id, name=principal.actor.name,
+                                             department=principal.actor.department), occurred_at=now,
+                                 details=dict(standard_id=str(piece.id), revision_id=str(revision.id),
+                                              revision=revision.revision, sha256=revision.sha256,
+                                              valid=validation["valid"], reason=validation["reason"],
+                                              session_id=str(row.id), commands=[e["command_id"] for e in entries])))
+    return _act(factory, session_id, principal, now, action)
+
+
+def _piece_state(piece, latest: dict, revision, generation: int) -> str:
+    if revision is not None and generation and piece.current_revision_id == revision.id:
+        return "active"
+    if revision is not None and revision.validation.get("valid"):
+        return "validated"
+    return "captured" if latest or revision is not None else "none"
+
+
+def _revision_view(kit_id, piece, revision) -> dict | None:
+    if revision is None:
+        return None
+    midpoints = revision.validation.get("midpoints") or {}
+    join = revision.validation.get("join") or {}
+    return dict(id=str(revision.id), revision=revision.revision, sha256=revision.sha256,
+                valid=bool(revision.validation.get("valid")), reason=revision.validation.get("reason") or None,
+                max_residual=midpoints.get("max_residual"), limit=midpoints.get("limit"),
+                join_step=join.get("step"), join_limit=join.get("limit"),
+                f_min_hz=revision.f_min_hz, f_max_hz=revision.f_max_hz, points=revision.points,
+                created_at=revision.created_at, created_by=revision.created_by,
+                download=f"/api/production/instruments/{kit_id}/standards/{piece.id}/revisions/{revision.id}/file")
+
+
+def _kit_view(uow, row, commands) -> dict:
+    """The guided list of the eight pieces with their state (нет данных / снято / проверено / действует)."""
+    characterization = row.snapshot["characterization"]
+    kit_id = UUID(characterization["kit_id"])
+    details = uow.session.get(RfDetailsRow, kit_id)
+    pieces = list(uow.session.scalars(select(RfKitStandardRow).where(RfKitStandardRow.kit_instrument_id == kit_id)))
+    revisions = {}
+    if pieces:
+        for revision in uow.session.scalars(select(RfStandardCharacterizationRow).where(
+                RfStandardCharacterizationRow.standard_id.in_([p.id for p in pieces]))
+                .order_by(RfStandardCharacterizationRow.revision)):
+            revisions[revision.standard_id] = revision
+    captures, band = characterization["captures"], characterization["band"]
+    current = str(row.calibration_check_id) if row.calibration_check_id else None
+    generation = details.characterization_generation if details else 0
+    order = {signature: i for i, signature in enumerate(KIT_ORDER)}
+    views = []
+    for piece in sorted(pieces, key=lambda p: order.get((p.kind, p.gender), 99)):
+        latest = _latest(captures, "standard_id", str(piece.id))
+        revision = revisions.get(piece.id)
+        needed = kc.bands_for(piece.f_min_hz, piece.f_max_hz)
+        saved = {a["command_id"] for a in (revision.provenance.get("acquisitions") or [])} if revision else set()
+        shown = latest.get(band) or next(iter(latest.values()), None)
+        numbers = [f["number"] for f in (shown or {}).get("fixtures") or []]
+        active = bool(generation and revision is not None and piece.current_revision_id == revision.id)
+        views.append(dict(
+            id=str(piece.id), label=piece.piece_label, kind=piece.kind, gender=piece.gender, gender2=piece.gender2,
+            name=kc.piece_name(piece.kind, piece.gender), f_min_hz=piece.f_min_hz, f_max_hz=piece.f_max_hz,
+            version=piece.version, bands=list(needed), fixtures_needed=kc.fixture_count(piece.kind, piece.gender),
+            in_band=band in needed, state=_piece_state(piece, latest, revision, generation), active=active,
+            captures={b: dict(command_id=c["command_id"], captured_at=c["captured_at"], summary=c["summary"],
+                              current=c["calibration_check_id"] == current, fixtures=[f["number"] for f in c["fixtures"]])
+                      for b, c in latest.items()},
+            preview=dict(band=shown["band"], points=shown["preview"]) if shown else None,
+            plane=kc.plane(piece.kind, piece.gender, numbers if len(numbers) == kc.fixture_count(piece.kind, piece.gender) else ["?", "?"]),
+            can_save=all(b in latest for b in needed) and {c["command_id"] for c in latest.values()} != saved,
+            latest_revision=_revision_view(kit_id, piece, revision)))
+    registered = {(p.kind, p.gender) for p in pieces}
+    missing = [dict(kind=kind, gender=gender, name=kc.piece_name(kind, gender),
+                    f_max_hz=3e9 if gender == "female" and kind in ("OPEN", "SHORT") else 6e9)
+               for kind, gender in KIT_ORDER if (kind, gender) not in registered]
+    ready = (details is not None and not missing and len(views) == len(REQUIRED_PIECES)
+             and all(v["latest_revision"] and v["latest_revision"]["valid"] for v in views))
+    activation = dict(expected_kit_version=details.version, revisions={v["id"]: v["latest_revision"]["id"] for v in views},
+                      expected_standard_versions={v["id"]: v["version"] for v in views}) if ready else None
+    fixtures = {}
+    for capture in captures:
+        if capture["subject"] == "fixture":
+            view = fixtures.setdefault(capture["instrument_id"], dict(instrument_id=capture["instrument_id"],
+                                                                     number=capture["number"], bands={}))
+            view["bands"][capture["band"]] = dict(captured_at=capture["captured_at"], summary=capture["summary"],
+                                                  current=capture["calibration_check_id"] == current)
+    return dict(kit=dict(id=str(kit_id), number=characterization["kit_number"], name=characterization["kit_name"],
+                         version=details.version if details else None, generation=generation,
+                         hash=details.characterization_hash if details else None,
+                         manifest=f"/api/production/instruments/{kit_id}/standards/manifest" if generation else None),
+                band=band, bands=[dict(key=key, label=kc.BAND_LABELS[key], start_mhz=start / 1e6, stop_mhz=stop / 1e6,
+                                       points=kc.band_profile(key).points, step_mhz=kc.STEP_HZ / 1e6)
+                                  for key, (start, stop) in kc.BANDS.items()],
+                torque=kc.TORQUE, pieces=views, missing=missing, fixtures=list(fixtures.values()),
+                fixture_choices=_fixture_choices(uow),
+                can_activate=bool(activation) and not all(v["active"] for v in views), activation=activation)
+
+
+# ---- Arinst: server-built standards from the ACTIVE SMA-MF06 generation (plan §4) -------------------------------------
+
+def _arinst_characterized(uow, snapshot, kit, payload) -> dict:
+    """Measured standards of the active generation on the exact session grid, pinned by generation and hash.
+
+    Refused (422, Russian) when the kit is not active, a piece has no published revision, or the grid leaves the
+    stored curve (female OPEN/SHORT stop at 3 GHz). Never an ideal standard."""
+    details = uow.session.get(RfDetailsRow, kit.id)
+    if details is None or not details.characterization_generation:
+        raise ValueError("Набор SMA-MF06 не активирован — нет опубликованных характеристик мер")
+    if payload.standard_gender is None:
+        raise ValueError("Укажите, какие меры подключаются: «розетка» (к кабелям с вилкой SMA) или «вилка»")
+    profile = ArinstProfile.model_validate(snapshot["profile"])
+    target = tuple(float(f) for f in profile.frequencies())
+    kinds = ("OPEN", "SHORT", "LOAD", "THRU") if payload.transmission else ("OPEN", "SHORT", "LOAD")
+    by_kind = {p.kind: p for p in RfKitRepository(uow.session).standards(kit.id) if p.gender == payload.standard_gender}
+    generation, digest = details.characterization_generation, details.characterization_hash
+    version = f"{generation}:{digest}"
+    standards, pieces, labels = {}, [], {}
+    for kind in kinds:
+        piece = by_kind.get(kind)
+        revision = (uow.session.get(RfStandardCharacterizationRow, piece.current_revision_id)
+                    if piece is not None and piece.current_revision_id else None)
+        if revision is None:
+            raise ValueError(f"В активном наборе нет меры «{kc.piece_name(kind, payload.standard_gender)}»")
+        try:
+            standard = kc.arinst_standard(
+                dict(id=piece.id, piece_label=piece.piece_label, kind=piece.kind, gender=piece.gender,
+                     gender2=piece.gender2, f_min_hz=piece.f_min_hz, f_max_hz=piece.f_max_hz),
+                dict(revision=revision.revision, sha256=revision.sha256, content=revision.content), target,
+                kit_id=str(kit.id), kit_version=version, source=f"SMA-MF06 {kit.inventory_number}, поколение {generation}",
+                orientation=payload.thru_orientation if kind == "THRU" else "forward")
+        except VnaDataError as error:
+            raise ValueError(str(error)) from error
+        standards[kind] = kc.standard_json(standard)
+        pieces.append(dict(kind=kind, standard_id=str(piece.id), label=piece.piece_label, revision=revision.revision,
+                           sha256=revision.sha256, f_min_hz=revision.f_min_hz, f_max_hz=revision.f_max_hz))
+        labels[kind] = f"{kc.piece_name(kind, piece.gender)} {piece.piece_label}"
+    chosen = [by_kind[kind] for kind in kinds]
+    context = dict(instrument_uid=snapshot["hardware_uid"], firmware=snapshot["firmware"],
+                   profile_fingerprint=bench.fingerprint(profile.model_dump(mode="json")),
+                   if_bandwidth_hz=profile.if_bandwidth_hz, kit_id=str(kit.id), kit_version=version,
+                   fixture_fingerprint=snapshot["calibration_setup"]["fixture_fingerprint"],
+                   reference_plane=snapshot["calibration_setup"]["reference_plane"],
+                   orientation=snapshot["calibration_setup"]["orientation"], connection_id=snapshot["connection_id"],
+                   standard_genders=[payload.standard_gender] * (2 if payload.transmission else 1),
+                   usable_band_hz=[max(p.f_min_hz for p in chosen), min(p.f_max_hz for p in chosen)])
+    try:
+        CalibrationContext(**context)
+    except (VnaDataError, TypeError) as error:
+        raise ValueError(str(error)) from error
+    snapshot["calibration_context"] = context
+    snapshot["characterized_standards"] = standards
+    snapshot["calibration_setup"].update(kit_generation=generation, kit_hash=digest,
+                                         standard_gender=payload.standard_gender,
+                                         thru_orientation=payload.thru_orientation, pieces=pieces)
+    return labels
+
+
+def _arinst_kit_stale(uow, snapshot) -> str:
+    """A newer activation (or none) after the run pinned its generation: the run and its results are stale."""
+    setup = (snapshot or {}).get("calibration_setup") or {}
+    if setup.get("kit_generation") is None:
+        return ""
+    details = uow.session.get(RfDetailsRow, UUID(setup["kit_id"]))
+    if details is None or (details.characterization_generation, details.characterization_hash) != (
+            setup["kit_generation"], setup["kit_hash"]):
+        return "Набор мер переактивирован после начала калибровки — начните калибровку Arinst заново"
+    return ""
+
+
+def _arinst_calibration_view(uow, row) -> dict:
+    if row is None:
+        return dict(valid=False, status="required")
+    calibration = row.snapshot.get("calibration") or dict(valid=False, status="required")
+    stale = _arinst_kit_stale(uow, row.snapshot)
+    # Any calibration built on the pinned generation — acquiring, awaiting verification or already valid — is stale
+    # once another generation is active; «required»/«blocked» hold nothing reusable and keep their own reason.
+    if stale and calibration.get("status") not in ("required", "blocked"):
+        return dict(valid=False, status="stale", reason=stale, coefficient_artifact_id=None)
+    return calibration
+
+
+def _arinst_kits(uow) -> list[dict]:
+    """SMA-MF06 kits for the Arinst kit choice: the active generation's pieces and bands by gender."""
+    kits = []
+    for details in uow.session.scalars(select(RfDetailsRow).where(
+            RfDetailsRow.kit_definition.in_((CHARACTERIZED_DEFINITION, LOADS_DEFINITION)))):
+        card = uow.session.get(ProductionInstrumentRow, details.instrument_id)
+        pieces = list(uow.session.scalars(select(RfKitStandardRow).where(
+            RfKitStandardRow.kit_instrument_id == details.instrument_id)))
+        current = {r.id: r for r in uow.session.scalars(select(RfStandardCharacterizationRow).where(
+            RfStandardCharacterizationRow.id.in_([p.current_revision_id for p in pieces if p.current_revision_id])))} \
+            if any(p.current_revision_id for p in pieces) else {}
+        sets = []
+        for gender in ("female", "male"):
+            own = {p.kind: current.get(p.current_revision_id) for p in pieces if p.gender == gender}
+            sol = [own.get(kind) for kind in ("OPEN", "SHORT", "LOAD")]
+            if details.characterization_generation and all(sol):
+                thru = own.get("THRU")
+                sets.append(dict(gender=gender, sol_mhz=[max(r.f_min_hz for r in sol) / 1e6, min(r.f_max_hz for r in sol) / 1e6],
+                                 thru_mhz=[thru.f_min_hz / 1e6, thru.f_max_hz / 1e6] if thru else None,
+                                 pieces=[dict(kind=p.kind, label=p.piece_label, revision=current[p.current_revision_id].revision)
+                                         for p in pieces if p.gender == gender and p.current_revision_id in current]))
+        kits.append(dict(id=str(details.instrument_id), number=card.inventory_number if card else "",
+                         name=card.name if card else "", generation=details.characterization_generation,
+                         hash=details.characterization_hash, active=bool(details.characterization_generation),
+                         sets=sets))
+    return sorted(kits, key=lambda kit: kit["number"])
+
+
+def _arinst_setup_view(row) -> dict | None:
+    setup = (row.snapshot.get("calibration_setup") if row else None) or {}
+    if setup.get("kit_generation") is None:
+        return None
+    return dict(kit_id=setup["kit_id"], generation=setup["kit_generation"], hash=setup["kit_hash"],
+                standard_gender=setup["standard_gender"], pieces=setup["pieces"])
+
+
+def _fixture_choices(uow) -> list[dict]:
+    """Registered F–F adapters (role «Переход», both connectors розетка): the fixtures for male pieces."""
+    both = (select(RfInterfaceRow.instrument_id).group_by(RfInterfaceRow.instrument_id)
+            .having(func.count() == 2, func.sum((RfInterfaceRow.body == "розетка").cast(Integer)) == 2))
+    rows = uow.session.execute(select(ProductionInstrumentRow.id, ProductionInstrumentRow.inventory_number,
+                                      ProductionInstrumentRow.name).join(
+        RfDetailsRow, RfDetailsRow.instrument_id == ProductionInstrumentRow.id).where(
+        RfDetailsRow.role == "adapter", ProductionInstrumentRow.id.in_(both))
+        .order_by(ProductionInstrumentRow.inventory_number))
+    return [dict(instrument_id=str(i), number=number, name=name) for i, number, name in rows]

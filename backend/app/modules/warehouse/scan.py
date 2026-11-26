@@ -19,7 +19,7 @@ _RUSSIAN_KEYS = str.maketrans(
     "ЙЦУКЕНГШЩЗХЪФЫВАПРОЛДЖЭЯЧСМИТЬБЮ.?",
     "QWERTYUIOP[]ASDFGHJKL;'ZXCVBNM,./&",
 )
-_GRN = re.compile(r"^(R&D|[A-Z]{3})\.(\d{2})\.(\d{7})(?:[\s\-/_]*(\S.*))?$")
+_GRN = re.compile(r"^(R&D|[A-Z]{3})\.(\d{2})\.(\d{6,7})(?!\d)(?:[\s\-/_]*(\S.*))?$")
 
 
 def _upper(code: str) -> str:

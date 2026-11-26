@@ -1,3 +1,5 @@
+import { GrnFields, QualityChip } from "./GrnFields";
+import { grnError, type GrnInput } from "./grn";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { AutoTextarea } from "./AutoTextarea";
 import { receivingApi, type ReceivingLine, type ReceivingQuery } from "./api";
@@ -46,6 +48,7 @@ const COLUMNS: DataColumn<ReceivingLine>[] = [
   { key: "status", title: "Статус", value: (line) => line.status, filter: true, render: (line) => <StatusChip status={line.status} /> },
   { key: "document", title: "УПД", value: (line) => [line.document_number, formatDate(line.document_date)].filter(Boolean).join(" от ") || (line.shipping_document_note ? "ждём по ЭДО" : ""), wrap: true, width: 100 },
   { key: "grn", title: "ГРН", value: (line) => line.grn ? `${line.grn}${line.package ? ` / ${line.package}` : ""}` : "" },
+  { key: "quality_state", title: "Качество", value: (line) => line.quality_state ?? "", render: (line) => <QualityChip passport={line} quietLegacy /> },
   { key: "location", title: "Место", value: (line) => line.storage_location ?? "", hidden: true },
   { key: "warehouse", title: "Склад", value: (line) => line.warehouse, filter: true, hidden: true },
   { key: "series", title: "Серия", value: (line) => line.series, hidden: true },
@@ -504,7 +507,8 @@ function ReceivingCard({
   const [manual, setManual] = useState<string[]>(
     line.nonconformities.filter((item) => MANUAL_CHECKS.includes(item)),
   );
-  const [prefix, setPrefix] = useState("");
+  const [grnInput, setGrnInput] = useState<GrnInput>({grn_category: line.grn_category, grn_context: line.grn_context, expiry_required: line.expiry_required});
+  const [grnIssue, setGrnIssue] = useState("");
   const [historical, setHistorical] = useState(false);
   const [documentDate, setDocumentDate] = useState(line.document_date ?? "");
   const [documentNumber, setDocumentNumber] = useState(line.document_number ?? "");
@@ -535,6 +539,9 @@ function ReceivingCard({
 
   function submitInspection(event: FormEvent) {
     event.preventDefault();
+    const invalid = batches.length >= 2 ? batches.map(grnError).find(Boolean) : !line.grn ? grnError(grnInput) : '';
+    if (invalid) { setGrnIssue(invalid); return; }
+    setGrnIssue('');
     void onInspect(line, {
       fact_quantity: fact || null,
       document_quantity: documentQty || null,
@@ -543,7 +550,7 @@ function ReceivingCard({
       expiry_date: expiry || null,
       manual_nonconformities: manual,
       disposition: disposition || null,
-      manual_grn_prefix: prefix || null,
+      ...grnInput,
       series: series.trim(),
       ...mass,
       historical,
@@ -561,6 +568,7 @@ function ReceivingCard({
       nonconformity_description: description.trim(),
       ...(brak && batches.length < 2 ? { defect_quantity: defect.trim() || null } : {}),
       ...(batches.length >= 2 ? { batches: batches.map((batch) => ({
+        grn_category: batch.grn_category, grn_context: batch.grn_context ?? {}, expiry_required: batch.expiry_required ?? false, quality_state: batch.quality_state, quality_basis: batch.quality_basis,
         document_quantity: batch.document_quantity || null,
         fact_quantity: batch.fact_quantity || null,
         series: batch.series.trim(),
@@ -634,15 +642,15 @@ function ReceivingCard({
             <label title="Вес СТА штук — самый точный способ для мелочи. Хватит любого ОДНОГО из трёх полей.">Масса 100 шт, г<input inputMode="decimal" value={mass.mass_100} onChange={(event) => setMass((current) => ({ ...current, mass_100: event.target.value }))} /></label>
             <DocumentField lineId={line.id} kind="quality" label="Документ качества" value={qualityDocument} required={line.quality_document_required} disabled={disabled} onChange={setQualityDocument} />
             <label>Решение<select value={disposition} onChange={(event) => setDisposition(event.target.value)}><option value="">Ещё не принято</option><option>Изолятор</option><option>Использование по разрешению</option><option>Возврат поставщику</option></select></label>
-            {!line.grn && (line.grn_prefix === null
-              ? <label title="Назначение не распознано — ГРН получит выбранный идентификатор">Идентификатор ГРН *<select required value={prefix} onChange={(event) => setPrefix(event.target.value)}><option value="">— выберите —</option><option>CSM</option><option>PPM</option></select></label>
-              : <label>Идентификатор ГРН<select value={prefix} onChange={(event) => setPrefix(event.target.value)}><option value="">{line.grn_prefix ? `Автоматически: ${line.grn_prefix}` : "Автоматически"}</option><option>CSM</option><option>PPM</option></select></label>)}
             <label className="check-field"><input type="checkbox" checked={historical} onChange={(event) => setHistorical(event.target.checked)} />Историческая приёмка: срок годности сверяется с датой УПД</label>
             <label className="wide">Примечание<AutoTextarea value={note} onChange={setNote} /></label>
             <label className="wide">Описание несоответствия<AutoTextarea value={description} onChange={setDescription} /></label>
             <fieldset className="check-field wide"><legend>Несоответствия ручной проверки</legend>{MANUAL_CHECKS.map((item) => <label key={item}><input type="checkbox" checked={manual.includes(item)} onChange={(event) => toggleManual(item, event.target.checked)} />{item}</label>)}</fieldset>
             {brak && !batchMode && <label title={`Сколько из фактического количества брак — не больше ${factLimit || "факта"} ${line.unit}. Принятое количество и склад не меняются.`}>Кол-во брака, {line.unit}<input type="number" min="0.000001" max={factLimit || undefined} step="any" required value={defect} onChange={(event) => setDefect(event.target.value)} /></label>}
           </div>
+          {grnIssue && <p className="error-banner" role="alert">{grnIssue}</p>}
+          {!batchMode && <GrnFields value={grnInput} locked={Boolean(line.grn)} disabled={disabled} quality onChange={value => {touch();setGrnInput(value);}}/>}
+          {batchMode && batches.map((batch,index) => <section className="grn-line" key={index}><h3 className="grn-line-title">Партия {index+1}</h3><GrnFields value={batch} disabled={disabled} quality onChange={next => {touch();editBatch(index,next);}}/></section>)}
           {batchMode && (
             <table className="batches">
               <thead><tr><th>Партия</th><th>По УПД</th><th>Факт</th>{brak && <th>Кол-во брака, {line.unit}</th>}<th>Серия</th><th>Срок годности</th><th>Дата изготовления</th><th /></tr></thead>
@@ -700,6 +708,7 @@ function ReceivingCard({
         </div>
       )}
       {line.status === "Архив ВК" && <p className="hint">Архив ВК: акты этой строки — история, приёмка идёт по ревизии.</p>}
+      {line.grn_contract_version === 1 && <p className="grn-status-line"><QualityChip passport={line} /></p>}
       {line.warehouse_event_emitted && <div className="success-banner">Передано на склад: {line.grn} · {line.storage_location}</div>}
       {!readOnly && line.warehouse_event_emitted && line.grn && (labels
         ? <ReceiptLabels lots={receiptLots([line])} onClose={() => setLabels(false)} />
@@ -708,7 +717,7 @@ function ReceivingCard({
   );
 }
 
-interface Batch {
+interface Batch extends GrnInput {
   document_quantity: string;
   fact_quantity: string;
   series: string;

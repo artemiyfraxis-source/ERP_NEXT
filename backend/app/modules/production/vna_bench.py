@@ -7,12 +7,14 @@
 
 Pure: the profile, ordered steps, item metadata and judgements. The workflow (`workflows/vna_bench_api.py`) owns the
 cards, journal rows, matings and VSWR records; the repository owns the state machine.
+Arinst helpers keep its diagnostic SOL/THRU acquisitions separate from Planar's ACM validity policy.
 """
 
 from __future__ import annotations
 
 import math
 import re
+from dataclasses import asdict
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -21,7 +23,8 @@ from .domain import ProductionValidationError
 from .instrument_characterization import Application, Characterization, characterization
 from .instrument_norms import Norm
 from .traceability import InstrumentFile, InstrumentFileKind
-from .vna_bench_protocol import Screen, command_args, screen_hash
+from .vna_bench_protocol import ArinstProfile, Screen, command_args, screen_hash
+from . import arinst_calibration as arinst_math
 from .vna_checks import KitStandard, LOAD_LIMIT
 from .vna_dsp import TwoPort, remove_fixtures, select_band, write_touchstone
 from .vna_sessions import Profile, Standard, fingerprint
@@ -40,8 +43,105 @@ VNA_MODEL = "S50180"
 SESSION_OPS = frozenset({"device_status", "apply_screen", "acm_confidence", "store_memory", "release"})
 UNCALIBRATED = dict(calibrated_at=None, calibration_temps=None, profile_hash=None, calibration_check_id=None)
 PORT_TO_END = {"1": "А", "2": "Б"}
+ARINST_COMMISSIONING = ("Сохранение Arinst заблокировано: требуется стендовое сравнение "
+                        "с подтверждёнными характеристиками калибровочных мер")
+ARINST_RAW_EVIDENCE = "arinst-native-bench-2026-11-23"
 CONNECT_ACM = "Подключите АКМ к концам обоих кабелей (порт 1 АКМ — к кабелю порта 1), не сдвигая кабели"
 KIT_ORDER = tuple((kind, port) for port in (1, 2) for kind in ("OPEN", "SHORT", "LOAD")) + (("THRU", 0),)
+
+
+def arinst_step(op, args=None, *, human=False, label="", item=None):
+    return dict(op=op, args=command_args(3, op, args or {}), human=human, label=label, item=item)
+
+
+def arinst_invalidated(snapshot, reason):
+    """Keep immutable artifacts/history, remove every reusable calibration reference — including the server-built
+    characterized standards and their context, which belong to one calibration run only."""
+    kept = {k: v for k, v in snapshot.items() if k not in ("calibration_context", "characterized_standards")}
+    return {**kept, "calibration": dict(valid=False, status="required", reason=reason, coefficient_artifact_id=None)}
+
+
+def arinst_license(state, seconds, observed_at, now):
+    remaining = None
+    if state == "TRIAL":
+        remaining = max(0, int((seconds or 0) - max(0, (as_utc(now) - as_utc(aware(observed_at, now))).total_seconds())))
+        if remaining == 0:
+            state = "LOCKED"
+    message = {"not_required": "Связь: протокол ArinstVL", "ACTIVATED": "Лицензия активна",
+               "LOCKED": "Время пробного режима вышло — переподключите прибор вручную или активируйте лицензию"}.get(state)
+    if state == "TRIAL":
+        message = f"Пробный режим API — осталось {math.ceil(remaining / 60)} мин"
+    return dict(state=state or "UNKNOWN", trial_remaining_seconds=remaining,
+                message=message or "Состояние лицензии API неизвестно")
+
+
+def arinst_calibration_steps(snapshot, *, orientation, transmission, run_id, labels=None):
+    """`labels`: the identified physical piece of each kind (a characterized kit), shown in the prompt."""
+    profile = ArinstProfile.model_validate(snapshot["profile"]).model_dump(mode="json")
+    standards = ("OPEN", "SHORT", "LOAD", "THRU") if transmission else ("OPEN", "SHORT", "LOAD")
+    return [arinst_step("measure_standard", dict(profile=profile, orientation=orientation, standard=standard),
+                       human=True, label=f"Подключите {(labels or {}).get(standard) or standard} в плоскости измерения "
+                                         "и подтвердите",
+                       item=dict(kind="arinst_calibration", run_id=run_id)) for standard in standards]
+
+
+def arinst_acquisition(receipt, evidence_id, context):
+    """Use the validated native grid and bench-confirmed raw semantics in T3."""
+    data = receipt["acquisition"]
+    if (data.get("grid_confirmed") is not True or not data.get("frequencies_hz")
+            or data.get("correction_origin") != "raw" or receipt.get("correction_origin") != "raw"):
+        raise ValueError("Для калибровки Arinst нужны исходные данные с подтверждённой сеткой")
+    parsed_profile = ArinstProfile.model_validate(receipt["profile"])
+    profile = parsed_profile.model_dump(mode="json")
+    if (context.instrument_uid != receipt["hardware_uid"] or context.firmware != receipt["firmware"]
+            or context.profile_fingerprint != fingerprint(profile)
+            or context.if_bandwidth_hz != profile["if_bandwidth_hz"]
+            or context.orientation != data["orientation"]
+            or data["frequencies_hz"] != parsed_profile.frequencies()):
+        raise ValueError("Настройка Arinst изменилась после калибровки")
+    return arinst_math.Acquisition(context, tuple(data["frequencies_hz"]),
+        tuple(complex(*p) for p in data["data"]["S11"]), evidence_id,
+        tuple(complex(*p) for p in data["data"]["S21"]) if "S21" in data["data"] else None,
+        correction_origin="raw", raw_semantics_evidence=ARINST_RAW_EVIDENCE, grid_confirmed=True)
+
+
+def arinst_json(value):
+    """Lossless JSON representation of T3 dataclasses, including complex coefficients."""
+    if isinstance(value, complex):
+        return [value.real, value.imag]
+    if isinstance(value, dict):
+        return {k: arinst_json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [arinst_json(v) for v in value]
+    return value
+
+
+def arinst_solve(snapshot, standards):
+    """Map immutable acquisitions and server-owned characterized definitions to SOL/THRU.
+
+    Browser input cannot set characterized standard coefficients. A numerical solution also needs
+    a separate physical verification before it may authorize any quality result.
+    """
+    if not snapshot.get("calibration_context") or not snapshot.get("characterized_standards"):
+        raise ValueError("Для калибровки Arinst нужны подтверждённые характеристики мер и плоскость измерения")
+    context = arinst_math.CalibrationContext(**snapshot["calibration_context"])
+    measured = []
+    for receipt, artifact_id, artifact_hash in standards:
+        if receipt["standard"] not in snapshot["characterized_standards"]:
+            raise ValueError("Не подтверждены характеристики калибровочной меры Arinst")
+        definition = dict(snapshot["characterized_standards"][receipt["standard"]])
+        definition["response"] = tuple(complex(*v) for v in definition["response"])
+        standard = arinst_math.CalibrationStandard(**definition)
+        measured.append(arinst_math.StandardMeasurement(standard,
+            arinst_acquisition(receipt, artifact_id, context)))
+    thru = next((m for m in measured if m.standard.kind == "THRU"), None)
+    solved = arinst_math.solve_sol([m for m in measured if m.standard.kind != "THRU"], thru=thru)
+    return dict(schema="arinst.calibration.v1", coefficients=arinst_json(asdict(solved)),
+                calibration_id=solved.calibration_id, method=solved.method,
+                raw_artifacts=[dict(id=i, sha256=h) for _, i, h in standards],
+                characterized_kit_sha256=fingerprint(snapshot["characterized_standards"]),
+                operator=snapshot["operator"], verification=dict(status="required", passed=False),
+                acceptance_eligible=False)
 
 
 def adapter_profile() -> Profile:

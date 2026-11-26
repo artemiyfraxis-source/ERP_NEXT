@@ -6,7 +6,7 @@ import pytest
 
 from app.main import app
 from app.modules.warehouse.domain import StockLot
-from app.modules.warehouse.scan import parse_scan, place_matches
+from app.modules.warehouse.scan import lot_matches, parse_scan, place_matches
 from app.shared.http_auth import Principal, authenticated_principal
 from tests.factories import Actor
 from tests.warehouse.test_api import warehouse_api  # noqa: F401 — fixture
@@ -44,6 +44,35 @@ def _scan(client, code):
 def _keys(response):
     assert response.status_code == 200, response.text
     return [(lot["grn"], lot["package"], lot["warehouse"]) for lot in response.json()["lots"]]
+
+
+@pytest.mark.parametrize("prefix", ["PPM", "PAM", "GOS", "SUB", "CSM", "FRX", "R&D", "OLD"])
+@pytest.mark.parametrize("serial", ["000001", "0000001"])
+def test_six_and_seven_digit_codes_preserve_number_and_package(prefix, serial):
+    number = f"{prefix}.26.{serial}"
+    code = parse_scan(f"{number}-П2").grn
+    assert code is not None and code.grn == number and code.package == "П2"
+    assert lot_matches(code, number, "П2")
+    other = f"{prefix}.26.{'0000001' if len(serial) == 6 else '000001'}"
+    assert not lot_matches(code, other, "П2")
+
+
+@pytest.mark.parametrize("raw", ["АКЧю26ю000001", "FRХ.26.000001", " frx.26.000001 "])
+def test_six_digit_scans_keep_keyboard_and_lookalike_support(raw):
+    assert parse_scan(raw).grn.grn == "FRX.26.000001"
+
+
+@pytest.mark.parametrize("raw", ["PPM.26.00001", "PPM.26.00000001", "PPM.26.00000001-П2"])
+def test_wrong_serial_length_is_not_reinterpreted_as_a_package(raw):
+    assert parse_scan(raw).grn is None
+
+
+def test_lookup_does_not_alias_six_and_seven_digit_numbers(scan_api):
+    client, _ = scan_api
+    with app.state.warehouse_uow_factory() as uow:
+        uow.warehouse.add(_lot("FRX.26.000001", "П2"))
+        uow.commit()
+    assert _keys(_scan(client, "FRX.26.000001-П2")) == [("FRX.26.000001", "П2", "ЦАР")]
 
 
 @pytest.mark.parametrize("code", ["FRX.26.0000001", " frx.26.0000001 ", "FRХ.26.0000001", "АКЧю26ю0000001"])

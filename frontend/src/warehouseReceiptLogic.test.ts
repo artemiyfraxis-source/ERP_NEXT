@@ -170,6 +170,7 @@ it("a row can be accepted with an article and a quantity above zero", () => {
 it("builds the accept body: unit and purpose fall back, labels and confirmation travel along", () => {
   const body = buildAccept(filled({ article: " A ", quantity: "2,5", expiry_date: "" }), emptyHeader(), " 1F4 ", 3, true);
   expect(body).toEqual({
+    acceptance_id: undefined, grn_category: undefined, grn_context: {}, expiry_required: false,
     article: "A", quantity: "2.5", unit: "шт", item_type: "", manufacturer: "", series: "", name: "", purpose: "Склад",
     expiry_date: null, datasheet: "", certificate: "", storage_location: "1F4", labels: 3, confirm_expected: true, upd_name: "",
     maker_article: "", supplier_article: "",

@@ -13,7 +13,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.clock import moscow_now
 from app.shared.stored_files import decode_upload, file_response
-from app.shared.http_auth import Principal, receiving_edit_principal, receiving_view_principal
+from app.shared.http_auth import Principal, receiving_edit_principal, receiving_view_principal, section_allowed
 from app.shared.unit_mass import mass_fields_from
 
 from .application import (
@@ -53,7 +53,6 @@ from .domain import (
     ReceivingValidationError,
     SHIPPING_DOCUMENT_PENDING_NOTE,
     SUPPLIER_RETURN_REASONS,
-    grn_prefix_for,
     normalize_document_url,
     SupplierReturnMode,
     verdict_reference_date,
@@ -65,7 +64,15 @@ Quantity = Annotated[Decimal, Field(gt=0, max_digits=18, decimal_places=6)]
 MassInput = Annotated[str, Field(max_length=64)] | float | None
 
 
-class BatchPayload(BaseModel):
+class GrnInspectionPayload(BaseModel):
+    grn_category: Literal["PPM", "PAM", "GOS", "SUB", "CSM", "FRX", "R&D"] | None = None
+    grn_context: dict | None = None
+    expiry_required: bool = False
+    quality_state: Literal["IQH", "QTN", "RELEASED", "REJECTED", "NOT_REQUIRED"] | None = None
+    quality_basis: str = Field(default="", max_length=2000)
+
+
+class BatchPayload(GrnInspectionPayload):
     """Одна партия изготовителя в поставке (Receiving.gs batchFields_): своё количество и реквизиты партии."""
 
     fact_quantity: Quantity | None = None
@@ -86,7 +93,7 @@ class BatchPayload(BaseModel):
         return normalize_document_url(value)
 
 
-class InspectionPayload(BaseModel):
+class InspectionPayload(GrnInspectionPayload):
     version: int = Field(ge=1)
     # RC-1 (Receiving.gs:676-678): одно из двух количеств можно не вводить — берётся другое.
     fact_quantity: Quantity | None = None
@@ -144,7 +151,7 @@ class DocumentsPayload(BaseModel):
         return normalize_document_url(value)
 
 
-class DeliveryLinePayload(BaseModel):
+class DeliveryLinePayload(GrnInspectionPayload):
     id: UUID
     version: int = Field(ge=1)
     # Typed only on a discrepancy: no УПД quantity → the ordered one, no fact → the УПД one.
@@ -229,11 +236,12 @@ def _decimal(value: Decimal | None) -> str | None:
 
 
 def _result(line: ReceivingLine) -> dict:
+    from app.workflows.receiving_stock import GRN_FIELDS, json_value
     return {
+        **{name: json_value(getattr(line, name)) for name in GRN_FIELDS},
         "id": str(line.id),
         "legacy_id": line.legacy_id,
-        # grnPrefixForPurpose_: what the ГРН will start with; None — the form asks for CSM or PPM up front.
-        "grn_prefix": grn_prefix_for(purpose=line.purpose, link=line.source_link, goal=line.goal),
+        "grn_prefix": line.grn_category,
         "status": line.status.value,
         "version": line.version,
         "warehouse": line.warehouse,
@@ -295,9 +303,12 @@ def _result(line: ReceivingLine) -> dict:
 
 
 def _run(operation):
+    from app.workflows.grn_allocation import GrnConflict, GrnCapacityExceeded
     try:
         return operation()
-    except ReceivingValidationError as error:
+    except GrnConflict as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except (ReceivingValidationError, GrnCapacityExceeded) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except ConcurrentReceivingUpdate as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
@@ -459,6 +470,10 @@ def inspect(
             standard=payload.standard.strip(),
             quality_document_date=payload.quality_document_date,
             defect_quantity=data.defect_quantity,
+            grn_category=data.grn_category, grn_context=data.grn_context, expiry_required=data.expiry_required,
+            quality_state=data.quality_state, quality_basis=data.quality_basis,
+            quality_authorized=section_allowed(principal, ("quality",), "edit"),
+            historical_verdict=payload.historical,
         )
 
     if len(payload.batches) == 1:
@@ -556,11 +571,14 @@ def delivery_command(payload: DeliveryPayload, principal: Principal, now: dateti
                 expiry_date=item.expiry_date,
                 series=item.series.strip(),
                 manual_grn_prefix=item.manual_grn_prefix,
+                grn_category=item.grn_category, grn_context=item.grn_context, expiry_required=item.expiry_required,
+                quality_state=item.quality_state, quality_basis=item.quality_basis,
             )
             for item in payload.lines
         ),
         actor=principal.actor,
         now=now,
+        quality_authorized=section_allowed(principal, ("quality",), "edit"),
         **fields,
     )
 

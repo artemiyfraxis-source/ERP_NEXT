@@ -6,6 +6,7 @@ const roles: Record<string, string> = {
   unknown: "Не указано", vna: "ВАЦ", adapter: "Переход коаксиальный", test_cable: "Тестовый кабель",
   auto_calibration: "АКМ", solt_kit: "Набор SOLT", load: "Нагрузка", load_kit: "Нагрузки SMA-MF06",
 };
+const CHARACTERIZED = "SMA-MF06-characterized";
 const series = ["SMA", "3.5mm", "N", "TNC", "BNC", "F", "RP-SMA", "тип III"];
 const blankPort = (): RfInterface => ({ series: "", body: "", center: "", impedance_ohm: null, f_max_ghz: null, f_confirmed: false, f_source: "" });
 const number = (value: string) => value === "" ? null : Number(value);
@@ -26,6 +27,8 @@ export function InstrumentRfInterfaces({ instrumentId, locked, onDirty, onBusy, 
   const form = useRef<HTMLFormElement>(null);
   const inFlight = useRef(false);
   const dirty = Boolean(draft && JSON.stringify(draft) !== JSON.stringify(saved));
+  // Охарактеризованный SMA-MF06: назначение и состав меняет только активация мер на стенде, не эта форма.
+  const characterized = saved?.kit_definition === CHARACTERIZED;
 
   useEffect(() => { onDirty(dirty); }, [dirty, onDirty]);
   useEffect(() => {
@@ -80,7 +83,7 @@ export function InstrumentRfInterfaces({ instrumentId, locked, onDirty, onBusy, 
       setAttempt((value) => value + 1);
     }}>Обновить ВЧ-интерфейсы</button>}
     {saved && !editing && !loading && <>
-      <p className={saved.confirmed ? "tone-ok" : "warning-inline"}>{saved.confirmed ? "Подтверждены" : "Не подтверждены"} · {roles[saved.role] ?? "Не указано"}</p>
+      <p className={saved.confirmed ? "tone-ok" : "warning-inline"}>{saved.confirmed ? "Подтверждены" : "Не подтверждены"} · {roles[saved.role] ?? "Не указано"}{characterized ? " · SMA-MF06, меры охарактеризованы" : ""}</p>
       {saved.interfaces.length ? saved.interfaces.map((port, i) => <p key={i}>
         {saved.role === "vna" || saved.role === "auto_calibration" ? "Порт" : "Интерфейс"} {i + 1}: {port.series} {port.body}, {port.center} · {port.impedance_ohm == null ? "сопротивление не указано" : `${formatNumber(port.impedance_ohm)} Ом`} · {port.f_max_ghz == null ? "частота не указана" : `до ${formatNumber(port.f_max_ghz, { digits: 9 })} ГГц`}
       </p>) : <p className="muted-text">Интерфейсы не указаны — добавьте данные из паспорта.</p>}
@@ -93,16 +96,18 @@ export function InstrumentRfInterfaces({ instrumentId, locked, onDirty, onBusy, 
     {editing && draft && !loading && <form ref={form} onSubmit={(event) => { event.preventDefault(); void save(false); }}>
       <fieldset className="instrument-fields" disabled={locked || busy}>
         <div className="form-grid">
-          <label>Назначение<select name="rf_role" value={draft.role} onChange={(event) => change({ role: event.target.value, max_points: null, kit_definition: "" })}>
+          <label>Назначение<select name="rf_role" value={draft.role} disabled={characterized} onChange={(event) => change({ role: event.target.value, max_points: null, kit_definition: "" })}>
             {Object.entries(roles).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select></label>
           <label>Частота от, ГГц<input name="rf_min" type="number" min="0" max="1000" step="any" value={draft.f_min_ghz ?? ""} onChange={(event) => change({ f_min_ghz: number(event.target.value) })} /></label>
           <label>Ресурс сочленений<input name="rf_mating_resource" type="number" min="1" max="2147483647" step="1" value={draft.mating_resource ?? ""} onChange={(event) => change({ mating_resource: number(event.target.value) })} /></label>
           {draft.role === "vna" && <label>Максимум точек ВАЦ<input name="rf_points" type="number" min="2" max="10000001" step="1" value={draft.max_points ?? ""} onChange={(event) => change({ max_points: number(event.target.value) })} /></label>}
           <label className="wide">Источник данных<input name="rf_source" autoComplete="off" maxLength={2000} value={draft.source} onChange={(event) => change({ source: event.target.value })} /></label>
-          {draft.role === "solt_kit" && <label className="wide">Состав набора<select name="rf_kit" value={draft.kit_definition} onChange={(event) => change({ kit_definition: event.target.value })}>
+          {draft.role === "solt_kit" && <label className="wide">Состав набора<select name="rf_kit" value={draft.kit_definition} disabled={characterized} onChange={(event) => change({ kit_definition: event.target.value })}>
             <option value="">Не подтверждён</option><option value="6650F27-full">6650F27: холостой ход, КЗ, нагрузка — вилка и розетка; проходы MA6666A/B/C-11</option>
+            <option value={CHARACTERIZED} disabled={!characterized}>SMA-MF06: меры, измеренные на Planar (активированное поколение); нагрузки 50 Ом</option>
           </select></label>}
+          {characterized && <p className="muted-text wide">Назначение и состав набора SMA-MF06 меняются только активацией мер на стенде («Характеристика мер»).</p>}
           {draft.role === "load_kit" && <label className="wide">Состав нагрузок<select name="rf_load_kit" value={draft.kit_definition} onChange={(event) => change({ kit_definition: event.target.value })}>
             <option value="">Не подтверждён</option><option value="SMA-MF06-loads">Нагрузки 50 Ом из SMA-MF06</option>
           </select></label>}

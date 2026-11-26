@@ -579,7 +579,7 @@ def test_station_refusal_codes(message, code):
 
 def test_online_agent_without_control_advertisement_is_not_offline(env):
     with env["sessions"]() as db:
-        db.delete(db.get(VnaControlRow, "pc-1"))
+        db.delete(db.get(VnaControlRow, ("pc-1", SERIAL)))
         db.commit()
     device = state(env)["device"]
     assert device["agent_online"] is True
@@ -591,7 +591,7 @@ def test_online_agent_without_control_advertisement_is_not_offline(env):
 def test_agent_and_vna_presence_are_separate(env, online):
     with env["sessions"]() as db:
         db.get(DeviceRow, ("pc-1", "s2vna", SERIAL)).present = False
-        db.delete(db.get(VnaControlRow, "pc-1"))
+        db.delete(db.get(VnaControlRow, ("pc-1", SERIAL)))
         if not online:
             db.get(ScanAgentRow, "pc-1").last_seen = env["clock"].now - timedelta(minutes=4)
         db.commit()

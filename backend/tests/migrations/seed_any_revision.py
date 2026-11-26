@@ -119,6 +119,14 @@ def _inventory_era(metadata: MetaData) -> bool:
     return isinstance(kind, sqltypes.String) and getattr(kind, "length", None) != 32
 
 
+def _cyclic_key(parent: str, referred: str) -> bool:
+    """Keys the seeder leaves empty because their parent can only be made after the child: 0217 ties a measuring unit
+    and its instrument binding both ways (deferred FKs); 0220 points a kit standard at its current measured revision
+    (nullable `(id, current_revision_id)` → the revision that itself needs the standard)."""
+    return ((parent == "equipment_measuring_units" and referred == "equipment_instrument_bindings")
+            or (parent == "production_rf_kit_standards" and referred == "production_rf_standard_characterizations"))
+
+
 def _fill_order(metadata: MetaData) -> list[Table]:
     """Parents before children; the lots also before the tables that hold reserves on them by a plain `lot_id`."""
     lots = metadata.tables.get("warehouse_lots")
@@ -126,12 +134,10 @@ def _fill_order(metadata: MetaData) -> list[Table]:
         (lots, table) for table in metadata.tables.values()
         if lots is not None and table is not lots and "lot_id" in table.c and not table.c.lot_id.foreign_keys
     ]
-    # 0217 ties a measuring unit and its instrument binding both ways (deferred FKs); the seeder fills neither, so the
-    # reciprocal key is left out of the order instead of making SQLAlchemy drop the whole cycle with a warning.
+    # A cyclic key is left out of the order instead of making SQLAlchemy drop the whole cycle with a warning.
     return sort_tables(metadata.tables.values(), extra_dependencies=extra, skip_fn=lambda fk:
         (fk.parent.table.name == "equipment_units" and fk.column.table.name != "equipment_models")
-        or (fk.parent.table.name == "equipment_measuring_units"
-            and fk.column.table.name == "equipment_instrument_bindings"))
+        or _cyclic_key(fk.parent.table.name, fk.column.table.name))
 
 
 def _has_rows(connection: Connection, table: Table) -> bool:
@@ -163,8 +169,8 @@ def _parent_values(connection: Connection, table: Table) -> dict[str, list[Any]]
     # references) takes the composite key's aligned values — set order must not decide which parent wins.
     for key in sorted(table.foreign_key_constraints, key=lambda key: (len(key.elements), key.name or "")):
         parent = key.referred_table
-        if parent is table:
-            continue  # self reference (a correction of an earlier row): left NULL
+        if parent is table or _cyclic_key(table.name, parent.name):
+            continue  # self reference (a correction of an earlier row) or a cyclic key: left NULL
         referred = [element.column for element in key.elements]
         rows = connection.execute(select(*referred).order_by(*referred)).all()
         for position, element in enumerate(key.elements):
@@ -204,7 +210,7 @@ def _row(table: Table, index: int, parents: dict[str, list[Any]], lots: list[Any
             else:
                 row[name] = choices[index % len(choices)]
             continue
-        if column.foreign_keys:  # self reference
+        if any(not _cyclic_key(table.name, fk.column.table.name) for fk in column.foreign_keys):  # self reference
             row[name] = None
             continue
         if name == "lot_id" and lots:
@@ -315,6 +321,16 @@ _OVER_CHECK: dict[tuple[str, str], Any] = {
     ("production_vswr_traces", "trace"): [[1000.0, 1.0], [2000.0, 1.0]],
     ("production_vswr_traces", "samples"): [[1e9, 1.0], [2e9, 1.0]],
     ("production_vswr_traces", "complex_samples"): [[1e9, 0.0, 0.0], [2e9, 0.0, 0.0]],
+    # 0219_arinst_control: a seeded capability is an unverified, not-ready Planar row (`source IN (…)` of the readiness
+    # CHECK would otherwise give 'arinst'); an identity association is an Arinst UID (serial = 'arinst:' || UID).
+    ("warehouse_vna_control", "source"): "s2vna",
+    ("warehouse_vna_control", "hardware_uid"): "",
+    ("warehouse_vna_identities", "source"): "arinst",
+    # 0220_rf_kit_characterization: a seeded kit piece has no measured revision yet (the cyclic key stays empty), and an
+    # RF detail is not an activated characterized kit (generation 0 goes with an empty hash).
+    ("production_rf_kit_standards", "current_revision_id"): None,
+    ("production_rf_details", "characterization_generation"): 0,
+    ("production_rf_details", "characterization_hash"): None,
 }
 # Values a CHECK shapes beyond `IN (…)`: an internal project number is «ВП-…» (0135_internal_projects), unique; the
 # label printer settings are bounded ranges and a numeric `dpi IN (203, 300)` (0138_warehouse_labels).
@@ -323,6 +339,17 @@ _LABEL_FORMATS = ("58x30", "58x40", "100x50")
 _LABEL_SETTINGS = {"width_mm": 58, "height_mm": 30, "dpi": 300, "gap_mm": 2, "density": 12, "speed": 2,
                    "offset_x_mm": 0, "offset_y_mm": 0}
 _SHAPED_VALUES: dict[tuple[str, str], Any] = {
+    # 0218: generic registry rows are legacy ones (ck_grn_new_identity); source_kind must be exactly 'legacy'.
+    ("warehouse_grn_registry", "is_legacy"): lambda i: True,
+    ("warehouse_grn_registry", "source_kind"): lambda i: "legacy",
+    ("warehouse_grn_counters", "full_year"): lambda i: 2000 + i,  # 0218: CHECK full_year BETWEEN 2000 AND 9999.
+    ("receiving_lines", "revision_root_id"): lambda i: None,  # No fabricated UUID lineage without a revision.
+    # 0218 rejects the same raw GRN on unrelated receipts. Generic "grn-0" in each
+    # table used to fabricate exactly that conflict; give independent fixtures distinct identities.
+    **{(table, "grn"): (lambda prefix: lambda i: f"{prefix}-{i}")(prefix) for table, prefix in (
+        ("warehouse_lots", "legacy-stock"), ("receiving_lines", "legacy-receiving"),
+        ("finished_goods", "legacy-good"), ("finished_goods_acts", "legacy-act"),
+    )},
     # Exact resource reservations have positive windows; setup transitions follow version 1 (0170).
     ("production_resource_reservations", "finish"): lambda i: datetime(2026, 9, 1, 10, tzinfo=timezone.utc) + timedelta(days=i),
     ("equipment_setup_transitions", "version"): lambda i: i + 2,
@@ -349,6 +376,16 @@ _SHAPED_VALUES: dict[tuple[str, str], Any] = {
     ("warehouse_upd_llm_settings", "base_url"): lambda i: "https://llm.example.test/v1",
     # A machine snapshot speaks bridge protocol 1 only (0193_machines).
     ("production_machine_snapshots", "proto"): lambda i: 1,
+    # One association per Arinst UID, its serial derived from it (0219_arinst_control, both UNIQUE).
+    ("warehouse_vna_identities", "hardware_uid"): lambda i: f"{i + 1}-0-0",
+    ("warehouse_vna_identities", "serial"): lambda i: f"arinst:{i + 1}-0-0",
+    # A kit piece and its measured revision cover 1–2 GHz (from < to ≤ 6 GHz, female OPEN/SHORT ≤ 3 GHz); a Touchstone
+    # revision has at least 2 points and a 64-character grid hash (0220_rf_kit_characterization).
+    **{(table, column): (lambda value: lambda i: value)(value)
+       for table in ("production_rf_kit_standards", "production_rf_standard_characterizations")
+       for column, value in (("f_min_hz", 1e9), ("f_max_hz", 2e9))},
+    ("production_rf_standard_characterizations", "points"): lambda i: 2,
+    ("production_rf_standard_characterizations", "grid_hash"): lambda i: hashlib.sha256(f"grid-{i}".encode()).hexdigest(),
 }
 # Shaped values win over a CHECK's first `IN (…)` value; a table with a UNIQUE of shaped pairs gets no more rows than
 # there are pairs.

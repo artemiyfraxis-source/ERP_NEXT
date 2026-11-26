@@ -112,11 +112,16 @@ it("unticked lines stay out, a changed quantity goes, the scan and its header go
   fireEvent.click(screen.getByLabelText("Пришло: PH-3 · Разъём PH"));
   fireEvent.change(screen.getByLabelText("Факт: XH-2P · Разъём XH"), { target: { value: "9" } });
   fireEvent.change(screen.getByLabelText("Место для всех"), { target: { value: "1F4" } });
+  // ГРН-23.11: категория у каждой отмеченной позиции, без подстановки по умолчанию.
+  fireEvent.click(screen.getByRole("button", { name: "Провести поставку (1 поз.)" }));
+  expect(calls.some((call) => call.path === "/api/receiving/upd/accept")).toBe(false);
+  fireEvent.change(within(screen.getByRole("region", { name: "Категория: XH-2P · Разъём XH" })).getByLabelText("Категория ГРН"), { target: { value: "PPM" } });
   fireEvent.click(screen.getByRole("button", { name: "Провести поставку (1 поз.)" }));
 
   await waitFor(() => expect(calls.some((call) => call.path === "/api/receiving/upd/accept")).toBe(true));
   const sent = calls.find((call) => call.path === "/api/receiving/upd/accept")!.body!;
-  expect(sent.lines).toEqual([{ id: "l1", version: 3, document_quantity: "10", fact_quantity: "9", storage_location: "1F4" }]);
+  expect(sent.lines).toEqual([{ id: "l1", version: 3, document_quantity: "10", fact_quantity: "9", storage_location: "1F4",
+    grn_category: "PPM", grn_context: {}, expiry_required: false }]);
   expect(sent).toMatchObject({ scan_file: scan.scan_file, recognised: scan.recognised, document_number: "771", document_date: "2026-10-20", warehouse: "ЦАР", shipping_document_url: null });
   expect(await screen.findByText("CSM-01")).toBeInTheDocument();
   expect(await screen.findByText(/Принято 1 позиция, ГРН присвоены/)).toBeInTheDocument();

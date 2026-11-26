@@ -73,18 +73,19 @@ class RfDetails:
             raise ProductionValidationError("Некорректное максимальное число точек ВАЦ")
         if self.max_points is not None and self.role != "vna":
             raise ProductionValidationError("Число точек указывается только для ВАЦ")
-        definitions = {"solt_kit": "6650F27-full", "load_kit": "SMA-MF06-loads"}
-        if self.kit_definition and self.kit_definition != definitions.get(self.role):
+        definitions = {"solt_kit": ("6650F27-full", "SMA-MF06-characterized"), "load_kit": ("SMA-MF06-loads",)}
+        if self.kit_definition and self.kit_definition not in definitions.get(self.role, ()):
             raise ProductionValidationError("Неизвестный состав набора калибровки")
         if any(p.f_max_ghz is not None and self.f_min_ghz is not None and p.f_max_ghz <= self.f_min_ghz for p in self.interfaces):
             raise ProductionValidationError("Верхняя частота должна быть выше нижней")
         if self.confirmed:
-            counts = (1,) if self.role == "load" else (1, 2) if self.role == "load_kit" else (2,)
+            # SMA-MF06 measures live in their own registry; retain the legacy kit's connector summary.
+            counts = (1,) if self.role == "load" else (1, 2) if self.role == "load_kit" or self.kit_definition == "SMA-MF06-characterized" else (2,)
             if len(self.interfaces) not in counts or self.role == "unknown" or not self.source.strip():
                 raise ProductionValidationError("Для подтверждения укажите назначение, интерфейсы и источник")
             if any(p.impedance_ohm is None for p in self.interfaces):
                 raise ProductionValidationError("Для подтверждения интерфейсов укажите сопротивление")
-            if self.role in definitions and self.kit_definition != definitions[self.role]:
+            if self.role in definitions and self.kit_definition not in definitions[self.role]:
                 raise ProductionValidationError("Подтвердите состав набора калибровки или нагрузок")
 
 

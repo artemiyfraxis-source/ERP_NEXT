@@ -85,6 +85,7 @@ function placeFromUrl(): Place {
   if (moved && moved !== value) {
     const url = new URL(window.location.href);
     url.searchParams.set("section", moved);
+    if (value === "labeldesigner") url.searchParams.set("printer", "labels");
     const view = value ? ALIAS_VIEW[value] : undefined;
     if (view) url.searchParams.set("view", view);
     window.history.replaceState(window.history.state, "", url);

@@ -35,7 +35,8 @@ def as_user(permissions, *, service=False):
 @pytest.fixture
 def catalog_api(database, monkeypatch):
     monkeypatch.setattr(bulk_import, "RATE_LIMITER", ImportRateLimiter())
-    command.upgrade(config(database), REVISION)
+    # The API runs today's ORM, so the schema is the head, not the cutover revision (later migrations add columns).
+    command.upgrade(config(database), "head")
     engine = create_engine(f"sqlite:///{database.as_posix()}", connect_args={"check_same_thread": False})
     event.listen(engine, "connect", lambda connection, _: connection.execute("PRAGMA foreign_keys=ON"))
     old = {key: getattr(app.state, key, None) for key in ("references_uow_factory", "production_uow_factory")}

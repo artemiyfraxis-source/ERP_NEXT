@@ -67,6 +67,16 @@ def database(tmp_path, monkeypatch):
     with engine.begin() as connection:
         connection.execute(text(
             "ALTER TABLE production_plan_events ADD COLUMN field VARCHAR(32) NOT NULL DEFAULT ''"))
+        # 0218: the GRN identity/quality columns of stock, receiving and finished goods (nullable here, no FK/CHECK:
+        # the registry tables stay absent on this old schema, while the current ORM still selects the columns).
+        from app.shared.persistence import Base
+        for name in ("warehouse_lots", "receiving_lines", "finished_goods", "finished_goods_acts"):
+            have = {row[1] for row in connection.execute(text(f"PRAGMA table_info({name})"))}
+            for column in (Base.metadata.tables[name].columns if have else ()):  # table absent on this old schema
+                if column.name not in have and (column.name.startswith(("grn_", "quality_")) or column.name in {
+                        "material_owner_id", "csm_project_id", "expiry_required"}):
+                    connection.execute(text(f"ALTER TABLE {name} ADD COLUMN {column.name} "
+                                            f"{column.type.compile(dialect=engine.dialect)}"))
         # 0100: история ручной смены этапа.
         connection.execute(text(
             "ALTER TABLE production_plan_events ADD COLUMN from_value VARCHAR(64) NOT NULL DEFAULT ''"))
