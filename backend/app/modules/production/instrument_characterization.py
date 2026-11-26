@@ -1,10 +1,12 @@
 """Shared measured facts for an instrument label and its on-demand passport."""
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, ROUND_CEILING
 import math
 import re
+
+from app.shared.clock import MOSCOW
 
 from .instrument_serials import CONNECTOR_LETTERS, IN_HOUSE_SERIAL
 from .rf_interfaces import RfDetails, parse_interfaces
@@ -283,9 +285,19 @@ def characterization(file: InstrumentFile) -> Characterization | None:
     comments = tuple(line.strip()[1:].strip() for line in text.splitlines() if line.strip().startswith("!"))
     if any("SYNTHETIC OFFLINE DATA - NOT A MEASUREMENT" in comment.upper() for comment in comments):
         return None
-    captured = next((_date(match[1]) for comment in comments
-                     if (match := re.search(r"(?:^|[;\s])captured=(\d{4}-\d{2}-\d{2}T[^;\s]{1,40})(?:$|[;\s])", comment, re.I))
-                     and _date(match[1]) is not None), None)
+    captured = None
+    for comment in comments:
+        match = re.search(r"(?:^|[;\s])captured=(\d{4}-\d{2}-\d{2}T[^;\s]{1,40})(?:$|[;\s])", comment, re.I)
+        if match is None:
+            continue
+        try:
+            timestamp = datetime.fromisoformat(match[1])
+            # Aware capture receipts describe an instant; legacy naive stamps already use local time.
+            captured = (timestamp.astimezone(MOSCOW) if timestamp.tzinfo else timestamp).date()
+        except (ValueError, OverflowError):
+            captured = _date(match[1])
+        if captured is not None:
+            break
     measured = captured or _date("\n".join(comments)) or _date(file.file_name) or file.uploaded_at.date()
     # Uploaded files are bounded, but arbitrary comment payloads must not produce thousands of PDF pages.
     clipped = len(comments) > 100 or any(len(line) > 2000 for line in comments)
