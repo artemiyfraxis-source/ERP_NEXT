@@ -82,7 +82,9 @@ export interface UnitSetup {
   references: { id: string; wire: string; contact: string; version: number; values: Record<string, string>; created_by: string; created_at: string }[];
   /** Открытые задания наладки, которые сотрудник видит в «Запросах на наладку»; `mine` — назначены ему,
    *  `can_confirm` — он может записать «Настроено по заданию» (назначенный наладчик или мастер площадки). */
-  open_tasks: { id: string; version: number; status: string; operation: string; planned_start: string | null; planned_finish: string | null; mine: boolean; can_confirm: boolean }[];
+  open_tasks: { id: string; version: number; status: string; operation: string; planned_start: string | null; planned_finish: string | null; mine: boolean; can_confirm: boolean;
+    /** Операция задания и позиция ЭТК, для которой наладка (пресс читает из неё клемму, аппликатор, высоту обжима). */
+    source?: { task_id: string; operation_id: string; etk_position: number } | null }[];
   history: { at: string; by: string; operation: string; reason: string; values: Record<string, string> }[];
   online: boolean;
 }
@@ -92,6 +94,9 @@ export interface ConfigurationDraft {
   task_id: string | null;
   task_version?: number | null;
   values: Record<string, string>;
+  /** Провод и клемма, под которые настроен станок (пресс: «Что обжимаем»). */
+  wire?: string;
+  contact?: string;
   reason: string;
 }
 
