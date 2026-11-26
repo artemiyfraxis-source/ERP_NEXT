@@ -16,7 +16,9 @@ production/machine_runs.py; the write itself is the card's write queue (machine_
   batch. Values include a positive quantity, length and all confirmed geometry. The client stages recipe/reference
   values before confirmation; this endpoint never injects later changes from the mutable wire recipe.
 - `POST .../run/reset` `{expected_active_run_id, confirm_state}` prepares «Новый тираж»: preserves the old run's
-  count, sets D22 to the fresh D649 counter and clears job/marking fields. D649/D645 are never written.
+  count, sets D22 to the fresh D649 counter and clears job/marking fields. With `{reset_counters: true, seen_total,
+  seen_batch}` (owner 23.11.2026) the same one command first zeroes D649/D645 (runner 1.5.2, production/machine_writes
+  `enqueue_reset_counters`) and writes the target 0; otherwise D649/D645 are not written.
 - `POST /api/production/machines/card/{ОБ}/run/close` (edit) `{run_id}` for a cutting run → closed with the machine
   count (the hand-in in «Мои задания» is pre-filled with it, the operator confirms there); for a manual run also
   `{version, good, defect, defect_reason, material, material_note}` → the manual job is finished (`count_source` plc, or
@@ -81,6 +83,11 @@ class RunPayload(Payload):
 class ResetPayload(Payload):
     expected_active_run_id: UUID | None
     confirm_state: int
+    # «Обнулить счётчик» in the same confirmation (owner 23.11.2026): D649 / D645 → 0 first, then the new batch with the
+    # target 0. `seen_*` — the counters the window showed («Сделано 2056 → 0, пучок 6 → 0»).
+    reset_counters: bool = False
+    seen_total: int | None = Field(default=None, ge=0, le=0xFFFFFFFF)
+    seen_batch: int | None = Field(default=None, ge=0, le=0xFFFFFFFF)
 
 
 class ClosePayload(Payload):
@@ -266,15 +273,28 @@ def reset_run(inventory: str, payload: ResetPayload, principal: Writer, factory:
         refuse_while_manual(session, link.equipment_id)
         if runs.is_open(previous) and (previous.status in commands.OPEN or runs.pending(previous)):
             raise HTTPException(409, runs.CLOSE_CHECKING)
+        if payload.reset_counters and (payload.seen_total is None or payload.seen_batch is None):
+            raise HTTPException(422, "Обнуление счётчика: нужны показанные значения «сделано» и «пучок»")
         # Reuse the normal counter age, link and idle checks. Only the absolute target is used below.
         try:
             _, quantity = commands.quantity_as_target([commands.FieldWrite("total_set", 1)],
                 session.get(rules.MachineSnapshotRow, link.equipment_id), now)
+            if payload.reset_counters:
+                quantity = {**quantity, "counter": 0}  # the counters become 0 first, the target follows them
             values = {"total_set": quantity["counter"], "order_quantity": 0, "order_number": "", "product": "",
                       **{item.key: item.value for item in marking_writes({}, new_job=True)}}
-            row, expired = commands.enqueue(session, equipment_id=link.equipment_id, purpose="settings",
-                writes=[commands.FieldWrite(key, value) for key, value in values.items()], summary="Новый тираж",
-                actor_id=principal.actor.id, actor_name=principal.actor.name, now=now)
+            writes = [commands.FieldWrite(key, value) for key, value in values.items()]
+            if payload.reset_counters:
+                row, expired = commands.enqueue_reset_counters(
+                    session, equipment_id=link.equipment_id, seen_total=payload.seen_total,
+                    seen_batch=payload.seen_batch, writes=writes,
+                    summary=f"Новый тираж с обнулением счётчика: сделано {payload.seen_total} → 0, "
+                            f"пучок {payload.seen_batch} → 0",
+                    actor_id=principal.actor.id, actor_name=principal.actor.name, now=now)
+            else:
+                row, expired = commands.enqueue(session, equipment_id=link.equipment_id, purpose="settings",
+                    writes=writes, summary="Новый тираж",
+                    actor_id=principal.actor.id, actor_name=principal.actor.name, now=now)
         except commands.MachineCommandRefused as error:
             raise HTTPException(409, str(error)) from error
         except rules.MachineWriteInvalid as error:
@@ -287,6 +307,8 @@ def reset_run(inventory: str, payload: ResetPayload, principal: Writer, factory:
                      f"Задание завершено: {closed.get('label', '')} — по станку {closed.get('machine_count')} шт",
                      command_id=str(previous.id))
         _journal(uow, link.equipment_id, "write_queued", principal.actor, now,
+                 (f"Новый тираж: обнулить счётчик (сделано {payload.seen_total} → 0, пучок {payload.seen_batch} → 0), "
+                  "записать цель 0; очистить маркировку и связь с заданием") if payload.reset_counters else
                  f"Новый тираж: записать цель {quantity['counter']}; очистить маркировку и связь с заданием",
                  command_id=str(row.id))
         uow.commit()
