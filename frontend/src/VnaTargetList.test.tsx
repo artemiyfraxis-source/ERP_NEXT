@@ -94,3 +94,10 @@ it("reloads on session change and ignores a response from the previous session",
   await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
   expect(screen.queryByText("СИ.035")).not.toBeInTheDocument();
 });
+
+it.each([{}, { targets: null }, { targets: "СИ.035" }, null])("shows the empty state instead of crashing on a payload without a list: %j",
+  async (payload) => {
+    vi.spyOn(vnaBenchApi, "targets").mockResolvedValue(payload as never);
+    render(<VnaTargetList {...props} />);
+    expect(await screen.findByText("Нет СИ с ВЧ-разъёмами — заведите СИ в реестре")).toBeInTheDocument();
+  });
