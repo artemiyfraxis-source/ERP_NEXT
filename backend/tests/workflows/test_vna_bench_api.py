@@ -266,8 +266,9 @@ def test_target_list_reuses_rf_registry_and_excludes_vna_acm_and_non_rf(env):
                                   interfaces_text="3.5mm вилка – 3.5mm розетка", last_measured_at=None)
 
 
-@pytest.mark.parametrize("permissions,status", [({"quality": "view"}, 200), ({"production": "edit"}, 403), ({}, 403)])
-def test_target_list_requires_quality_view_not_edit(env, monkeypatch, permissions, status):
+# The list belongs to the bench: same right as the bench state (ОТК edit, the contract gate production_quality).
+@pytest.mark.parametrize("permissions,status", [({"quality": "edit"}, 200), ({"quality": "view"}, 403), ({"production": "edit"}, 403), ({}, 403)])
+def test_target_list_follows_the_bench_right(env, monkeypatch, permissions, status):
     monkeypatch.setitem(app.dependency_overrides, authenticated_principal, lambda: Principal(
         actor=Actor(id=uuid4(), name="Наблюдатель", department="ОТК"), email="viewer@example.test",
         roles=frozenset(), permissions=permissions))

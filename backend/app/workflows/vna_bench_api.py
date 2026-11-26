@@ -61,7 +61,6 @@ from app.modules.warehouse.scan_jobs import ScanJobClosed
 from app.shared.clock import MOSCOW, as_utc
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
-from app.shared.http_auth import Principal, require_section
 from .coax_vswr_api import CoaxRefs, _task_etk, task_norm
 from .vna_capture_instrument import capture_instrument
 from .vna_measurement_api import Factory, Now, Person, _expire
@@ -71,7 +70,6 @@ router = APIRouter(tags=["production"])
 PREFIX = "/api/production/vna-bench"
 Techcards = Annotated[Callable | None, Depends(techcards_uow_factory)]
 Refs = Annotated[Callable | None, Depends(references_uow_factory)]
-Reader = Annotated[Principal, Depends(require_section("quality", "view"))]
 MEASURING = ("instrument", "assembly")       # stopped by a failed weekly/monthly control (разд. 14)
 ITEMS = ("instrument", "assembly")
 CHECKS = {"flex": "flex", "weekly": "control_standard", "monthly": "kit_standards"}
@@ -828,7 +826,7 @@ def close(session_id: UUID, payload: Version, principal: Person, now: Now, facto
 # ---- objects ---------------------------------------------------------------------------------------------------------
 
 @router.get(PREFIX + "/targets")
-def targets(_principal: Reader, factory: Factory):
+def targets(_principal: Person, factory: Factory):
     """Registry RF targets; connection/band readiness remains the existing plan's decision."""
     with _refusals(), factory() as uow:
         repository = RfRepository(uow.session)
