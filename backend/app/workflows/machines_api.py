@@ -523,7 +523,8 @@ JOB_TONES = {"pending": "info", "taken": "info", "spooled": "ok", "printed": "ok
 EVENT_TEXTS = {"production.machine_bound": "Агент станка привязан к ПК {pc_name}",
                # Writes and corrections (slice 4, machine_writes_api.py) carry their own line.
                **{f"production.machine_{event}": "{text}" for event in (
-                   "write_queued", "write_done", "write_failed", "offset_set", "etk_corrected", "run_verified", "run_closed")}}
+                   "write_queued", "write_done", "write_failed", "offset_set", "etk_corrected", "run_verified", "run_closed",
+                   "counters_reset")}}
 JOURNAL_LIMIT = 30
 
 
