@@ -953,8 +953,9 @@ it("a damaged or old saved set gives the default order; a column the saved order
   window.localStorage.setItem("erp-table:stock-columns:v3", JSON.stringify({ grouped: { order: ["warehouse", "name", "bogus", "grn", "grn"], hidden: ["name", "type", "bogus"] } }));
   render(<WarehousePage />);
   await screen.findByText("GHR-04V-S");
-  // The name cannot be hidden by a saved set; the unknown ones are dropped, the missing ones follow in the default order.
-  expect(headerNames()).toEqual(["Склад", "Наименование", "ГРН", "Свободно", "Резерв", "Партий", "Места", "Артикул номенклатуры"]);
+  // The name cannot be hidden by a saved set; the unknown ones are dropped, the missing ones follow in the default order;
+  // «Свободно» and «Места» never stand right of the name.
+  expect(headerNames()).toEqual(["Склад", "Наименование", "Свободно", "Места", "ГРН", "Резерв", "Партий", "Артикул номенклатуры"]);
 });
 
 it("the first column stays in view when the table is scrolled sideways: Тип, or ГРН when the rows are grouped by type", async () => {
@@ -1002,6 +1003,20 @@ it("a click on a header still sorts the rows; the sort column keeps its sort aft
   fireEvent.click(openChooser().getByRole("button", { name: "Ниже: Свободно" }));
   expect(headerNames()).toEqual(["Тип", "ГРН", "Резерв", "Свободно", "Партий", "Места", "Серия", "Артикул номенклатуры", "Наименование", "Склад"]);
   expect(screen.getByRole("columnheader", { name: /^Свободно/ })).toHaveAttribute("aria-sort", "ascending");
+});
+
+it("a sort column that leaves the table gives the order back to the article", async () => {
+  mockStock([lot, second]);
+
+  render(<WarehousePage />);
+  await screen.findByText("GHR-04V-S");
+  fireEvent.change(screen.getByLabelText("Группировка склада"), { target: { value: "" } });
+  fireEvent.click(screen.getByRole("button", { name: /^Тип/ }));
+  expect(screen.getByRole("columnheader", { name: /^Тип/ })).toHaveAttribute("aria-sort", "ascending");
+
+  fireEvent.click(openChooser().getByLabelText("Тип"));
+  await waitFor(() => expect(screen.getByRole("columnheader", { name: /^Артикул/ })).toHaveAttribute("aria-sort", "ascending"));
+  expect(screen.queryByRole("columnheader", { name: /^Тип/ })).not.toBeInTheDocument();
 });
 
 it("the lot table has its own order and set of columns; «Назначение» is off until asked for", async () => {

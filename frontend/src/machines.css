@@ -43,6 +43,10 @@
 .machine-summary dt { color: var(--muted-foreground); }
 .machine-summary dd { margin: 0; font-weight: 500; font-variant-numeric: tabular-nums; }
 .machine-summary.machine-old dd { color: var(--muted-foreground); }
+.machine-summary dd .machine-zero { margin-left: 8px; }
+/* «Обнулить счётчик» in «Новый тираж»: a touch-sized checkbox (erp-machine-hmi: targets ≥ 44 px). */
+.machine-check { display: flex; align-items: center; gap: 8px; min-height: 44px; font-weight: 500; }
+.machine-check input[type="checkbox"] { width: 22px; height: 22px; margin: 0; }
 
 /* Чертёж провода ОБ.019 (Ob019WireDrawing.tsx): колонки — зачистка начала, изоляция, зачистка конца (ширина — в style). */
 .wire-drawing { display: grid; row-gap: 4px; padding: 12px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }

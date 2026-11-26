@@ -21,7 +21,14 @@ $script:sp = $null
 # page D730 and the date D1087..D1089 are written only by 'pulse' / Write-HmiContext below, never on request;
 # passwords D1682..D1687 and the SHA-256 handshake D1203..D1211 never.
 # 1.5.1: verified fresh pulses and D600.6 recovery before accepting requests after restart.
-$script:MbdVersion = '1.5.1'
+# 1.5.2 (23.11.2026): 'reset_counters' - the only path that writes the PLC counters: exactly 0 to D645..646 (B.Finish,
+# done in the bundle) and/or D649..650 (T.Finish, done in total), only while the machine stands (D766 in
+# $script:ResetStates) and while D645/646/649/650 still hold the confirmed `seen`, with D645..650 read before and
+# after (D647..648 = history, never written) and D766 read again after the writes. 'write' still refuses
+# D645..650: the counters never enter $script:allowedWrite.
+$script:MbdVersion = '1.5.2'
+$script:ResetCounters = @(645, 649)
+$script:ResetStates = @(100, 102, 106, 107)
 $script:allowedWrite = @(@(20, 20), @(22, 28), @(32, 53), @(67, 72), @(74, 74), @(100, 104), @(120, 123), @(197, 197), @(199, 199), @(391, 395), @(401, 402), @(404, 415), @(423, 423), @(430, 432), @(440, 484), @(658, 659), @(940, 969), @(1703, 1705), @(1722, 1723), @(1750, 1753))
 $script:allowedBits = @{ 132 = @(0); 400 = @(0); 604 = @(0); 422 = @(0); 434 = @(0); 435 = @(0); 436 = @(0) }
 $script:allowedPulse = @{ 599 = @(0, 2); 600 = @(1, 4, 6) }
@@ -231,9 +238,56 @@ function Invoke-SetBit([int]$a, [int]$bit, [int]$value) {
     return @{ addr = $a; bit = $bit; value = $value; before = $orig; written = $word; readback = [int[]](Read-Regs $a 1) }
 }
 
+# 'reset_counters' request -> the counter words to zero (645 and/or 649). Every value must be the integer 0, exactly two
+# per counter (a u32), each counter at most once; anything else is refused before the port opens.
+function Get-ResetTargets($Blocks) {
+    $targets = @()
+    $list = @($Blocks | Where-Object { $_ -ne $null })
+    if ($list.Count -lt 1 -or $list.Count -gt 2) { throw 'reset_counters refused: one or two counters' }
+    foreach ($block in $list) {
+        if (-not ($block -is [System.Collections.IDictionary])) { throw 'reset_counters refused: bad block' }
+        $a = $block['addr']
+        if (-not ($a -is [int]) -or $script:ResetCounters -notcontains $a) { throw ('reset_counters refused: only D645 / D649, not D' + $a) }
+        if ($targets -contains $a) { throw ('reset_counters refused: D' + $a + ' twice') }
+        $values = @($block['values'])
+        if ($values.Count -ne 2) { throw ('reset_counters refused: D' + $a + ' needs two words') }
+        foreach ($v in $values) { if (-not ($v -is [int]) -or $v -ne 0) { throw ('reset_counters refused: only 0 may be written to D' + $a) } }
+        $targets += $a
+    }
+    return ,$targets
+}
+
+# 'reset_counters' `seen` -> @{ '645' = word; ... } of D645/646/649/650 the operator confirmed; refused when missing.
+function Get-ResetSeen($Seen) {
+    if (-not ($Seen -is [System.Collections.IDictionary])) { throw 'reset_counters refused: seen counters missing' }
+    $out = @{}
+    foreach ($key in @('645', '646', '649', '650')) {
+        $v = $Seen[$key]
+        if (-not ($v -is [int]) -or $v -lt 0 -or $v -gt 65535) { throw ('reset_counters refused: seen D' + $key + ' missing') }
+        $out[$key] = $v
+    }
+    return $out
+}
+
+# Zero the counters in one COM8 session: state check, D645..650 before compared with `seen`, the zero writes,
+# D645..650 after, D766 again (state_after: the machine may have been started meanwhile - the runner reports it).
+function Invoke-ResetCounters([int[]]$Targets, $Seen) {
+    $state = (Read-Regs 766 1)[0]
+    if ($script:ResetStates -notcontains $state) { throw ('reset_counters refused: state ' + $state) }
+    $before = [int[]](Read-Regs 645 6)
+    foreach ($key in $Seen.Keys) {
+        if ($before[[int]$key - 645] -ne $Seen[$key]) { throw ('reset_counters refused: seen value changed D' + $key) }
+    }
+    foreach ($a in $Targets) { Write-Regs $a @(0, 0) }
+    $after = [int[]](Read-Regs 645 6)
+    $stateAfter = (Read-Regs 766 1)[0]
+    return @{ state = $state; state_after = $stateAfter; addr = 645; before = $before; readback = $after; written = [int[]]$Targets }
+}
+
 function Invoke-Request($req) {
     $cmd = [string]$req['cmd']
-    if (@('read', 'write', 'pulse', 'status', 'setbit', 'version', 'recover_correction') -notcontains $cmd) { throw ('unknown cmd ' + $cmd) }
+    if (@('read', 'write', 'pulse', 'status', 'setbit', 'version', 'recover_correction', 'reset_counters') -notcontains $cmd) { throw ('unknown cmd ' + $cmd) }
+    if ($cmd -eq 'reset_counters') { $targets = Get-ResetTargets $req['blocks']; $seen = Get-ResetSeen $req['seen'] }
     if ($cmd -eq 'version') { return @{ version = $script:MbdVersion } }
     if ($cmd -eq 'write') {
         $a = [int]$req['addr']; $vals = [int[]]@($req['values'] | ForEach-Object { [int]$_ })
@@ -263,6 +317,7 @@ function Invoke-Request($req) {
             }
             'pulse' { Write-HmiContext; return (Invoke-Pulse ([int]$req['addr']) ([int]$req['bit']) ([int]$req['hold_ms'])) }
             'setbit' { Write-HmiContext; return (Invoke-SetBit $a $bit $value) }
+            'reset_counters' { Write-HmiContext; return (Invoke-ResetCounters $targets $seen) }
         }
     } finally {
         if ($script:sp) { try { $script:sp.Close(); $script:sp.Dispose() } catch { }; $script:sp = $null }

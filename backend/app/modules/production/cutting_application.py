@@ -224,13 +224,22 @@ def planning_groups(uow, new_tasks, free, site, team, actor):
 def check_access(group, uow, actor):
     viewer = uow.operators.get(actor.id)
     site = viewer.site if viewer else ""
+    check_group_sites(group, site, uow.cutting.members(group.id), uow.production.get, uow.operators.get)
+
+
+def check_group_sites(group, site, members, task_of, operator_of):
+    """The whole-group site rule of `check_access` over already-read data (the queue checks every visible group in
+    one pass): a viewer with a site sees a group only when the group, each active member's task (handed to) and each
+    member's assignees are all of that site; a viewer without a site sees every group (the queue then passes no
+    members). `members` — the group's active members (`task_id`, `operation_id`); `task_of`/`operator_of` — lookups by
+    id (an inactive operator included)."""
     if site and group.site and site != group.site:
         raise PermissionError("Группа содержит работу другой площадки")
-    for member in uow.cutting.members(group.id):
-        task = uow.production.get(member.task_id)
+    for member in members:
+        task = task_of(member.task_id)
         sites = {group.site, task.handed_to} - {""}
         for identifier in task.operation(member.operation_id).operator_ids:
-            operator = uow.operators.get(identifier)
+            operator = operator_of(identifier)
             if operator and operator.site:
                 sites.add(operator.site)
         if site and any(other != site for other in sites):

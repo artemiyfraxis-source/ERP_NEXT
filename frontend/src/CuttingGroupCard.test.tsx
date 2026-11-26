@@ -250,8 +250,8 @@ const plain = (rows: CuttingGroup["rows"]) => rows.map((row) => ({ ...row, label
 it("shows label progress failures inside the group instruction", async () => {
   vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ detail: "Прогресс печати недоступен" }, 503));
   render(<CuttingGroupCard group={{ ...group, kind: "labels" }} readOnly={false} renderInstruction={() => null} />);
-  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
-  expect(await within(screen.getByRole("dialog", { name: "Инструкция группы резки" })).findByRole("alert"))
+  fireEvent.click(screen.getByRole("button", { name: "Подробно" }));
+  expect(await within(screen.getByRole("dialog", { name: "Подробно по КБ" })).findByRole("alert"))
     .toHaveTextContent("Прогресс печати недоступен");
 });
 
@@ -270,23 +270,24 @@ it("labels group: printed / remaining per КБ and «Печатать остав
     remaining_labels: index === 0 ? labels : 0 })), printed: 0, remaining, remaining_labels: labels });
   const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(json(answer(5)));
   const { unmount } = render(<CuttingGroupCard group={{ ...group, kind: "labels" }} readOnly={false} renderInstruction={() => null} />);
-  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
+  fireEvent.click(screen.getByRole("button", { name: "Подробно" }));
   expect(screen.getByRole("heading", { name: "Печать этикеток · 708К. · 4 КБ" })).toBeTruthy();
   await waitFor(() => expect(screen.getByRole("button", { name: "Печатать оставшиеся" })).toBeEnabled());
   expect(String(fetch.mock.calls[0][0])).toBe("/api/production/marking/progress?group_id=group-1");
-  expect(screen.getAllByRole("columnheader").map((cell) => cell.textContent?.trim())).toEqual(["КБ", "Напечатано", "Осталось"]);
+  expect(within(screen.getByRole("dialog", { name: "Подробно по КБ" })).getAllByRole("columnheader").map((cell) => cell.textContent?.trim()))
+    .toEqual(["КБ", "Этикеток, шт", "Напечатано, шт", "Осталось, шт", "Изделий без этикеток"]);
   expect(screen.queryByText("Длина, мм")).toBeNull();
   unmount();
   fetch.mockResolvedValue(json(answer(0)));
   const second = render(<CuttingGroupCard group={{ ...group, kind: "labels" }} readOnly={false} renderInstruction={() => null} />);
-  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
-  await waitFor(() => expect(screen.getAllByText("15").length).toBeGreaterThan(0));
+  fireEvent.click(screen.getByRole("button", { name: "Подробно" }));
+  await waitFor(() => expect(within(screen.getByRole("dialog", { name: "Подробно по КБ" })).getAllByText("0")).toHaveLength(8));
   expect(screen.getByRole("button", { name: "Печатать оставшиеся" })).toBeDisabled();
   second.unmount();
   // Every item's numbered labels printed, fixed ones left: no item remains, the button stays enabled.
   fetch.mockResolvedValue(json(answer(0, 30)));
   render(<CuttingGroupCard group={{ ...group, kind: "labels" }} readOnly={false} renderInstruction={() => null} />);
-  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
+  fireEvent.click(screen.getByRole("button", { name: "Подробно" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Печатать оставшиеся" })).toBeEnabled());
 });
 
@@ -294,10 +295,18 @@ it("tubes group: material, length and pieces, one value per column", () => {
   const rows = plain(group.rows).map((row, index) => ({ ...row, tubes: [
     { material: "ТУТ 2:1 Ø3", length_mm: 35, quantity: 30 + index }, { material: "ТУТ 2:1 Ø3", length_mm: 55, quantity: 15 }] }));
   render(<CuttingGroupCard group={{ ...group, kind: "tubes", rows }} readOnly={false} renderInstruction={() => null} />);
-  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
+  // Face: one row per material × length, no КБ column; КБ rows only behind «Подробно».
+  const face = screen.getByRole("region", { name: "Трубки группы, итого" });
+  expect(within(face).getAllByRole("columnheader").map((cell) => cell.textContent?.trim())).toEqual(["Материал", "Длина, мм", "План, шт"]);
+  expect(within(face).getAllByRole("row").slice(1).map((row) => within(row).getAllByRole("cell").map((cell) => cell.textContent)))
+    .toEqual([["ТУТ 2:1 Ø3", "35", "126"], ["ТУТ 2:1 Ø3", "55", "60"]]);
+  expect(screen.getByText("Сдано КБ: 0 из 4")).toBeInTheDocument();
+  expect(screen.queryByText(/По проектам/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Подробно" }));
   expect(screen.getByRole("heading", { name: "Резка трубок · 708К. · 4 КБ" })).toBeTruthy();
-  expect(screen.getAllByRole("columnheader").map((cell) => cell.textContent?.trim())).toEqual(["КБ", "Материал", "Длина, мм", "Шт."]);
-  expect(screen.getAllByRole("row")).toHaveLength(9);
+  const dialog = screen.getByRole("dialog", { name: "Подробно по КБ" });
+  expect(within(dialog).getAllByRole("columnheader").map((cell) => cell.textContent?.trim())).toEqual(["КБ", "Материал", "Длина, мм", "Шт."]);
+  expect(within(dialog).getAllByRole("row")).toHaveLength(9);
 });
 
 it("old mixed group (no kind) keeps the wide table and the label block", () => {
@@ -373,7 +382,7 @@ it("shows the group norm to the master only", () => {
 
 it("labels group: «Отметить напечатанные вне ERP» opens its window and a mark reloads «Напечатано / Осталось»", async () => {
   const progress = (printed: number) => ({ rows: group.rows.map((row) => ({ task_id: row.task_id, task_number: row.task_number,
-    item: row.item, quantity: 15, printed, remaining: 15 - printed, remaining_labels: (15 - printed) * 3 })),
+    item: row.item, quantity: 15, printed, remaining: 15 - printed, remaining_labels: (15 - printed) * 3, total_labels: 45, printed_labels: printed * 3 })),
     printed: printed * 4, remaining: (15 - printed) * 4, remaining_labels: (15 - printed) * 12 });
   let marked = false;
   const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -386,16 +395,19 @@ it("labels group: «Отметить напечатанные вне ERP» opens
       task_number: row.task_number, serial: 1, text: `FRX.${row.item}.1`, quantity: 1, state: "new" })) });
   });
   render(<CuttingGroupCard group={{ ...group, kind: "labels" }} readOnly={false} renderInstruction={() => null} />);
-  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
-  await waitFor(() => expect(screen.getAllByText("0")).toHaveLength(4));
-  fireEvent.keyDown(screen.getByRole("dialog", { name: "Инструкция группы резки" }), { key: "Escape" });
+  fireEvent.click(screen.getByRole("button", { name: "Подробно" }));
+  await waitFor(() => expect(within(screen.getByRole("dialog", { name: "Подробно по КБ" })).getAllByText("0")).toHaveLength(4));
+  fireEvent.keyDown(screen.getByRole("dialog", { name: "Подробно по КБ" }), { key: "Escape" });
   fireEvent.click(screen.getByRole("button", { name: "Отметить напечатанные вне ERP" }));
   const dialog = screen.getByRole("dialog", { name: "Отметить напечатанные вне ERP" });
   fireEvent.click(await within(dialog).findByRole("button", { name: /^Отметить 4\sэтикетки$/ }));
   await waitFor(() => expect(fetch.mock.calls.filter(([url]) => String(url).startsWith("/api/production/marking/progress"))).toHaveLength(2));
   fireEvent.keyDown(dialog, { key: "Escape" });
-  fireEvent.click(screen.getByRole("button", { name: "Инструкция" }));
-  await waitFor(() => expect(screen.getAllByText("14").length).toBeGreaterThanOrEqual(4));
+  // Face counters follow the reload: 4 КБ × 45 label pieces, 3 of each КБ marked printed.
+  expect(within(screen.getByRole("group", { name: "Этикетки группы, шт" })).getAllByRole("definition").map((cell) => cell.textContent))
+    .toEqual(["180", "12", "168"]);
+  fireEvent.click(screen.getByRole("button", { name: "Подробно" }));
+  await waitFor(() => expect(within(screen.getByRole("dialog", { name: "Подробно по КБ" })).getAllByText("14")).toHaveLength(4));
   expect(fetch.mock.calls.filter(([url]) => String(url).startsWith("/api/production/marking/progress"))).toHaveLength(2);
 });
 
@@ -416,4 +428,29 @@ it("read-only labels group has no «Отметить напечатанные в
   vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ rows: [], printed: 0, remaining: 0, remaining_labels: 0 }));
   render(<CuttingGroupCard group={{ ...group, kind: "labels" }} readOnly renderInstruction={() => null} />);
   expect(screen.queryByRole("button", { name: "Отметить напечатанные вне ERP" })).toBeNull();
+});
+
+it("labels face: counters over the shown КБ, split by project only when КБ of several projects are shown", async () => {
+  const rows = group.rows.map((row, index) => ({ ...row, project: index < 3 ? "708К." : "709К.", state: index === 0 ? "done" as const : row.state }));
+  const answer = { rows: rows.map((row, index) => ({ task_id: row.task_id, task_number: row.task_number, item: row.item, quantity: 15,
+    printed: 0, remaining: 15, remaining_labels: 45 - index * 5, total_labels: 45, printed_labels: index * 5 })), printed: 0, remaining: 60, remaining_labels: 150 };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json(answer));
+  const counters = () => within(screen.getByRole("group", { name: "Этикетки группы, шт" })).getAllByRole("definition").map((cell) => cell.textContent);
+  const { unmount } = render(<CuttingGroupCard group={{ ...group, kind: "labels", rows }} readOnly={false} renderInstruction={() => null} />);
+  await waitFor(() => expect(counters()).toEqual(["180", "30", "150"]));
+  expect(screen.getByText("Сдано КБ: 1 из 4")).toBeInTheDocument();
+  expect(screen.getByText(/Осталось по проектам/).textContent?.replaceAll("\u00a0", " ")).toBe("Осталось по проектам: 708К.: 120 шт; 709К.: 30 шт");
+  unmount();
+  // Partial view of the first two КБ: no other КБ leaks into the counters, one project — no hint.
+  render(<CuttingGroupCard group={{ ...group, kind: "labels", partial_view: true, rows: rows.slice(0, 2) }} readOnly={false} renderInstruction={() => null} />);
+  await waitFor(() => expect(counters()).toEqual(["90", "5", "85"]));
+  expect(screen.queryByText(/Осталось по проектам/)).toBeNull();
+});
+
+it("tubes face: two projects get the allocation hint; a КБ without tubes is named", () => {
+  const rows = plain(group.rows).map((row, index) => ({ ...row, project: index < 2 ? "708К." : "709К.",
+    tubes: index === 3 ? [] : [{ material: "ТУТ 2:1 Ø3", length_mm: "15", quantity: index < 2 ? 20 + index * 10 : 30 }] }));
+  render(<CuttingGroupCard group={{ ...group, kind: "tubes", rows }} readOnly={false} renderInstruction={() => null} />);
+  expect(screen.getByText(/^По проектам/).textContent?.replaceAll("\u00a0", " ")).toBe("По проектам: 708К.: 50 шт; 709К.: 30 шт");
+  expect(screen.getByText("Нет трубок в ЭТК: КБ4")).toBeInTheDocument();
 });
