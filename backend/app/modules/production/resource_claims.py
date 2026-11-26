@@ -10,6 +10,12 @@ class ResourceConflict(ValueError):
     pass
 
 
+class ResourcesBusy(RuntimeError):
+    """The production resource lock stayed held past the wait limit: the request may simply be repeated (HTTP 503).
+
+    Not a ValueError on purpose: handlers map those to 409/422, this one must reach the app-wide 503 handler."""
+
+
 class ResourceKind(str, Enum):
     MACHINE = "machine"
     PERSON = "person"
