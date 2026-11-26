@@ -137,6 +137,9 @@ def inspect(db, line, document_quantity: str, **overrides):
             line_id=line.id,
             expected_version=line.version,
             inspection=replace(InspectionInput(
+                grn_category="PPM",
+                quality_authorized=True,
+                quality_state="RELEASED", quality_basis="ОТК: годен",
                 fact_quantity=Decimal(document_quantity),
                 document_quantity=Decimal(document_quantity),
                 ordered_quantity=Decimal("0"),

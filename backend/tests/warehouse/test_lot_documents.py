@@ -69,8 +69,8 @@ def test_a_lot_edit_keeps_the_document_names(stand):  # noqa: F811
 
 def test_quick_entry_without_a_delivery_has_no_upd_name(stand):  # noqa: F811
     client, _ = stand
-    response = client.post("/api/stock/batches", json={"items": [
-        {"article": "CON-009", "quantity": "1", "storage_location": "2A1", "name": "Разъём"}]})
+    response = client.post("/api/stock/batches", json={"operation_id": "7d0a5a11-0000-4000-8000-000000000002", "items": [
+        {"article": "CON-009", "grn_category": "PPM", "quantity": "1", "storage_location": "2A1", "name": "Разъём"}]})
     assert response.status_code == 200, response.text
     [listed] = client.get("/api/stock?limit=10").json()["lots"]
     assert (listed["upd_name"], listed["receipt"]) == ("", None)

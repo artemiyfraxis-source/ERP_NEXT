@@ -97,6 +97,11 @@ export type VnaBenchTarget =
     item: string; operation_id?: string | null;
   };
 
+export type VnaBenchInstrumentTarget = Extract<VnaBenchTarget, { kind: "instrument" }> & {
+  interfaces_text: string;
+  last_measured_at: string | null;
+};
+
 export interface VnaBenchPlanTrace { label: string; scale: string }
 
 export interface VnaBenchPlan {
@@ -408,6 +413,7 @@ export const vnaBenchApi = {
     post<VnaBenchState>(`/sessions/${id(sessionId)}/steps/${step}`, { version }),
   /** Найти объект по скану или номеру: СИ («СИ.035»), задание и позиция («ПЗ-0001/3»), серийный номер изделия. */
   resolve: (query: string) => post<{ candidates: VnaBenchTarget[] }>("/resolve", { query }),
+  targets: () => api<{ targets: VnaBenchInstrumentTarget[] }>(`${BASE}/targets`),
   /** План замера объекта в этом сеансе: экран, полоса, точки, ПЧ, мощность, графики, шкалы, норма. */
   plan: (sessionId: string, target: VnaBenchTarget) => post<VnaBenchPlan>(`/sessions/${id(sessionId)}/plan`, { target }),
   /** Начать замер объекта (подключение 1). */

@@ -126,6 +126,30 @@ it("writes off stock with its optimistic version and stated reason", async () =>
   }));
 });
 
+it("scrap shows the fixed destination of its reason and sends no purpose", async () => {
+  let writeoff: Record<string, unknown> | undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path.split("?")[0] === "/api/stock") return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+    if (path.endsWith("/writeoff") && init?.method === "POST") {
+      writeoff = JSON.parse(String(init.body));
+      return json({ lot: { ...lot, version: 5, written_off: "1", balance: "9" } });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
+  fireEvent.click(await screen.findByRole("button", { name: "− Списать" }));
+  fireEvent.change(await screen.findByLabelText("Количество"), { target: { value: "1" } });
+  fireEvent.change(screen.getByLabelText("Основание"), { target: { value: "Брак" } });
+  const destination = screen.getByLabelText("Назначение списания") as HTMLInputElement;
+  expect(destination.value).toBe("Утилизация — брак");
+  expect(destination.readOnly).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Списать" }));
+  await waitFor(() => expect(writeoff).toMatchObject({ quantity: "1", purpose: "", reason: "Брак" }));
+});
+
 it("offers «Выдача в производство» as the write-off basis and needs a purpose before writing off", async () => {
   let writeoff: Record<string, unknown> | undefined;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -955,7 +979,7 @@ it("a damaged or old saved set gives the default order; a column the saved order
   await screen.findByText("GHR-04V-S");
   // The name cannot be hidden by a saved set; the unknown ones are dropped, the missing ones follow in the default order;
   // «Свободно» and «Места» never stand right of the name.
-  expect(headerNames()).toEqual(["Склад", "Наименование", "Свободно", "Места", "ГРН", "Резерв", "Партий", "Артикул номенклатуры"]);
+  expect(headerNames()).toEqual(["Склад", "Свободно", "Места", "Наименование", "ГРН", "Резерв", "Партий", "Артикул номенклатуры"]);
 });
 
 it("the first column stays in view when the table is scrolled sideways: Тип, or ГРН when the rows are grouped by type", async () => {

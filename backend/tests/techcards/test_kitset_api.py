@@ -215,6 +215,24 @@ def test_calculation_comparison_falls_back_to_stripped_urls(kitset_api, source, 
             flow.load_kitset(command, app.state.techcards_uow_factory, None, None)
 
 
+@pytest.mark.parametrize("step", ["register_project", "add_plan_event"])
+def test_busy_production_fails_the_load_whole_and_a_retry_completes_it(kitset_api, monkeypatch, step):
+    """No half result («заведён, но не в реестре / без ДЛ»): a busy production lock is a 503, the retry finishes it."""
+    from app.modules.production.resource_claims import ResourcesBusy
+
+    client, _lot = kitset_api
+    def busy(*_args, **_kwargs):
+        raise ResourcesBusy("Производство занято другим запросом — повторите позже")
+    with monkeypatch.context() as patch:
+        patch.setattr(flow, step, busy)
+        refused = _load(client, deadline="2026-10-20")
+    assert refused.status_code == 503 and refused.json()["detail"].startswith("Производство занято")
+    retried = _load(client, deadline="2026-10-20")
+    assert retried.status_code == 200, retried.text
+    res = retried.json()["res"]
+    assert res["erp"] is not None and not (res["erp_error"] or res["deadline_error"])
+
+
 def test_project_from_calculation_registers_plan_queue_and_addressee(kitset_api):
     client, _lot = kitset_api
     created = _load(client, deadline="2026-10-20", ship={"shipping_point": "Москва, склад 3", "contact": "Иван"})

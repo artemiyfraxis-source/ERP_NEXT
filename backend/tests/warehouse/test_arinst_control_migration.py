@@ -124,7 +124,7 @@ def test_full_sqlite_history_upgrades_to_single_0219_head(tmp_path, monkeypatch)
     config = Config(str(Path(__file__).parents[2] / "alembic.ini"))
     path = tmp_path / "history.db"
     config.set_main_option("sqlalchemy.url", "sqlite+pysqlite:///" + path.as_posix())
-    command.upgrade(config, "0217_unify_instrument_catalog")
+    command.upgrade(config, "0218_grn_registry")
     engine = sa.create_engine("sqlite+pysqlite:///" + path.as_posix())
     with engine.connect() as connection:
         counts = {name: connection.exec_driver_sql(f'SELECT COUNT(*) FROM "{name}"').scalar() for name in

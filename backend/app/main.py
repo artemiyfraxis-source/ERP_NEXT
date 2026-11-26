@@ -13,6 +13,7 @@ from sqlalchemy import text
 
 from .database import configure_database, equipment_setup_enabled
 from .modules.operations.application import background_health
+from .modules.production.resource_claims import ResourcesBusy
 from .modules.techcards.kitset_names import tls_exception_hosts
 from .shared.clock import moscow_now
 from .shared.http_auth import Principal
@@ -114,6 +115,12 @@ async def validation_error_without_input(_request: Request, error: RequestValida
     Keep only where and what failed."""
     return JSONResponse(status_code=422, content={"detail": [
         {key: item[key] for key in ("type", "loc", "msg") if key in item} for item in error.errors()]})
+
+
+@app.exception_handler(ResourcesBusy)
+async def production_resources_busy(_request: Request, error: ResourcesBusy) -> JSONResponse:
+    """The production resource lock timed out: a retryable 503 with a plain message, not a 500 (prod 23.11)."""
+    return JSONResponse(status_code=503, content={"detail": str(error)}, headers={"Retry-After": "5"})
 
 
 app.state.cookie_secure = os.getenv("ERP_COOKIE_SECURE", "1").strip().lower() not in {

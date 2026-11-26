@@ -59,7 +59,8 @@ def test_a_nonconformity_is_quarantine_and_an_offline_line_is_left_alone(db):
     _, line = paid_procurement_line(db)
     expected = dispatch_next_receiving_expected(NOW, db.receiving())
     # A defect holds the line in «Ожидание» (a missing УПД or a shortfall no longer does, owner 05.10.2026).
-    waiting = inspect(db, expected, "10", manual_nonconformities=("Механическое повреждение / брак",), defect_quantity=Decimal("1"))
+    waiting = inspect(db, expected, "10", manual_nonconformities=("Механическое повреждение / брак",), defect_quantity=Decimal("1"),
+                      quality_state=None, quality_basis="")
     assert waiting.status is ReceivingStatus.WAITING
 
     assert sync(db) == 1

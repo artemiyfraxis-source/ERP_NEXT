@@ -7,7 +7,7 @@ import subprocess
 import sys
 from contextlib import closing
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, timedelta
 from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
@@ -480,3 +480,74 @@ def test_open_generated_task_title_moves_closed_and_custom_text_stays(db):
     rows = _rows(engine, "project_tasks")
     assert all(row["project"] == NEW for row in rows)
     assert {row["title"] for row in rows} == {PLAN.text(NEW, "КБ1"), PLAN.text(OLD, "КБ1"), "Custom " + OLD}
+
+
+@pytest.mark.parametrize("reused_alias", [OLD, NEW])
+def test_grn_context_and_csm_identity_survive_two_project_renames(db, reused_alias):
+    from dataclasses import replace
+    from app.modules.warehouse.grn_registry import MaterialOwnerRow, SqlAlchemyGrnAllocator
+    from app.modules.warehouse.grn import GrnCategory, GrnContext, GrnRequest, fingerprint_body
+    from app.modules.fulfillment.application import _stock_scope
+    from app.workflows.warehouse_grn_context import validate_warehouse_grn_context
+    from app.shared.project_identity import stable_project_key, current_project_name
+    from app.modules.warehouse.domain import WarehouseValidationError
+
+    state, engine = db
+    _seed(state)
+    owner_id = uuid4()
+    context = GrnContext(owner_id=owner_id, customer_order=OLD, project=OLD, transfer_document="M-15:1")
+    request = GrnRequest(category=GrnCategory.CSM, source_kind="warehouse_quick", source_op_id=str(uuid4()),
+                         context=context, body_fingerprint=fingerprint_body({"quantity":"10"}))
+    with state.sessions.begin() as session:
+        session.add(MaterialOwnerRow(id=owner_id, display_name="Owner", legal_identity=f"TEST:{owner_id}"))
+        session.flush()
+        identity = SqlAlchemyGrnAllocator(session).allocate(request, registered_at=NOW.replace(tzinfo=UTC))
+    before = _rows(engine, "warehouse_grn_registry")
+    cli.rename_project(engine, OLD, NEW, apply=True, now=NOW)
+    last = "9999К.9"
+    cli.rename_project(engine, NEW, last, apply=True, now=NOW)
+    assert _rows(engine, "warehouse_grn_registry") == before
+    lot = replace(state.lot, grn=identity.number, grn_id=identity.id, grn_category="CSM", grn_contract_version=1,
+                  grn_context=context.payload(), material_owner_id=owner_id, csm_project_id=OLD)
+    with state.fulfillment_uow_factory() as uow:
+        scope = _stock_scope(lot, last, uow)
+        lot.assert_owner(**scope)
+        assert stable_project_key(uow.session, last) == OLD
+        assert current_project_name(uow.session, OLD) == last
+        from app.modules.warehouse.labels_application import _data_in, prepare_label_in
+        from app.modules.warehouse.labels.template import lot_content
+        from app.modules.warehouse.labels.settings import PrintSettings
+        data = _data_in(uow.session, lot, NOW)
+        assert data.context["project"] == last and data.context["customer_order"] == last
+        _, snapshot = prepare_label_in(uow.session, lot_content(data), PrintSettings(width_mm=100, height_mm=50))
+        assert snapshot["grn_provenance"]["origin_context"]["project"] == OLD
+        validated = validate_warehouse_grn_context(uow, GrnCategory.CSM,
+            replace(context, customer_order=last, project=last))
+        assert validated == context
+        assert SqlAlchemyGrnAllocator(uow.session).allocate(request, registered_at=NOW.replace(tzinfo=UTC)) == identity
+        with pytest.raises(WarehouseValidationError, match="другого проекта"):
+            _stock_scope(lot, OLD + ".1", uow)
+    events = [row for row in _rows(engine, "audit_events") if row["event_type"] == "techcards.project_renamed"]
+    assert len({row["aggregate_id"] for row in events}) == 1
+    assert all(row["details"]["project_id"] == OLD for row in events)
+    from app.modules.production.infrastructure import ProductionPlanProjectRow
+    with state.sessions.begin() as session:
+        session.add(ProductionPlanProjectRow(project=reused_alias, customer="Reused name", status="", terminal=False, imported_at=NOW))
+    with state.fulfillment_uow_factory() as uow:
+        with pytest.raises(WarehouseValidationError, match="актуальный проект"):
+            _stock_scope(lot, reused_alias, uow)
+        with pytest.raises(WarehouseValidationError, match="повторно"):
+            validate_warehouse_grn_context(uow, GrnCategory.CSM, replace(context, customer_order=last, project=last))
+    before = _snapshot(engine)
+    with pytest.raises(cli.RenameRefused, match="OLD is a historical project identity"):
+        cli.rename_project(engine, reused_alias, "9998К.1", apply=True, now=NOW)
+    assert _snapshot(engine) == before
+    with pytest.raises(cli.RenameRefused, match="historical project identity"):
+        cli.rename_project(engine, last, OLD, apply=True, now=NOW)
+    assert _snapshot(engine) == before
+
+
+def test_pending_outbox_preserves_grn_origin_context():
+    context = {"project": OLD, "customer_order": OLD}
+    payload = {"purpose": OLD, "grn_context": context, "csm_project_id": OLD, "grn_provenance":{"context":context}}
+    assert cli.rename_json(payload, OLD, NEW) == {**payload,"purpose":NEW}

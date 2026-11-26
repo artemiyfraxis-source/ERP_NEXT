@@ -100,13 +100,14 @@ export function defaultLayout(kind: TableKind): ColumnLayout {
 
 export const REQUIRED_STOCK_COLUMNS: readonly ColumnKey[] = ["name", "available", "place"];
 
-/** «Свободно» and the place never sit right of «Наименование»: on a 16" screen a wide personal view ends near the name,
- *  and the stock must stay in the first screen (owner, prod check 26.11.2026). Earlier positions are kept. */
+/** «Свободно» and the place never sit right of «Наименование»: the name is the flexible column, so in a wide personal view
+ *  everything after it runs off a 16" screen (prod check 26.11.2026). Late ones move just before the name; earlier positions
+ *  are kept. */
 export function stockInView(order: ColumnKey[]): ColumnKey[] {
   const late: ColumnKey[] = order.slice(order.indexOf("name") + 1).filter((key) => key === "available" || key === "place");
   if (!order.includes("name") || !late.length) return order;
   const rest = order.filter((key) => !late.includes(key));
-  const at = rest.indexOf("name") + 1;
+  const at = rest.indexOf("name");
   return [...rest.slice(0, at), ...late, ...rest.slice(at)];
 }
 

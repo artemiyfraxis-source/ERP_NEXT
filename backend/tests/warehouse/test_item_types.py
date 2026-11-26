@@ -1,5 +1,6 @@
 """SK-14: the item type dictionary — canonical list, the stock tail, aliases, saving and renaming a type."""
 
+from tests.warehouse.test_api import quick_payload
 import json
 from decimal import Decimal
 
@@ -155,10 +156,10 @@ def test_rename_without_rows_or_names(warehouse_api):  # noqa: F811
 def test_quick_entry_writes_the_canonical_type(warehouse_api):  # noqa: F811
     client, _ = warehouse_api
 
-    response = client.post("/api/stock/batches", json={"items": [
+    response = client.post("/api/stock/batches", json=quick_payload({"items": [
         {"article": "A-1", "quantity": "1", "storage_location": "1F4", "item_type": " мультипровод "},
         {"article": "A-2", "quantity": "1", "storage_location": "1F4", "item_type": "Реле"},
-    ]})
+    ]}))
 
     assert response.status_code == 200, response.text
     assert [lot["item_type"] for lot in response.json()["lots"]] == ["Кабель", "Реле"]

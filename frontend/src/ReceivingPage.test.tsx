@@ -74,6 +74,7 @@ it("submits document URLs and optimistic version without browser-owned presence 
   fireEvent.change(screen.getByLabelText("Серия изготовителя"), {
     target: { value: "LOT-2409" },
   });
+  chooseCategories();
   fireEvent.click(screen.getByRole("button", { name: "Провести входной контроль" }));
 
   await waitFor(() => expect(inspection).toEqual(expect.objectContaining({
@@ -106,6 +107,7 @@ it("submits the incoming control without a УПД — it can come later by ЭД�
   expect(upd.required).toBe(false);
   expect(screen.getByText("УПД по ЭДО можно внести позже — «Внести УПД» в списке.")).toBeTruthy();
   expect(screen.queryByText(/уйдёт в «Ожидание»/)).toBeNull();
+  chooseCategories();
   fireEvent.click(screen.getByRole("button", { name: "Провести входной контроль" }));
 
   await waitFor(() => expect(inspection).toEqual(expect.objectContaining({ version: 2, shipping_document_url: null })));
@@ -141,6 +143,7 @@ it("sends the УПД date for a historical receipt so the verdict uses it", asyn
   expect(screen.getByLabelText("Дата УПД/М-15")).not.toBeRequired();
   fireEvent.click(screen.getByLabelText("Историческая приёмка: срок годности сверяется с датой УПД"));
   fireEvent.change(screen.getByLabelText("Дата УПД/М-15"), { target: { value: "2026-02-10" } });
+  chooseCategories();
   fireEvent.click(screen.getByRole("button", { name: "Провести входной контроль" }));
 
   await waitFor(() => expect(inspection).toEqual(expect.objectContaining({
@@ -167,6 +170,7 @@ it("sends the weighed mass and prefills the sample it was weighed with on repeat
   expect(await screen.findByLabelText("Масса 100 шт, г")).toHaveValue("0.123");
   fireEvent.change(screen.getByLabelText("Масса 10 шт, г"), { target: { value: "0,5" } });
   fireEvent.change(screen.getByLabelText("Документ УПД/М-15"), { target: { value: "https://files.test/upd.pdf" } });
+  chooseCategories();
   fireEvent.click(screen.getByRole("button", { name: "Провести входной контроль" }));
 
   await waitFor(() => expect(inspection).toEqual(expect.objectContaining({
@@ -207,6 +211,7 @@ it("keeps persisted documents and manual defects during repeated control", async
   expect(count).toHaveValue(null); // a brak line from before the count: typed by the technologist, not assumed
   expect(count).toBeRequired();
   fireEvent.change(count, { target: { value: "3" } });
+  chooseCategories();
   fireEvent.click(screen.getByRole("button", { name: "Провести входной контроль" }));
 
   await waitFor(() => expect(inspection).toEqual(expect.objectContaining({
@@ -240,6 +245,7 @@ it("ticking брак asks for the defect count, prefilled with the whole fact an
   expect(count).toHaveValue(8);
   expect(count).toHaveAttribute("max", "8");
   fireEvent.change(count, { target: { value: "4" } });
+  chooseCategories();
   fireEvent.click(screen.getByRole("button", { name: "Провести входной контроль" }));
   await waitFor(() => expect(inspections).toHaveLength(1));
   expect(inspections[0]).toMatchObject({ manual_nonconformities: ["Механическое повреждение / брак"], defect_quantity: "4" });
@@ -261,6 +267,7 @@ it("a line without брак sends no defect count", async () => {
   await openRow();
   fireEvent.click(await screen.findByLabelText("Механическое повреждение / брак"));
   fireEvent.click(screen.getByLabelText("Механическое повреждение / брак")); // unticked again
+  chooseCategories();
   fireEvent.click(screen.getByRole("button", { name: "Провести входной контроль" }));
   await waitFor(() => expect(inspection).toBeDefined());
   expect(inspection).not.toHaveProperty("defect_quantity");
@@ -286,6 +293,7 @@ it("batches with брак take a defect count per batch", async () => {
   expect(screen.queryByLabelText("Кол-во брака, шт")).toBeNull(); // the per-batch column instead
   expect(screen.getByLabelText("Партия 1: кол-во брака")).toHaveValue(6);
   fireEvent.change(screen.getByLabelText("Партия 1: кол-во брака"), { target: { value: "1" } });
+  chooseCategories();
   fireEvent.click(screen.getByRole("button", { name: "Провести ВК по партиям (2)" }));
   await waitFor(() => expect(inspection).toBeDefined());
   expect(inspection).not.toHaveProperty("defect_quantity");
@@ -386,11 +394,13 @@ it("the ВК window shows the server error inside it and closes freely once the 
   await openRow();
   const dialog = await screen.findByRole("dialog", { name: "Входной контроль SM-20260921-01" });
   fireEvent.change(within(dialog).getByLabelText("Серия изготовителя"), { target: { value: "LOT-1" } });
+  chooseCategories();
   fireEvent.click(within(dialog).getByRole("button", { name: "Провести входной контроль" }));
   expect(await within(dialog).findByText("Строка изменена другим пользователем")).toBeInTheDocument();
   expect(within(dialog).getByLabelText("Серия изготовителя")).toHaveValue("LOT-1"); // kept for a retry
 
   fail = false;
+  chooseCategories();
   fireEvent.click(within(dialog).getByRole("button", { name: "Провести входной контроль" }));
   const done = await screen.findByRole("dialog", { name: "Строка приёмки SM-20260921-01" });
   expect(await within(done).findByText("Присвоены ГРН: SM-20260921-01 — PPM.26.0000009")).toBeInTheDocument();
@@ -515,6 +525,7 @@ it("RC-13: splits a delivery into manufacturer batches, each with its own quanti
   fireEvent.change(screen.getByLabelText("Партия 1: серия"), { target: { value: "A1" } });
   fireEvent.change(screen.getByLabelText("Партия 2: по УПД"), { target: { value: "4" } });
   fireEvent.change(screen.getByLabelText("Партия 2: серия"), { target: { value: "B2" } });
+  chooseCategories();
   fireEvent.click(screen.getByRole("button", { name: "Провести ВК по партиям (2)" }));
 
   await waitFor(() => expect(inspection).toEqual(expect.objectContaining({
@@ -655,13 +666,14 @@ it("a delivery with only the УПД requisites sends the lines without quantitie
   fireEvent.change(await screen.findByLabelText("УПД №"), { target: { value: "УПД-5" } });
   fireEvent.change(screen.getByLabelText("Дата УПД"), { target: { value: "2026-10-05" } });
   fireEvent.change(screen.getByLabelText("Место для всех"), { target: { value: "1F4" } });
+  chooseCategories();
   fireEvent.click(screen.getByRole("button", { name: "Провести поставку (2 поз.)" }));
 
   await waitFor(() => expect(calls).toHaveLength(1));
   expect(calls[0]).toEqual({
     lines: [
-      { id: deliveryLines[0].id, version: 3, storage_location: "1F4" },
-      { id: deliveryLines[1].id, version: 5, storage_location: "1F4" },
+      {grn_category:"PPM",grn_context:{},expiry_required:false, id: deliveryLines[0].id, version: 3, storage_location: "1F4" },
+      {grn_category:"PPM",grn_context:{},expiry_required:false, id: deliveryLines[1].id, version: 5, storage_location: "1F4" },
     ],
     shipping_document_url: null,
     document_number: "УПД-5",
@@ -683,6 +695,7 @@ it("the УПД is optional: a delivery goes without number and date and the bann
   await screen.findByRole("region", { name: "Ожидаются" });
   fireEvent.click(screen.getAllByRole("button", { name: "Принять поставку" })[0]);
   expect(await screen.findByText(/УПД по ЭДО можно внести позже/)).toBeTruthy();
+  chooseCategories();
   fireEvent.click(screen.getByRole("button", { name: "Провести поставку (2 поз.)" }));
   await waitFor(() => expect(calls).toHaveLength(1));
   expect(calls[0]).toMatchObject({ document_number: "", document_date: null, shipping_document_url: null });
@@ -702,11 +715,12 @@ it("a discrepancy row sends the fact, an unticked line stays out, the deviation 
   expect(count).toHaveAttribute("max", "8");
   expect(count).toBeRequired();
   fireEvent.change(count, { target: { value: "2" } });
+  chooseCategories();
   fireEvent.click(screen.getByRole("button", { name: "Провести поставку (1 поз.)" }));
 
   await waitFor(() => expect(calls).toHaveLength(1));
   expect(calls[0].lines).toEqual([
-    { id: deliveryLines[0].id, version: 3, fact_quantity: "8", deviation: "brak", deviation_quantity: "2" },
+    {grn_category:"PPM",grn_context:{},expiry_required:false, id: deliveryLines[0].id, version: 3, fact_quantity: "8", deviation: "brak", deviation_quantity: "2" },
   ]);
 });
 
@@ -718,6 +732,7 @@ it("names the shortfall backorder in the success banner", async () => {
   render(<ReceivingPage />);
   await screen.findByRole("region", { name: "Ожидаются" });
   fireEvent.click(screen.getAllByRole("button", { name: "Принять поставку" })[0]);
+  chooseCategories();
   fireEvent.click(await screen.findByRole("button", { name: "Провести поставку (2 поз.)" }));
   expect(await screen.findByText("Принято 1 позиция, ГРН присвоены; недовоз → дозавоз: A-1 · Разъём 4 шт")).toBeTruthy();
 });
@@ -735,9 +750,11 @@ it("409 asks to refresh the list; another error shows the server text", async ()
   render(<ReceivingPage />);
   await screen.findByRole("region", { name: "Ожидаются" });
   fireEvent.click(screen.getAllByRole("button", { name: "Принять поставку" })[0]);
+  chooseCategories();
   fireEvent.click(await screen.findByRole("button", { name: "Провести поставку (2 поз.)" }));
   expect(await screen.findByText("Строки изменились — обновите список")).toBeTruthy();
   status = 422;
+  chooseCategories();
   fireEvent.click(screen.getByRole("button", { name: "Провести поставку (2 поз.)" }));
   expect(await screen.findByText("В одной поставке позиции разных складов")).toBeTruthy();
 });
@@ -782,19 +799,20 @@ it("stores the УПД scan in ERP and puts its link into the inspection", async 
   render(<ReceivingPage />);
   expect(await screen.findByText("Разъём")).toBeInTheDocument(); // артикул = наименование — один раз
   await openRow();
-  expect(screen.getByText("Автоматически: FRX")).toBeInTheDocument();
+  expect(screen.getByLabelText("Категория ГРН",{exact:true})).toHaveValue("");
   const scan = new File(["pdf"], "скан.pdf", { type: "application/pdf" });
   fireEvent.change(screen.getAllByText("Файл PDF/фото")[0].querySelector("input")!, { target: { files: [scan] } });
 
   await waitFor(() => expect(screen.getByLabelText("Документ УПД/М-15")).toHaveValue("/api/receiving/files/30000000-0000-0000-0000-000000000001"));
   expect(upload).toEqual(expect.objectContaining({ line_id: line.id, kind: "upd", file_name: "скан.pdf", content_type: "application/pdf" }));
+  chooseCategories();
   fireEvent.click(screen.getByRole("button", { name: "Провести входной контроль" }));
   await waitFor(() => expect(inspection).toEqual(expect.objectContaining({
     shipping_document_url: "/api/receiving/files/30000000-0000-0000-0000-000000000001",
   })));
 });
 
-it("asks for CSM or PPM up front when the purpose gives no ГРН prefix", async () => {
+it("requires an explicit category even when a line has an old inferred prefix", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     if (isQueue(String(input))) return json({ lines: [{ ...line, grn_prefix: null }] });
     throw new Error(`Unexpected request: ${String(input)}`);
@@ -802,7 +820,7 @@ it("asks for CSM or PPM up front when the purpose gives no ГРН prefix", async
 
   render(<ReceivingPage />);
   await openRow();
-  const prefix = await screen.findByLabelText("Идентификатор ГРН *");
+  const prefix = await screen.findByLabelText("Категория ГРН",{exact:true});
   expect(prefix).toBeRequired();
   expect(prefix).toHaveValue("");
 });
@@ -917,3 +935,7 @@ it("shows the nomenclature item under the line name", async () => {
   expect(await screen.findByText("Разъём SMA (номенклатура)")).toBeInTheDocument();
   expect(calls).toContain(`/api/purchasing/items/for-receiving?ids=${line.id}`);
 });
+
+function chooseCategories() {
+  screen.queryAllByLabelText("Категория ГРН",{exact:true}).forEach(select=>{if(!(select as HTMLSelectElement).value)fireEvent.change(select,{target:{value:"PPM"}});});
+}
