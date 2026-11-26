@@ -17,7 +17,7 @@ import { IntakeWindow, keyOf, leftOf, RollbackActWindow } from "./IntakeWindow";
 import { PrintOutcome, type PrintResult } from "./LabelPrint";
 import { PackWindow } from "./PackWindow";
 import { PrintSetupButton } from "./PrintSetupWindow";
-import { needsTrack, NoUpdWindow, onlyUpdBlocks, readyForTrack, readyToShip, type CardRights } from "./ShipmentCard";
+import { needsTrack, NoUpdWindow, onlyUpdBlocks, readyForTrack, readyToShip, ShipWithoutDataWindow, type CardRights, type Mutate } from "./ShipmentCard";
 import { CreateShipmentWindow, JournalWindow, RegisterGoodWindow, useDocLink } from "./ShipmentJournal";
 import { ShipWindow } from "./ShipWindow";
 import { TrackWindow } from "./TrackWindow";
@@ -91,7 +91,7 @@ function urlTab(): { tab: Tab | null; journal: boolean } {
   return { tab: TABS.some(([key]) => key === tab) ? tab as Tab : null, journal: false };
 }
 
-type Opened = { kind: "pack" | "ship"; project: string } | { kind: "track"; title: string; shipment: DispatchShipment } | { kind: "noupd"; shipment: DispatchShipment };
+type Opened = { kind: "pack" | "ship"; project: string } | { kind: "track"; title: string; shipment: DispatchShipment } | { kind: "noupd" | "bare"; shipment: DispatchShipment };
 type Accepting = { rows: IntakeRow[]; quantities: Record<string, number>; blank?: boolean };
 type RollingBack = { row: IntakeRow; act: IntakeAct; onStock: number };
 
@@ -243,10 +243,14 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     try { setLabel({ grn, result: await intakeApi.printLabel(grn), error: "", busy: false }); }
     catch (reason) { setLabel({ grn, result: null, error: failureText(reason, "Этикетка не напечатана"), busy: false }); }
   }
-  const mutate = async (key: string, operation: () => Promise<unknown>, message: string) => {
+  const mutate: Mutate = async (key, operation, message) => {
     if (busy) return false;
     setBusy(key); setError(""); setNotice("");
-    try { await operation(); setNotice(message); await reload(); return true; }
+    try {
+      const result = await operation();
+      const outcome = typeof message === "string" ? message : message(result);
+      setNotice(typeof outcome === "string" ? outcome : outcome.warning); await reload(); return true;
+    }
     catch (reason) { setError(failureText(reason, "Операция не выполнена")); return false; }
     finally { setBusy(""); }
   };
@@ -325,18 +329,22 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     const ready = needing && (readyForTrack(shipment) || Boolean(shipment.track_number));
     // Держит УПД (владелец 23.11: «непонятно назначение кнопок»): главное — вписать его; запасной путь — отгрузить без него по ПИН.
     const updGap = updGapAction(shipment);
+    // Груз уже уехал, а данных нет (владелец 23.11: «она уже отгружена»): руководителю — сразу из строки, не из окна упаковки.
+    const bare = rights.canUnship && shipment.lines.some((line) => num(line.picked) > 0) && !readyToShip(shipment) && shipment.missing_ship.length > 0
+      ? <button type="button" className="secondary small" title="Груз уже уехал: отметить «Отгружена», недостающее внести позже"
+        aria-label={`Уже отгружена ${title}`} onClick={() => setOpened({ kind: "bare", shipment })}>Уже отгружена…</button> : null;
     const enter = updGap && canDispatch ? <button type="button" className="primary small" title={`Открыть данные отправки и вписать ${updGap.what}`}
       aria-label={`${updGap.label} ${title}`} onClick={() => setShipmentData(shipment.id)}>{updGap.label}…</button> : null;
     if (!ready && canWarehouse && onlyUpdBlocks(shipment) && (shipment.status === "Упакована" || Boolean(shipment.dn_number))) return <>{enter}
-      <button type="button" className="secondary small intake-print" title="УПД ещё нет — отгрузку без него разрешает уполномоченный по ПИН"
-        aria-label={`Отгрузить без УПД ${title}`} onClick={() => setOpened({ kind: "noupd", shipment })}>Отгрузить без УПД…</button></>;
-    if (enter) return enter;
-    if (!needing || shipment.status !== "Упакована") return null;
+      {bare ?? <button type="button" className="secondary small intake-print" title="УПД ещё нет — отгрузку без него разрешает уполномоченный по ПИН"
+        aria-label={`Отгрузить без УПД ${title}`} onClick={() => setOpened({ kind: "noupd", shipment })}>Отгрузить без УПД…</button>}</>;
+    if (enter) return <>{enter}{bare}</>;
+    if (!needing || shipment.status !== "Упакована") return bare;
     const gaps = shipment.missing_ship.filter((gap) => gap !== "трек-номер");
     const button = <button type="button" className="secondary small intake-print" disabled={!ready}
       title={ready ? "Вписать трек-номер ТК" : `Трек вносится, когда есть УПД и ТК${gaps.length ? ` — не хватает: ${gaps.join(", ")}` : ""}. Ждём данные менеджера`}
       aria-label={`Трек ${title}`} onClick={() => setOpened({ kind: "track", title, shipment })}>Трек…</button>;
-    return button;
+    return <>{button}{bare}</>;
   };
   /** Одно действие строки — по её шагу; число на кнопке — штуки этой строки. */
   const actionCell = (line: IntakeLine) => {
@@ -543,7 +551,8 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     {opened?.kind === "pack" && <PackWindow project={opened.project} rows={projectRows(opened.project)} shipments={projectShips(opened.project)} rights={rights} reload={reload} close={() => setOpened(null)} />}
     {opened?.kind === "ship" && <ShipWindow project={opened.project} shipments={projectShips(opened.project)} rights={rights} reload={reload} close={() => setOpened(null)} />}
     {opened?.kind === "track" && <TrackWindow title={opened.title} shipments={[shipments.find((shipment) => shipment.id === opened.shipment.id) ?? opened.shipment]} reload={reload} close={() => setOpened(null)} />}
-    {opened?.kind === "noupd" && <NoUpdWindow shipment={opened.shipment} mutate={(key, operation, message) => mutate(key, operation, typeof message === "string" ? message : "Готово")} close={() => setOpened(null)} />}
+    {opened?.kind === "noupd" && <NoUpdWindow shipment={opened.shipment} mutate={mutate} close={() => setOpened(null)} />}
+    {opened?.kind === "bare" && <ShipWithoutDataWindow shipment={opened.shipment} gaps={opened.shipment.missing_ship} mutate={mutate} close={() => setOpened(null)} />}
     {header === "journal" && <JournalWindow shipments={shipments} selectedShipment={shipments.find((shipment) => shipment.id === urlParam("shipment"))} initialQuery={urlParam("q")} close={() => setHeader(null)} />}
     {header === "good" && <RegisterGoodWindow reload={reload} close={() => setHeader(null)} />}
     {header === "request" && <CreateShipmentWindow reload={reload} close={() => setHeader(null)} />}

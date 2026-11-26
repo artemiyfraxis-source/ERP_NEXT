@@ -716,6 +716,28 @@ it("PL и DN по отдельности: без номера — «Сформи
   await waitFor(() => expect(writes().map((call) => [call.url, call.body])).toContainEqual(["/api/shipping/shipments/s1/issue-document", { version: 3, document: "pl" }]));
 });
 
+it("груз уже уехал (владелец 23.11): руководителю «Уже отгружена…» в строке вместо «Отгрузить без УПД…», кладовщику — нет", async () => {
+  intakeRows = [row({ accepted: "4", packed: "4", remaining: "0", delivered: "4", tasks: [] })];
+  shipments = [{ ...packedShipment, missing_ship: ["№ УПД"], missing_ship_codes: ["upd_number"], no_upd_offered: true }];
+  const storekeeper = render(<ProductionIntakePage principal={principal} />);
+  expect(await screen.findByRole("button", { name: "Отгрузить без УПД ОТГ-20261029-01" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Уже отгружена ОТГ-20261029-01" })).not.toBeInTheDocument();
+  storekeeper.unmount();
+
+  render(<ProductionIntakePage principal={admin} />);
+  fireEvent.click(await screen.findByRole("tab", { name: /^Упаковано/ }));
+  expect(await screen.findByRole("button", { name: "Вписать № УПД ОТГ-20261029-01" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Отгрузить без УПД ОТГ-20261029-01" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Уже отгружена ОТГ-20261029-01" }));
+  const dialog = await screen.findByRole("dialog", { name: "Отгрузить без данных · ОТГ-20261029-01" });
+  expect(within(within(dialog).getByRole("list", { name: "Не заполнено" })).getAllByRole("listitem").map((item) => item.textContent)).toEqual(["№ УПД"]);
+  fireEvent.change(within(dialog).getByLabelText("Почему без данных"), { target: { value: "уехала 20.11, № УПД позже" } });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Отгрузить" }));
+  await waitFor(() => expect(calls.find((call) => call.url === "/api/shipping/shipments/s1/ship")?.body)
+    .toEqual({ version: 3, missing_reason: "уехала 20.11, № УПД позже", ship_date: "2026-11-09" }));
+  expect(await screen.findByText("Отгружено без данных: ОТГ-20261029-01. Не заполнено: № УПД")).toBeInTheDocument();
+});
+
 it("ЭДО без № (владелец 20.11): сервер предлагает «Без УПД…» и у упакованной, и у набранной с DN; без DN — нет", async () => {
   intakeRows = [row({ accepted: "4", packed: "4", remaining: "0", delivered: "4", tasks: [] })];
   const offered = { ...packedShipment, missing_data: ["№ УПД"], missing_ship_codes: ["upd_number", "track_number"], no_upd_offered: true };

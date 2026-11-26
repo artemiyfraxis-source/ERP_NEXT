@@ -32,6 +32,9 @@ def test_progress_counts_printed_serials_and_remaining_prints_only_the_rest(mark
     assert (row["printed"], row["remaining"], row["printed_serials"]) == (1, task.quantity - 1, [1])
     assert row["remaining_serials"] == list(range(2, task.quantity + 1))
     assert row["remaining_labels"] == progress.json()["remaining_labels"] == 3 * task.quantity - 1
+    # Group card counters (owner 23.11): label pieces, not items — total over the serial range, printed = total − left.
+    assert (row["total_labels"], row["printed_labels"]) == (3 * task.quantity, 1)
+    assert (progress.json()["total_labels"], progress.json()["printed_labels"]) == (3 * task.quantity, 1)
     rest = preview(marking, {**payload, "remaining": True})
     texts = [(label["text"], label["quantity"]) for label in rest["labels"]]
     assert ("КБ-001", 1) not in texts
@@ -69,6 +72,9 @@ def test_rows_match_by_task_serial_and_text_not_by_etk_index():
     view = task_progress(SimpleNamespace(id="t1", number="ПЗ-1", item="КБ1", quantity=3), document, (1, 3),
                          Counter({("t1", 1, "FRX.1"): 1}))
     assert (view["printed"], view["remaining"], view["remaining_serials"]) == (1, 2, [2, 3])
+    assert (view["total_labels"], view["printed_labels"], view["remaining_labels"]) == (3, 1, 2)
+    released = task_progress(SimpleNamespace(id="t1", number="ПЗ-1", item="КБ1", quantity=3), document, None, Counter())
+    assert (released["total_labels"], released["printed_labels"], released["remaining_labels"]) == (0, 0, 0)
     assert task.quantity == 3
 
 
@@ -145,6 +151,7 @@ def test_fixed_labels_left_after_every_serial_keep_the_button(marking):
     _keep(factory, list(range(1, task.quantity + 1)))
     body = _progress(marking)
     assert (body["printed"], body["remaining"], body["remaining_labels"]) == (task.quantity, 0, 2 * task.quantity)
+    assert (body["total_labels"], body["printed_labels"]) == (3 * task.quantity, task.quantity)
     rest = preview(marking, {**payload, "remaining": True})
     assert [(label["text"], label["quantity"]) for label in rest["labels"]] == [("АБВ", 2 * task.quantity)]
 
@@ -163,7 +170,9 @@ def test_a_reprinted_label_counts_once(marking):
     response = client.post(BASE + f"/batches/{batch['id']}/reprint",
                            json={"sequences": [last - 1], "reason": "Смялась", "idempotency_key": "rp-once"})
     assert response.status_code == 200, response.text
-    assert _progress(marking)["remaining_labels"] == 1
+    body = _progress(marking)
+    # The reprint replaces the label it repeats: printed pieces never exceed the total.
+    assert (body["remaining_labels"], body["total_labels"], body["printed_labels"]) == (1, last, last - 1)
     rest = preview(marking, {**payload, "remaining": True})
     assert [(label["text"], label["quantity"]) for label in rest["labels"]] == [("АБВ", 1)]
 
@@ -209,6 +218,7 @@ def test_a_serial_marked_printed_outside_the_erp_counts_as_printed(marking):
     row = progress.json()["rows"][0]
     assert (row["printed"], row["remaining"], row["printed_serials"]) == (1, task.quantity - 1, [1])
     assert row["remaining_labels"] == 3 * task.quantity - 1
+    assert (row["total_labels"], row["printed_labels"]) == (3 * task.quantity, 1)
     rest = preview(marking, {**group_source, "remaining": True})
     texts = [label["text"] for label in rest["labels"]]
     assert "КБ-001" not in texts and texts[0] == "КБ-002"
