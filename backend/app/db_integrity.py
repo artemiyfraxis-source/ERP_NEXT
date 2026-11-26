@@ -246,6 +246,15 @@ def _invariants(connection: Connection, schema: _Schema) -> tuple[dict[str, int]
         details["equipment_catalogs"] = {tab: _count(connection, schema, table) for tab, table in catalogs.items()}
         details["equipment_archived_units"] = int(scalar("SELECT count(*) FROM tech_operation_records WHERE tab = 'ob'"))
 
+    if schema.has("equipment_instrument_bindings", "unit_id", "instrument_id") and schema.has("production_instruments", "article"):
+        counts["instrument_catalog_unbound_extensions"] = int(scalar(
+            "SELECT count(*) FROM equipment_measuring_units u LEFT JOIN equipment_instrument_bindings b "
+            "ON b.unit_id = u.id WHERE b.unit_id IS NULL"))
+        counts["instrument_catalog_invalid_bindings"] = int(scalar(
+            "SELECT count(*) FROM equipment_instrument_bindings b LEFT JOIN equipment_measuring_units u "
+            "ON u.id = b.unit_id LEFT JOIN production_instruments i ON i.id = b.instrument_id "
+            "WHERE u.id IS NULL OR i.id IS NULL"))
+
     orphans = _foreign_key_orphans(connection, schema)
     counts.update(orphans)
 

@@ -40,11 +40,11 @@ from app.modules.production import machine_history as history
 from app.modules.production import machines as rules
 from app.modules.production import ob099
 from app.modules.production.api import production_uow_factory
-from app.modules.production.infrastructure import ProductionInstrumentRow
+from app.modules.production.traceability import MeasurementInstrument
 from app.modules.production.machine_load import normalized_site
 from app.modules.references.equipment import ARTICLE_KEY, INV_KEY, NAME_KEYS, field
 from app.modules.references.infrastructure import (
-    EquipmentMachineRow, EquipmentMeasuringRow, EquipmentModelRow, EquipmentUnitRow,
+    EquipmentMachineRow, EquipmentModelRow, EquipmentUnitRow,
 )
 from app.modules.warehouse.agent_release import version_tuple
 from app.modules.warehouse.devices import DeviceRow, PrinterRow
@@ -56,6 +56,7 @@ from app.shared.clock import moscow_now
 from app.shared.events import AuditEvent
 from app.shared.persistence import AuditEventRow
 from app.workflows.marking_labels import STATUS_LABELS
+from app.workflows.instrument_catalog import ReferenceInstrumentCatalog
 from app.workflows.ob019_setup import wire_label
 from app.workflows.warehouse_stations import stations
 from app.shared.http_auth import TOKEN_SCOPE_PREFIX, Principal, authenticated_principal, require_section
@@ -408,10 +409,10 @@ def _aware(moment: datetime | None, now: datetime) -> datetime:
     return moment.replace(tzinfo=now.tzinfo) if moment.tzinfo is None else moment
 
 
-def _vna_registry(session) -> tuple[dict[str, ProductionInstrumentRow], ProductionInstrumentRow | None]:
+def _vna_registry(session) -> tuple[dict[str, MeasurementInstrument], MeasurementInstrument | None]:
     """СИ of the registry the agents' analysers are: S2VNA by serial; Arinst (no serial in its reports) only when the
     registry has exactly one Arinst VL instrument."""
-    rows = list(session.scalars(select(ProductionInstrumentRow).where(ProductionInstrumentRow.vna_app != "")))
+    rows = ReferenceInstrumentCatalog(session).list()
     by_serial = {row.serial_number.strip(): row for row in rows
                  if row.vna_app == VNA_APPS["s2vna"] and row.serial_number.strip()}
     arinst = [row for row in rows if row.vna_app == VNA_APPS["arinst"]]
@@ -466,10 +467,8 @@ def _device_rows(session, now) -> list[dict]:
     only its program installed) is one row on the PC with the latest real presence; the others go to «Также на ПК»."""
     by_serial, arinst = _vna_registry(session)
     captures = _arinst_captures(session)
-    articles = {_inventory(field(row.fields or {}, INV_KEY, "inventoryNumber")): field(row.fields or {}, ARTICLE_KEY)
-                for row in session.scalars(select(EquipmentMeasuringRow))}
     groups: dict[str, list[tuple[DeviceRow, ScanAgentRow]]] = {}
-    instruments: dict[str, ProductionInstrumentRow | None] = {}
+    instruments: dict[str, MeasurementInstrument | None] = {}
     for device, agent in session.execute(select(DeviceRow, ScanAgentRow).join(
             ScanAgentRow, ScanAgentRow.machine_id == DeviceRow.machine_id)):
         instrument = by_serial.get(device.device_id) if device.kind == "s2vna" else arinst if device.kind == "arinst" \
@@ -502,7 +501,7 @@ def _device_rows(session, now) -> list[dict]:
             "state": _state(presence), "card": False,
             "others": "; ".join(_other_note(other_agent, other_presence) for _, other_agent, other_presence in others),
             **NO_CATALOG, "controlled": True,
-            "article": articles.get(_inventory(instrument.inventory_number), "") if instrument else "",
+            "article": instrument.article if instrument else "",
             # The MFP of the warehouse scans and prints: it stands with the warehouse printer (owner 20.11.2026).
             # The analyser card picks its work by this: «s2vna» — the VNA workplace, «arinst» — files from ArinstVL.
             "vna": device.kind if device.kind in VNA_APPS else None,

@@ -252,7 +252,8 @@ def test_fitter_reads_sketches_of_his_issued_card_only_and_cannot_edit_techcards
     card = issue_card("591K.3", "КБ1", [("OP-01", "Нарезка", "10", "0"), ("OP-02", "Сборка", "10", "0")])
     other = issue_card("591K.9", "КБ1", [("OP-01", "Нарезка", "10", "0")])
     png = b"PNG-sketch-bytes"
-    for target, key in ((card, "OP-02"), (other, "SECRET")):
+    sketch_key = "OP-02::2::"  # operation_key of the 2nd operation: sketches are uploaded under real keys only
+    for target, key in ((card, sketch_key), (other, "SECRET")):
         with app.state.techcards_uow_factory() as uow:
             uow.techcards.put_sketch(target.id, OperationSketch(
                 operation_key=key, file_name=f"{key}.png", content_type="image/png", size=len(png),
@@ -262,16 +263,16 @@ def test_fitter_reads_sketches_of_his_issued_card_only_and_cannot_edit_techcards
 
     _as_operator(operator_id)
     listing = client.get(base)
-    image = client.get(base + "/OP-02")
+    image = client.get(f"{base}/{sketch_key}")
     foreign = client.get(base + "/SECRET")
     traversal = client.get(base + "/../../OP-02")
-    put = client.put(f"/api/techcards/projects/{card.id}/sketches/OP-02", json={"file_name": "a.png", "content_type": "image/png", "content_base64": "AAAA"})
-    delete = client.delete(f"/api/techcards/projects/{card.id}/sketches/OP-02")
+    put = client.put(f"/api/techcards/projects/{card.id}/sketches/{sketch_key}", json={"file_name": "a.png", "content_type": "image/png", "content_base64": "AAAA"})
+    delete = client.delete(f"/api/techcards/projects/{card.id}/sketches/{sketch_key}")
     direct = client.get(f"/api/techcards/projects/{card.id}/sketches")
     _as_operator(uuid4())
-    stranger_list, stranger_image = client.get(base), client.get(base + "/OP-02")
+    stranger_list, stranger_image = client.get(base), client.get(f"{base}/{sketch_key}")
 
-    assert listing.status_code == 200 and [item["operation_key"] for item in listing.json()["items"]] == ["OP-02"]
+    assert listing.status_code == 200 and [item["operation_key"] for item in listing.json()["items"]] == [sketch_key]
     assert image.status_code == 200 and image.content == png
     assert foreign.status_code == 404 and traversal.status_code == 404
     assert put.status_code == 403 and delete.status_code == 403 and direct.status_code == 403

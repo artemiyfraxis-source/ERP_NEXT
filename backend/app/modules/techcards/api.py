@@ -62,7 +62,7 @@ from .domain.coax import построить_коакс
 from .domain.harness import Провод, Разъём, Сборка, построить
 from .etk_read import IssuedLots, card_views
 from .td_grades import reference_grades
-from .project_cards import OperationSketch, ProjectTechcard, TechcardRevision, TechcardValidationError
+from .project_cards import OperationSketch, ProjectTechcard, TechcardRevision, TechcardValidationError, document_sketches
 from .project_cards import operation_key as etk_operation_key
 from .operation_cards import OperationCardTemplate
 from .grapher_import import GrapherComponent, GrapherImportError, read_export
@@ -927,8 +927,8 @@ def operation_sketches(
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(techcards_uow_factory)],
 ) -> dict:
     with uow_factory() as uow:
-        _card_or_404(uow, card_id)
-        sketches = uow.techcards.sketches(card_id)
+        card = _card_or_404(uow, card_id)
+        sketches = document_sketches(uow.techcards.sketches(card_id), card.document)
     return {"items": [_sketch_result(sketch) for sketch in sketches]}
 
 

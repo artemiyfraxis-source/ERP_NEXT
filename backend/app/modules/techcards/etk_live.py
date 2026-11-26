@@ -24,7 +24,7 @@ from typing import Any
 
 from .etk_builder import COMBINED_DEFECTS, build_etk, with_coax_connectors
 from .operation_cards import OperationCardTemplate
-from .project_cards import TechcardValidationError, operation_key
+from .project_cards import TechcardValidationError, operation_aliases, operation_key, resolved_operation_key
 
 TEMPLATE = "template"
 EDITED = "edited"
@@ -222,13 +222,15 @@ def _rebuilt_cards(
             known.add(template_id)
     try:
         built = build_etk(document["build_config"], cards)
+        built["operation_key_aliases"] = operation_aliases(document, built)
     except Exception:  # noqa: BLE001 — a config the builder no longer takes keeps the stored copies
         return {}
     by_key = {_key(op): op for op in _operations(built) if isinstance(op, Mapping)}
     found: dict[int, dict[str, Any]] = {}
     for index in refill:
         op = operations[index]
-        twin = by_key.get(_key(op))
+        key = _key(op)
+        twin = by_key.get(resolved_operation_key(key, built)) if key is not None else None
         if (twin is not None and isinstance(twin.get("card"), Mapping)
                 and str(twin.get("template_id") or "") == str(op.get("template_id") or "")):
             found[index] = deepcopy(dict(twin["card"]))

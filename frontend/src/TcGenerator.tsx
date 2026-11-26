@@ -589,6 +589,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       return {
         position: index + 1, key: spec.opKey, type: spec.type, code,
         label: spec.label || spec.cat || `Операция ${index + 1}`, minutes: docMinutes ? docMinutes.minutes[index] : null,
+        ...(docMinutes?.unknown?.[index] ? { unknownTime: true } : {}),
         number: ops.indexOf(spec) + 1, codeNote: differs ? `вместо ${want}${known ? "" : " — нет карты"}` : "",
         ...(spec.side ? { side: spec.side } : {}),
       };

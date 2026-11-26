@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.main import app
-from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
+from app.workflows.instrument_catalog import SqlAlchemyInstrumentReferencesUnitOfWork
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.persistence import create_schema
@@ -24,7 +24,7 @@ def references_api():
     )
     create_schema(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False, class_=Session)
-    app.state.references_uow_factory = lambda: SqlAlchemyReferencesUnitOfWork(sessions)
+    app.state.references_uow_factory = lambda: SqlAlchemyInstrumentReferencesUnitOfWork(sessions)
     actor = Actor(
         id=UUID("10000000-0000-0000-0000-000000000001"),
         name="Администратор",

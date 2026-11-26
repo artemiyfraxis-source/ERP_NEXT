@@ -176,5 +176,6 @@ def file_import(
         bulk_import.RATE_LIMITER.check(principal.actor.id)
     except ImportRefused as error:
         raise HTTPException(status_code=error.status_code, detail=str(error)) from error
-    report = _run_roundtrip(lambda: import_file(table, uow_factory, content, principal.actor, now, dry_run=dry_run))
+    report = _run_roundtrip(lambda: import_file(table, uow_factory, content, principal.actor, now, dry_run=dry_run,
+        catalog_quality=not principal.service and (principal.full_access or principal.permissions.get("quality") == "edit")))
     return {**report.as_dict(), "file_name": payload.file_name}

@@ -13,6 +13,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from app.modules.techcards.application import UnitOfWork as TechcardsUnitOfWork
 from app.modules.techcards.etk_read import IssuedLots, _item_index, card_views, issued_card_for_item, pinned_card, saved_harness
+from app.modules.techcards.project_cards import document_sketches
 from app.workflows.etk_lots import IssuedKitLots
 from app.workflows.project_kitset import closed_kb_keys
 from app.modules.techcards.project_cards import TechcardStatus
@@ -288,6 +289,10 @@ class RegisterInstrumentPayload(BaseModel):
     storage_location: str = Field(default="", max_length=255)
     warehouse_grn: str = Field(default="", max_length=32)
     vna_app: Literal["", "S2VNA", "Arinst VL"] = ""
+    article: str = Field(default="", max_length=512)
+    notes: str = ""
+    measurement_category: str = Field(default="", max_length=255)
+    custom_fields: dict[str, str] = Field(default_factory=dict)
 
 
 class UpdateInstrumentPayload(BaseModel):
@@ -309,6 +314,10 @@ class UpdateInstrumentPayload(BaseModel):
     storage_location: str | None = Field(default=None, max_length=255)
     warehouse_grn: str | None = Field(default=None, max_length=32)
     vna_app: Literal["", "S2VNA", "Arinst VL"] | None = None
+    article: str | None = Field(default=None, max_length=512)
+    notes: str | None = None
+    measurement_category: str | None = Field(default=None, max_length=255)
+    custom_fields: dict[str, str] | None = None
 
 
 class InstrumentFilePayload(BaseModel):
@@ -1189,7 +1198,8 @@ def operation_etk_sketches(
         card = issued_card_for_item(techcards, task.project, task.item)
         if card is None:
             raise HTTPException(status_code=404, detail="Нет выданной ЭТК по этой позиции")
-        sketches = techcards.techcards.sketches(card.id)
+        shown, _ = pinned_card(techcards, card, task.techcard_revision)
+        sketches = document_sketches(techcards.techcards.sketches(card.id), card.document, shown.document)
     return {"items": [{
         "operation_key": sketch.operation_key, "file_name": sketch.file_name, "size": sketch.size,
         "uploaded_by": sketch.uploaded_by, "uploaded_at": sketch.uploaded_at.isoformat(),
@@ -1212,8 +1222,11 @@ def operation_etk_sketch(
     with techcards_factory() as techcards:
         card = issued_card_for_item(techcards, task.project, task.item)
         found = None
-        if card is not None and operation_key in {sketch.operation_key for sketch in techcards.techcards.sketches(card.id)}:
-            found = techcards.techcards.sketch_content(card.id, operation_key)
+        if card is not None:
+            shown, _ = pinned_card(techcards, card, task.techcard_revision)
+            sketches = document_sketches(techcards.techcards.sketches(card.id), card.document, shown.document)
+            if operation_key in {sketch.operation_key for sketch in sketches}:
+                found = techcards.techcards.sketch_content(card.id, operation_key)
     if found is None:
         raise HTTPException(status_code=404, detail="Эскиз не найден")
     sketch, content = found
@@ -1548,6 +1561,8 @@ def instrument_result(item, files=(), *, now: datetime,
         "storage_location": item.storage_location, "warehouse_grn": item.warehouse_grn,
         "warehouse_writeoff_id": str(item.warehouse_writeoff_id) if item.warehouse_writeoff_id else None,
         "vna_app": item.vna_app,
+        "article": item.article, "notes": item.notes,
+        "measurement_category": item.measurement_category, "custom_fields": dict(item.custom_fields),
         "verification_number": item.verification_number,
         "verified_at": item.verified_at.isoformat() if item.verified_at is not None else None,
         "verification_due": item.verification_due.isoformat() if item.verification_due is not None else None,

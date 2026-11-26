@@ -172,11 +172,11 @@ it("shows the server's text in an error banner", () => {
   expect(screen.getByRole("alert")).toHaveClass("error-banner");
 });
 
-it("shows no time when the card has never been built", () => {
+it("shows an unknown total when the card has never been built", () => {
   mount({ ops: OPS.map((item) => ({ ...item, minutes: null })) });
-  expect(screen.queryByText(/мин\/шт/)).not.toBeInTheDocument();
+  expect(screen.getAllByText(/мин\/шт, не задано/)).toHaveLength(3);
   expect(screen.getByText(/3 карточки/)).toHaveTextContent("3 карточки · 5 операций");
-  expect(screen.getByText(/3 карточки/)).not.toHaveTextContent("на изделие");
+  expect(screen.getByText(/3 карточки/)).toHaveTextContent("на изделие ≥ 0 мин, не задано у 5 операций");
   expect(within(cards()[2]).queryByText("—")).not.toBeInTheDocument();
 });
 

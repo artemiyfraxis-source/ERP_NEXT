@@ -2748,6 +2748,18 @@ export function makeGen(D: GenData, S: GenState) {
   }
 
   // ── Маршрут межплатной / сложной сборки ──
+  /** Finish covered labels after connector assembly, even when an older draft saved a different operation order. */
+  function coaxFinishingOps_(ops: OpSpec[]): OpSpec[] {
+    const colors = ops.filter((op) => op.type === "coaxConnColor");
+    let rest = ops.filter((op) => op.type !== "coaxConnColor");
+    const label = rest.find((op) => op.opKey === "coaxInsLabel");
+    const heat = rest.find((op) => op.opKey === "coaxHeat" && op.protective);
+    if (label && heat) {
+      const checks = rest.filter((op) => op.type === "coaxVswr");
+      rest = [...rest.filter((op) => op !== label && op !== heat && op.type !== "coaxVswr"), label, heat, ...checks];
+    }
+    return [...rest, ...colors];
+  }
   /** Операции в порядке генератора, а поверх — свой порядок технолога (S.opOrder). */
   function getActiveOps(): OpSpec[] {
     if (S.tab === "rework") return reworkOps_();
@@ -2756,7 +2768,8 @@ export function makeGen(D: GenData, S: GenState) {
       if (problems.length) throw new Error(problems.join("\n"));
     }
     const ops = autoOps();
-    return (topologyOn_() ? topologyOps_(ops) : applyOpOrder(ops, S.opOrder || [])).map(withShrinkMaterials_);
+    const ordered = topologyOn_() ? topologyOps_(ops) : applyOpOrder(ops, S.opOrder || []);
+    return (S.tab === "coax" ? coaxFinishingOps_(ordered) : ordered).map(withShrinkMaterials_);
   }
   const tubeMaterials_ = (items: Array<{ art?: string; name?: string } | null | undefined>) => items
     .filter((item): item is { art?: string; name?: string } => !!item)

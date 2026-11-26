@@ -19,7 +19,10 @@ from .harness_infrastructure import (
 from .kitset_infrastructure import SqlAlchemyKitsetRepository
 from .std_figures_infrastructure import SqlAlchemyStdFigureRepository
 from .td_issues_infrastructure import SqlAlchemyTdIssueRepository, TdIssueRow
-from .project_cards import OperationSketch, ProjectTechcard, TechcardRevision, TechcardStatus, TechcardValidationError
+from .project_cards import (
+    OperationSketch, ProjectTechcard, TechcardRevision, TechcardStatus, TechcardValidationError,
+    with_operation_fingerprints, with_override_fingerprints,
+)
 from .operation_cards import OperationCardTemplate, OperationRecordEdit, parse_operation_template
 from .template_sheets import TemplateDraft
 
@@ -194,6 +197,7 @@ class SqlAlchemyTechcardRepository:
 
     @staticmethod
     def _domain(row: ProjectTechcardRow) -> ProjectTechcard:
+        document = with_operation_fingerprints(row.document)
         return ProjectTechcard(
             id=row.id,
             version=row.version,
@@ -204,13 +208,13 @@ class SqlAlchemyTechcardRepository:
             deadline=row.deadline,
             status=TechcardStatus(row.status),
             revision=row.revision,
-            document=row.document,
+            document=document,
             manual_operation_keys=tuple(row.manual_operation_keys),
             created_at=row.created_at,
             updated_at=row.updated_at,
             issued_at=row.issued_at,
             inputs=row.inputs,
-            overrides=row.overrides,
+            overrides=with_override_fingerprints(row.overrides, document),
             review_note=row.review_note,
             derived_hash=row.derived_hash,
         )
@@ -356,14 +360,24 @@ class SqlAlchemyTechcardRepository:
         row.content, row.uploaded_by, row.uploaded_at = content, sketch.uploaded_by, sketch.uploaded_at
 
     def delete_sketch(self, card_id: UUID, operation_key: str) -> int:
+        found = self._sketch_row(card_id, operation_key)
+        if found is None:
+            return 0
         return self.session.execute(delete(OperationSketchRow).where(
-            OperationSketchRow.project_card_id == card_id, OperationSketchRow.operation_key == operation_key,
+            OperationSketchRow.id == found.id,
         )).rowcount or 0
 
     def _sketch_row(self, card_id: UUID, operation_key: str) -> OperationSketchRow | None:
-        return self.session.scalar(select(OperationSketchRow).where(
-            OperationSketchRow.project_card_id == card_id, OperationSketchRow.operation_key == operation_key,
-        ))
+        card = self.session.get(ProjectTechcardRow, card_id)
+        aliases = ((card.document or {}).get("operation_key_aliases") or {}) if card else {}
+        target = aliases.get(operation_key, operation_key)
+        keys = {operation_key, target, *(key for key, value in aliases.items() if value == target)}
+        rows = list(self.session.scalars(select(OperationSketchRow).where(
+            OperationSketchRow.project_card_id == card_id, OperationSketchRow.operation_key.in_(keys),
+        )))
+        if len(rows) > 1:
+            raise TechcardValidationError("Несколько эскизов сопоставлены с одной операцией — требуется проверка технолога")
+        return rows[0] if rows else None
 
 
 class SqlAlchemyOperationCardRepository:

@@ -141,7 +141,7 @@ describe("карточки «Схемы полуфабрикатов» гене�
   });
 
   it("prints labels apart from cutting the cable and the tubes, FAKRA too (owner 20.11)", () => {
-    // 708К. КБ1: резка с разделкой, печать этикеток, резка прозрачной ТУТ — три ПФ без входов, все в «Кабель с метками».
+    // Historical operation order is preserved until the ETK is rebuilt.
     const fakra = [op(1, "coaxCut", "Резка с разделкой (А и В)", { key: "coaxFakraCutStrip", code: "CUT_COAX+2strip" }),
       op(2, "coaxCutTut", "Печать этикеток", { key: "coaxPrintLabel", code: "PRINT_MARK_LABEL" }),
       op(3, "coaxCutTut", "Резка прозрачной ТУТ", { key: "coaxProtectCut", code: "CUT_TUT_short" }),
@@ -160,6 +160,13 @@ describe("карточки «Схемы полуфабрикатов» гене�
     ]);
     expect(cards.links.map((link) => `${link.from}>${link.to}`).sort())
       .toEqual(["A>B", "B>final", "labels>marked", "marked>A", "tubes>marked", "wires>marked"]);
+    const rebuilt = [...fakra.slice(0, 5), fakra[6], fakra[7], fakra[5], fakra[8]]
+      .map((operation, index) => ({ ...operation, position: index + 1 }));
+    const updated = genCards(deriveRoute(rebuilt), rebuilt);
+    expect(updated.cards.find((card) => card.id === "marked")?.title).toBe("Кабель с трубками и деталями");
+    expect(updated.cards.find((card) => card.final)?.ops.map((op) => op.key)).toEqual(["coaxInsLabel", "coaxHeat"]);
+    expect(updated.links.map((link) => `${link.from}>${link.to}`).sort())
+      .toEqual(["A>B", "B>final", "labels>final", "marked>A", "tubes>marked", "wires>marked"]);
     // Коаксиал без FAKRA: этикетки — своя карточка, а не «Нарезанные трубки»; маркировочная трубка с печатью — тоже.
     const coax = [op(1, "coaxCut", "Резка кабеля"), op(2, "coaxCutTut", "Печать этикеток", { key: "coaxPrintLabel", code: "PRINT_MARK_LABEL" }),
       op(3, "coaxCutTut", "Резка ТУТ", { key: "coaxProtectCut", code: "CUT_TUT_short" }), op(4, "coaxPin", "Пайка А", { side: "A" }),

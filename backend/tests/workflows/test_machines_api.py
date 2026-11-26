@@ -40,9 +40,9 @@ def _unit(session, inventory, name, **extra):
 @pytest.fixture
 def machines_api(tokens_api):
     sessions, clock = tokens_api
-    from app.modules.references.infrastructure import SqlAlchemyReferencesUnitOfWork
+    from app.workflows.instrument_catalog import SqlAlchemyInstrumentReferencesUnitOfWork
     app.state.production_uow_factory = lambda: SqlAlchemyProductionUnitOfWork(sessions)
-    app.state.references_uow_factory = lambda: SqlAlchemyReferencesUnitOfWork(sessions)
+    app.state.references_uow_factory = lambda: SqlAlchemyInstrumentReferencesUnitOfWork(sessions)
     with sessions.begin() as session:
         ob019 = _unit(session, "ОБ.019", "Автомат резки и зачистки провода с лазерной маркировкой")
         ob101 = _unit(session, "ОБ.101", "Godex EZ2350i")
@@ -699,24 +699,46 @@ def test_a_machine_without_a_setup_model_takes_free_values(machines_api):
     assert empty.status_code == 422
 
 
-def test_the_article_of_an_instrument_comes_from_its_si_card(machines_api):
+@pytest.mark.parametrize("number, name, vna_app, kind, serial", [
+    ("СИ.001", "Arinst VNA-DL", "Arinst VL", "arinst", "arinst"),
+    ("СИ.002", "Planar S50180", "S2VNA", "s2vna", "26030095"),
+])
+def test_the_article_of_an_instrument_comes_from_its_si_card(machines_api, number, name, vna_app, kind, serial):
     from app.modules.references.infrastructure import EquipmentMeasuringRow
     sessions, clock, admin, _, _ = machines_api
     now = clock.now
     with sessions.begin() as session:
-        _instrument(session, "СИ.001", "Arinst VNA-DL", "Arinst VL")
+        _instrument(session, number, name, vna_app, serial=serial)
+        instrument = session.scalar(select(ProductionInstrumentRow).where(ProductionInstrumentRow.inventory_number == number))
+        instrument.article = "Canonical article"
+        instrument_id = str(instrument.id)
         unit_id, model_id = uuid4(), uuid4()
         session.add_all([EquipmentModelRow(id=model_id),
                          EquipmentUnitRow(id=unit_id, catalog="ob_measuring", model_id=model_id, ob_measuring_id=unit_id),
                          EquipmentMeasuringRow(id=unit_id, tab="ob_measuring", equipment_model_id=model_id,
                                                display_text="ВАЦ", normalized_search="", source_sheet="", sort_key="",
-                                               fields={"Инв. номер": "СИ.001", "Артикул": "VNA-DL 1-8800 MHz"})])
+                                               fields={"Инв. номер": number, "Артикул": "Frozen article"})])
         _agent(session, "otk", "DESKTOP-PTA57QF", "2.9.7", now)
-        session.add(DeviceRow(machine_id="otk", kind="arinst", device_id="arinst", name="Arinst VNA-DL", present=True,
+        session.add(DeviceRow(machine_id="otk", kind=kind, device_id=serial, name=name, present=True,
                               last_seen=now))
     [row] = [row for row in admin.get(LIST).json()["rows"] if row["kind"] == "device"]
-    assert (row["inventory"], row["article"]) == ("СИ.001", "VNA-DL 1-8800 MHz")
+    assert (row["inventory"], row["name"], row["article"]) == (number, name, "Canonical article")
+    assert row["instrument_id"] == instrument_id
     assert (row["family"], row["controlled"]) == ("Анализаторы цепей", True)
+
+    for version, changes in enumerate([
+        {"article": "Edited article", "name": "Edited analyser"},
+        {"inventory_number": "СИ.100"},
+        {"article": ""},
+    ], start=1):
+        response = admin.patch(f"/api/references/instruments/{instrument_id}", headers=_csrf(admin),
+                               json={"version": version, **changes})
+        assert response.status_code == 200, response.text
+        saved = response.json()["instrument"]
+        [tile] = [item for item in admin.get(LIST).json()["rows"] if item.get("instrument_id") == instrument_id]
+        assert (tile["inventory"], tile["name"], tile["article"]) == (
+            saved["inventory_number"], saved["name"], saved["article"])
+        assert tile["key"] == row["key"]
 
 
 @pytest.mark.parametrize("operations, name, article, maker, family", [

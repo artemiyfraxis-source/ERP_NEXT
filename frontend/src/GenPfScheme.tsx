@@ -3,7 +3,7 @@ import { failureText, type ProjectTechcard } from "./api";
 import { EtkRouteDiagram } from "./EtkRouteDiagram";
 import { etkDocOperations, etkTitle, harnessPins, navSub, type EtkDocOperation } from "./etkDocOps";
 import { etkConfigOp, etkPfArt } from "./etkPfArt";
-import { etkRouteChips, etkRouteOf, formatMinutes, type EtkPfGroup } from "./etkRoute";
+import { etkRouteChips, etkRouteOf, formatTimeTotal, type EtkPfGroup } from "./etkRoute";
 import { PageWindow } from "./PageWindow";
 import { pluralRu } from "./tcGenLogic";
 
@@ -56,10 +56,8 @@ export function previewSummary(card: ProjectTechcard): ReactNode {
   const operations = etkDocOperations(card.document).length;
   const blocks = route?.blocks.length ?? 0;
   const final = route ? etkRouteChips(route).find((chip) => chip.final) : undefined;
-  // Норма меньше сотой минуты на изделие — не «0 мин»: время ещё не задано.
-  const minutes = final && final.rolledMinutes > 0 ? formatMinutes(final.rolledMinutes) : "";
   return <>{blocks} ПФ · {operations} {pluralRu(operations, "операция", "операции", "операций")}
-    {minutes && minutes !== "0" && <> · на изделие <strong>{minutes} мин</strong></>}</>;
+    {final && <> · на изделие <strong>{formatTimeTotal(final.rolledMinutes, final.rolledUnknownOperations)}</strong></>}</>;
 }
 
 /** Схема ПФ собранной из формы ЭТК: состояние запроса и сама схема. Схемы ещё нет и она не строится — null. */
