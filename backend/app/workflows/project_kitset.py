@@ -47,6 +47,7 @@ from app.modules.procurement.application import (
 from app.modules.procurement.domain import ProcurementLine
 from app.workflows.item_names import ReferenceNames, StockNames, reference_records, resolve_name
 from app.modules.production.domain import ProductionTask
+from app.modules.production.resource_claims import ResourcesBusy
 from app.modules.production.infrastructure import SqlAlchemyProductionUnitOfWork
 from app.modules.production.traceability import ProductionBox
 from app.modules.production.plan import (
@@ -401,6 +402,8 @@ def load_kitset(
     if production_uow is not None:
         try:
             result.erp = register_project(kitset, command.actor, command.now, production_uow)
+        except ResourcesBusy:
+            raise  # 503: the repeated load finishes it, never a project left half registered
         except Exception as error:  # noqa: BLE001 — реестр не роняет заведение (SUPPLYMAP res.erpError)
             result.erp_error = str(error)
     # Очередь на отгрузку встаёт САМА — по строке на каждую КБ (ADR-0016).
@@ -437,6 +440,8 @@ def load_kitset(
                 deadline=command.deadline, known_projects=(kitset.project,),
                 actor=command.actor, now=command.now,
             ), production_uow())
+        except ResourcesBusy:
+            raise  # 503: the repeated load adds the deadline, never silently dropped
         except Exception as error:  # noqa: BLE001
             result.deadline_error = str(error)
     # tcKitNamesEnqueue_: пустые наименования добирает фон (kitset_names_tick) по ссылкам из расчёта.

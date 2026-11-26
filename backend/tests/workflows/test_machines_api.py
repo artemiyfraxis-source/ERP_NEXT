@@ -596,6 +596,11 @@ def test_configuring_by_task_moves_the_task_to_ready_and_clears_waiting(setup_wo
     card = tech.get(SETUP_CARD).json()
     assert [(item["id"], item["version"], item["status"], item["operation"], item["mine"])
             for item in card["open_tasks"]] == [(str(task), 1, "Назначена", "ЭТК 3", True)]
+    # The press card reads the required values from this ETK operation (read-only source metadata).
+    with sessions() as session:
+        operation = session.get(SetupTaskRow, task).snapshot["operation"]
+    assert card["open_tasks"][0]["source"] == {"task_id": operation["production_task_id"],
+                                               "operation_id": operation["production_operation_id"], "etk_position": 3}
     manual = tech.post(CONFIGURE, json={"expected_version": 0, "values": {"strip_mm": "5"}}, headers=_csrf(tech))
     assert manual.status_code == 422 and "причину" in manual.json()["detail"]
     stray = tech.post(CONFIGURE, json={"expected_version": 0, "task_id": str(task), "values": {"length": "5"}},
@@ -633,6 +638,21 @@ def test_configuring_by_task_moves_the_task_to_ready_and_clears_waiting(setup_wo
     assert [(item["reason"], item["operation"], item["values"]) for item in card["history"]] == [
         ("смена ножа", "", {"strip_mm": "6"}), ("", "ЭТК 3", {"strip_mm": "5.5"})]
     assert card["open_tasks"] == []
+
+
+def test_setup_task_source_is_none_when_the_snapshot_lacks_the_operation():
+    """The press card reads required values only from a complete task/operation/ETK-position triple."""
+    from uuid import uuid4 as new_id
+    from app.workflows.equipment_setup_model import operation_source
+    task, step = str(new_id()), str(new_id())
+    assert operation_source({}) is None
+    assert operation_source({"operation": None}) is None
+    assert operation_source({"operation": {"production_task_id": task, "etk_position": 3}}) is None
+    assert operation_source({"operation": {"production_task_id": "не id", "production_operation_id": step, "etk_position": 3}}) is None
+    assert operation_source({"operation": {"production_task_id": task, "production_operation_id": step, "etk_position": "3"}}) is None
+    assert operation_source({"operation": {"production_task_id": task, "production_operation_id": step, "etk_position": True}}) is None
+    assert operation_source({"operation": {"production_task_id": task, "production_operation_id": step, "etk_position": 3}}) == {
+        "task_id": task, "operation_id": step, "etk_position": 3}
 
 
 def test_setup_card_and_configuration_follow_the_task_list_rules(setup_world):

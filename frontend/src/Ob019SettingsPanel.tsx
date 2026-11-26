@@ -3,7 +3,7 @@ import { ApiError, failureText, productionApi } from "./api";
 import { equipmentSetupApi } from "./equipmentSetupApi";
 import { EMPTY, formatMoment, formatNumber } from "./format";
 import {
-  clock, commandResult, IDLE_STATES, machineControlApi, operatorText, type MachineCommand, type MachineRun, type MachineRunState,
+  clock, commandResult, IDLE_STATES, machineControlApi, operatorText, resetCountersText, type MachineCommand, type MachineRun, type MachineRunState,
   type ConfirmedRunRequest, type MachineWindow, type RunRequest,
   type SettingField, type TransferChoice, type TransferPlan, type TransferRow, type WireChoice,
 } from "./machineControlApi";
@@ -242,7 +242,9 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
   const [due, setDue] = useState<RunDue | null>(null);
   // An ETK job with a size missing in the ETK: what was typed for it, sent with the job once every size is there.
   const [held, setHeld] = useState<Record<string, string> | null>(null);
-  const [confirmReset, setConfirmReset] = useState<{ activeRunId: string | null; state: number | null; description: string } | null>(null);
+  // «Новый тираж»: `counters` — сделано (D649) и пучок (D645), как их показало окно; `zero` — обнулить их в той же команде.
+  const [confirmReset, setConfirmReset] = useState<{ activeRunId: string | null; state: number | null; description: string;
+    counters: { total: number; batch: number } | null; zero: boolean } | null>(null);
   const [resetPending, setResetPending] = useState<string | null>(null);
   const [choices, setChoices] = useState<TransferChoice[] | null>(null);
   const [wires, setWires] = useState<WireChoice[] | null>(null);
@@ -758,7 +760,8 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
     loadLock.current = true;
     setSending(true);
     try {
-      const command = await machineControlApi.resetRun(inventory, confirmReset.activeRunId, confirmReset.state);
+      const command = await machineControlApi.resetRun(inventory, confirmReset.activeRunId, confirmReset.state,
+        confirmReset.zero && confirmReset.counters ? confirmReset.counters : undefined);
       setResetPending(command.id);
       setInFlight({ id: command.id, at: Date.now() });
       setConfirmReset(null);
@@ -1187,7 +1190,16 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
       <section className="panel machine-card">
         <h2>Новый тираж</h2>
         <p>{confirmReset.description}</p>
-        <p>Тираж станет 0, маркировка и связь с заданием будут сняты. Общий счётчик станка сохранится.</p>
+        {confirmReset.counters && (confirmReset.counters.total > 0 || confirmReset.counters.batch > 0) &&
+          <label className="machine-check">
+            <input type="checkbox" checked={confirmReset.zero} disabled={sending}
+              onChange={(event) => setConfirmReset({ ...confirmReset, zero: event.target.checked })} />
+            {" "}Обнулить счётчик (сделано {formatNumber(confirmReset.counters.total)})
+          </label>}
+        {confirmReset.zero && confirmReset.counters
+          ? <p><strong className="tnum">{resetCountersText(confirmReset.counters.total, confirmReset.counters.batch)}</strong>.
+            Тираж станет 0, маркировка и связь с заданием будут сняты.</p>
+          : <p>Тираж станет 0, маркировка и связь с заданием будут сняты. Общий счётчик станка сохранится.</p>}
         {message?.tone === "danger" && <p className="error-banner" role="alert">{message.text}</p>}
         <div className="machine-actions">
           <button type="button" className="secondary" disabled={sending} onClick={() => setConfirmReset(null)}>Отмена</button>
@@ -1223,7 +1235,9 @@ export function Ob019SettingsPanel({ inventory, equipmentId, live = null, old = 
         {wire && held && !plan?.group_id && <button type="button" className="primary" disabled={!canWrite || !free || planLoading}
           onClick={() => void prepareWire()}>Загрузить в станок</button>}
         <button type="button" className="secondary" disabled={!canWrite || !free || !!resetPending}
-          onClick={() => setConfirmReset({ activeRunId: runOpen?.id ?? null, state: control?.state ?? null,
+          onClick={() => setConfirmReset({ activeRunId: runOpen?.id ?? null, state: control?.state ?? null, zero: false,
+            counters: counter !== null && typeof live?.job?.batch_finished === "number"
+              ? { total: counter, batch: live.job.batch_finished } : null,
             description: runOpen ? `${runOpen.label}: сделано ${runOpen.done ?? EMPTY} шт. Результат сохранится в журнале.`
               : `Текущий тираж: осталось ${left ?? EMPTY} шт.` })}>Новый тираж</button>
         {completed && <span className="machine-muted">Тираж готов — подготовьте новый</span>}

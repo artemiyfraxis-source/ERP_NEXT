@@ -4,15 +4,17 @@ from copy import deepcopy
 from dataclasses import replace
 from datetime import timedelta
 from uuid import UUID, uuid4
+import threading
+import traceback
 
 import pytest
-from sqlalchemy import event
+from sqlalchemy import create_engine, event
 
 from app.main import app
 from app.modules.identity.infrastructure import IdentityApiTokenRow
 from app.modules.production import machine_runs, machine_writes, machines
 from app.modules.production.domain import ProductionStatus, link_inputs
-from app.modules.production.infrastructure import ProductionTaskRow
+from app.modules.production.infrastructure import ProductionTaskRow, SqlAlchemyProductionUnitOfWork
 from app.modules.production.resource_assignment_infrastructure import (
     ResourceAllocationMachineRow, ResourceAllocationMemberRow, ResourceAllocationRow,
 )
@@ -24,6 +26,7 @@ from app.modules.warehouse.marking_render import presets
 from app.modules.warehouse.scan_agents import ScanAgentRow
 from app.shared.http_auth import Principal, authenticated_principal
 from app.shared.clock import moscow_now
+from app.workflows.production_resource_context import production_resources
 from tests.factories import Actor
 from tests.production.test_api import issue_card, production_api  # noqa: F401
 from tests.production.test_cutting_groups import batch, document
@@ -185,23 +188,32 @@ def test_marking_readiness_print_permissions_and_exact_versioned_source(producti
     assert bool(row["blocker"]) is not expected
 
 
-@pytest.mark.parametrize("adapter", ["marking", "ob019", "generic", "generic_cut"])
-def test_discovery_repeatedly_executes_only_selects_and_never_issues_serials(production_api, monkeypatch, adapter):
+ADAPTERS = ["marking", "ob019", "generic", "generic_cut"]
+
+
+def adapter_seed(production_api, adapter):
     if adapter == "marking":
         client, _, task, _, _ = marking_seed(production_api)
-    elif adapter == "generic":
+        return client, task
+    if adapter == "generic":
         client, _, task, _, _ = seed(production_api)
-    else:
-        client, _ = production_api
-        inventory = "ОБ.019" if adapter == "ob019" else "ОБ.095"
-        unit = _unit(inventory)
-        batch(client, [issue("708К.", "КБ1", on_machine(wire_document(), inventory))])
-        with app.state.production_uow_factory() as uow:
-            [task] = list(uow.production.with_status(ProductionStatus.RUNNING))
-        if adapter == "ob019":
-            connect(unit)
-        sessions = app.state.techcards_uow_factory().session_factory
-        app.state.references_uow_factory = lambda: SqlAlchemyReferencesUnitOfWork(sessions)
+        return client, task
+    client, _ = production_api
+    inventory = "ОБ.019" if adapter == "ob019" else "ОБ.095"
+    unit = _unit(inventory)
+    batch(client, [issue("708К.", "КБ1", on_machine(wire_document(), inventory))])
+    with app.state.production_uow_factory() as uow:
+        [task] = list(uow.production.with_status(ProductionStatus.RUNNING))
+    if adapter == "ob019":
+        connect(unit)
+    sessions = app.state.techcards_uow_factory().session_factory
+    app.state.references_uow_factory = lambda: SqlAlchemyReferencesUnitOfWork(sessions)
+    return client, task
+
+
+@pytest.mark.parametrize("adapter", ADAPTERS)
+def test_discovery_repeatedly_executes_only_selects_and_never_issues_serials(production_api, monkeypatch, adapter):
+    client, task = adapter_seed(production_api, adapter)
     def forbidden(*args, **kwargs):
         pytest.fail("Discovery called a serial issuer or writer")
     monkeypatch.setattr("app.modules.production.api.issue_mark_serials", forbidden)
@@ -371,3 +383,70 @@ def test_ob019_loading_requires_live_supported_source_and_permission(production_
     assert row["can_load"] is expected, row
     assert bool(row["blocker"]) is not expected
     assert row["source"]["length_mm"] == "1000"
+
+
+class _OneUowPerThread:
+    """Wraps the production UoW factory and records every UoW entered while another is open in the same thread.
+
+    Production UoWs take one global resource lock (PostgreSQL advisory lock / SQLite BEGIN IMMEDIATE): a second
+    one in the same request waits forever for the first (prod 23.11). Detected here without any real lock."""
+
+    def __init__(self, factory):
+        self.factory, self.local, self.nested = factory, threading.local(), []
+
+    def __call__(self):
+        guard, uow = self, self.factory()
+
+        class Guarded:
+            def __getattr__(self, name):
+                return getattr(uow, name)
+
+            def __enter__(self):
+                depth = getattr(guard.local, "depth", 0)
+                if depth:
+                    guard.nested.append("".join(traceback.format_stack(limit=8)))
+                guard.local.depth = depth + 1
+                try:
+                    uow.__enter__()
+                except BaseException:
+                    guard.local.depth = depth
+                    raise
+                return uow
+
+            def __exit__(self, *exc):
+                guard.local.depth -= 1
+                return uow.__exit__(*exc)
+
+        return Guarded()
+
+
+@pytest.mark.parametrize("adapter", ADAPTERS)
+def test_discovery_never_opens_a_second_production_uow_inside_the_first(production_api, adapter):
+    client, task = adapter_seed(production_api, adapter)
+    guard = app.state.production_uow_factory = _OneUowPerThread(app.state.production_uow_factory)
+    row = read(client, task, task.operations[0])[0]
+    assert guard.nested == [], guard.nested[0]
+    assert row["can_open"] is True
+    if adapter.startswith("generic"):
+        assert row["source"]["queue_kind"] == ("cutting" if adapter == "generic_cut" else "machine")
+
+
+@pytest.fixture
+def file_production_api(monkeypatch, tmp_path, request):
+    """production_api over a file SQLite with several connections; the lock wait is cut to 0.5 s."""
+    from tests.production import test_api
+
+    monkeypatch.setattr(test_api, "create_engine", lambda *_args, **_kwargs: create_engine(
+        f"sqlite+pysqlite:///{tmp_path / 'erp.db'}", connect_args={"check_same_thread": False, "timeout": 0.5}))
+    return request.getfixturevalue("production_api")
+
+
+@pytest.mark.parametrize("adapter", ["generic", "generic_cut"])
+def test_discovery_with_the_resource_lock_does_not_wait_for_itself(file_production_api, adapter):
+    """The runtime factory (resource_factory set): each production UoW begins IMMEDIATE, so a nested one is refused."""
+    client, task = adapter_seed(file_production_api, adapter)
+    sessions = app.state.production_uow_factory().session_factory
+    app.state.production_uow_factory = lambda: SqlAlchemyProductionUnitOfWork(sessions, production_resources)
+    row = read(client, task, task.operations[0])[0]
+    assert row["can_open"] is True and row["source"]["queue_kind"] == (
+        "cutting" if adapter == "generic_cut" else "machine")

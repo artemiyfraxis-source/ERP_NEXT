@@ -1,7 +1,9 @@
 import { useCallback, useState, type ReactNode } from "react";
+import { failureText } from "./api";
 import { PageWindow } from "./PageWindow";
 import { EMPTY, formatMoment, formatNumber } from "./format";
-import { PULT_OPEN, operatorText, type MachineControl, type MachineRunState } from "./machineControlApi";
+import { machineControlApi, PULT_OPEN, operatorText, RESET_STATES, resetCountersText, type MachineCommand, type MachineControl,
+  type MachineRunState } from "./machineControlApi";
 import { machinesApi, usePolled, type MachineCard, type Ob019Live, type Tone } from "./machinesApi";
 import { Ob099CardView } from "./Ob099Card";
 import { Ob019Controls, Ob019Pult } from "./Ob019Controls";
@@ -14,7 +16,7 @@ import { Ob019SettingsPanel } from "./Ob019SettingsPanel";
  *  программы, с кнопкой «Закрыть пульт на ПК»; на связи — тихая «Открыть пульт на ПК» (Ob019Pult). Опрос раз в 3 с,
  *  пока окно открыто. */
 
-type Fact = [label: string, value: string];
+type Fact = [label: string, value: string, action?: ReactNode];
 
 const toneClass = (tone?: Tone) => (tone && tone !== "neutral" && tone !== "ok" ? `tone-${tone}` : "");
 
@@ -76,18 +78,79 @@ export function machineStatus(card: MachineCard, startWhy?: string): MachineStat
 }
 
 /** Ход задания на станке одной строкой; пустое не показывается. «Сделано» — только без открытого задания: при нём счёт
- *  уже в строке состояния и в «Выполнении задания». */
-function liveFacts(live: Ob019Live, running: boolean): Fact[] {
+ *  уже в строке состояния и в «Выполнении задания». `zero` — кнопка «Обнулить» рядом со «Сделано». */
+function liveFacts(live: Ob019Live, running: boolean, zero?: ReactNode): Fact[] {
   const { job } = live;
   const facts: Fact[] = [
     ["Режим", live.mode.text],
-    ["Сделано", job.total_set === null || running ? "" : `${count(job.total_finished)} из ${count(job.total_set)} шт`],
+    ["Сделано", job.total_set === null || running ? "" : `${count(job.total_finished)} из ${count(job.total_set)} шт`, zero],
     ["Пучок", job.batch_set ? `${count(job.batch_finished)} из ${count(job.batch_set)} шт` : ""],
     ["Заказ", job.order_number ?? ""],
     ["Изделие", job.product ?? ""],
     ["Скорость", job.uph ? `${formatNumber(job.uph)} шт/ч` : ""],
   ];
   return facts.filter(([, value]) => value && value !== EMPTY);
+}
+
+/** The newest done «Обнулить счётчики»: the machine read 0 back, the bridge may not have reported since — the card shows
+ *  the read-back until a snapshot newer than the command arrives (owner 23.11.2026: «после обнуления видно 0»). */
+export function zeroedLive(live: Ob019Live, commands: MachineCommand[], reportedAt: string | null): Ob019Live {
+  const done = commands.find((row) => row.reset_counters);
+  const after = done?.status === "done" ? done.reset_counters?.after : null;
+  if (!after || !done?.finished_at) return live;
+  if (reportedAt && new Date(reportedAt).getTime() > new Date(done.finished_at).getTime()) return live;
+  return { ...live, job: { ...live.job, total_finished: after.total ?? live.job.total_finished,
+    batch_finished: after.batch ?? live.job.batch_finished } };
+}
+
+/** «Обнулить» у «Сделано … из …», когда тираж сделан и станок стоит: одно подтверждение «Сделано N → 0, пучок M → 0»,
+ *  итог — рядом с кнопкой. Только D649 и D645; тираж D22 остаётся — его заново начнёт кнопка «Пуск» на самом станке
+ *  («Пуск» ERP без задания отказывает); новое задание — «Новый тираж». */
+export function Ob019ZeroCounters({ card, live, control }: { card: MachineCard; live: Ob019Live; control: MachineControl }) {
+  const [asking, setAsking] = useState(false);
+  const [sent, setSent] = useState<string | null>(null);
+  const [refused, setRefused] = useState("");
+  const [busy, setBusy] = useState(false);
+  const { total_finished: total, batch_finished: batch, total_set: set } = live.job;
+  const state = live.state.code;
+  const commands = Array.isArray(control.commands) ? control.commands : [];
+  const row = sent ? commands.find((item) => item.id === sent) : undefined;
+  const open = commands.some((item) => item.status === "queued" || item.status === "taken");
+  const finished = state === 107 || (set !== null && set > 0 && total !== null && total >= set);
+  const shown = control.can_edit && card.link.code === "ok" && finished && total !== null && batch !== null
+    && (total > 0 || batch > 0) && state !== null && RESET_STATES.includes(state);
+  const note = refused ? `отказ: ${refused}` : row ? (row.status === "done" ? "обнулено"
+    : row.status === "queued" || row.status === "taken" ? "обнуляется…"
+    : row.status === "unknown" ? "результат неизвестен — проверьте счётчик на станке"
+    : `не обнулено: ${operatorText(row.error || row.status_text)}`) : "";
+  async function send() {
+    if (total === null || batch === null) return;
+    setBusy(true); setRefused("");
+    try {
+      const queued = await machineControlApi.resetCounters(card.inventory, state, { total, batch });
+      setSent(queued.id); setAsking(false);
+    } catch (reason) {
+      setRefused(failureText(reason, "не отправлено")); setAsking(false);
+    } finally { setBusy(false); }
+  }
+  if (!shown && !note) return null;
+  return <>
+    {shown && <button type="button" className="secondary small machine-zero" disabled={busy || open}
+      onClick={() => { setRefused(""); setAsking(true); }}>Обнулить</button>}
+    {note && <span className={`machine-cmd-note${refused || (row && row.status !== "done" && row.status !== "queued" && row.status !== "taken") ? " tone-danger" : ""}`}
+      role="status"> {note}</span>}
+    {asking && total !== null && batch !== null && <PageWindow label="Обнулить счётчик" close={() => { if (!busy) setAsking(false); }} width={520}>
+      <section className="panel machine-card">
+        <h2>Обнулить счётчик</h2>
+        <p><strong className="tnum">{resetCountersText(total, batch)}</strong></p>
+        {set !== null && set > 0 && <p>Кнопка «Пуск» на станке начнёт тираж {formatNumber(set)} шт заново. Другое задание — «Новый тираж».</p>}
+        <div className="machine-actions">
+          <button type="button" className="secondary" disabled={busy} onClick={() => setAsking(false)}>Отмена</button>
+          <button type="button" className="primary" disabled={busy} onClick={() => void send()}>Обнулить</button>
+        </div>
+      </section>
+    </PageWindow>}
+  </>;
 }
 
 function plain(value: string | null | undefined): string {
@@ -110,7 +173,9 @@ export function Ob019CardView({ card, controls = false, header, incoming }: {
   const run = runState?.run;
   const running = !!run && !["closed", "failed", "moved"].includes(run.stage);
   const status = machineStatus(card, startWhy);
-  const facts = card.live ? liveFacts(card.live, running) : [];
+  const live = card.live && control ? zeroedLive(card.live, Array.isArray(control.commands) ? control.commands : [], card.reported_at) : card.live;
+  const zero = controls && live && control && !running ? <Ob019ZeroCounters card={card} live={live} control={control} /> : undefined;
+  const facts = live ? liveFacts(live, running, zero) : [];
   // The agent's answer only when it says more than the state line above (the server already translates known ones).
   const agentNote = card.error && card.error !== card.link.text && operatorText(card.error) !== PULT_OPEN ? card.error : "";
   return <>
@@ -130,7 +195,7 @@ export function Ob019CardView({ card, controls = false, header, incoming }: {
     {facts.length > 0 && <dl className={`machine-summary${old ? " machine-old" : ""}`}
       aria-label={old ? "Последние полученные данные" : "Данные станка"}>
       {old && card.reported_at && <div><dt>Данные на</dt><dd>{formatMoment(card.reported_at)}</dd></div>}
-      {facts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+      {facts.map(([label, value, action]) => <div key={label}><dt>{label}</dt><dd>{value}{action}</dd></div>)}
     </dl>}
     {controls && <Ob019Controls card={card} run={runState ? runState.run : undefined} onStartWhy={setStartWhy} onControl={setControl} />}
     <Ob019SettingsPanel incoming={incoming} inventory={card.inventory} equipmentId={card.equipment_id} live={card.live} old={old}
@@ -138,20 +203,20 @@ export function Ob019CardView({ card, controls = false, header, incoming }: {
   </>;
 }
 
-export function Ob019Card({ equipmentId, title, close, actions, incoming, openJournal }: { equipmentId: string; title: string; close: () => void; actions?: ReactNode; incoming?: import("./machinesApi").MachineTaskContext; openJournal?: () => void }) {
+/** `openJournal` — старый вход в журнал работ; обе живые карточки открывают свой «Журнал» сами. `canWrite` — право
+ *  записывать наладку (карточка пресса). */
+export function Ob019Card({ equipmentId, title, close, actions, incoming, canWrite = false }: { equipmentId: string; title: string; close: () => void; actions?: ReactNode; incoming?: import("./machinesApi").MachineTaskContext; openJournal?: () => void; canWrite?: boolean }) {
   const load = useCallback((signal: AbortSignal) => machinesApi.card(equipmentId, signal), [equipmentId]);
   const { data, error } = usePolled(load, undefined, "Не удалось загрузить станок");
   return <PageWindow label={title} close={close} width={1100} dismissable>
     <section className="panel machine-card">
-      {(!data || data.kind === "ob099_fins") && <header className="machine-card-head">
+      {!data && <header className="machine-card-head">
         <h2>{title}</h2>
-        {data?.kind === "ob099_fins" && actions}
-        {data?.kind === "ob099_fins" && openJournal && <button type="button" className="secondary small" onClick={openJournal}>Журнал</button>}
         <button className="secondary small" onClick={close}>Закрыть</button>
       </header>}
       {error && <div className="error-banner" role="alert">{error}</div>}
       {!data && !error && <p className="empty">Загрузка…</p>}
-      {data && (data.kind === "ob099_fins" ? <Ob099CardView card={data} incoming={incoming} />
+      {data && (data.kind === "ob099_fins" ? <Ob099CardView card={data} incoming={incoming} header={{ title, close }} canWrite={canWrite} />
         : <Ob019CardView card={data} controls incoming={incoming} header={{ title, actions, close }} />)}
     </section>
   </PageWindow>;

@@ -39,8 +39,8 @@ def test_the_register_is_one_constant_and_the_agent_mirrors_it():
     assert re.search(r"^\$script:FeedWheelAddress = (\d+)$", bridge, re.M).group(1) == str(rules.OB019_FEED_WHEEL_ADDRESS)
     assert "@(20, 74, 142, 197, 604" in bridge
     writer = (ROOT / "ob019-writer.ps1").read_text(encoding="ascii")
-    assert f"$script:RunnerVersion = '{commands.RUNNER_CORRECTION}'" in writer
-    assert f"$script:MbdVersion = '{commands.RUNNER_CORRECTION}'" in (ROOT / "mbd.ps1").read_text(encoding="ascii")
+    assert f"$script:RunnerVersion = '{commands.RUNNER_COUNTERS}'" in writer
+    assert f"$script:MbdVersion = '{commands.RUNNER_COUNTERS}'" in (ROOT / "mbd.ps1").read_text(encoding="ascii")
     # The bit has required mbd 1.3.0 since its introduction, independently of the current runner version.
     assert f"$script:MbdBitVersions = @{{ {rules.OB019_FEED_WHEEL_ADDRESS} = '1.3.0' }}" in writer
     assert "$script:MbdMinVersion = '1.2.0'" in writer

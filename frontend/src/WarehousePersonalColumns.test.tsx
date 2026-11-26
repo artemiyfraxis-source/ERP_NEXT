@@ -159,7 +159,8 @@ it("the layout is the person's own: read from the server, a change is saved ther
   const calls = mockServer([lot], { "stock.grouped": { order: ["name", "maker", "grn", "available"], hidden: ["type", "reserved", "lots", "place", "article", "warehouse", "balance"] } });
   render(<WarehousePage />);
   await screen.findByText("Amphenol RF");
-  expect(headerNames()).toEqual(["Наименование", "Производитель", "ГРН", "Свободно", "Места"]);
+  // The stock stays in the first screen: «Свободно» and «Места» come just before the name, whatever the saved order.
+  expect(headerNames()).toEqual(["Свободно", "Места", "Наименование", "Производитель", "ГРН"]);
 
   fireEvent.click(openChooser().getByLabelText("Склад"));
   await waitFor(() => expect(writes(calls)).toHaveLength(1), { timeout: 2000 });
@@ -232,7 +233,8 @@ it("the server's layout wins over this browser's; without the server the browser
   const { unmount } = render(<WarehousePage />);
   await screen.findByText("SMA-KWE-RG402");
   await waitFor(() => expect(offline.length).toBe(1));
-  expect(headerNames().slice(0, 2)).toEqual(["Склад", "Наименование"]);
+  // The browser's order leads with «Склад»; «Свободно» and «Места» stand just before the name.
+  expect(headerNames().slice(0, 4)).toEqual(["Склад", "Свободно", "Места", "Наименование"]);
   expect(writes(offline)).toHaveLength(0);
   unmount();
 
@@ -246,7 +248,7 @@ it("the server's layout wins over this browser's; without the server the browser
 it("«По умолчанию» drops the person's layout on the server", async () => {
   const calls = mockServer([lot], { "stock.grouped": { order: ["name", "grn"], hidden: ["type"] } });
   render(<WarehousePage />);
-  await waitFor(() => expect(headerNames()[0]).toBe("Наименование"));
+  await waitFor(() => expect(headerNames().slice(0, 3)).toEqual(["Свободно", "Места", "Наименование"]));
   await screen.findByText(lot.article);
   fireEvent.click(openChooser().getByRole("button", { name: "По умолчанию" }));
   expect(headerNames()).toEqual(["Тип", "ГРН", "Свободно", "Резерв", "Партий", "Места", "Артикул номенклатуры", "Наименование", "Склад"]);

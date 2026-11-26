@@ -128,6 +128,9 @@ export interface DataTableProps<T> {
   /** Aligned ordinary-table group cells, keyed by column. Unspecified cells are empty; null omits the group header.
       Raw row values still drive search, filters and export. The fourth argument follows the visible header order. */
   groupCells?: (name: string, rows: T[], filteredRows: T[], visibleColumns: DataColumn<T>[]) => Partial<Record<string, ReactNode>> | null;
+  /** Блок группы одной ячейкой на всю ширину вместо `groupCells`: `head` — шапка, `foot` — подвал после строк группы.
+      `null`/`undefined` — группа без шапки. `fold` сворачивает группу (нужен `collapsibleGroups`). */
+  groupBlock?: (name: string, rows: T[], filteredRows: T[], fold: { folded: boolean; toggle: () => void }) => { head: ReactNode; foot?: ReactNode } | null | undefined;
   /** Opt in to project/group headers above cards; existing card consumers keep their flat layout. */
   groupCards?: boolean;
   /** Заголовок группы сворачивает её строки (по умолчанию группы всегда раскрыты). */
@@ -454,6 +457,7 @@ export function DataTable<T>({
   groupParent,
   groupParentLabel,
   groupCells,
+  groupBlock,
   groupCards = false,
   collapsibleGroups,
   collapsedGroups,
@@ -736,7 +740,9 @@ export function DataTable<T>({
   const lineKeys = new Set(lines.map(rowKey));
   const linesSig = JSON.stringify([...lineKeys]);
   const keys = new Set(rows.map(rowKey));
-  const selectedRows = rows.filter((row) => lineKeys.has(rowKey(row)) && selected.has(rowKey(row)));
+  // Свёрнутая группа таблицы остаётся в выборе: массовые действия работают и с отмеченными строками внутри неё (блоки `blocks` — как раньше, без свёрнутых).
+  const selectableKeys = new Set(groups.flatMap(([name, groupRows]) => blocks && (isFolded(name) || isSectionFolded(blockSection?.(name))) ? [] : groupRows).map(rowKey));
+  const selectedRows = rows.filter((row) => selectableKeys.has(rowKey(row)) && selected.has(rowKey(row)));
   // Выбор переживает перезагрузку данных только для строк, которые остались.
   useEffect(() => {
     setSelected((current) => {
@@ -1807,7 +1813,8 @@ export function DataTable<T>({
             {groups.map(([name, groupRows], index) => {
               const parent = groupParent?.(groupRows[0]);
               const startsParent = parent !== undefined && (index === 0 || groupParent?.(groups[index - 1][1][0]) !== parent);
-              const cells = grouping && groupCells ? groupCells(name, groupRows, filtered, visible) : undefined;
+              const block = grouping && groupBlock ? groupBlock(name, groupRows, filtered, { folded: isFolded(name), toggle: () => toggleCollapsed(name) }) : undefined;
+              const cells = grouping && groupCells && !groupBlock ? groupCells(name, groupRows, filtered, visible) : undefined;
               const checkbox = selectable ? (() => {
                 const picked = groupRows.filter((row) => selected.has(rowKey(row))).length;
                 return <input type="checkbox" aria-label="Выбрать группу" title="Выбрать группу"
@@ -1819,7 +1826,10 @@ export function DataTable<T>({
                 {startsParent && <tr className="group-row dt-parent-row">
                   <td colSpan={span}>{groupParentLabel ? groupParentLabel(parent, parentRows.get(parent)!, filtered) : parent}</td>
                 </tr>}
-                {grouping && cells !== null && (cells !== undefined ? <tr className="group-row dt-group-cells">
+                {grouping && cells !== null && !(groupBlock && !block) && (block ? <tr className="group-row dt-group-block">
+                  {selectable && <td>{checkbox}</td>}
+                  <td colSpan={span - (selectable ? 1 : 0)}>{block.head}</td>
+                </tr> : cells !== undefined ? <tr className="group-row dt-group-cells">
                   {selectable && <td>{checkbox}</td>}
                   {visible.map((column, at) => {
                     const width = widths[column.key];
@@ -1841,6 +1851,7 @@ export function DataTable<T>({
                     </td>
                   </tr>)}
                 {!isFolded(name) && groupRows.map(renderRow)}
+                {block?.foot && !isFolded(name) && <tr className="group-row dt-group-foot"><td colSpan={span}>{block.foot}</td></tr>}
               </Fragment>;
             })}
             {!shown.length && <tr><td colSpan={span} className="empty">{loading ? "Загрузка…" : emptyText}</td></tr>}

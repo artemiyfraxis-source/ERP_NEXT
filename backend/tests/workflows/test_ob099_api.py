@@ -13,7 +13,7 @@ from app.main import app
 from app.modules.production import machines as rules
 from app.modules.production import ob099
 from app.modules.production.infrastructure import SqlAlchemyProductionUnitOfWork
-from tests.identity.test_api_tokens import _bearer, _issue, _login, tokens_api  # noqa: F401
+from tests.identity.test_api_tokens import _bearer, _csrf, _issue, _login, tokens_api  # noqa: F401
 from tests.workflows.test_machines_api import _unit
 
 REPORT = "/api/production/machines/agent/report"
@@ -102,6 +102,11 @@ def test_the_press_reports_fins_words_and_the_card_decodes_state_job_height_and_
     assert window["connection"]["pc"] == "DESKTOP-K6M7O0U" and window["connection"]["extra"] == []
     # Writes from ERP are ОБ.019 only: the press's control panel says so, its agent cannot take commands.
     assert admin.get(f"{LIST}/card/ОБ.099.1/control").json()["can_edit"] is False
+    # The press setup screen records ERP attestation only: every write route still refuses the press.
+    for route, body in (("write", {"values": {"length_mm": "100"}}),
+                        ("correction", {"parameter": "length_mm", "case": "machine", "offset": "1"})):
+        refused = admin.post(f"{LIST}/card/ОБ.099.1/{route}", json=body, headers=_csrf(admin))
+        assert refused.status_code == 409 and "только у ОБ.019" in refused.json()["detail"], refused.text
 
 
 def test_alarm_bits_and_warnings_decode_to_russian_and_alarm_wins_the_state():

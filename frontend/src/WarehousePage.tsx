@@ -212,6 +212,10 @@ function StockPage({ admin, readOnly, canEditReferences, views }: { admin: boole
   // Document columns switched on widen the table (it scrolls in its frame) instead of squeezing the name.
   const docsLayout = documentsLayout(shownColumns);
   const chooserKeys = chooserColumns(layout, groupColumn).filter((key) => populatedColumns.has(key));
+  // A sort column that left the table (switched off, grouped by, or empty on every lot) hands the order back to the
+  // article, so rows are never ordered by something the table does not show.
+  const sortShown = sort.key === "article" || shownColumns.includes(sort.key as ColumnKey);
+  useEffect(() => { if (!sortShown) setSort({ key: "article", desc: false }); }, [sortShown]);
   // The leftmost column stays in view when the table is scrolled sideways.
   const pinned = shownColumns[0];
   const changeLayout = (change: (current: ColumnLayout) => ColumnLayout) => {
