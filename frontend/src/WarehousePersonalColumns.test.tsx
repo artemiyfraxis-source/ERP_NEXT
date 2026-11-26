@@ -159,7 +159,8 @@ it("the layout is the person's own: read from the server, a change is saved ther
   const calls = mockServer([lot], { "stock.grouped": { order: ["name", "maker", "grn", "available"], hidden: ["type", "reserved", "lots", "place", "article", "warehouse", "balance"] } });
   render(<WarehousePage />);
   await screen.findByText("Amphenol RF");
-  expect(headerNames()).toEqual(["Наименование", "Производитель", "ГРН", "Свободно", "Места"]);
+  // The stock stays in the first screen: «Свободно» and «Места» come right after the name, whatever the saved order.
+  expect(headerNames()).toEqual(["Наименование", "Свободно", "Места", "Производитель", "ГРН"]);
 
   fireEvent.click(openChooser().getByLabelText("Склад"));
   await waitFor(() => expect(writes(calls)).toHaveLength(1), { timeout: 2000 });
