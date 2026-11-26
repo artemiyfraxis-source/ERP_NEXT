@@ -128,7 +128,7 @@ export function CoaxReseed({ coax, onChange, propose }: Props & { propose: () =>
   const rows: ReseedRow[] = patch ? (Object.keys(patch) as Array<keyof Coax>)
     .filter((key) => JSON.stringify(coax[key]) !== JSON.stringify(patch[key]))
     .map((key) => ({ key, field: RESEED_LABELS[key] || "", before: reseedText(key, coax[key]), after: reseedText(key, patch[key]) })) : [];
-  return <section className="gsec full" aria-label="Заполнение по составу и КД">
+  return <div className="coax-reseed" role="region" aria-label="Заполнение по составу и КД">
     <div className="gsec-head"><button type="button" className="secondary" onClick={() => setPatch(propose())}>Заполнить по составу и КД</button></div>
     {patch && <>
       {rows.length ? <DataTable columns={RESEED_COLUMNS} rows={rows} rowKey={(row) => row.key} /> : <p>Изменений нет.</p>}
@@ -137,5 +137,5 @@ export function CoaxReseed({ coax, onChange, propose }: Props & { propose: () =>
         <button type="button" className="secondary" onClick={() => setPatch(null)}>Отмена</button>
       </div>
     </>}
-  </section>;
+  </div>;
 }
