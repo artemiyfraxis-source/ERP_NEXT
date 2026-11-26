@@ -105,7 +105,11 @@ def label_printer(_principal: Annotated[Principal, Depends(warehouse_view_princi
                      "at": _moment(row.created_at), "status": row.status, "finished_at": _moment(row.finished_at),
                      "error": row.error or ""})
     # `online` — the TSC's agent asked for jobs lately (it polls every 3 s); the card says «Нет связи с ПК» otherwise.
-    return {"now": now.isoformat(), "online": _fresh(seen, now), "agent": agent_status(uow_factory()), "jobs": jobs}
+    # Templates are stored and looked up by the PRINT SETTINGS printer name (labels_application.selected_template_in),
+    # not by the queue name the agent reports: the card shows and edits exactly that key.
+    from .labels_application import label_settings
+    return {"now": now.isoformat(), "online": _fresh(seen, now), "agent": agent_status(uow_factory()), "jobs": jobs,
+            "template_printer": label_settings(uow_factory(), "lot").printer_name}
 
 
 def _fresh(moment: datetime | None, now: datetime) -> bool:

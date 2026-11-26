@@ -146,7 +146,11 @@ POLICIES: dict[str, dict[str, str]] = {
 }
 
 _TABLES = frozenset(POLICIES) | {"audit_events", "shipments", "purchasing_internal_projects",
-    "warehouse_label_jobs", "finished_goods_acts", "warehouse_label_settings", "warehouse_label_templates"}
+    "warehouse_label_jobs", "finished_goods_acts", "warehouse_label_settings", "warehouse_label_templates",
+    "warehouse_grn_registry"}
+
+# Registration context is immutable provenance, not the current project display name.
+PRESERVED_PROJECT_COLUMNS = {("warehouse_grn_registry", "project")}
 
 
 def rename_token(value: str, old: str, new: str, *, designation: bool = False) -> str:
@@ -173,6 +177,9 @@ def rename_json(value: Any, old: str, new: str) -> Any:
     if isinstance(value, dict):
         result = {}
         for key, item in value.items():
+            if key in {"grn_context", "grn_provenance", "csm_project_id"}:
+                result[key] = item
+                continue
             moved_key = rename_token(key, old, new)
             if moved_key in result:
                 raise RenameRefused(f"JSON key collision: {moved_key}")
@@ -265,7 +272,7 @@ def _inventory(session: Session) -> MetaData:
                 raise RenameRefused(f"Cannot replace referenced history: {table.name}.{foreign_key.parent.name}")
         for column in table.c:
             if column.name in {"project", "project_reference", "project_key"} or column.name.endswith("_project_key"):
-                if column.name not in POLICIES.get(table.name, {}):
+                if column.name not in POLICIES.get(table.name, {}) and (table.name, column.name) not in PRESERVED_PROJECT_COLUMNS:
                     raise RenameRefused(f"Uninventoried project column: {table.name}.{column.name}")
         if table.name in POLICIES and (set(POLICIES[table.name]) - set(table.c.keys())):
             raise RenameRefused(f"Schema mismatch: {table.name}")
@@ -349,6 +356,9 @@ def _labels(session: Session, metadata: MetaData, changes: list[RowChange], old:
     settings = SqlAlchemyLabelSettings(session).load() or PrintSettings()
     result = []
     for row in jobs:
+        # A GRN job is an immutable print snapshot; renaming never changes queued bytes.
+        if row.get("grn_id") is not None:
+            continue
         lot_id = row["lot_id"]
         if lot_id in lots:
             repo = SqlAlchemyWarehouseRepository(session)
@@ -408,6 +418,16 @@ def rename_project(engine: Engine, old: str, new: str, *, apply: bool = False,
         metadata = _inventory(session)
         if engine.dialect.name != "sqlite":
             _lock(session, old, new)
+        from app.shared.project_identity import project_aliases, stable_project_key, ProjectIdentityConflict
+        try:
+            forward, backward = project_aliases(session)
+            if normalize_project_number(old) in forward:
+                raise RenameRefused("OLD is a historical project identity; use its current name")
+            project_id = stable_project_key(session, old)
+            if normalize_project_number(new) in forward or normalize_project_number(new) in backward:
+                raise RenameRefused("NEW already exists: historical project identity")
+        except ProjectIdentityConflict as error:
+            raise RenameRefused(str(error)) from error
         changes = _plan(session, metadata, old, new)
         changes += _labels(session, metadata, changes, old, new)
         counts = {name: 0 for name in POLICIES}
@@ -434,9 +454,9 @@ def rename_project(engine: Engine, old: str, new: str, *, apply: bool = False,
             actor = Actor(id=uuid4(), name="администратор (CLI)", department="")
             message = f"проект переименован {old} → {new}"
             SqlAlchemyAuditRepository(session).add(AuditEvent(
-                id=uuid4(), aggregate_id=uuid5(NAMESPACE_URL, f"kitset:{new}"),
+                id=uuid4(), aggregate_id=uuid5(NAMESPACE_URL, f"kitset:{project_id}"),
                 event_type="techcards.project_renamed", actor=actor, occurred_at=now,
-                details={"project": new, "old_project": old, "message": message},
+                details={"project": new, "old_project": old, "project_id": project_id, "message": message},
             ))
             from app.modules.production.infrastructure import SqlAlchemyPlanEventRepository
             from app.modules.production.plan import PlanEvent

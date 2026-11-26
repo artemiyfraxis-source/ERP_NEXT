@@ -77,7 +77,7 @@ def _receipt(client, **fields) -> dict:
 
 
 def _accept(client, receipt_id, **fields):
-    response = client.post(f"/api/stock/receipts/{receipt_id}/accept", json={**LINE, **fields})
+    response = client.post(f"/api/stock/receipts/{receipt_id}/accept", json={**LINE, "acceptance_id": str(uuid4()), **fields})
     assert response.status_code == 200, response.text
     return response.json()
 

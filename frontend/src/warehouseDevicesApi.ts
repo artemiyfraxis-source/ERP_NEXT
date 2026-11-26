@@ -30,6 +30,8 @@ export interface LabelPrinterView {
   online: boolean;
   agent: { last_seen: string | null; host: string; printer: string; queue: number; last_error: string | null };
   jobs: LabelJob[];
+  /** The print-settings printer name: the key printing looks the saved templates up by. */
+  template_printer?: string;
 }
 
 export type ScanColor = "color" | "gray";

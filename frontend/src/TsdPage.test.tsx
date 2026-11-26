@@ -272,3 +272,11 @@ it("the ТСД address of the whole app: PIN sign-in, then the ТСД screen", a
   expect(screen.getByText("FRAXIS · склад")).toBeInTheDocument();
   expect(screen.queryByRole("navigation", { name: "Основная навигация" })).not.toBeInTheDocument();
 });
+
+it.each(["PPM.26.000002","PPM.26.0000002","R&D.26.000001-П2"])("auto-opens six/seven digit and R&D labels without changing their payload: %s",async(code)=>{
+  const calls=stage({[scanOf(code)]:()=>json({kind:"lot",code,place:"",lots:[{...lot,grn:code.split("-П")[0]}]})});
+  render(<TsdPage readOnly={true}/>);
+  fireEvent.change(screen.getByLabelText("ГРН или место"),{target:{value:code}});
+  await screen.findByRole("region",{name:`Партия ${code.split("-П")[0]}`},{timeout:4000});
+  expect(calls.map(call=>`${call.method} ${call.path}`)).toContain(scanOf(code));
+});

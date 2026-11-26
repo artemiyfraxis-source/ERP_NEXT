@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal, DecimalException
 from typing import Mapping, Protocol, Sequence
@@ -36,6 +36,10 @@ from .domain import (
     normalize_location_code,
 )
 from .item_types import canonical_item_type
+from .grn import NO_QC_CATEGORIES, GrnCategory, GrnContext, GrnRequest, fingerprint_body
+from .acceptance import (
+    allocator_in, check_owner, claim_quick_acceptance, lot_by_grn, lot_for_identity, quick_result, quick_result_id,
+)
 from .journal import WRITEOFF_KIND_LABELS, event_text
 from .scan import lot_matches, parse_scan, place_matches
 from .stock_export import LegacyStockRow, LegacyWriteOffRow, parse_quantity
@@ -221,6 +225,9 @@ class ManualStockItem:
     upd_name: str = ""  # a delivery line: the item row as the УПД prints it (the lot's «Наим. по УПД»)
     maker_article: str = ""  # «Артикул производителя»: a УПД line's article read off the name
     supplier_article: str = ""  # «Артикул поставщика»: a УПД line's «Код товара»
+    grn_category: str | None = None
+    grn_context: GrnContext = field(default_factory=GrnContext)
+    expiry_required: bool = False
 
 
 @dataclass(frozen=True)
@@ -228,12 +235,13 @@ class AddManualStockCommand:
     items: tuple[ManualStockItem, ...]
     actor: Actor
     now: datetime
+    operation_id: UUID | None = None
 
 
 MANUAL_STOCK_LIMIT = 200  # STOCK05_ADD_LIMIT_ (Stock05.gs:15)
 MANUAL_STOCK_DEFAULT_UNIT = "шт"  # STOCK05_DEFAULT_UNIT_
 MANUAL_STOCK_DEFAULT_PURPOSE = "Склад"  # STOCK05_DEFAULT_PURPOSE_
-_MANUAL_GRN_PENDING = "OLD.pending"  # a row is checked before its number is reserved
+_MANUAL_GRN_PENDING = "GRN.pending"  # a row is checked before its number is allocated
 _QUANTITY_STEP = Decimal("0.000001")  # Numeric(18, 6) of the stock columns
 _QUANTITY_LIMIT = Decimal("1e12")
 
@@ -268,7 +276,7 @@ def _lot_from_payload(payload: dict) -> StockLot:
     `manufacturer` key and stay valid."""
     split = split_article_maker(payload.get("article"))
     try:
-        return StockLot.create(
+        lot = StockLot.create(
             warehouse=str(payload["warehouse"]),
             grn=str(payload["grn"]),
             package=str(payload.get("package") or ""),
@@ -286,6 +294,23 @@ def _lot_from_payload(payload: dict) -> StockLot:
             manufacturer=str(payload.get("manufacturer") or "").strip() or split.maker,
             description=split_extras(split),
         )
+        if payload.get("grn_id"):
+            context = payload.get("grn_context")
+            lot = replace(lot, grn_id=UUID(str(payload["grn_id"])), grn_category=payload.get("grn_category"),
+                grn_context=context, grn_contract_version=payload.get("grn_contract_version"),
+                material_owner_id=UUID(str(payload["material_owner_id"])) if payload.get("material_owner_id") else None,
+                csm_project_id=payload.get("csm_project_id") or (
+                    (context or {}).get("customer_order") if payload.get("grn_category") == "CSM" else None),
+                quality_state=payload.get("quality_state"), quality_basis=payload.get("quality_basis"),
+                quality_decided_by=UUID(str(payload["quality_decided_by"])) if payload.get("quality_decided_by") else None,
+                quality_decided_at=datetime.fromisoformat(payload["quality_decided_at"]) if payload.get("quality_decided_at") else None,
+                quality_version=payload.get("quality_version"), expiry_required=payload.get("expiry_required"))
+            if lot.grn_contract_version is not None:
+                lot.assert_owner(owner_id=lot.material_owner_id,
+                                 customer_order=(context or {}).get("customer_order"), project_id=lot.csm_project_id)
+        elif payload.get("grn_contract_version") is not None:
+            raise WarehouseValidationError("Нет подтверждённой идентичности ГРН")
+        return lot
     except (KeyError, ValueError, TypeError, DecimalException) as error:
         if isinstance(error, WarehouseValidationError):
             raise
@@ -337,6 +362,13 @@ def dispatch_next_warehouse_received(now: datetime, uow: UnitOfWork) -> StockLot
         try:
             incoming = _lot_from_payload(message.payload)
             existing = uow.warehouse.by_key(incoming.warehouse, incoming.grn, incoming.package)
+            if incoming.grn_id is not None:
+                if existing is None and incoming.grn_contract_version is not None:
+                    existing = lot_by_grn(uow, incoming.grn_id, incoming.grn, incoming.warehouse, incoming.package)
+                if existing is not None and (existing.grn_id != incoming.grn_id
+                        or existing.material_owner_id != incoming.material_owner_id
+                        or existing.csm_project_id != incoming.csm_project_id):
+                    raise WarehouseValidationError("Приход не совпадает с идентичностью, владельцем или проектом партии")
             lot = incoming if existing is None else existing.receive(
                 incoming.inbound,
                 incoming.source_receiving_ids[0],
@@ -406,7 +438,7 @@ def dispatch_next_supplier_return(now: datetime, uow: UnitOfWork) -> StockLot | 
             if current is None:
                 label = grn + (f" (пакет {package})" if package else "")
                 raise WarehouseValidationError(f"Партии {label} нет на складе {warehouse}")
-            updated = current.write_off(quantity)
+            updated = current.write_off(quantity, disposal=True, **current.owner_claim())
         except WarehouseValidationError as error:
             uow.outbox.mark_failed(message.id, now, str(error))
             uow.commit()
@@ -491,7 +523,12 @@ def manual_lot(item: ManualStockItem, receipt: WarehouseReceipt | None = None) -
         raise WarehouseValidationError(f"неизвестный склад «{warehouse}»")
     if not str(item.storage_location or "").strip():
         raise WarehouseValidationError("укажи стеллаж, полку и № на полке")
-    return StockLot.create(
+    try:
+        category = GrnCategory(item.grn_category)
+        item.grn_context.validate(category)
+    except (TypeError, ValueError) as error:
+        raise WarehouseValidationError(f"Укажите категорию и контекст ГРН: {error}") from error
+    draft = StockLot.create(
         warehouse=warehouse,
         grn=_MANUAL_GRN_PENDING,
         package="",
@@ -516,28 +553,66 @@ def manual_lot(item: ManualStockItem, receipt: WarehouseReceipt | None = None) -
         maker_article=item.maker_article,
         supplier_article=item.supplier_article,
     )
+    return replace(draft, grn_category=category.value, grn_context=item.grn_context.payload(),
+                   grn_contract_version=1, material_owner_id=item.grn_context.owner_id,
+                   expiry_required=item.expiry_required, quality_state="IQH", quality_version=1)
 
 
-def add_manual_stock(command: AddManualStockCommand, uow: UnitOfWork) -> ManualStockResult:
+def add_manual_stock(command: AddManualStockCommand, uow: UnitOfWork, *, context_validator=None) -> ManualStockResult:
     """Quick entry (stock05Add_, Stock05.gs:734-794): every row is checked on its own; a bad row is skipped and
-    reported as {i, error}, the good ones get consecutive OLD numbers and are committed together."""
+    reported as {i, error}, the good ones get category numbers and are committed together."""
+    if command.operation_id is None:
+        raise WarehouseValidationError("Нужен стабильный номер операции приёмки")
     if not command.items:
         raise WarehouseValidationError("Добавьте хотя бы одну позицию")
     if len(command.items) > MANUAL_STOCK_LIMIT:
         raise WarehouseValidationError(f"За раз не больше {MANUAL_STOCK_LIMIT} позиций.")
-    good: list[tuple[int, StockLot]] = []
-    errors: list[ManualStockRowError] = []
-    for index, item in enumerate(command.items):
-        try:
-            good.append((index, manual_lot(item)))
-        except WarehouseValidationError as error:
-            errors.append(ManualStockRowError(i=index, error=str(error)))
-    if not good:
-        return ManualStockResult(assigned=(), errors=tuple(errors))
     with uow:
-        assigned = place_manual_lots(uow, good, command.actor, command.now)
+        claim_quick_acceptance(uow, command.operation_id, manual_command_fingerprint(command.items), command.actor, command.now)
+        replay = quick_result(uow, command.operation_id)
+        if replay is not None:
+            return ManualStockResult(
+                assigned=tuple(ManualStockAssigned(i=row["i"], lot=uow.warehouse.get(UUID(row["lot_id"])))
+                               for row in replay["assigned"]),
+                errors=tuple(ManualStockRowError(**row) for row in replay["errors"]))
+        good: list[tuple[int, StockLot]] = []
+        errors: list[ManualStockRowError] = []
+        for index, item in enumerate(command.items):
+            try:
+                good.append((index, manual_lot(item)))
+            except WarehouseValidationError as error:
+                errors.append(ManualStockRowError(i=index, error=str(error)))
+        assigned = place_manual_lots(uow, good, command.actor, command.now,
+                                    operation_ids={i: f"{command.operation_id}:{i:03d}" for i, _ in good},
+                                    context_validator=context_validator) if good else []
+        uow.audit.add(AuditEvent(id=quick_result_id(command.operation_id), aggregate_id=command.operation_id,
+            event_type="grn.quick_accepted", actor=command.actor, occurred_at=command.now,
+            details={"assigned": [{"i": row.i, "lot_id": str(row.lot.id)} for row in assigned],
+                     "errors": [asdict(row) for row in errors]}))
         uow.commit()
         return ManualStockResult(assigned=tuple(assigned), errors=tuple(errors))
+
+
+def manual_command_fingerprint(items: Sequence[ManualStockItem]) -> str:
+    def json_value(value):
+        if isinstance(value, dict):
+            return {key: json_value(item) for key, item in value.items()}
+        if isinstance(value, (tuple, list)):
+            return [json_value(item) for item in value]
+        if isinstance(value, (Decimal, UUID, date)):
+            return _audit_value(value)
+        if isinstance(value, float) and not math.isfinite(value):
+            return str(value)
+        return value.strip() if isinstance(value, str) else value
+    rows = []
+    for item in items:
+        row = asdict(item)
+        try:
+            row["quantity"] = _audit_value(_manual_quantity(item.quantity))
+        except WarehouseValidationError:
+            pass  # Invalid rows still participate in the immutable command body.
+        rows.append(json_value(row))
+    return fingerprint_body({"items": rows})
 
 
 def receipt_audit(receipt: WarehouseReceipt) -> dict[str, str]:
@@ -558,14 +633,55 @@ def place_manual_lots(
     actor: Actor,
     now: datetime,
     receipt: WarehouseReceipt | None = None,
+    *,
+    operation_ids: Mapping[int, str],
+    context_validator=None,
+    request_details: dict | None = None,
 ) -> list[ManualStockAssigned]:
-    """Checked rows → lots on stock inside the caller's transaction: consecutive OLD.YY numbers of the entry moment and
-    one `warehouse.manually_received` event each (with the delivery header when the lots come with a receipt)."""
-    first = uow.warehouse.reserve_manual_numbers(now.year, len(drafts))
+    """Allocate/replay a physical acceptance in the same transaction as stock and audit."""
+    requests, checked = [], []
+    for index, draft in drafts:
+        context_data = dict(draft.grn_context)
+        if context_data.get("owner_id") is not None:
+            context_data["owner_id"] = UUID(context_data["owner_id"])
+        context = GrnContext(**context_data)
+        category = GrnCategory(draft.grn_category)
+        if context_validator is not None:
+            context = context_validator(uow, category, context)
+        elif category in {GrnCategory.CSM, GrnCategory.RD}:
+            raise WarehouseValidationError("Недоступна проверка проекта производства")
+        if category == GrnCategory.CSM:
+            check_owner(uow, context.owner_id)
+            draft = replace(draft, csm_project_id=context.customer_order)
+        draft = replace(draft, grn_context=context.payload())
+        body = {key: value for key, value in asdict(draft).items() if key not in {
+            "id", "version", "grn", "source_receiving_ids", "grn_id", "quality_state", "quality_basis",
+            "quality_decided_by", "quality_decided_at", "quality_version",
+        }}
+        body = {key: _audit_value(value) if isinstance(value, (Decimal, UUID, date)) else value
+                for key, value in body.items()}
+        body["receipt"] = receipt_audit(receipt) if receipt else None
+        body["request"] = request_details
+        requests.append(GrnRequest(category=category,
+            source_kind="warehouse_receipt" if receipt else "warehouse_quick", source_op_id=operation_ids[index],
+            context=context, body_fingerprint=fingerprint_body(body)))
+        checked.append((index, draft))
+    identities = allocator_in(uow).allocate_many(tuple(requests), registered_at=(
+        now.replace(tzinfo=MOSCOW) if now.tzinfo is None else now))
     assigned = []
-    for offset, (index, draft) in enumerate(drafts):
-        grn = f"OLD.{now.year % 100:02d}.{first + offset:07d}"
-        lot = replace(draft, grn=grn)
+    for (index, draft), identity in zip(checked, identities, strict=True):
+        previous = lot_for_identity(uow, identity, draft.warehouse)
+        if previous is not None:
+            assigned.append(ManualStockAssigned(i=index, lot=previous))
+            continue
+        grn = identity.number
+        lot = replace(draft, grn=grn, grn_id=identity.id,
+                      source_receiving_ids=(f"{identity.source_kind}:{identity.source_op_id}",))
+        if identity.category.value in NO_QC_CATEGORIES:
+            lot = replace(lot, quality_state="NOT_REQUIRED",
+                          quality_basis=f"ВК не требуется: маршрут {identity.category.value}; "
+                                        f"{identity.context.purpose or identity.context.equipment or identity.context.project or identity.context.production_order or ''}",
+                          quality_decided_by=actor.id, quality_decided_at=now)
         uow.warehouse.add(lot)
         uow.audit.add(
             AuditEvent(
@@ -578,12 +694,45 @@ def place_manual_lots(
                     "grn": grn,
                     "quantity": _audit_value(lot.inbound),
                     "storage_location": lot.storage_location,
+                    "grn_id": str(identity.id), "category": identity.category.value,
+                    "quality_state": lot.quality_state, "quality_basis": lot.quality_basis or "",
                     **(receipt_audit(receipt) if receipt is not None else {}),
                 },
             )
         )
         assigned.append(ManualStockAssigned(i=index, lot=lot))
     return assigned
+
+
+@dataclass(frozen=True)
+class DecideQualityCommand:
+    lot_id: UUID
+    expected_version: int
+    expected_quality_version: int
+    state: str
+    basis: str
+    actor: Actor
+    now: datetime
+
+
+def decide_quality(command: DecideQualityCommand, uow: UnitOfWork) -> StockLot:
+    with uow:
+        current = _versioned(command.lot_id, command.expected_version, uow)
+        if current.quality_version != command.expected_quality_version:
+            raise ConcurrentWarehouseUpdate("Решение ОТК изменилось: обновите партию")
+        updated = current.decide_quality(command.state, command.basis, command.actor.id, command.now)
+        uow.warehouse.add(updated)
+        state_text = {"IQH": "Ожидает ВК", "QTN": "Карантин", "RELEASED": "Годен",
+                      "REJECTED": "Не годен", "NOT_REQUIRED": "ВК не требуется"}[updated.quality_state]
+        # Reuse the existing Russian journal presentation for a passport change.
+        uow.audit.add(AuditEvent(id=uuid4(), aggregate_id=current.id, event_type="warehouse.row_edited",
+            actor=command.actor, occurred_at=command.now,
+            details={"from": current.quality_state, "to": updated.quality_state, "basis": updated.quality_basis,
+                     "changes": f"Входной контроль: {state_text} (всё место)", "reason": updated.quality_basis,
+                     "scope": "whole_place", "grn": current.grn, "package": current.package,
+                     "balance": str(current.balance), "quality_version": str(updated.quality_version)}))
+        uow.commit()
+        return updated
 
 
 LotKey = tuple[str, str, str]
@@ -1009,6 +1158,34 @@ def _versioned(lot_id: UUID, expected_version: int, uow: UnitOfWork) -> StockLot
 
 
 WRITEOFF_DEFAULT_REASON = "Выдача"
+# Taking stock OUT (scrap, loss, inventory) is decided by the REASON alone, never by the free «Назначение» text: the
+# server fixes the destination, and only these fixed destinations may lift a quarantine / rejection / expiry hold.
+# Any other write-off is an issue: full hold check, and customer material goes only to its own project.
+DISPOSAL_DESTINATIONS = {"Брак": "Утилизация — брак", "Порча": "Утилизация — порча", "Недостача": "Недостача",
+                         "Инвентаризация": "Инвентаризация"}
+
+
+def _assert_csm_purpose(lot: StockLot, purpose: str, uow) -> None:
+    """Customer material issued from stock goes only to the CURRENT name of the project it was received for."""
+    if lot.grn_category != "CSM" or lot.grn_contract_version is None:
+        return
+    from app.shared.project_identity import ProjectIdentityConflict, current_project_name, stable_project_key
+    from app.shared.project_number import normalize_project_number, project_from_purpose
+    target = project_from_purpose(purpose)
+    expected = lot.csm_project_id
+    try:
+        if hasattr(uow, "session") and target:
+            if normalize_project_number(current_project_name(uow.session, target) or "") != normalize_project_number(target):
+                raise WarehouseValidationError("Давальческий материал: выберите актуальный проект, прежнее имя не допускается")
+            target = stable_project_key(uow.session, target) or target
+        if hasattr(uow, "session"):
+            expected = stable_project_key(uow.session, lot.csm_project_id)
+    except ProjectIdentityConflict as error:
+        raise WarehouseValidationError("Неоднозначная история проекта давальческого материала") from error
+    if not target or normalize_project_number(target) != normalize_project_number(expected or ""):
+        raise WarehouseValidationError("Давальческий материал: назначение должно быть проектом заказа клиента")
+
+
 INSTRUMENT_WRITEOFF_PREFIX = "Принадлежности СИ"
 INSTRUMENT_RETURN_MESSAGE = "Это принадлежность СИ — верните её через Качество → Средства измерения"
 
@@ -1017,15 +1194,20 @@ def write_off(command: WriteOffCommand, uow: UnitOfWork) -> StockLot:
     """SUPPLYMAP stock05Writeoff_: НАЗНАЧЕНИЕ is required on the server, an empty ОСНОВАНИЕ is «Выдача».
     A `source_key` already in the journal refuses the whole write-off: the journal skips a known key silently, so the
     lot must not be written off a second time either."""
-    purpose = str(command.purpose or "").strip()
+    reason = str(command.reason or "").strip() or WRITEOFF_DEFAULT_REASON
+    disposal = reason in DISPOSAL_DESTINATIONS
+    purpose = DISPOSAL_DESTINATIONS[reason] if disposal else str(command.purpose or "").strip()
     if not purpose:
         raise WarehouseValidationError("Укажи назначение: номер проекта или фамилию ответственного.")
-    reason = str(command.reason or "").strip() or WRITEOFF_DEFAULT_REASON
     with uow:
         if command.source_key is not None and uow.writeoffs.by_source_key(command.source_key) is not None:
             raise ConcurrentWarehouseUpdate("Это списание уже проведено")
         current = _versioned(command.lot_id, command.expected_version, uow)
-        updated = current.write_off(command.quantity)
+        # Scrap, loss and inventory take stock out: a quality hold / rejection / expiry must not trap it.
+        if not disposal:
+            _assert_csm_purpose(current, purpose, uow)
+        updated = current.write_off(command.quantity, on_date=command.now.date(), **current.owner_claim(),
+                                    disposal=disposal)
         uow.warehouse.add(updated)
         uow.writeoffs.add(replace(WriteOffEntry.for_lot(
             updated, kind="writeoff", quantity=command.quantity, reason=reason, purpose=purpose,
@@ -1097,7 +1279,7 @@ def return_writeoff(command: ReturnWriteOffCommand, uow: UnitOfWork) -> StockLot
                 " — вернуть можно только их. Если это НЕ возврат, а новый приход, заведи позицию через"
                 " «Внести позиции»."
             )
-        updated = current.return_writeoff(command.quantity)
+        updated = current.return_writeoff(command.quantity, **current.owner_claim())
         uow.warehouse.add(updated)
         uow.writeoffs.add(WriteOffEntry.for_lot(
             updated, kind="return", quantity=command.quantity, reason=reason, purpose=source,
@@ -1650,10 +1832,10 @@ def undo_last_movement(command: UndoLastCommand, uow: UnitOfWork) -> tuple[Stock
             if event.event_type == "warehouse.written_off":
                 if quantity > current.written_off:
                     raise WarehouseValidationError("Списанное уже изменилось — отмена невозможна.")
-                updated = current.return_writeoff(quantity)
+                updated = current.return_writeoff(quantity, **current.owner_claim())
                 kind, reason, event_type = "return", UNDO_WRITEOFF_REASON, "warehouse.writeoff_returned"
             else:
-                updated = current.write_off(quantity)
+                updated = current.write_off(quantity, disposal=True, **current.owner_claim())
                 kind, reason, event_type = "writeoff", UNDO_RETURN_REASON, "warehouse.written_off"
             uow.writeoffs.add(WriteOffEntry.for_lot(
                 updated, kind=kind, quantity=quantity, reason=reason, purpose=purpose,

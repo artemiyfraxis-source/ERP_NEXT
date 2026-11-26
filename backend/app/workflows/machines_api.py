@@ -66,7 +66,7 @@ Factory = Annotated[Callable, Depends(production_uow_factory)]
 Now = Annotated[datetime, Depends(moscow_now)]
 # A named gate of the access contract (tests/identity/test_level_gates.py DEPENDENCIES): the master and the fitter read.
 # ОТК (`quality`) reads it too: the VNA workplace lives in the analyser card of «Оборудование» (owner 20.11.2026).
-machines_view_principal = require_section(("production", "myops", "quality"), "view",
+machines_view_principal = require_section(("production", "myops", "quality", "warehouse"), "view",
                                           detail="Раздел «Оборудование» вам не открыт.")
 Reader = Annotated[Principal, Depends(machines_view_principal)]
 # Commands to a machine («Стоп» included) — the shop's own (Производство / Задания), never ОТК, which only reads the

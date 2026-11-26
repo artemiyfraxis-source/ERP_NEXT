@@ -83,6 +83,7 @@ it("scan correction learning is opt-in and sends explicit packaging and a stable
   fireEvent.change(screen.getByLabelText("Основа количества, строка 1"), { target: { value: "packs" } });
   expect(screen.getByLabelText("Размер упаковки, строка 1")).toHaveValue("");
   fireEvent.change(screen.getByLabelText("Размер упаковки, строка 1"), { target: { value: "100" } });
+  chooseCategories();
   fireEvent.click(screen.getByRole("button", { name: "Принять строку 1" }));
   const dialog = within(await screen.findByRole("dialog", { name: "Принять позицию" }));
   fireEvent.change(dialog.getByLabelText("Место хранения"), { target: { value: "1F4" } });
@@ -98,6 +99,7 @@ it("a stale rule conflict cannot be overridden by the receiving confirmation but
   await openSupply();
   type("Артикул", "A");
   type("Кол-во", "2");
+  chooseCategories();
   fireEvent.click(screen.getByRole("button", { name: "Принять строку 1" }));
   const dialog = within(await screen.findByRole("dialog", { name: "Принять позицию" }));
   fireEvent.change(dialog.getByLabelText("Место хранения"), { target: { value: "1F4" } });
@@ -207,6 +209,7 @@ it("accepts a row: the supply is created first, then the position with its place
   fireEvent.change(screen.getByLabelText("Поставщик"), { target: { value: "ООО Ромашка" } });
   type("Артикул", "GHR-04V-S");
   type("Кол-во", "10");
+  chooseCategories();
   fireEvent.click(screen.getByRole("button", { name: "Принять строку 1" }));
 
   const dialog = within(await screen.findByRole("dialog", { name: "Принять позицию" }));
@@ -229,6 +232,7 @@ it("sends the supply header before the first acceptance and the labels count wit
   fireEvent.change(screen.getByLabelText("Дата счёта"), { target: { value: "2026-10-02" } });
   type("Артикул", "GHR-04V-S");
   type("Кол-во", "10");
+  chooseCategories();
   fireEvent.click(screen.getByRole("button", { name: "Принять строку 1" }));
   const dialog = within(await screen.findByRole("dialog", { name: "Принять позицию" }));
   fireEvent.change(dialog.getByLabelText("Место хранения"), { target: { value: "1F4" } });
@@ -253,6 +257,7 @@ it("a later header edit goes up with the version before the next acceptance", as
     type("Артикул", `ART-${row}`, row);
     type("Кол-во", "1", row);
   }
+  chooseCategories();
   fireEvent.click(screen.getByRole("button", { name: "Принять строку 1" }));
   let dialog = within(await screen.findByRole("dialog", { name: "Принять позицию" }));
   fireEvent.change(dialog.getByLabelText("Место хранения"), { target: { value: "1F4" } });
@@ -260,6 +265,7 @@ it("a later header edit goes up with the version before the next acceptance", as
   await screen.findByText(/Принято · ГРН/);
 
   fireEvent.change(screen.getByLabelText("№ счёта"), { target: { value: "С-9" } });
+  chooseCategories();
   fireEvent.click(screen.getByRole("button", { name: "Принять строку 2" }));
   dialog = within(await screen.findByRole("dialog", { name: "Принять позицию" }));
   fireEvent.change(dialog.getByLabelText("Место хранения"), { target: { value: "1F5" } });
@@ -285,6 +291,7 @@ it("a 409 «ожидается в Приёмке» shows the reason and accepts 
   type("Артикул", "GHR-04V-S");
   type("Кол-во", "2");
   expect(await screen.findByText("ожидается в Приёмке: заказ № 17")).toBeInTheDocument();
+  chooseCategories();
   fireEvent.click(screen.getByRole("button", { name: "Принять строку 1" }));
   const dialog = within(await screen.findByRole("dialog", { name: "Принять позицию" }));
   expect(dialog.getByText("уже лежит:")).toBeInTheDocument();
@@ -309,6 +316,7 @@ it("marks a busy place in the acceptance window without blocking it, and prints 
   await openSupply();
   type("Артикул", "GHR-04V-S");
   type("Кол-во", "2");
+  chooseCategories();
   fireEvent.click(screen.getByRole("button", { name: "Принять строку 1" }));
   const dialog = within(await screen.findByRole("dialog", { name: "Принять позицию" }));
   const place = dialog.getByLabelText("Место хранения");
@@ -382,6 +390,8 @@ it("a scanned line: the catalog name replaces the model's, the printed УПД li
   expect(screen.getByLabelText("№ ПРД")).toHaveValue("916, 917");
   expect(screen.getByLabelText("Дата ПРД")).toHaveValue("2026-10-19");
   expect(screen.getByLabelText("№ счёта")).toHaveValue("45");
+
+  chooseCategories();
 
   fireEvent.click(screen.getByRole("button", { name: "Принять строку 1" }));
   const dialog = within(await screen.findByRole("dialog", { name: "Принять позицию" }));
@@ -573,3 +583,7 @@ it("several files are uploaded one by one and merged once", async () => {
   expect(merge).toHaveLength(1);
   expect(merge[0].body).toEqual({ files: ["f1.pdf", "f2.pdf", "f3.pdf"] });
 });
+
+function chooseCategories() {
+  screen.queryAllByLabelText("Категория ГРН",{exact:true}).forEach(select=>{if(!(select as HTMLSelectElement).value)fireEvent.change(select,{target:{value:"PPM"}});});
+}
