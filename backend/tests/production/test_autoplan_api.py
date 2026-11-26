@@ -141,7 +141,7 @@ def test_preview_plans_every_task_skips_zhuk_and_saves_no_changeover_while_the_p
     assert all(item["operator_id"] != str(ZHUK) for item in planned["proposals"])
     assert crimps[0]["machine"] == "ОБ.027 Пресс"
     assert crimps[0]["setup_label"].startswith("Опрессовка терминалов: терминал T-1, аппликатор A19")
-    assert planned["stats"] == {"changeovers": 0, "changeovers_naive": 0, "saved_seconds": 0}
+    assert planned["stats"] == {"changeovers": 0, "changeovers_naive": 0, "saved_seconds": 0, "unknown_time": 0}
     assert all(item["task_version"] == tasks[0]["version"] for item in crimps)
 
 

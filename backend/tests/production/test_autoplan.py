@@ -444,3 +444,17 @@ def test_machine_without_any_time_and_steps_without_a_machine_do_not_hold_anythi
     result = plan(with_steps(tasks, card))
 
     assert {item.start for item in result.placements} == {MONDAY}
+
+
+def test_operations_without_a_time_norm_are_placed_but_counted_as_time_not_set():
+    from dataclasses import replace as _with
+
+    tasks = [task(number, [operation(1, "PRS")]) for number in (1, 2)]
+    keys = {current.operations[0].id: crimp_key() for current in tasks}
+    unknown = frozenset({tasks[1].operations[0].id})
+    result = plan(_with(data(tasks, keys, capacity={"ОБ.027": 2}), unknown=unknown))
+    assert len(result.placements) == 2 and result.unknown_time == 1
+    assert "Время не задано: 1 оп. — запланированы с известной частью нормы (без пустых), уточните нормы в техкарте" in result.warnings
+    known = plan(data(tasks, keys, capacity={"ОБ.027": 2}))
+    assert known.unknown_time == 0 and not any("Время не задано" in text for text in known.warnings)
+    assert [item.finish - item.start for item in known.placements] == [item.finish - item.start for item in result.placements]

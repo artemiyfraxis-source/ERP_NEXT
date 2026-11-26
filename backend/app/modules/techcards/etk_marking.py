@@ -69,6 +69,17 @@ def _amount(value: object) -> Decimal:
     return number if number.is_finite() else Decimal(0)
 
 
+def _given_seconds(value: object) -> Decimal | None:
+    """Норма в секундах, если она задана (явный 0 — тоже норма); None — пусто или не число."""
+    if value is None or isinstance(value, bool) or not str(value).strip():
+        return None
+    try:
+        number = Decimal(str(value).strip().replace(",", "."))
+    except InvalidOperation:
+        return None
+    return number if number.is_finite() and number >= 0 else None
+
+
 def _qty(item: Mapping[str, Any]) -> Decimal:
     number = _amount(item.get("qty"))
     return number if number > 0 else Decimal(1)
@@ -246,10 +257,12 @@ def _time_rows(counts: Mapping[str, Decimal], op: Mapping[str, Any], batch: Deci
         if not pieces:
             continue
         norm = norms.get(key) if isinstance(norms.get(key), Mapping) else None
-        seconds = _amount(norm.get("operation_seconds")) if norm else Decimal(0)
-        if not seconds:
+        seconds = _given_seconds(norm.get("operation_seconds")) if norm else None
+        if seconds is None:
+            # Нет нормы — строка остаётся с пустой нормой: итог операции неполный, а не меньше на эту работу (аудит 23.11, D1).
             missing = str(norm.get("code") or "") if norm else ""
-            warnings.append(f"Операция {position} ({code}): нет нормы времени «{label}»{f' ({missing})' if missing else ''} — в расчётное время не вошла")
+            warnings.append(f"Операция {position} ({code}): нет нормы времени «{label}»{f' ({missing})' if missing else ''} — расчётное время неполное")
+            rows.append({"name": label, "norm": ""})
             continue
         minutes = seconds * pieces * batch / 60
         rows.append({"name": label, "norm": _format(minutes)})

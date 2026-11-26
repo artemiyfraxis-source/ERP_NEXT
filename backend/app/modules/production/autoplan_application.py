@@ -74,7 +74,7 @@ from .board import (
 )
 from .dispatch import localize
 from .domain import ProductionStatus, ProductionTask, ProductionValidationError
-from .launchable import ReadyCard, stage_name
+from .launchable import ReadyCard, stage_name, unknown_time_operations
 from .equipment_catalog import EMPTY, EquipmentCatalog
 from .machine_load import MachineStep, task_steps
 from .resource_assignments import MachineBinding
@@ -349,6 +349,7 @@ def _prepare(
     shift = _shift(uow.calendar)
     keys: dict[UUID, SetupKey] = {}
     steps: dict[UUID, tuple[MachineStep, ...]] = {}
+    unknown: set[UUID] = set()
     used_cards: dict[str, int] = {}
     free_tasks = {task.id for task in planned_tasks if any(operation.id in free for operation in task.operations)}
     for task in planned_tasks:
@@ -362,6 +363,7 @@ def _prepare(
         keys.update(task_keys)
         # Станки по операциям ЭТК; код, разошедшийся с техкартой, уже в предупреждениях наладки.
         steps.update(task_steps(task, card.document if card is not None else None, equipment)[0])
+        unknown |= unknown_time_operations(task, card.document if card is not None else None)
         if task.id in free_tasks:
             warnings.extend(task_warnings)
     machines = machine_names(keys, steps)
@@ -375,7 +377,7 @@ def _prepare(
     data = AutoplanInput(
         tasks=planned_tasks, free=frozenset(free), keys=keys, team=team, skills=skills, busy=busy,
         capacity=capacity, start=start, end=end, holidays=holidays, shift=shift, steps=steps, cutting_groups=cutting_groups,
-        operator_options=operator_options,
+        operator_options=operator_options, unknown=frozenset(unknown),
     )
     result = plan(data)
     all_tasks = {**tasks, **{task_id: item.task for task_id, item in scope.new_tasks.items()}}
@@ -711,7 +713,7 @@ def describe(preview: AutoplanPreview) -> dict:
         "warnings": list(dict.fromkeys(preview.warnings)),
         "stats": {
             "changeovers": result.changeovers, "changeovers_naive": result.changeovers_naive,
-            "saved_seconds": result.saved_seconds,
+            "saved_seconds": result.saved_seconds, "unknown_time": result.unknown_time,
         },
         "fingerprint": preview.fingerprint,
     }

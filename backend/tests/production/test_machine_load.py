@@ -270,3 +270,15 @@ def test_machine_with_two_units_warns_only_when_both_are_taken():
     found = conflicts(candidate, both_busy, {"ОБ.027": 2})
     assert len(found) == 1 and found[0].units == 2
     assert conflict_text(found[0], {}).startswith("ОБ.027 занят (заняты все 2 ед.) 05.10 09:00–")
+
+
+def test_a_machine_step_without_any_norm_is_counted_as_time_not_set_not_as_a_real_zero():
+    from app.modules.production.machine_load import unknown_time_steps
+
+    task = placed(make_task(1, [single(1, "PRS", "Опрессовка"), single(2, "ASM", "Сборка")]), OperationShare(ANNA, None, at(9), at(17, 30)))
+    hand_press = {"code": "PRS", "stage": "Опрессовка", "prep": "300", "op": "12", "machine": "ОБ.048.1"}
+    no_time = {"code": "ASM", "stage": "Сборка", "machine": "ОБ.050.1"}
+    steps, _ = task_steps(task, etk(hand_press, no_time))
+    flags = {step.machine: step.unknown for own in steps.values() for step in own}
+    assert flags == {"ОБ.048": False, "ОБ.050": True}
+    assert unknown_time_steps(steps) == 1
