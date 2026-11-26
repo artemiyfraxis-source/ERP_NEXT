@@ -267,23 +267,8 @@ def _unit(references_factory, catalog, equipment_id):
 def _queue(principal, factory, techcards_factory, machine_id=None, *, catalog=EMPTY, unit=None):
     with factory() as uow:
         candidates = cutting_queue.collect(uow, principal.actor)
-    return _rows(candidates, techcards_factory, machine_id, catalog=catalog, unit=unit)
-
-
-def _rows(candidates, techcards_factory, machine_id=None, *, catalog=EMPTY, unit=None):
     documents = _documents(techcards_factory, cutting_queue.document_keys(candidates))
     return cutting_queue.queue_rows(candidates, documents, machine_id, unit=unit, catalog=catalog)
-
-
-def equipment_rows(uow, principal, techcards_factory, references_factory, equipment_id):
-    """The `GET ?equipment_id=` rows read on the caller's open production UoW. A caller inside `with factory()` must not
-    open a second one: its session waits forever for the resource lock the first one holds (prod 23.11)."""
-    catalog = _catalog(references_factory)
-    try:
-        unit = _unit(references_factory, catalog, equipment_id)
-    except ProductionValidationError as error:
-        raise HTTPException(422, str(error)) from error
-    return _rows(cutting_queue.collect(uow, principal.actor), techcards_factory, catalog=catalog, unit=unit)
 
 
 @queue_router.get("/machines")

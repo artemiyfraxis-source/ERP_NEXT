@@ -72,8 +72,10 @@ class ResourceGenerationRow(Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
-LOCK_WAIT = "5s"  # a writer holds the generation lock for milliseconds; longer is a stuck transaction (prod 23.11)
-BUSY = "Производство занято другим запросом — повторите через несколько секунд"
+# Longest legitimate hold: autoplan preview/apply runs the planner inside the production UoW (~3 s on 90 operations,
+# before any DB work). Far past that, the holder is stuck (prod 23.11: a request waiting for itself) — answer 503.
+LOCK_WAIT = "30s"
+BUSY = "Производство занято другим запросом — повторите позже"
 LOCK_NOT_AVAILABLE = "55P03"
 
 
@@ -91,6 +93,7 @@ class SqlAlchemyResourceClaims:
 
     def __init__(self, session: Session):
         self.session = session
+        self._held_in = None  # the session transaction that already holds the lock: no repeated round-trips
 
     def acquire(self):
         """Call at command transaction entry, before any production task/session row locks.
@@ -102,6 +105,8 @@ class SqlAlchemyResourceClaims:
         transaction's previous lock_timeout is restored for its row locks.
         """
         if self.session.get_bind().dialect.name == "postgresql":
+            if self._held_in is not None and self._held_in is self.session.get_transaction():
+                return  # the transaction-level lock lasts until this transaction ends
             with self.session.no_autoflush:
                 previous = self.session.scalar(text("SELECT current_setting('lock_timeout')"))
                 self.session.execute(text("SELECT set_config('lock_timeout', :wait, true)"), {"wait": LOCK_WAIT})
@@ -114,6 +119,7 @@ class SqlAlchemyResourceClaims:
                         raise ResourcesBusy(BUSY) from error
                     raise
                 self.session.execute(text("SELECT set_config('lock_timeout', :value, true)"), {"value": previous})
+            self._held_in = self.session.get_transaction()
 
     def generation(self) -> int:
         self.acquire()

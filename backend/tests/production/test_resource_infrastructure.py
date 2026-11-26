@@ -147,6 +147,11 @@ class _PostgresSession:
         self.sqlstate, self.statements = sqlstate, []
         self.no_autoflush = nullcontext()
 
+        self.transaction = object()
+
+    def get_transaction(self):
+        return self.transaction
+
     def get_bind(self):
         return type("Bind", (), {"dialect": type("Dialect", (), {"name": "postgresql"})()})()
 
@@ -163,9 +168,15 @@ class _PostgresSession:
 
 def test_lock_wait_is_limited_only_for_the_generation_lock_and_restored():
     session = _PostgresSession()
-    SqlAlchemyResourceClaims(session).acquire()
+    claims = SqlAlchemyResourceClaims(session)
+    claims.acquire()
     set_wait, lock, restore = session.statements[1:]
-    assert set_wait[1] == {"wait": "5s"} and "pg_advisory_xact_lock" in lock[0] and restore[1] == {"value": "0"}
+    assert set_wait[1] == {"wait": "30s"} and "pg_advisory_xact_lock" in lock[0] and restore[1] == {"value": "0"}
+    claims.acquire()  # held by this transaction: no repeated round-trips
+    assert len(session.statements) == 4
+    session.transaction = object()  # committed; a new transaction takes the lock again
+    claims.acquire()
+    assert len(session.statements) == 8
 
 
 def test_lock_timeout_is_a_retryable_busy_error_and_other_db_errors_pass():
@@ -185,7 +196,7 @@ def test_busy_production_answers_503_with_retry_after():
     from app.modules.production.resource_claims import ResourcesBusy
 
     def busy():
-        raise ResourcesBusy("Производство занято другим запросом — повторите через несколько секунд")
+        raise ResourcesBusy("Производство занято другим запросом — повторите позже")
 
     app.add_api_route("/api/test-only/production-busy", busy)
     try:
@@ -193,4 +204,17 @@ def test_busy_production_answers_503_with_retry_after():
     finally:
         app.router.routes.pop()
     assert response.status_code == 503 and response.headers["retry-after"] == "5"
-    assert response.json() == {"detail": "Производство занято другим запросом — повторите через несколько секунд"}
+    assert response.json() == {"detail": "Производство занято другим запросом — повторите позже"}
+
+
+def test_plan_source_on_a_busy_lock_is_a_503_not_an_empty_column():
+    from app.modules.production.plan_api import _safe_read
+    from app.modules.production.resource_claims import ResourcesBusy
+
+    def busy():
+        raise ResourcesBusy("Производство занято другим запросом — повторите позже")
+    with pytest.raises(ResourcesBusy):
+        _safe_read("production", busy, lambda uow: ())
+    def broken():
+        raise RuntimeError("source down")
+    assert _safe_read("production", broken, lambda uow: (), default=()) == ()

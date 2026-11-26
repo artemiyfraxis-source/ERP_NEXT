@@ -6,7 +6,7 @@ the returned sources when the operator explicitly loads/prints/starts work.
 """
 
 from datetime import datetime
-from typing import Annotated, Callable
+from typing import Annotated, Callable, NamedTuple
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -17,11 +17,11 @@ from app.modules.production.api import _etk_task_access, production_uow_factory,
 from app.modules.production.application import ConcurrentProductionUpdate
 from app.modules.production.autoplan_api import references_uow_factory
 from app.modules.production.cutting import CABLE_CUTS
-from app.modules.production.cutting_api import equipment_rows as cutting_rows
+from app.modules.production.cutting_api import queue_rows as cutting_queue_view
 from app.modules.production.domain import EtkOperation, ProductionStatus, ProductionValidationError
 from app.modules.production.launchable import route_from_document
 from app.modules.production.marking_sources import MAX_LABELS, check_materials, labels
-from app.modules.production.machine_queue_api import equipment_rows as machine_rows
+from app.modules.production.machine_queue_api import queue as machine_queue_view
 from app.modules.production.resource_assignment_infrastructure import (
     ResourceAllocationMachineRow, ResourceAllocationMemberRow, ResourceAllocationRow,
 )
@@ -184,7 +184,7 @@ def _ob019_problem(uow, link, unit, group, source, now):
 
 
 def _source(uow, task, operation, part, built, member, group, kind, link, unit, principal,
-            now, techcards_factory, references_factory):
+            now):
     if task.status is not ProductionStatus.RUNNING:
         raise ValueError("Задание не запущено или уже закрыто")
     if kind == "ob019":
@@ -257,19 +257,56 @@ def _source(uow, task, operation, part, built, member, group, kind, link, unit, 
     if kind == "ob099":
         return None, "Этот станок поддерживает только наблюдение — загрузка задания не предусмотрена"
     cutting = str(built.get("type") or "") in CABLE_CUTS
-    # On THIS uow: a second production UoW here would wait forever for the resource lock this one holds (prod 23.11).
-    rows = (cutting_rows(uow, principal, techcards_factory, references_factory, unit.id)
-            if cutting else machine_rows(uow, unit.id, principal, techcards_factory, references_factory))
-    row = next((row for row in rows if row["task_id"] == str(task.id)
+    check = None if cutting else _outcome(
+        lambda: _read_problem(lambda: machine_queue.check_source(uow, task.id, operation.id, part.position) and None))
+    return _Queued(cutting, check, {"kind": "generic", "task_id": str(task.id), "operation_id": str(operation.id),
+            "etk_position": part.position, "queue_kind": "cutting" if cutting else "machine"}), None
+
+
+class _Queued(NamedTuple):
+    """A generic source still to be found in the machine's queue — after the production UoW is closed: the queue view
+    opens its own UoW and must neither nest in ours (prod 23.11) nor hold the resource lock while it reads."""
+    cutting: bool
+    check: tuple | None  # machine queue: check_source's outcome, read on our UoW, used only when the row is queued
+    source: dict
+
+
+def _outcome(read):
+    try:
+        return True, read()
+    except Exception as error:  # noqa: BLE001 - re-raised as is if the queue row exists, as when it was read inline
+        return False, error
+
+
+def _queued_source(queued, task, operation, part, unit, principal, factory, techcards_factory, references_factory):
+    queue = (cutting_queue_view(principal, factory, techcards_factory, references_factory, equipment_id=unit.id)
+             if queued.cutting else machine_queue_view(unit.id, principal, factory, techcards_factory, references_factory))
+    row = next((row for row in queue["rows"] if row["task_id"] == str(task.id)
                 and row["operation_id"] == str(operation.id)
-                and (cutting or row["etk_position"] == part.position)), None)
+                and (queued.cutting or row["etk_position"] == part.position)), None)
     if row is None:
         raise ValueError("Операции нет в текущей очереди этого станка — обновите инструкцию")
-    problem = row["blocked"] if cutting else _read_problem(
-        lambda: machine_queue.check_source(uow, task.id, operation.id, part.position) and None)
-    return {"kind": "generic", "task_id": str(task.id), "operation_id": str(operation.id),
-            "etk_position": part.position, "queue_kind": "cutting" if cutting else "machine"}, (
-                problem or "У станка нет адаптера загрузки — работа учитывается вручную")
+    if queued.cutting:
+        problem = row["blocked"]
+    else:
+        ok, problem = queued.check
+        if not ok:
+            raise problem
+    return queued.source, problem or "У станка нет адаптера загрузки — работа учитывается вручную"
+
+
+SOURCE_ERRORS = (KeyError, ValueError, ArithmeticError, PermissionError, ProductionValidationError,
+                 ConcurrentProductionUpdate, machine_writes.MachineCommandRefused, machines.MachineWriteInvalid)
+
+
+def _guarded(read):
+    """(source, blocker) of a source reader; a refused source becomes the blocker text."""
+    try:
+        return read()
+    except SOURCE_ERRORS as error:
+        return None, str(error.args[0])
+    except HTTPException as error:
+        return None, str(error.detail)
 
 
 @router.get("/api/production/my/tasks/{task_id}/operations/{operation_id}/etk/machine-actions")
@@ -294,7 +331,7 @@ def operation_machine_actions(task_id: UUID, operation_id: UUID,
         route = route_from_document(document)
         units = {unit.id: unit for unit in machine_units(session)}
         bindings, setups = _bindings(session, task, operation), ready_for_operation(session, task.id, operation.id)
-        actions = []
+        found = []
         for part in operation.etk_ops or (EtkOperation(operation.position, operation.code, operation.stage),):
             index = part.position - 1
             built = (document.get("operations") or [])[index] if 0 <= index < len(document.get("operations") or []) else {}
@@ -304,30 +341,31 @@ def operation_machine_actions(task_id: UUID, operation_id: UUID,
             kind, link = _kind(session, unit) if unit else ("none", None)
             connectivity, _snapshot = _connectivity(session, unit, kind, link, now) if unit else (
                 {"state": "unresolved", "fresh": False, "last_seen": None}, None)
-            open_permitted = not principal.service and section_allowed(principal, ("production", "myops"), "view")
-            load_permitted = (not principal.service and section_allowed(principal, ("print",), "edit")) if kind == "marking" else _can_edit(principal)
             source, blocker = None, stale or unresolved
             if not blocker:
-                try:
-                    source, blocker = _source(uow, task, operation, part, built, member, group, kind, link, unit,
-                        principal, now, techcards_factory, references_factory)
-                except (KeyError, ValueError, ArithmeticError, PermissionError, ProductionValidationError,
-                        ConcurrentProductionUpdate, machine_writes.MachineCommandRefused, machines.MachineWriteInvalid) as error:
-                    blocker = str(error.args[0])
-                except HTTPException as error:
-                    blocker = str(error.detail)
-            if not open_permitted:
-                blocker = "Нет права просмотра оборудования"
-            elif not load_permitted and kind in ("ob019", "marking"):
-                blocker = "Нет права печати этикеток" if kind == "marking" else "Нет права загрузки задания в станок"
-            if kind == "marking" and not connectivity["fresh"] and not blocker:
-                blocker = "Принтер не на связи"
-            actions.append({"etk_position": part.position, "equipment_id": str(unit.id) if unit else None,
-                "inventory_number": unit.inventory_number if unit else None,
-                "display_name": unit.name if unit else None, "model": unit.model if unit else None,
-                "card_kind": kind, "connectivity": connectivity, "open_permitted": open_permitted,
-                "load_permitted": load_permitted,
-                "can_open": bool(unit and open_permitted and not stale and (source is not None or kind == "ob099")),
-                "can_load": bool(source and load_permitted and not blocker and kind in ("ob019", "marking")),
-                "blocker": blocker, "source": source})
+                source, blocker = _guarded(lambda: _source(uow, task, operation, part, built, member, group, kind,
+                                                           link, unit, principal, now))
+            found.append((part, unit, kind, connectivity, stale, source, blocker))
+    # Generic sources are looked up in the machine's queue only now, with the production UoW closed (prod 23.11).
+    actions = []
+    open_permitted = not principal.service and section_allowed(principal, ("production", "myops"), "view")
+    for part, unit, kind, connectivity, stale, source, blocker in found:
+        if isinstance(source, _Queued):
+            source, blocker = _guarded(lambda: _queued_source(source, task, operation, part, unit, principal, factory,
+                                                              techcards_factory, references_factory))
+        load_permitted = (not principal.service and section_allowed(principal, ("print",), "edit")) if kind == "marking" else _can_edit(principal)
+        if not open_permitted:
+            blocker = "Нет права просмотра оборудования"
+        elif not load_permitted and kind in ("ob019", "marking"):
+            blocker = "Нет права печати этикеток" if kind == "marking" else "Нет права загрузки задания в станок"
+        if kind == "marking" and not connectivity["fresh"] and not blocker:
+            blocker = "Принтер не на связи"
+        actions.append({"etk_position": part.position, "equipment_id": str(unit.id) if unit else None,
+            "inventory_number": unit.inventory_number if unit else None,
+            "display_name": unit.name if unit else None, "model": unit.model if unit else None,
+            "card_kind": kind, "connectivity": connectivity, "open_permitted": open_permitted,
+            "load_permitted": load_permitted,
+            "can_open": bool(unit and open_permitted and not stale and (source is not None or kind == "ob099")),
+            "can_load": bool(source and load_permitted and not blocker and kind in ("ob019", "marking")),
+            "blocker": blocker, "source": source})
     return {"task_id": str(task.id), "operation_id": str(operation.id), "task_version": task.version, "actions": actions}
