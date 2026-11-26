@@ -590,6 +590,45 @@ def test_head_edit_sets_delivery_terms_and_carrier(shipping_api):
     assert (body["terms"], body["carrier"], body["phone"]) == ("ДОСТАВКА ТК", "СДЭК", "8925")
     assert _shipment(client, shipment["id"])["terms"] == "ДОСТАВКА ТК"
 
+def test_tk_note_endpoint_saves_without_boxes_with_version_journal_and_notification(shipping_api):
+    """PUT /tk-note: «Для перевозчика» без раскладки по коробам — отправка не упаковывается, PL/DN не выдаются."""
+    client = shipping_api
+    good = _queued_good(client)
+    permit_fixture_goods(client)
+    shipment = client.post("/api/shipping/shipments", json={"lines": [{"good_id": good["id"], "quantity": "5"}]}).json()["shipment"]
+
+    saved = client.put(f"/api/shipping/shipments/{shipment['id']}/tk-note", json={"version": shipment["version"], "tk_note": " Звонить за час "})
+
+    assert saved.status_code == 200, saved.text
+    body = saved.json()["shipment"]
+    assert (body["tk_note"], body["version"], body["status"], body["pl_number"], body["boxes"]) == (
+        "Звонить за час", shipment["version"] + 1, shipment["status"], shipment["pl_number"], shipment["boxes"])
+    with app.state.shipping_uow_factory() as uow:
+        events = [(row.event_type, row.details) for row in uow.session.scalars(select(AuditEventRow).where(AuditEventRow.aggregate_id == UUID(shipment["id"])))]
+        notes = [row.payload for row in uow.session.query(OutboxMessageRow) if "carrier-comment" in row.idempotency_key]
+    assert ("shipping.head_edited", {"fields": ["tk_note"], "refresh_delivery": False}) in events
+    assert len(notes) == 1 and "Звонить за час" in notes[0]["body"]
+    same = client.put(f"/api/shipping/shipments/{shipment['id']}/tk-note", json={"version": body["version"], "tk_note": "Звонить за час"})
+    assert same.status_code == 200 and same.json()["shipment"]["version"] == body["version"]
+    stale = client.put(f"/api/shipping/shipments/{shipment['id']}/tk-note", json={"version": shipment["version"], "tk_note": "другое"})
+    assert stale.status_code == 409
+    assert client.put(f"/api/shipping/shipments/{shipment['id']}/tk-note", json={"version": body["version"], "tk_note": "x" * 5001}).status_code == 422
+    assert _shipment(client, shipment["id"])["tk_note"] == "Звонить за час"
+
+
+def test_tk_note_endpoint_needs_shipping_edit_right(shipping_api):
+    client = shipping_api
+    good = _queued_good(client)
+    permit_fixture_goods(client)
+    shipment = client.post("/api/shipping/shipments", json={"lines": [{"good_id": good["id"], "quantity": "5"}]}).json()["shipment"]
+    viewer = Actor(id=UUID("10000000-0000-0000-0000-000000000002"), name="Наблюдатель", department="ERP")
+    app.dependency_overrides[authenticated_principal] = lambda: Principal(
+        actor=viewer, email="viewer@example.test", roles=frozenset(), permissions={"shipping": "view"},
+    )
+    refused = client.put(f"/api/shipping/shipments/{shipment['id']}/tk-note", json={"version": shipment["version"], "tk_note": "нет"})
+    assert refused.status_code == 403
+
+
 def test_legacy_open_shipment_follows_project_card_until_closed_and_head_edit_overrides(shipping_api):
     client = shipping_api
     good = _queued_good(client)

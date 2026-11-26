@@ -114,3 +114,24 @@ it("exports child records with raw shipment and project values without synthetic
   const text = new TextDecoder("utf-16le").decode(await blob!.arrayBuffer());
   expect(text).toBe("КБ\tКоличество\tОтправка\tТК\tПроект\r\n02\t20\tОТГ-2\tСДЭК\t663К.1\r\n01\t10\tОТГ-2\tСДЭК\t663К.1\r\n");
 });
+
+it("optional group checkbox label, the group's own selection in its block and a bulk button with live text and hint", () => {
+  const block = vi.fn((_name: string, group: Row[], _filtered: Row[], fold: { selected: Row[] }) => group[0].shipment
+    ? { head: <span>{group[0].shipment}: выбрано {fold.selected.length} из {group.length}</span> } : null);
+  render(<DataTable {...props} groupCells={undefined} groupBlock={block}
+    groupSelectLabel={(_name, group) => `Выбрать отправку ${group[0].shipment || "без отправки"}`}
+    bulkActions={[{ label: "Отгрузить выбранные", run: vi.fn(), text: (selected) => `Отгрузить выбранные (${selected.length})`,
+      hint: (selected) => selected.length > 1 ? "Только по одной" : undefined, disabled: (selected) => selected.length > 1 }]} />);
+  fireEvent.click(screen.getByRole("checkbox", { name: "Выбрать отправку ОТГ-2" }));
+  expect(screen.getByText("ОТГ-2: выбрано 2 из 2")).toBeInTheDocument();
+  expect(screen.getByText("ОТГ-1: выбрано 0 из 1")).toBeInTheDocument();
+  const button = screen.getByRole("button", { name: "Отгрузить выбранные (2)" });
+  expect(button).toBeDisabled();
+  expect(button).toHaveAttribute("title", "Только по одной");
+});
+
+it("without the new options the group checkbox and the bulk button keep their old label", () => {
+  render(<DataTable {...props} bulkActions={[{ label: "Сделать", run: vi.fn() }]} />);
+  fireEvent.click(screen.getAllByRole("checkbox", { name: "Выбрать группу" })[0]);
+  expect(screen.getByRole("button", { name: "Сделать" })).not.toHaveAttribute("title");
+});
