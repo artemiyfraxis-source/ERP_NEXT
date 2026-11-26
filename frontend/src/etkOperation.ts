@@ -36,12 +36,17 @@ export function etkMarkPhase(operation: Row): "print" | "install" | null {
   if (!list(obj(operation.fields).marks).length) return null;
   const explicit = str(obj(operation.fields).markPhase);
   if (explicit === "print" || explicit === "install") return explicit;
-  const name = `${str(obj(operation.card).name)} ${str(operation.title)}`;
+  const name = `${str(obj(operation.card).name)} ${str(operation.title)}`.trim();
   const code = str(operation.code);
-  if (/печат/i.test(name)) return "print";
-  if (/монтаж|наклей|установ|навес|надет/i.test(name)) return "install";
-  if (/^PRINT_/i.test(code) || list(operation.result).some((row) => /^Напечатанные /.test(str(row.name)))) return "print";
-  return null;
+  const byName = /^печат/i.test(name) ? "print" : /монтаж|наклей|установ|навес|надет/i.test(name) ? "install"
+    : /(?<![а-яё])печат/i.test(name) || /^PRINT_/i.test(code) || list(operation.result).some((row) => /^Напечатанные /.test(str(row.name))) ? "print" : null;
+  if (byName !== "print") return byName;
+  // The builder does not save markPhase yet (slice 1): a «печатная» name or code may sit on an installation, so the card's
+  // steps (what the fitter is told to do) can overturn a print verdict — but only when they only install and never print.
+  const steps = list(obj(operation.card).steps).map((step) => str(step.text)).join(" ");
+  const doesInstall = /наклеи[тв]|наклеить|надеть|надеват|смонтир|установи[тв]|установить/i.test(steps);
+  const doesPrint = /напечата|печат(?:ь|ать|ает)|принтер|маркиратор/i.test(steps);
+  return doesInstall && !doesPrint ? "install" : "print";
 }
 
 /** Correct the label-print output when reading an issued ETK, without rewriting its snapshot. The product is the noun

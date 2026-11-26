@@ -137,3 +137,38 @@ describe("etkToleranceLines / etkToleranceParts", () => {
     expect(etkToleranceParts("IPC/WHMA-A-620F (Раздел 3)")).toEqual([{ text: "IPC/WHMA-A-620F (Раздел 3)", strong: false }]);
   });
 });
+
+describe("etkMarkPhase matrix", () => {
+  const fields = { marks: [{ text: "X1", batch: "1" }] };
+  const phase = (name: string, extra: Record<string, unknown> = {}) => etkMarkPhase({ fields, card: { name, steps: [] }, ...extra });
+  it("reads the name: install words beat a «печат» inside another word, print at a word start stays print", () => {
+    expect(phase("Монтаж напечатанных этикеток")).toBe("install");
+    expect(phase("Установка после печати")).toBe("install");
+    expect(phase("Печать и наклейка")).toBe("print");
+    expect(phase("Печать этикеток ×3")).toBe("print");
+    expect(phase("Наклейка этикеток маркировки ×3")).toBe("install");
+  });
+  it("old and English codes, and a name-less operation, stay undecided or follow the code", () => {
+    expect(phase("", { code: "INS_MARK_LABEL" })).toBeNull();
+    expect(phase("", { code: "PRINT_MARK_LABEL" })).toBe("print");
+    expect(phase("", { code: "print_mark_tube" })).toBe("print");
+    expect(phase("Mark harness", { code: "INS_MARK_HARNESS" })).toBeNull();
+    expect(etkMarkPhase({ fields })).toBeNull();
+    expect(etkMarkPhase({ code: "PRINT_MARK_LABEL" })).toBeNull();
+  });
+  it("an explicit markPhase wins", () => {
+    expect(etkMarkPhase({ fields: { ...fields, markPhase: "install" }, card: { name: "Печать этикеток" } })).toBe("install");
+  });
+  it("takes the phase from what the steps tell the fitter when the name and code say «печать»", () => {
+    const install = { fields, code: "PRINT_MARK_LABEL", card: { name: "Печать этикеток", steps: [{ text: "Наклеить этикетки на кабель по таблице." }] } };
+    expect(etkMarkPhase(install)).toBe("install");
+    const print = { fields, code: "PRINT_MARK_LABEL", card: { name: "Печать этикеток", steps: [{ text: "Заправить ленту в маркиратор и напечатать партию." }] } };
+    expect(etkMarkPhase(print)).toBe("print");
+  });
+  // KNOWN GAP (findings.md:75): an installation whose name, code, template AND steps all say «печать» cannot be told
+  // from a print by any saved field; it needs slice 1's builder to write fields.markPhase. Until then it is classed as print.
+  it("known gap: an install that says «печать» everywhere is still print until the builder saves markPhase", () => {
+    const stale = { fields, code: "PRINT_MARK_LABEL", card: { name: "Печать этикеток", steps: [{ text: "Выполнить печать этикеток." }] } };
+    expect(etkMarkPhase(stale)).toBe("print");
+  });
+});

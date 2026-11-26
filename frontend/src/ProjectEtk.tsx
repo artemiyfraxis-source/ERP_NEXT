@@ -313,7 +313,7 @@ function MarksView({ marks, batch, caption = "Метки по КД", summary = "
   const serial = useContext(MarkSerialContext);
   const lengths = marks.some((mark) => mark.length);
   const labels = serial ? markLabelList(marks, serial.range) : [];
-  if (labels.length && serial) return <><table className="etk-marks" aria-label="Метки по КД" style={{ overflowWrap: "anywhere" }}>
+  if (labels.length && serial) return <><table className="etk-marks" aria-label={caption} style={{ overflowWrap: "anywhere" }}>
     <caption>{caption}</caption>
     <thead><tr><th className="num">№</th><th>Текст</th><th>Где</th><th>Материал</th>{lengths && <th className="num">Длина, мм</th>}<th className="num">Кол-во</th></tr></thead>
     <tbody>{labels.map((label, index) => <tr key={index}>
@@ -325,14 +325,14 @@ function MarksView({ marks, batch, caption = "Метки по КД", summary = "
     {serial.print && <button type="button" className="secondary small" onClick={serial.print}>Печать надписей № {serial.range.first}–{serial.range.last}</button>}
     <span className="muted">{countLabel(serial.range.last - serial.range.first + 1, ["изделие", "изделия", "изделий"])} задания</span>
   </div></>;
-  const table = <table className="etk-marks" aria-label="Метки по КД">
+  const table = <table className="etk-marks" aria-label={caption}>
     <caption>{caption}</caption>
     <thead><tr><th>№</th><th>Что маркируем</th><th>Надпись</th><th>Материал</th><th>Где</th>{lengths && <th className="num">Длина, мм</th>}<th className="num">На изделие</th><th className="num">{batch ? `На партию ${formatQty(batch, "шт")}` : "На партию"}</th></tr></thead>
     <tbody>{marks.map((mark, index) => <tr key={index}>
       <td className="num">{index + 1}</td><td>{mark.target || "—"}</td><td><MarkText text={mark.text} batch={mark.batch} /></td><td>{mark.material || "—"}</td>
       <td>{mark.place || "—"}</td>{lengths && <td className="num">{mark.length || ""}</td>}<td className="num">{mark.qty || ""}</td><td className="num">{mark.batch || ""}</td>
     </tr>)}</tbody>
-    {summary && <tfoot><tr><td colSpan={6 + (lengths ? 1 : 0)}>Итого: {summary}</td></tr></tfoot>}
+    {summary && <tfoot><tr><td colSpan={7 + (lengths ? 1 : 0)}>Итого: {summary}</td></tr></tfoot>}
   </table>;
   return table;
 }
@@ -383,7 +383,7 @@ function EtkOperationCard({ operation, number, total, batch = "", route = null, 
     <EtkSection label="Вход" number={next()}>
       {operation.components?.length || operation.semis?.length ? <PickList semis={operation.semis} parts={operation.components} fields={raw.fields}
         semiFrom={etkSemiSource(route, operation.position || number)} />
-      : <div className="empty">Комплектующих и полуфабрикатов на входе нет.</div>}
+      : installMarks ? null : <div className="empty">Комплектующих и полуфабрикатов на входе нет.</div>}
       {installMarks && <MarksView marks={marks} batch={batch} caption="Места установки меток" />}
     </EtkSection>
     <EtkSection label="Оснастка" number={next()}>

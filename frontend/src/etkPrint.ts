@@ -201,7 +201,7 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
           return [
             text(operation.position || index + 1), text(operation.code),
             etkOperationTitle(operation) + (operation.edited ? " (правлена)" : ""), text(operation.connector),
-            text(times.operation_seconds) || ("operation_seconds" in times ? "не задано" : ""), text(times.setup_seconds),
+            text(times.operation_seconds) || "не задано", text(times.setup_seconds),
           ];
         }),
       } },
@@ -264,7 +264,7 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
         section("Вход"),
         ...table(["№", "Что взять: полуфабрикат", "Сколько", "Факт", "Ед.", "Откуда"], semis),
         ...table(["№", "Что взять: комплектующие, артикул", "Наименование", "ГРН", "Сколько", "Факт", "Ед.", "Откуда"], components),
-        ...(components.length || semis.length ? [] : [{ text: "Комплектующих и полуфабрикатов на входе нет." }]),
+        ...(components.length || semis.length || installMarks ? [] : [{ text: "Комплектующих и полуфабрикатов на входе нет." }]),
         ...(installMarks && marks.length ? [{ text: "Места установки меток" },
           ...table(labels?.columns ?? markColumns, marks)] : []),
         section("Оснастка: инструмент, оборудование, расходники"),
