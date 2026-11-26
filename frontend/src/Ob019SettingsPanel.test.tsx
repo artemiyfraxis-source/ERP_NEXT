@@ -975,6 +975,23 @@ it("clamps an overrun to zero and requires confirmation before a new batch", asy
   expect(posts[0]).toEqual({ url: "/api/production/machines/card/ОБ.019/run/reset", body: { expected_active_run_id: null, confirm_state: 102 } });
 });
 
+it("new batch offers zeroing the counter in the same single confirmation", async () => {
+  const { posts } = server();
+  render(<Ob019SettingsPanel inventory="ОБ.019" live={{ ...LIVE, job: { ...LIVE.job, total_set: 2058, total_finished: 2056, batch_finished: 6 } }} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Новый тираж" }));
+  const dialog = await screen.findByRole("dialog", { name: "Новый тираж" });
+  const zero = within(dialog).getByRole("checkbox", { name: /^Обнулить счётчик \(сделано 2\D?056\)$/ });
+  expect(zero).not.toBeChecked();
+  fireEvent.click(zero);
+  expect(within(dialog).getByText("Сделано 2056 → 0, пучок 6 → 0")).toBeVisible();
+  expect(within(dialog).queryByText(/Общий счётчик станка сохранится/)).toBeNull();
+  expect(posts).toEqual([]);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Подтвердить новый тираж" }));
+  await waitFor(() => expect(posts).toHaveLength(1));
+  expect(posts[0]).toEqual({ url: "/api/production/machines/card/ОБ.019/run/reset", body: {
+    expected_active_run_id: null, confirm_state: 102, reset_counters: true, seen_total: 2056, seen_batch: 6 } });
+});
+
 it("new-batch confirmation stays bound to the run shown when opened", async () => {
   const current = { ...OPEN_RUN };
   const originalId = current.id;
