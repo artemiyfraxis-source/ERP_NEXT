@@ -388,6 +388,38 @@ function freshData(kb = "КБ1") {
 }
 
 describe("FAKRA flow 16.11", () => {
+  it.each([
+    [true, true, "all"], [true, true, "none"], [true, false, "all"],
+    [false, true, "all"], [false, true, "none"], [false, false, "all"],
+  ] as const)("finishes covered labels after all connector work (FAKRA %s, two ends %s, VSWR %s)", (fakra, both, vswrMode) => {
+    const data = freshData(), state = seededState(data);
+    if (!fakra) {
+      state.coax.sideA = { ...state.coax.sideA!, kind: undefined, art: "SMA-A", name: "SMA" };
+      state.coax.sideB = { ...state.coax.sideB!, kind: undefined, art: "SMA-B", name: "SMA" };
+    }
+    if (!both) state.coax.sideB = null;
+    state.coax.vswrMode = vswrMode;
+    // Simulate an older saved custom order with sticking before connector assembly and colour before VSWR.
+    state.opOrder = freshConfigs[0].config.ops.map((op) => op.opKey);
+    const ops = makeGen(data, state).getActiveOps(), keys = ops.map((op) => op.opKey);
+    const install = keys.indexOf("coaxInsLabel"), heat = keys.indexOf("coaxHeat"), protect = keys.indexOf("coaxProtectIns");
+    expect(install).toBeGreaterThan(0);
+    expect(heat).toBe(install + 1);
+    expect(keys.at(-1)).toBe("coaxConnColor");
+    const connectorWork = ops.filter((op) => ["coaxHousing", "coaxShield", "coaxCapCrimp", "coaxCapScrew"].includes(op.type));
+    expect(connectorWork.length).toBeGreaterThan(0);
+    connectorWork.forEach((op) => {
+      expect(keys.indexOf(op.opKey)).toBeGreaterThan(protect);
+      expect(keys.indexOf(op.opKey)).toBeLessThan(install);
+    });
+    const routeOps: RouteOp[] = ops.map((op, i) => ({ position: i + 1, key: op.opKey, type: op.type,
+      code: op.tmplHint || "", side: op.side, label: op.label || "", minutes: 0 }));
+    const { cards, links } = genCards(deriveRoute(routeOps), routeOps);
+    expect(cards.find((card) => card.final)?.ops.some((op) => op.key === "coaxInsLabel")).toBe(true);
+    expect(links.some((link) => link.from === "labels" && link.to === "final")).toBe(true);
+    expect(links.some((link) => link.from === "labels" && link.to === "marked")).toBe(false);
+  });
+
   it.each([1, 4])("protects labels by place on %i cables regardless of the saved single length", (cables) => {
     const data = freshData(), state = seededState(data);
     state.coax.cables = cables;
@@ -417,6 +449,10 @@ describe("FAKRA flow 16.11", () => {
     const expected = structuredClone(freshConfigs.find((item) => item.kb === kb)!.config) as any;
     expected.coax.finishedLengthFrom = "bom";
     delete expected.ops.find((op: any) => op.opKey === "coaxPrintLabel").parts;
+    // The frozen 16.11 recipe remains an old-config regression fixture; finishing changed on 23.11.
+    const finishing = ["coaxInsLabel", "coaxHeat", "coaxVswr", "coaxConnColor"];
+    expected.ops = [...expected.ops.filter((op: any) => !finishing.includes(op.opKey)),
+      ...finishing.map((key) => expected.ops.find((op: any) => op.opKey === key))];
     expect(withoutShrinkMaterials(cfg)).toEqual(expected);
     for (const key of ["coaxProtectCut", "coaxProtectIns", "coaxHeat"]) {
       expect(cfg.ops.find((op: any) => op.opKey === key).shrinkMaterials).toEqual([
@@ -426,9 +462,9 @@ describe("FAKRA flow 16.11", () => {
     expect(cfg.coax.marks).toEqual(coaxMarksFromName(kb === "КБ2" ? "120905/AA Camera 11 → Splitter B C3" : "120907/AA Camera 14 → Splitter B C6"));
     expect(cfg.coax.connColor).toMatchObject(kb === "КБ2" ? { color: "розовый", code: "PK" } : { color: "оранжевый", code: "OG" });
     expect(cfg.ops.map((op: any) => op.opKey)).toEqual([
-      "coaxFakraCutStrip", "coaxPrintLabel", "coaxProtectCut", "coaxProtectIns", "coaxInsSleeveA", "coaxInsSleeveB", "coaxInsLabel",
+      "coaxFakraCutStrip", "coaxPrintLabel", "coaxProtectCut", "coaxProtectIns", "coaxInsSleeveA", "coaxInsSleeveB",
       "coaxPinCrimpA", "coaxInsertA", "coaxShieldA", "coaxBodyA", "coaxSealCapA",
-      "coaxPinCrimpB", "coaxInsertB", "coaxShieldB", "coaxCapCrimpB", "coaxBodyB", "coaxHeat", "coaxConnColor", "coaxVswr",
+      "coaxPinCrimpB", "coaxInsertB", "coaxShieldB", "coaxCapCrimpB", "coaxBodyB", "coaxInsLabel", "coaxHeat", "coaxVswr", "coaxConnColor",
     ]);
     expect(cfg.ops[0]).toMatchObject({ stripSides: ["A", "B"], templateId: "CUT_COAX+2strip", units: 1 });
     expect(cfg.ops[0].machine.model).toBe("BZW-886+Q2");
@@ -441,11 +477,11 @@ describe("FAKRA flow 16.11", () => {
     const ops: RouteOp[] = cfg.ops.map((op: any, i: number) => ({ position: i + 1, key: op.opKey, type: op.type, code: op.templateId, label: op.label, side: op.side || undefined, minutes: 0 }));
     const route = deriveRoute(ops), cards = genCards(route, ops).cards;
     expect(cards.map((card) => card.title)).toEqual(["Нарезанный и разделанный кабель", "Этикетки", "Нарезанные трубки",
-      "Кабель с метками и деталями", "Сторона А собрана", "Сторона В собрана", "Готовый кабель"]);
+      "Кабель с трубками и деталями", "Сторона А собрана", "Сторона В собрана", "Готовый кабель"]);
     expect(cards.slice(0, 3).map((card) => card.ops.map((op) => op.position))).toEqual([[1], [2], [3]]);
     expect(cards.flatMap((card) => card.ops).map((op) => op.position)).toEqual(ops.map((op) => op.position));
     expect(route.edges.filter((edge) => ["b1", "b2", "b3"].includes(edge.to))).toEqual([]);
-    expect(route.edges).toContainEqual({ from: "b2", to: "b7", per_unit: 1 });
+    expect(route.edges).toContainEqual({ from: "b2", to: "b17", per_unit: 1 });
     expect(route.edges).toContainEqual({ from: "b3", to: "b4", per_unit: 1 });
   });
   it("blocks a missing allowance and accepts an explicit zero", () => {
@@ -765,6 +801,7 @@ it.each([KB3, KB28])("$index matches the shared batch A ETK fixture", (bom) => {
   const data = batchAData(bom), state = seededState(data); state.coax.finishedLengthFrom = "user";
   const cfg = makeGen(data, state).buildConfig() as any;
   const expected = structuredClone(batchAConfigs.find((item) => item.kb === bom.index)!.config) as any;
+  expected.ops = [...expected.ops.filter((op: any) => op.type !== "coaxConnColor"), ...expected.ops.filter((op: any) => op.type === "coaxConnColor")];
   if (bom === KB3) {
     expected.coax.sideA.channels = expected.coax.sideB.channels = 4;
     for (const op of expected.ops) if (["coaxCutTut", "coaxInsTut", "coaxHeat"].includes(op.opKey)) {

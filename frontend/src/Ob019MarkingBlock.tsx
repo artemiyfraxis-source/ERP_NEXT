@@ -2,14 +2,14 @@ import type { ReactNode } from "react";
 import { EMPTY } from "./format";
 import type { MarkingPlan } from "./machineControlApi";
 
-/** Лазерная маркировка в карточке ОБ.019 (владелец 20.11.2026: «из ЭТК взять задание с маркировкой или в ручной работе;
+/** Лазерная маркировка в карточке ОБ.019 (владелец 20.11.2026: «из ЭТК взять задание с маркировкой или в работе;
  *  режимы — маркировка по краям и по всей длине»). Режим читается с регистров станка; выбор режима пишет одной записью
  *  все регистры этого режима (и явно стирает тексты другого). Правила — как на сервере (workflows/ob019_marking.py);
  *  запись и её итоги — в Ob019SettingsPanel.tsx. */
 
 export type MarkMode = "none" | "ends" | "full";
 export const MARK_MODES: [MarkMode, string][] = [["none", "Без"], ["ends", "По краям"], ["full", "По всей длине"]];
-/** Регистры маркировки, которые правятся в этом блоке; остальные (шрифт, скорости, поворот…) — в «Остальных параметрах». */
+/** Mode fields; the main card's marking settings expose font, speed and rotation separately. */
 export const MARK_KEYS = ["marking", "mark_by_step", "mark_count", "mark_front", "mark_middle", "mark_back",
   "mark_pos_front_mm", "mark_pos_back_mm", "mark_step_mm"];
 export const MARK_TEXTS = ["mark_front", "mark_middle", "mark_back"];
@@ -59,11 +59,10 @@ const positive = (text: string) => {
   return text.trim() !== "" && Number.isFinite(value) && value > 0;
 };
 
-/** Что пишет выбор режима — одна запись, все регистры режима, как сервер для ЭТК: «Без» — только выключатель; «По краям» —
- *  тексты у начала и конца, средний стёрт; «По всей длине» — средний текст и шаг, краевые стёрты. Текст режима берётся со
- *  станка, а если он пуст — из текста другого режима, чтобы метки не ушли пустыми. `now(key)` — значение на станке. */
+/** One batch per mode, matching the ETK planner. Off clears all texts and the middle-mark mode; ends clears the
+ *  middle, full clears both edges. Preserve the current mode's text, falling back to another mode's text. */
 export function modeValues(mode: MarkMode, now: (key: string) => string): Record<string, string> {
-  if (mode === "none") return { marking: "0" };
+  if (mode === "none") return { marking: "0", mark_by_step: "0", mark_count: "0", mark_front: "", mark_middle: "", mark_back: "" };
   const front = now("mark_front");
   const middle = now("mark_middle");
   const back = now("mark_back");

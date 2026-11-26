@@ -259,7 +259,9 @@ def test_a_missing_operation_gets_a_note_for_the_technologist_and_the_edit_stays
     report = run_refresh(base, now=T1)
 
     row = _row(base)
-    assert row.revision == 2 and row.review_note.startswith(NOTE_PREFIX)
+    assert row.revision == 1 and row.review_note.startswith(NOTE_PREFIX)
+    assert row.document == document
+    assert len(_revisions(base)) == 1
     assert row.overrides == overrides
     assert report.cards[0].conflicts[0]["kind"] == "missing_operation"
 
@@ -365,8 +367,8 @@ def test_a_card_edited_during_the_run_is_skipped_and_its_request_stays(base, mon
     _set_depth(base, "0,9")
     real = etk_refresh.evaluate
 
-    def with_a_concurrent_save(card, ctx):
-        outcome = real(card, ctx)
+    def with_a_concurrent_save(card, ctx, **kwargs):
+        outcome = real(card, ctx, **kwargs)
         with SqlAlchemyTechcardsUnitOfWork(base) as other:  # an edit form saved while the job was deriving
             other.techcards.save(replace(other.techcards.get(card.id), version=card.version + 1, updated_at=T1))
             other.commit()

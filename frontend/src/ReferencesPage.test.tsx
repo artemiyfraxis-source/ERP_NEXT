@@ -2,7 +2,7 @@ import { CRIMP_COLUMN_TITLE } from "./CrimpCell";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { ReferencesPage } from "./ReferencesPage";
-import type { Principal } from "./api";
+import type { Principal, ProductionInstrument } from "./api";
 
 const admin: Principal = {
   user: {
@@ -33,6 +33,93 @@ function typeInCell(cell: HTMLElement, value: string) {
   fireEvent.change(input, { target: { value } });
   fireEvent.keyDown(input, { key: "Enter" });
 }
+
+it("loads the measuring tab from the canonical registry and resolves a legacy equipment link through the parent page", async () => {
+  const canonical: ProductionInstrument = {
+    id: "canonical-si", legacy_unit_id: "old-equipment-unit", version: 4,
+    inventory_number: "СИ.118", name: "Линейка поверочная", instrument_type: "Линейный",
+    kind: "Средство измерений", parent_id: null, serial_number: "Л-118", manufacturer: "Производитель",
+    doc_designation: "Л-118", quantity: 1, storage_location: "ОТК", warehouse_grn: "",
+    verification_number: null, verified_at: null, verification_due: null, status: "Поверка не подтверждена",
+    files: [], custom_fields: {},
+  };
+  const requests: string[] = [];
+  window.history.replaceState({}, "", "/?section=references&tab=ob_measuring&equipment=old-equipment-unit");
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input); requests.push(path);
+    if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
+    if (path === "/api/references/bases") return json({ bases: [], tabs: { ob_measuring: 103 } });
+    if (path === "/api/references/column-views") return json({ views: {}, can_edit: true });
+    if (path === "/api/references/instruments") return json({ instruments: [canonical], count: 1, quantity: 1,
+      custom_columns: [], can_edit_identity: false, can_edit_custom: true });
+    if (path === "/api/references/instruments/old-equipment-unit") return json({ instrument: canonical });
+    if (path.includes("tab=mat")) return json({ metadata: null, records: [] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<ReferencesPage principal={admin} initialTab="ob_measuring" />);
+  const dialog = await screen.findByRole("dialog", { name: "Средство измерений: Линейка поверочная" });
+  expect(within(dialog).getByLabelText("Инв. №")).toHaveValue("СИ.118");
+  expect(within(dialog).getByLabelText("Наименование")).toBeDisabled();
+  expect(new URLSearchParams(window.location.search).get("equipment")).toBe(canonical.id);
+  expect(screen.getByRole("button", { name: "Средства измерений" })).toHaveTextContent("1 записей · 1 шт.");
+  expect(requests).toContain("/api/references/instruments");
+  expect(requests).toContain("/api/references/instruments/old-equipment-unit");
+  expect(requests.some((path) => path.includes("tab=ob_measuring") || path.includes("family=true") || path.startsWith("/api/production"))).toBe(false);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Закрыть" }));
+  expect(screen.getByText("СИ.118")).toBeInTheDocument();
+});
+
+it("refreshes the canonical measuring registry after applying an Excel roundtrip", async () => {
+  const canonical: ProductionInstrument = {
+    id: "canonical-si", legacy_unit_id: null, version: 4,
+    inventory_number: "СИ.118", name: "Линейка поверочная", instrument_type: "Линейный",
+    kind: "Средство измерений", parent_id: null, serial_number: "Л-118", manufacturer: "Производитель",
+    doc_designation: "Л-118", quantity: 1, storage_location: "ОТК", warehouse_grn: "",
+    verification_number: null, verified_at: null, verification_due: null, status: "Поверка не подтверждена", files: [],
+  };
+  let applied = false;
+  let catalogReads = 0;
+  const uploads: string[] = [];
+  const report = {
+    tab: "ob_measuring", label: "Средства измерений", dry_run: true, applied: false, file_name: "Средства измерений.xlsx",
+    columns: [{ field: "Полка", title: "Полка" }], ignored_columns: [], created: [],
+    updated: [{ row: 2, id: canonical.id, title: canonical.name,
+      changes: [{ field: "Полка", title: "Полка", old: "Старая полка", new: "Новая полка" }] }],
+    conflicts: [], not_found: [], errors: [], unchanged: 0,
+  };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/references/maps") return json({ suppliers: [], countries: [], gost_awg: [] });
+    if (path === "/api/references/bases") return json({ bases: [] });
+    if (path === "/api/references/column-views") return json({ views: {}, can_edit: true });
+    if (path === "/api/references/instruments") {
+      catalogReads += 1;
+      return json({ instruments: [{ ...canonical, custom_fields: { Полка: applied ? "Новая полка" : "Старая полка" } }],
+        count: 1, quantity: 1, custom_columns: ["Полка"], can_edit_identity: false, can_edit_custom: true });
+    }
+    if (path.includes("tab=mat")) return json({ metadata: null, records: [] });
+    if (path === "/api/references/import/ob_measuring/file?dry_run=1") {
+      uploads.push(path); return json(report);
+    }
+    if (path === "/api/references/import/ob_measuring/file?dry_run=0") {
+      applied = true; uploads.push(path); return json({ ...report, dry_run: false, applied: true });
+    }
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  render(<ReferencesPage principal={admin} initialTab="ob_measuring" />);
+  await screen.findByText("Старая полка", { selector: "td" });
+  expect(catalogReads).toBe(1);
+  const file = new File(["PK"], "Средства измерений.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  fireEvent.change(screen.getByLabelText("Исправленная таблица .xlsx"), { target: { files: [file] } });
+  const dialog = await screen.findByRole("dialog", { name: "Загрузка исправленной таблицы: Средства измерений" });
+  fireEvent.click(await within(dialog).findByRole("button", { name: "Применить: 1 изменение, 0 новых" }));
+  await waitFor(() => expect(within(screen.getByRole("region", { name: "Средства измерений" })).getByText("Новая полка", { selector: "td" })).toBeInTheDocument());
+  expect(catalogReads).toBe(2);
+  expect(uploads).toEqual([
+    "/api/references/import/ob_measuring/file?dry_run=1",
+    "/api/references/import/ob_measuring/file?dry_run=0",
+  ]);
+});
 
 it("edits and atomically saves all reference maps", async () => {
   let payload: unknown;

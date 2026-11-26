@@ -8,7 +8,7 @@
 import { connectorFace, connectorFaceUnits, topFeature, wireColorKnown, type TopFeature } from "./connectorArt";
 import { connectorTopView } from "./connectorTopView";
 import { twistedPairSvg } from "./twistArt";
-import { etkCutEnds, etkDrawHarness, etkFigure, etkWireColor, type CutEndKind, type EtkHousing, type EtkTopologyData } from "./etkDraw";
+import { etkCutEnds, etkDrawHarness, etkDrawLabelPrint, etkFigure, etkWireColor, type CutEndKind, type EtkHousing, type EtkTopologyData } from "./etkDraw";
 import { formatMinutes, type EtkPfGroup } from "./etkRoute";
 import type { WireBlankEnd } from "./harness/WireBlankCatalog";
 import { coreColor } from "./pinoutCheck";
@@ -519,6 +519,9 @@ export function etkPfArt({ group, operations, inputs = [], document, pins = {}, 
   operations = withCoreColors(operations, document);
   const topology = obj(document?.topology) as EtkTopologyData;
   const source = etkConfigOp(document), housingOf = housingsOf(document);
+  // A printing-only PF can itself be final (a label order); it still has no cable or connector assembly.
+  const printed = operations.map(etkDrawLabelPrint);
+  if (printed.length && printed.every(Boolean)) return { main: { svg: printed.join("") }, layers: "" };
   // Коаксиальная сборка: конец кабеля, собранный конец и вся сборка — свои рисунки на размер карточки (владелец 19.10).
   const coaxArt = coaxPfArt(group, operations, config);
   if (coaxArt) return { main: { svg: coaxArt }, layers: "" };

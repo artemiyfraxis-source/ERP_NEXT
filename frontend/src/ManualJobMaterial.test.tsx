@@ -82,7 +82,7 @@ it("suggests the wire used, spreads it over the lots and writes it off in one re
 
 it("refuses more than a lot has before sending and shows the server's refusal", async () => {
   const calls: Call[] = [];
-  serve(calls, VIEW, () => json({ detail: "Ручную работу уже изменили — обновите и проверьте ещё раз" }, 409));
+  serve(calls, VIEW, () => json({ detail: "Работу уже изменили — обновите и проверьте ещё раз" }, 409));
   render(<ManualJobMaterial job={JOB} close={() => undefined} />);
   const dialog = await screen.findByRole("dialog", { name: "Материал Р-000003" });
   const first = await within(dialog).findByLabelText("Списать с Г-001");
@@ -92,7 +92,7 @@ it("refuses more than a lot has before sending and shows the server's refusal", 
   expect(within(dialog).getByText(/Г-001: доступно 6/)).toBeTruthy();
   fireEvent.change(first, { target: { value: "6" } });
   fireEvent.click(submit);
-  expect(await within(dialog).findByRole("alert")).toHaveProperty("textContent", "Ручную работу уже изменили — обновите и проверьте ещё раз");
+  expect(await within(dialog).findByRole("alert")).toHaveProperty("textContent", "Работу уже изменили — обновите и проверьте ещё раз");
   // A lot found by search can be written off too; its typed quantity survives the next search.
   fireEvent.change(within(dialog).getByRole("searchbox"), { target: { value: "син" } });
   fireEvent.click(within(dialog).getByRole("button", { name: "Найти" }));

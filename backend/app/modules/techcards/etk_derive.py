@@ -10,11 +10,13 @@ Overrides (what a rebuild must keep), stored by the card:
     {"operations": {operation_key: {"base_template_version": str, "operation": {the operation as edited}}},
      "route": {"blocks": [{"key", "name", "final", "kit"?, "ops": [operation_key, …]}],
                "edges": [{"from", "to", "per_unit", "item"?}]}}
-`operation_key` is `code::connector::side` (project_cards). The route is the ПФ scheme cut by hand, its blocks naming
+`operation_key` is `code::op:<opKey>::side` for generator recipes with opKey, otherwise `code::connector::side` (project_cards).
+Legacy keys migrate using the previous document's aligned recipe. The route is the ПФ scheme cut by hand, its blocks naming
 operations by key instead of by place, so it survives a rebuild that moves the operations."""
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import replace
@@ -29,7 +31,9 @@ from .domain import pf_split, route as route_domain
 from .etk_builder import _route_ops, build_etk
 from .etk_live import VIEW_KEYS, stamp_templates
 from .operation_cards import OperationCardTemplate
-from .project_cards import TechcardValidationError, operation_key
+from .project_cards import (
+    TechcardValidationError, operation_key, operation_aliases, resolved_operation_key, with_operation_identity, migrated_overrides,
+)
 
 NO_INPUTS = "no_inputs"
 BUILD_FAILED = "build_failed"
@@ -89,21 +93,40 @@ def derive(
     inputs: Mapping[str, Any] | None, overrides: Mapping[str, Any] | None,
     enrich: Callable[[Mapping[str, Any]], Mapping[str, Any]], templates: Sequence[OperationCardTemplate],
     *, operation_library_commit: str = "", technology_source: Mapping[str, Any] | None = None,
+    previous_document: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, list[dict[str, str]]]:
     """(document, conflicts). `inputs` — the raw generator config, not enriched; `enrich` — config → config (the
     references norms); the builder and the template stamp follow, then the overrides. An override whose operation is
     gone is returned in `conflicts`, never dropped. A card without inputs cannot be derived: (None, [no_inputs])."""
     if not isinstance(inputs, Mapping) or not inputs:
         return None, [_conflict(NO_INPUTS, NO_INPUTS_MESSAGE)]
+    overrides = overrides if isinstance(overrides, Mapping) else {}
     try:
-        document = stamp_templates(build_etk(
+        document = project_cards.with_operation_fingerprints(stamp_templates(build_etk(
             enrich(deepcopy(dict(inputs))), templates, operation_library_commit=operation_library_commit,
             technology_source=technology_source,
-        ), templates)
+        ), templates))
+        aliases = operation_aliases(previous_document, document)
+        # Inputs backfill also derives saved edits/routes without a previous snapshot.
+        # A matching position/fingerprint is insufficient when the target is not unique.
+        edits, route = overrides.get("operations"), overrides.get("route")
+        saved_keys = set(edits) if isinstance(edits, Mapping) else set()
+        if isinstance(route, Mapping):
+            for block in route.get("blocks") or []:
+                if isinstance(block, Mapping):
+                    saved_keys.update(block.get("ops") or [])
+        saved_targets = {aliases.get(key, key) for key in saved_keys}
+        counts = Counter(op.get("operation_fingerprint") for op in document["operations"])
+        for op in document["operations"]:
+            fingerprint = op.get("operation_fingerprint")
+            if operation_key(op) in saved_targets and fingerprint and counts[fingerprint] > 1:
+                raise TechcardValidationError(
+                    "Несколько операций имеют одну смысловую идентичность — требуется проверка технолога")
     except (ValueError, KeyError, TypeError, AttributeError, IndexError, TechcardValidationError) as error:
         return None, [_conflict(BUILD_FAILED, f"сборка не удалась: {error}")]
-    overrides = overrides if isinstance(overrides, Mapping) else {}
     conflicts: list[dict[str, str]] = []
+    if aliases:
+        document["operation_key_aliases"] = aliases
     document = _apply_operations(document, overrides.get("operations"), conflicts)
     document = _apply_route(document, overrides.get("route"), conflicts)
     return document, conflicts
@@ -117,7 +140,7 @@ def _apply_operations(document: dict[str, Any], edits: object, conflicts: list[d
     versions = (document.get("source") or {}).get("templates") or {}
     for key, edit in edits.items():
         edited = edit.get("operation") if isinstance(edit, Mapping) else None
-        index = index_by_key.get(key)
+        index = index_by_key.get(resolved_operation_key(key, document))
         if index is None:
             conflicts.append(_conflict(
                 MISSING_OPERATION, "операции, которую правил технолог, в пересобранной карте больше нет", key))
@@ -125,15 +148,18 @@ def _apply_operations(document: dict[str, Any], edits: object, conflicts: list[d
         if not isinstance(edited, Mapping):
             continue
         base = operations[index]
+        fingerprint = edited.get("operation_fingerprint")
+        if fingerprint and fingerprint != base.get("operation_fingerprint"):
+            conflicts.append(_conflict(
+                MISSING_OPERATION, f"Операция «{_label(base)}»: сохранённая правка относится к другой операции", key))
+            continue
         template_id = str(base.get("template_id") or "").strip()
         base_version = str(edit.get("base_template_version") or "")
         if base_version and template_id in versions and versions[template_id] != base_version:
             conflicts.append(_conflict(
                 TEMPLATE_CHANGED, "шаблон операции изменился после правки технолога — правка оставлена как была", key))
-        operations[index] = {
-            **{name: value for name, value in deepcopy(dict(edited)).items() if name not in VIEW_KEYS},
-            "position": base.get("position"),
-        }
+        operations[index] = with_operation_identity(
+            {name: value for name, value in edited.items() if name not in VIEW_KEYS}, base)
         if etk_heat_shrink.refresh_override(operations[index], base):
             conflicts.append(_conflict(THERMAL_OVERRIDE, etk_heat_shrink.THERMAL_REVIEW, key))
     return {**document, "operations": operations}
@@ -148,7 +174,7 @@ def _apply_route(document: dict[str, Any], stored: object, conflicts: list[dict[
     for block in stored["blocks"]:
         if not isinstance(block, Mapping):
             continue
-        ops = [positions.get(key) for key in block.get("ops") or []]
+        ops = [positions.get(resolved_operation_key(key, document)) for key in block.get("ops") or []]
         for key, position in zip(block.get("ops") or [], ops):
             if position is None:
                 missing = True
@@ -156,11 +182,15 @@ def _apply_route(document: dict[str, Any], stored: object, conflicts: list[dict[
         raw_blocks.append({**block, "ops": [position for position in ops if position is not None]})
     if missing:
         return document
+
     try:
         ops, final_name, quantity = _route_ops(document, strict=False)
         route = route_domain.parse_route({**stored, "blocks": raw_blocks}, ops, final_name, manual=True)
+        if (document.get("build_config") or {}).get("mode") == "coax":
+            pf_split.validate_coax_finishing(route, ops)
         route = replace(route, generated=stored.get("source") == "generated")
-        totals = route_domain.route_totals(route, {op.position: op.minutes for op in ops}, quantity)
+        totals = route_domain.route_totals(route, {op.position: op.minutes for op in ops}, quantity,
+                            unknown_positions={op.position for op in ops if op.unknown_time})
         return {**document, "route": route_domain.route_json(route, totals)}
     except (route_domain.RouteError, AttributeError, IndexError, KeyError, TypeError, ValueError) as error:
         conflicts.append(_conflict(ROUTE_NOT_APPLIED, f"схема ПФ, нарезанная вручную, не подошла: {error}"))

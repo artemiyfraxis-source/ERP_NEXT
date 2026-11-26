@@ -4,6 +4,8 @@ import { App } from "./App";
 import { AUTH_REQUIRED_EVENT, type Principal } from "./api";
 import { forgetPersonalViews, loadPersonalViews, SAVE_DELAY, savePersonalView } from "./personalViews";
 import { forgetScanDevice, loadScanDevice } from "./ScanAgent";
+import { openPlace } from "./navigation";
+import { machineLink } from "./ProjectEtk";
 
 const principal: Principal = {
   user: {
@@ -33,7 +35,173 @@ afterEach(() => {
   forgetScanDevice();
   vi.useRealTimers();
   vi.restoreAllMocks();
+  window.localStorage.clear();
   window.history.replaceState({}, "", "/");
+});
+
+function serveCollapsibleSidebar(person = principal) {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+    if (String(input) === "/api/auth/me") return json(person);
+    if (String(input) === "/api/auth/ui-settings") return json({ views: {} });
+    return json({}, 404);
+  });
+}
+
+it("collapses sidebar blocks and restores the viewer's preference after remount", async () => {
+  serveCollapsibleSidebar();
+  const first = render(<App />);
+  const nav = await screen.findByRole("navigation", { name: "Основная навигация" });
+  const supply = within(nav).getByRole("button", { name: "Снабжение" });
+  expect(supply).toHaveAttribute("aria-expanded", "true");
+  fireEvent.click(supply);
+  expect(supply).toHaveAttribute("aria-expanded", "false");
+  expect(within(nav).queryByRole("button", { name: "Первичная документация" })).toBeNull();
+  expect(within(nav).queryByRole("button", { name: "Документация" })).toBeNull();
+  first.unmount();
+  render(<App />);
+  const restored = await screen.findByRole("navigation", { name: "Основная навигация" });
+  const toggle = within(restored).getByRole("button", { name: "Снабжение" });
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  fireEvent.click(toggle);
+  expect(within(restored).getByRole("button", { name: "Первичная документация" })).toBeVisible();
+});
+
+it.each(["/?section=primarydocs&tab=upd&upd=u42", "/?block=supply"])
+  ("forces the current sidebar block open for %s without overwriting the saved collapse", async address => {
+    window.localStorage.setItem(`erp-sidebar-collapsed:${principal.user.id}`, '["supply"]');
+    window.history.replaceState({}, "", address);
+    serveCollapsibleSidebar();
+    render(<App />);
+    const nav = await screen.findByRole("navigation", { name: "Основная навигация" });
+    const supply = within(nav).getByRole("button", { name: "Снабжение" });
+    expect(supply).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(supply);
+    expect(supply).toHaveAttribute("aria-expanded", "true");
+    expect(within(nav).getByRole("button", { name: "Первичная документация" })).toBeVisible();
+    if (address.includes("upd=")) expect(new URLSearchParams(window.location.search).get("upd")).toBe("u42");
+    fireEvent.click(within(nav).getByRole("button", { name: "Главная" }));
+    expect(supply).toHaveAttribute("aria-expanded", "false");
+  });
+
+it("keeps commands searchable through Ctrl+K while their sidebar block is collapsed", async () => {
+  serveCollapsibleSidebar();
+  render(<App />);
+  const nav = await screen.findByRole("navigation", { name: "Основная навигация" });
+  fireEvent.click(within(nav).getByRole("button", { name: "Снабжение" }));
+  fireEvent.keyDown(document.body, { key: "k", code: "KeyK", ctrlKey: true });
+  const search = await screen.findByRole("dialog", { name: "Поиск" });
+  fireEvent.change(within(search).getByRole("combobox"), { target: { value: "Первичная документация" } });
+  expect(await within(search).findByRole("option", { name: /Первичная документация/ })).toBeInTheDocument();
+});
+
+it("keeps sidebar preferences separate when another employee signs in", async () => {
+  window.localStorage.setItem(`erp-sidebar-collapsed:${principal.user.id}`, '["supply"]');
+  serveCollapsibleSidebar({ ...principal, user: { ...principal.user, id: "other-viewer" } });
+  render(<App />);
+  const nav = await screen.findByRole("navigation", { name: "Основная навигация" });
+  expect(within(nav).getByRole("button", { name: "Снабжение" })).toHaveAttribute("aria-expanded", "true");
+});
+
+const journalGrants = [undefined, "view", "edit"] as const;
+it.each(journalGrants.flatMap(production => journalGrants.flatMap(myops => journalGrants.map(warehouse => ({ production, myops, warehouse })))))
+  ("replaces the authenticated legacy journal route for grants %j", async grants => {
+    const person = as("operator", Object.fromEntries(Object.entries(grants).filter(([, mode]) => mode)) as Principal["permissions"]);
+    const calls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+      const path = String(input); calls.push(path);
+      if (path === "/api/auth/me") return json(person);
+      if (path.includes("/manual-jobs?")) return json({ rows: [], can_edit: false, can_issue: false, can_decide: false, waiting_count: 0 });
+      if (path === "/api/production/machines") return json({ rows: [], now: "2026-11-23T10:00:00+03:00" });
+      return json({}, 404);
+    });
+    window.history.replaceState({}, "", "/?section=manualjobs&equipment_id=u19&date_from=2026-10-01&date_to=2026-10-31&waiting=false&q=Проба");
+    const replace = vi.spyOn(window.history, "replaceState");
+    const push = vi.spyOn(window.history, "pushState");
+    render(<App />);
+    const destination = grants.production || grants.myops ? "machines" : grants.warehouse ? "stock" : null;
+    if (!destination) {
+      expect(await screen.findByRole("alert")).toHaveTextContent("Журнал работ вам не открыт.");
+      expect(new URLSearchParams(window.location.search).get("section")).toBe("manualjobs");
+      expect(calls.some(path => path.includes("/manual-jobs"))).toBe(false);
+      expect(replace).not.toHaveBeenCalled();
+    } else {
+      await screen.findByRole("heading", { name: destination === "machines" ? "Оборудование" : "Материал работ" });
+      const params = new URLSearchParams(window.location.search);
+      expect(params.get("section")).toBe(destination);
+      expect(params.get("view")).toBe(destination === "machines" ? "journal" : "work-materials");
+      expect(params.get("equipment_id")).toBe("u19");
+      expect(params.get("date_from")).toBe("2026-10-01");
+      expect(params.get("date_to")).toBe("2026-10-31");
+      expect(params.get("waiting")).toBe("false");
+      expect(params.get("q")).toBe("Проба");
+      expect(replace).toHaveBeenCalled();
+    }
+    expect(push).not.toHaveBeenCalled();
+    expect(vi.mocked(globalThis.fetch).mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+    expect(screen.queryByRole("button", { name: "Ручная работа" })).not.toBeInTheDocument();
+  });
+
+it.each(["admin", "superadmin"])("replaces legacy journal links for full access %s", async level => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async input => String(input) === "/api/auth/me"
+    ? json(as(level, {})) : json({}, 404));
+  window.history.replaceState({}, "", "/?section=manualjobs");
+  render(<App />);
+  await screen.findByRole("heading", { name: "Оборудование" });
+  expect(new URLSearchParams(window.location.search).get("view")).toBe("journal");
+});
+
+it("waits for authentication before resolving a legacy journal link", async () => {
+  let authenticate!: (response: Response) => void;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async input => String(input) === "/api/auth/me"
+    ? new Promise<Response>(resolve => { authenticate = resolve; }) : json({}, 404));
+  window.history.replaceState({}, "", "/?section=manualjobs");
+  render(<App />);
+  expect(new URLSearchParams(window.location.search).get("section")).toBe("manualjobs");
+  await act(async () => authenticate(json(as("operator", { myops: "view" }))));
+  await screen.findByRole("heading", { name: "Оборудование" });
+  expect(new URLSearchParams(window.location.search).get("view")).toBe("journal");
+});
+
+it("resolves a legacy link reached through Back without pushing a new history entry", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async input => String(input) === "/api/auth/me"
+    ? json(as("operator", { warehouse: "view" }))
+    : String(input).includes("/manual-jobs?") ? json({ rows: [], can_edit: false }) : json({}, 404));
+  render(<App />);
+  await screen.findByText("Добрый день, Сотрудник");
+  window.history.replaceState({}, "", "/?section=manualjobs");
+  const push = vi.spyOn(window.history, "pushState");
+  fireEvent(window, new PopStateEvent("popstate"));
+  await screen.findByRole("heading", { name: "Материал работ" });
+  expect(new URLSearchParams(window.location.search).get("view")).toBe("work-materials");
+  expect(push).not.toHaveBeenCalled();
+});
+
+it("preserves exact equipment source parameters on reload and popstate, and clears them on menu navigation", async () => {
+  const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+    if (String(input) === "/api/auth/me") return json(as("operator", { myops: "view" }));
+    if (String(input) === "/api/production/machines") return json({ rows: [], now: "2026-11-23T10:00:00+03:00" });
+    return json({}, 404);
+  });
+  const action: Parameters<typeof machineLink>[0] = { equipment_id: "u19", task_id: "t1", operation_id: "o1", etk_position: 2,
+    inventory_number: "ОБ.019", display_name: "Резка", model: null, card_kind: "ob019", source: null,
+    connectivity: { state: "ok", fresh: true, last_seen: null }, open_permitted: true, load_permitted: true,
+    can_open: true, can_load: true, blocker: null };
+  window.history.replaceState({}, "", machineLink(action, true));
+  render(<App />);
+  await screen.findByRole("heading", { name: "Оборудование" });
+  expect(new URLSearchParams(window.location.search).get("etk_position")).toBe("2");
+  const params = new URLSearchParams(machineLink({ ...action, equipment_id: "u99", task_id: "t2", operation_id: "o2", etk_position: 7 }, true));
+  params.delete("section");
+  const source = { ...Object.fromEntries(params), group_id: "g2", member_id: "m2" };
+  act(() => openPlace("machines", source));
+  for (const [key, value] of Object.entries(source)) expect(new URLSearchParams(window.location.search).get(key)).toBe(value);
+  expect(fetch.mock.calls.every(([, init]) => !init?.method || init.method === "GET")).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Главная" }));
+  for (const key of Object.keys(source)) expect(new URLSearchParams(window.location.search).has(key)).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Оборудование" }));
+  await screen.findByRole("heading", { name: "Оборудование" });
+  expect(screen.queryByText("Ссылка на задание неполная — откройте станок из инструкции заново")).not.toBeInTheDocument();
+  for (const key of Object.keys(source)) expect(new URLSearchParams(window.location.search).has(key)).toBe(false);
 });
 
 it.each([404, 403, 503])("explains unavailable setup deep links (%s) without fetching task data", async (status) => {
@@ -238,7 +406,7 @@ it("draws the block tiles with line icons, never emoji (audit М-6)", async () =
   await screen.findByText("Добрый день, Сотрудник");
   const tiles = document.querySelectorAll(".block-tile");
   expect(tiles.length).toBeGreaterThan(0);
-  expect(screen.getByRole("button", { name: "Администрирование" }).querySelector("svg path")).not.toBeNull();
+  expect(within(screen.getByRole("main")).getByRole("button", { name: "Администрирование" }).querySelector("svg path")).not.toBeNull();
   tiles.forEach((tile) => {
     expect(tile.querySelector(".tile-icon svg.block-icon")).not.toBeNull();
     expect(tile.querySelector(".tile-icon")?.textContent).toBe("");
@@ -587,7 +755,7 @@ it("NAV-1: home shows the blocks as tiles and a block shows its section cards in
   expect(window.location.search).toBe("?block=supply");
   // Sidebar groups agree with the blocks.
   const nav = screen.getByRole("navigation", { name: "Основная навигация" });
-  expect(within(nav).getAllByRole("heading", { level: 4 }).map((heading) => heading.textContent))
+  expect(within(nav).getAllByRole("heading", { level: 4 }).map((heading) => heading.querySelector("button")?.textContent?.replace(/^[▾▸]/, "")))
     .toEqual(["Производство", "Снабжение", "Склад", "Менеджмент", "Справочники"]);
 });
 

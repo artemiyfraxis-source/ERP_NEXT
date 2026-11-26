@@ -93,8 +93,11 @@ it("the positions table offers the maker and the documents in «Колонки»
   render(<WarehousePage />);
   await screen.findAllByText("SMA-KWE-RG402");
   const chooser = openChooser();
-  for (const title of ["Производитель", "Наим. по УПД", "Наим. по счёту", "№ счёта", "Дата счёта", "№ УПД", "Дата УПД", "№ ПРД", "Дата ПРД", "Файл УПД"]) {
+  for (const title of ["Производитель", "Наим. по УПД", "№ УПД", "Дата УПД", "Файл УПД"]) {
     expect(chooser.getByLabelText(title)).not.toBeChecked();
+  }
+  for (const title of ["Наим. по счёту", "№ счёта", "Дата счёта", "№ ПРД", "Дата ПРД"]) {
+    expect(chooser.queryByLabelText(title)).not.toBeInTheDocument();
   }
   expect(headerNames()).not.toContain("Производитель");
 
@@ -121,7 +124,7 @@ it("the positions table offers the maker and the documents in «Колонки»
   expect(screen.queryByRole("button", { name: /^Файл УПД/ })).not.toBeInTheDocument();
 });
 
-it("a lot per row: its own ГРН, no «+1»; «Тип» wraps instead of «…»; an empty type is «—»", async () => {
+it("a lot per row: its own ГРН, no «+1»; «Тип» truncates with the full title; an empty type is «—»", async () => {
   mockServer([lot, other, untyped]);
   render(<WarehousePage />);
   await screen.findAllByText("SMA-KWE-RG402");
@@ -131,18 +134,32 @@ it("a lot per row: its own ГРН, no «+1»; «Тип» wraps instead of «…�
   const grn = within(position).getByText("OLD.26.0000069").closest("td")!;
   expect(grn).toHaveTextContent(/^OLD\.26\.0000069$/);
   const type = within(position).getByText("Коаксиальный соединитель");
-  expect(type).toHaveClass("stock-clamp");
-  expect(type.closest("td")).toHaveClass("stock-wrap");
+  expect(type.closest("td")).toHaveClass("cut");
+  expect(type.closest("td")).toHaveAttribute("title", "Коаксиальный соединитель");
+  expect(type.closest("td")).not.toHaveClass("stock-wrap");
   const cap = row("CAP-1");
   expect(cap.querySelector("td")).toHaveTextContent("—");
   expect(cap.querySelector("td")).toHaveClass("stock-dim");
+  fireEvent.click(openChooser().getByLabelText("Производитель"));
+  for (const text of [lot.series, lot.manufacturer!]) {
+    const cell = within(position).getByText(text).closest("td");
+    expect(cell).toHaveClass("cut");
+    expect(cell).toHaveAttribute("title", text);
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Таблица склада" }));
+  fireEvent.click(openChooser().getByLabelText("Производитель"));
+  for (const text of [lot.item_type, lot.series, lot.manufacturer!]) {
+    const cell = within(row(lot.grn)).getByText(text).closest("td");
+    expect(cell).toHaveClass("cut");
+    expect(cell).toHaveAttribute("title", text);
+  }
 });
 
 it("the layout is the person's own: read from the server, a change is saved there", async () => {
   const calls = mockServer([lot], { "stock.grouped": { order: ["name", "maker", "grn", "available"], hidden: ["type", "reserved", "lots", "place", "article", "warehouse", "balance"] } });
   render(<WarehousePage />);
   await screen.findByText("Amphenol RF");
-  expect(headerNames()).toEqual(["Наименование", "Производитель", "ГРН", "Свободно"]);
+  expect(headerNames()).toEqual(["Наименование", "Производитель", "ГРН", "Свободно", "Места"]);
 
   fireEvent.click(openChooser().getByLabelText("Склад"));
   await waitFor(() => expect(writes(calls)).toHaveLength(1), { timeout: 2000 });
@@ -223,13 +240,14 @@ it("the server's layout wins over this browser's; without the server the browser
   vi.restoreAllMocks();
   mockServer([lot], { "stock.grouped": { order: ["grn", "name"], hidden: ["type", "available", "reserved", "lots", "place", "article", "warehouse"] } });
   render(<WarehousePage />);
-  await waitFor(() => expect(headerNames()).toEqual(["ГРН", "Наименование"]));
+  await waitFor(() => expect(headerNames()).toEqual(["ГРН", "Свободно", "Места", "Наименование"]));
 });
 
 it("«По умолчанию» drops the person's layout on the server", async () => {
   const calls = mockServer([lot], { "stock.grouped": { order: ["name", "grn"], hidden: ["type"] } });
   render(<WarehousePage />);
   await waitFor(() => expect(headerNames()[0]).toBe("Наименование"));
+  await screen.findByText(lot.article);
   fireEvent.click(openChooser().getByRole("button", { name: "По умолчанию" }));
   expect(headerNames()).toEqual(["Тип", "ГРН", "Свободно", "Резерв", "Партий", "Места", "Артикул номенклатуры", "Наименование", "Склад"]);
   await waitFor(() => expect(writes(calls)).toEqual([{ method: "DELETE", path: "/api/auth/ui-settings/stock.grouped", body: undefined }]));
@@ -243,6 +261,140 @@ it("«Таблица склада» is its own view on the server", async () => 
   fireEvent.click(openChooser().getByLabelText("Производитель"));
   await waitFor(() => expect(writes(calls).map((call) => call.path)).toEqual(["/api/auth/ui-settings/stock.flat"]), { timeout: 2000 });
   expect(within(screen.getByRole("table", { name: "Таблица склада" })).getByText("Amphenol RF")).toBeInTheDocument();
+});
+
+it.each(["grouped", "flat"] as const)("restores required quantity and place in an old %s view without saving it", async (kind) => {
+  const saved = { order: ["grn", "name"], hidden: ["available", "place", "type", "reserved", "lots", "series", "article", "warehouse"] };
+  const original = JSON.stringify(saved);
+  const calls = mockServer([{ ...lot, storage_location: "", balance: "0", available: "0" }], { [`stock.${kind}`]: saved });
+  render(<WarehousePage />);
+  await screen.findByText(lot.name);
+  if (kind === "flat") fireEvent.click(screen.getByRole("button", { name: "Таблица склада" }));
+  const place = kind === "flat" ? "Место" : "Места";
+  expect(headerNames()).toEqual(["ГРН", "Свободно", place, "Наименование"]);
+  expect(screen.getByText("0 шт")).toBeInTheDocument();
+  const chooser = openChooser();
+  for (const title of ["Наименование", "Свободно", place]) {
+    expect(chooser.getByLabelText(title)).toBeChecked();
+    expect(chooser.getByLabelText(title)).toBeDisabled();
+  }
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  expect(writes(calls)).toHaveLength(0);
+  expect(JSON.stringify(saved)).toBe(original);
+
+  // The checkbox is locked; the keyboard-friendly move controls still change the order.
+  // Pass the optional quantities (flat has no lot count), then the other required column.
+  for (let step = 0; step < (kind === "flat" ? 3 : 4); step += 1) fireEvent.click(chooser.getByRole("button", { name: `Выше: ${place}` }));
+  expect(headerNames()).toEqual(["ГРН", place, "Свободно", "Наименование"]);
+  await waitFor(() => expect(writes(calls)).toHaveLength(1), { timeout: 2000 });
+  expect(writes(calls)[0].path).toBe(`/api/auth/ui-settings/stock.${kind}`);
+});
+
+it("omits every empty optional column even if the saved view enables it, while numeric zero is meaningful", async () => {
+  const empty: WarehouseLot = {
+    ...lot, article: "", series: "", item_type: "", manufacturer: "  ", upd_name: "", invoice_name: " \t ",
+    maker_article: "", supplier_article: "", purpose: "", receipt: null, storage_location: "", balance: "0", available: "0",
+  };
+  const layout = readLayout("grouped", null);
+  const calls = mockServer([empty], { "stock.grouped": { ...layout, hidden: [] } });
+  render(<WarehousePage />);
+  await screen.findByText(lot.name);
+  expect(headerNames()).toEqual(["ГРН", "Свободно", "Резерв", "Остаток", "Партий", "Места", "Наименование", "Склад"]);
+  const chooser = openChooser();
+  for (const label of ["Тип", "Серия", "Артикул номенклатуры", "Артикул производителя", "Артикул поставщика", "Назначение", "Производитель", "Наим. по УПД", "Наим. по счёту", "№ счёта", "Дата счёта", "№ УПД", "Дата УПД", "№ ПРД", "Дата ПРД", "Файл УПД"]) {
+    expect(chooser.queryByLabelText(label)).not.toBeInTheDocument();
+  }
+  expect(chooser.getByLabelText("Резерв")).toBeChecked();
+  expect(writes(calls)).toHaveLength(0);
+});
+
+it("reveals a saved column when a later page has a value and retains it when search hides that lot", async () => {
+  const filled = { ...other, invoice_name: "Соединитель по счёту" };
+  const layout = readLayout("grouped", null);
+  const stockReads: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/auth/ui-settings") return json({ views: { "stock.grouped": { ...layout, hidden: layout.hidden.filter((key) => key !== "invoice_name") } } });
+    if (path.split("?")[0] === "/api/stock") {
+      stockReads.push(path);
+      const params = new URL(path, "http://test").searchParams;
+      if (params.get("q")) return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+      if (params.has("after")) return json({ lots: [filled], total: 2, truncated: 0, next_cursor: null });
+      return json({ lots: [lot], total: 2, truncated: 1, next_cursor: "next" });
+    }
+    return json({ group: "series", groups: [], articles: [] });
+  });
+  render(<WarehousePage />);
+  await screen.findByText(lot.grn);
+  expect(headerNames()).not.toContain("Наим. по счёту");
+  expect(openChooser().queryByLabelText("Наим. по счёту")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Показать ещё" }));
+  await screen.findByText(filled.invoice_name);
+  expect(headerNames()).toContain("Наим. по счёту");
+  expect(openChooser().getByLabelText("Наим. по счёту")).toBeChecked();
+
+  fireEvent.change(screen.getByLabelText("Поиск по складу"), { target: { value: lot.grn } });
+  await waitFor(() => expect(screen.queryByText(filled.grn)).not.toBeInTheDocument());
+  expect(stockReads.some((path) => path.includes("q="))).toBe(true);
+  expect(headerNames()).toContain("Наим. по счёту");
+  expect(openChooser().getByLabelText("Наим. по счёту")).toBeChecked();
+  expect(within(row(lot.grn)).queryByText(filled.invoice_name)).not.toBeInTheDocument();
+});
+
+it.each([false, true])("suppresses duplicate maker articles in cells and chooser (flat=%s)", async (flat) => {
+  const same = { ...lot, article: " SMA-KWE-RG402 ", maker_article: " sma-kwe-rg402 " };
+  const different = { ...other, maker_article: " MFG-402 " };
+  const views = Object.fromEntries(["grouped", "flat"].map((kind) => {
+    const layout = readLayout(kind as "grouped" | "flat", null);
+    return [`stock.${kind}`, { ...layout, hidden: layout.hidden.filter((key) => key !== "maker_article") }];
+  }));
+  mockServer([same, different], views);
+  render(<WarehousePage />);
+  await screen.findAllByText(/SMA-KWE-RG402/);
+  if (flat) fireEvent.click(screen.getByRole("button", { name: "Таблица склада" }));
+  expect(headerNames()).toContain("Артикул производителя");
+  const index = headerNames().indexOf("Артикул производителя");
+  expect(row(same.grn).querySelectorAll("td")[index]).toHaveTextContent(/^—$/);
+  expect(row(same.grn).querySelectorAll("td")[index]).toHaveClass("stock-dim");
+  expect(row(different.grn).querySelectorAll("td")[index]).toHaveTextContent(/^MFG-402$/);
+  expect(row(different.grn).querySelectorAll("td")[index]).toHaveAttribute("title", "MFG-402");
+});
+
+it("does not offer a maker article column when all maker articles duplicate ours", async () => {
+  mockServer([{ ...lot, maker_article: ` ${lot.article.toLowerCase()} ` }], {
+    "stock.grouped": { order: ["article", "maker_article", "name"], hidden: [] },
+  });
+  render(<WarehousePage />);
+  await screen.findByText(lot.article);
+  expect(headerNames()).not.toContain("Артикул производителя");
+  expect(openChooser().queryByLabelText("Артикул производителя")).not.toBeInTheDocument();
+});
+
+it("retains populated receipt columns when a mutation answers with lot fields but no receipt", async () => {
+  const layout = readLayout("grouped", null);
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path === "/api/auth/ui-settings") return json({ views: { "stock.grouped": {
+      ...layout, hidden: layout.hidden.filter((key) => key !== "upd_number" && key !== "upd_file"),
+    } } });
+    if (path.endsWith("/writeoff") && init?.method === "POST") {
+      return json({ lot: { ...lot, receipt: undefined, version: 2, written_off: "1", balance: "39", available: "39" } });
+    }
+    if (path.split("?")[0] === "/api/stock") return json({ lots: [lot], total: 1, truncated: 0, next_cursor: null });
+    return json({ group: "series", groups: [], articles: [] });
+  });
+  render(<WarehousePage />);
+  fireEvent.click(await screen.findByRole("button", { name: "Показать партии (1)" }));
+  fireEvent.click(screen.getByRole("button", { name: "− Списать" }));
+  fireEvent.change(screen.getByLabelText("Количество"), { target: { value: "1" } });
+  fireEvent.change(screen.getByLabelText("Назначение списания"), { target: { value: "Склад" } });
+  fireEvent.click(screen.getByRole("button", { name: "Списать" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "Списать" })).not.toBeInTheDocument());
+  expect(headerNames()).toEqual(expect.arrayContaining(["№ УПД", "Файл УПД"]));
+  const position = within(document.querySelector<HTMLElement>(".stock-article-row")!);
+  expect(position.getByText("125")).toBeInTheDocument();
+  expect(position.getByRole("link", { name: `Файл УПД партии ${lot.grn}` })).toHaveAttribute("href", lot.receipt!.scan_file);
+  expect(openChooser().getByLabelText("Файл УПД")).toBeChecked();
 });
 
 type Item = { id: string; a: string; b: string; c: string };

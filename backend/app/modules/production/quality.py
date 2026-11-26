@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
 from datetime import datetime, timezone
 from decimal import Decimal
 import re
@@ -102,6 +102,12 @@ class RegisterInstrumentCommand:
     warehouse_grn: str = ""
     warehouse_writeoff_id: UUID | None = None
     vna_app: str = ""
+    article: str = ""
+    notes: str = ""
+    measurement_category: str = ""
+    custom_fields: dict = field(default_factory=dict)
+    source: str = "quality"
+    legacy_unit_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -111,6 +117,8 @@ class UpdateInstrumentCommand:
     changes: dict
     actor: Actor
     now: datetime
+    source: str = "quality"
+    legacy_unit_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -154,13 +162,19 @@ def next_instrument_number(repository: InstrumentRepository) -> str:
 
 def _validated_instrument(item: MeasurementInstrument, repository: InstrumentRepository) -> MeasurementInstrument:
     limits = {"inventory_number": 128, "name": 255, "instrument_type": 255, "serial_number": 128,
-              "manufacturer": 255, "storage_location": 255, "warehouse_grn": 32}
+              "manufacturer": 255, "storage_location": 255, "warehouse_grn": 32,
+              "article": 512, "measurement_category": 255}
     cleaned = {}
-    for key in (*limits, "doc_designation"):
+    for key in (*limits, "doc_designation", "notes"):
         value = getattr(item, key)
         if not isinstance(value, str) or (key in limits and len(value.strip()) > limits[key]):
             raise ProductionValidationError("Некорректное текстовое поле СИ")
         cleaned[key] = value.strip()
+    if not isinstance(item.custom_fields, dict) or any(
+            not isinstance(key, str) or not key.strip() or not isinstance(value, str)
+            for key, value in item.custom_fields.items()):
+        raise ProductionValidationError("Дополнительные поля СИ должны быть объектом с текстовыми значениями")
+    cleaned["custom_fields"] = dict(item.custom_fields)
     if item.kind is InstrumentKind.ACCESSORY and not cleaned["instrument_type"]:
         cleaned["instrument_type"] = "Принадлежность"
     item = replace(item, **cleaned)
@@ -219,55 +233,93 @@ def _validated_instrument(item: MeasurementInstrument, repository: InstrumentRep
     return item
 
 
+def instrument_snapshot(item: MeasurementInstrument) -> dict:
+    """JSON-safe aggregate values shared by all catalog audit writers."""
+    result = {}
+    for attribute in fields(item):
+        value = getattr(item, attribute.name)
+        if isinstance(value, (UUID, datetime)):
+            value = value.isoformat() if isinstance(value, datetime) else str(value)
+        elif isinstance(value, (InstrumentKind, InstrumentStatus)):
+            value = value.value
+        elif isinstance(value, dict):
+            value = dict(value)
+        result[attribute.name] = value
+    return result
+
+
+def _instrument_audit_context(command) -> dict:
+    if command.source not in {"quality", "references", "excel", "migration"}:
+        raise ProductionValidationError("Неизвестный источник изменения СИ")
+    return {"source": command.source,
+            "legacy_unit_id": str(command.legacy_unit_id) if command.legacy_unit_id else None}
+
+
 def register_instrument(command: RegisterInstrumentCommand, uow: QualityUnitOfWork) -> MeasurementInstrument:
     with uow:
-        uow.instruments.lock_tree()
-        if command.kind is InstrumentKind.MEASURING and command.status is InstrumentStatus.INACTIVE:
-            raise ProductionValidationError("Недопустимый статус регистрации СИ")
-        item = MeasurementInstrument(id=uuid4(), version=1, warehouse_writeoff_id=command.warehouse_writeoff_id, **{
-            name: getattr(command, name) for name in INSTRUMENT_EDITABLE
-        })
-        item = _validated_instrument(item, uow.instruments)
-        uow.instruments.save(item)
-        _audit(item.id, "production.instrument_registered", command.actor, command.now, {
-            "inventory_number": item.inventory_number, "kind": item.kind.value,
-            "parent_id": str(item.parent_id) if item.parent_id else None,
-            "quantity": item.quantity, "warehouse_grn": item.warehouse_grn,
-            "warehouse_writeoff_id": str(item.warehouse_writeoff_id) if item.warehouse_writeoff_id else None,
-        }, uow)
+        item = register_instrument_in_transaction(command, uow)
         uow.commit()
         return item
+
+
+def register_instrument_in_transaction(command: RegisterInstrumentCommand, uow: QualityUnitOfWork) -> MeasurementInstrument:
+    """Use the caller's transaction; the workflow owns commit/rollback and authorization."""
+    context = _instrument_audit_context(command)
+    uow.instruments.lock_tree()
+    if command.kind is InstrumentKind.MEASURING and command.status is InstrumentStatus.INACTIVE:
+        raise ProductionValidationError("Недопустимый статус регистрации СИ")
+    item = MeasurementInstrument(id=uuid4(), version=1, warehouse_writeoff_id=command.warehouse_writeoff_id, **{
+        name: getattr(command, name) for name in INSTRUMENT_EDITABLE
+    })
+    item = _validated_instrument(item, uow.instruments)
+    uow.instruments.save(item)
+    _audit(item.id, "production.instrument_registered", command.actor, command.now, {
+        **context, "before": None, "after": instrument_snapshot(item),
+        "inventory_number": item.inventory_number, "kind": item.kind.value,
+        "parent_id": str(item.parent_id) if item.parent_id else None,
+        "quantity": item.quantity, "warehouse_grn": item.warehouse_grn,
+        "warehouse_writeoff_id": str(item.warehouse_writeoff_id) if item.warehouse_writeoff_id else None,
+    }, uow)
+    return item
 
 
 def update_instrument(command: UpdateInstrumentCommand, uow: QualityUnitOfWork) -> MeasurementInstrument:
     with uow:
-        uow.instruments.lock_tree()
-        current = uow.instruments.get(command.instrument_id)
-        if current is None:
-            raise KeyError("СИ не найдено")
-        if current.version != command.expected_version:
-            raise ConcurrentProductionUpdate("СИ изменилось после загрузки формы")
-        if command.changes.keys() - INSTRUMENT_EDITABLE:
-            raise ProductionValidationError("Недопустимые поля СИ")
-        if current.warehouse_writeoff_id is not None and any(
-                key in command.changes and command.changes[key] != getattr(current, key)
-                for key in ("quantity", "kind", "warehouse_grn")):
-            raise ProductionValidationError(
-                "Количество, вид и ГРН принадлежности со склада меняются только возвратом на склад")
-        item = replace(current, **command.changes, version=current.version + 1)
-        if (current.status is InstrumentStatus.UNVERIFIED and "status" not in command.changes
-                and item.kind is InstrumentKind.MEASURING and item.verification_number
-                and item.verified_at is not None and item.verification_due is not None):
-            item = replace(item, status=InstrumentStatus.ACTIVE)
-        item = _validated_instrument(item, uow.instruments)
-        uow.instruments.save(item)
-        _audit(item.id, "production.instrument_updated", command.actor, command.now, {
-            "version": [current.version, item.version],
-            "changes": {key: [str(getattr(current, key)), str(getattr(item, key))]
-                        for key in INSTRUMENT_EDITABLE if getattr(current, key) != getattr(item, key)},
-        }, uow)
+        item = update_instrument_in_transaction(command, uow)
         uow.commit()
         return item
+
+
+def update_instrument_in_transaction(command: UpdateInstrumentCommand, uow: QualityUnitOfWork) -> MeasurementInstrument:
+    """Use the caller's transaction; the workflow owns commit/rollback and authorization."""
+    context = _instrument_audit_context(command)
+    uow.instruments.lock_tree()
+    current = uow.instruments.get(command.instrument_id)
+    if current is None:
+        raise KeyError("СИ не найдено")
+    if current.version != command.expected_version:
+        raise ConcurrentProductionUpdate("СИ изменилось после загрузки формы")
+    if command.changes.keys() - INSTRUMENT_EDITABLE:
+        raise ProductionValidationError("Недопустимые поля СИ")
+    if current.warehouse_writeoff_id is not None and any(
+            key in command.changes and command.changes[key] != getattr(current, key)
+            for key in ("quantity", "kind", "warehouse_grn")):
+        raise ProductionValidationError(
+            "Количество, вид и ГРН принадлежности со склада меняются только возвратом на склад")
+    item = replace(current, **command.changes, version=current.version + 1)
+    if (current.status is InstrumentStatus.UNVERIFIED and "status" not in command.changes
+            and item.kind is InstrumentKind.MEASURING and item.verification_number
+            and item.verified_at is not None and item.verification_due is not None):
+        item = replace(item, status=InstrumentStatus.ACTIVE)
+    item = _validated_instrument(item, uow.instruments)
+    uow.instruments.save(item)
+    _audit(item.id, "production.instrument_updated", command.actor, command.now, {
+        **context, "before": instrument_snapshot(current), "after": instrument_snapshot(item),
+        "version": [current.version, item.version],
+        "changes": {key: [str(getattr(current, key)), str(getattr(item, key))]
+                    for key in INSTRUMENT_EDITABLE if getattr(current, key) != getattr(item, key)},
+    }, uow)
+    return item
 
 
 def assign_instrument_serial(instrument_id: UUID, expected_version: int, actor: Actor, now: datetime,

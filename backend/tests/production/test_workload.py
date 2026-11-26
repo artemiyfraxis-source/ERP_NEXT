@@ -72,6 +72,15 @@ def test_unit_hours_sum_norms_by_kind_and_multiply_pieces_per_product():
     assert unit_hours(blocks) == {"Резка": D("0.5"), "Монтаж": D("0.5")}
 
 
+def test_unknown_downstream_time_does_not_lose_the_known_upstream_piece_factor():
+    blocks = [
+        step(1, "CUT_WIRE", "Резка", 900, block="cut", block_name="Резка", manual=True, block_number=1),
+        step(2, "INS_x", "Монтаж", 0, block="finish", block_name="Сборка", final=True, manual=True, block_number=2,
+             inputs=(BlockInput("cut", D(2)),), unknown_operations=1),
+    ]
+    assert unit_hours(blocks) == {"Резка": D("0.5")}
+
+
 def test_done_takes_the_largest_fact_and_names_its_source():
     assert done_of(D(0), D(0), D(0)) == Done(D(0), "")
     assert done_of(D(5), D(0), D(0)) == Done(D(5), SOURCE_SHOP)

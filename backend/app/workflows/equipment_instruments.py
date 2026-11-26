@@ -22,8 +22,9 @@ def instrument_passports(session, unit_ids):
         return {}
     statement = select(EquipmentInstrumentBindingRow.unit_id, ProductionInstrumentRow).join(
         ProductionInstrumentRow, ProductionInstrumentRow.id == EquipmentInstrumentBindingRow.instrument_id
-    ).where(EquipmentInstrumentBindingRow.unit_id.in_(unit_ids), ProductionInstrumentRow.kind == "Средство измерений")
-    return {unit_id: {"serial_number": item.serial_number, "status": item.status,
+    ).where(EquipmentInstrumentBindingRow.unit_id.in_(unit_ids))
+    return {unit_id: {"instrument_id": str(item.id), "version": item.version, "name": item.name,
+                     "article": item.article, "serial_number": item.serial_number, "status": item.status,
                      "verification_number": item.verification_number,
                      "verified_at": item.verified_at.isoformat() if item.verified_at else None,
                      "verification_due": item.verification_due.isoformat() if item.verification_due else None}
@@ -40,7 +41,7 @@ def binding_report(session):
         candidates = [str(item.id) for item in instruments if item.kind == "Средство измерений"
                       and number and inv_key(item.inventory_number) == number]
         bound = next((item for item in instruments if item.id == bindings.get(row.id)), None)
-        valid = bound is not None and bound.kind == "Средство измерений"
+        valid = bound is not None
         result.append({"unit_id": str(row.id), "instrument_id": str(bindings[row.id]) if row.id in bindings else None,
                        "candidates": candidates, "resolved": valid,
                        "issue": "Связанная запись больше не является средством измерений" if bound and not valid else ""})
@@ -58,10 +59,11 @@ def bind_reviewed(session, pairs, actor):
         unit_id, instrument_id = UUID(pair["unit_id"]), UUID(pair["instrument_id"])
         unit = repository.get(unit_id)
         instrument = session.get(ProductionInstrumentRow, instrument_id)
+        if (unit is not None and unit.tab == TechOperationTab.MEASURING and instrument is not None
+                and by_unit.get(unit_id) == instrument_id):
+            continue
         if unit is None or unit.tab != TechOperationTab.MEASURING or instrument is None or instrument.kind != "Средство измерений":
             raise ReferenceValidationError("Связь требует UUID средства измерений из каталога и реестра")
-        if unit_id in by_unit and by_unit[unit_id] == instrument_id:
-            continue
         if unit_id in by_unit or instrument_id in by_instrument:
             raise ReferenceValidationError("У экземпляра или записи реестра уже есть другая связь")
         by_unit[unit_id], by_instrument[instrument_id] = instrument_id, unit_id

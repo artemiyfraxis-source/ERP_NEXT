@@ -86,7 +86,7 @@ def test_all_equipment_rows_are_considered_not_only_first():
 def test_missing_tooling_is_unknown_not_manual():
     task, operation, document = data()
     document["operations"][0]["card"] = {}
-    with pytest.raises(ResourceConflict, match="не предполагается"):
+    with pytest.raises(ResourceConflict, match="Оборудование операции не определено"):
         Context(document).requirements(task, operation)
     document["operations"][0]["card"]["tooling"] = []
     assert Context(document).requirements(task, operation) == {1: None}

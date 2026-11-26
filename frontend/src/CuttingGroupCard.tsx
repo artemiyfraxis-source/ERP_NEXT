@@ -157,7 +157,7 @@ export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruct
     : `${cuttingKindTitle[look]} · ${group.project} · ${rows.length} КБ`;
   return <section className={`mo-card cutting-group${done ? " done" : ""}`} aria-label={title}>
     <div className="mo-h">
-      <div className="mo-name"><h2>{title}</h2><small>{group.number} · {group.site}</small></div>
+      <div className="mo-name"><h2><button type="button" className="link-button mo-instruction-title" aria-haspopup="dialog" onClick={() => setView("instruction")}>{title}</button></h2><small>{group.number} · {group.site}</small></div>
       <div className="mo-side">
         {!readOnly && !done && <>
           {!session && <button type="button" className="primary" disabled={disabled || Boolean(activeSession) || group.partial_view}
@@ -180,14 +180,12 @@ export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruct
       </div>
     </div>
     <div className="mo-s mo-plan">План {windowText(group.planned_start, group.planned_finish)} {master && <> · норма {formatNumber(group.norm_seconds / 60)} мин</>}</div>
+    <div className="mo-s">{done ? "Выполнено" : `Осталось: ${rows.reduce((total, row) => total + left(row), 0)} шт`}</div>
     {session && <div className="mo-fact" role="status">{session.status === "Пауза" ? "На простое" : "В работе"} · время {clock(workedSeconds(session, now))}
       {group.downtime && <> · {group.downtime.reason_name}{group.downtime.comment ? ` · ${group.downtime.comment}` : ""}</>}</div>}
     {group.partial_view && <div className="warning-inline">Показаны только назначенные вам КБ. Этикетки — для показанных КБ.</div>}
     {error && !["submit", "downtime"].includes(view) && <div className="error-banner" role="alert">{error}</div>}
     {progressError && look === "labels" && <div className="error-banner" role="alert">{progressError}</div>}
-    {look === "tubes"
-      ? <DataTable rows={tubeRows} columns={tubeColumns} rowKey={(row) => row.id} label="Трубки группы" compactBelow={Infinity} pageSize={1000} phoneCards={false} />
-      : <DataTable rows={rows} columns={look === "mixed" ? columns : kindColumns[look]} rowKey={rowKey} label={look === "labels" ? "Этикетки по КБ группы" : "КБ группы резки"} compactBelow={Infinity} pageSize={1000} phoneCards={false} />}
     {view === "submit" && <GroupSubmit group={group} busy={disabled} error={error} close={() => setView("")}
       submit={(values, key) => act(() => productionApi.submitCuttingGroup(group.id, group.version, values, { onBehalfOf, key }))} />}
     {view === "downtime" && <GroupDowntime busy={disabled} error={error} close={() => setView("")}
@@ -197,10 +195,18 @@ export function CuttingGroupCard({ group: initialGroup, readOnly, renderInstruct
       close={() => { setView(""); setProgressTick((tick) => tick + 1); }} />}
     {view === "outside" && <MarkingOutsideWindow group={group} close={() => setView("")} onChange={() => setProgressTick((tick) => tick + 1)} />}
     {view === "instruction" && instruction && <PageWindow label="Инструкция группы резки" width={1400} close={() => setView("")}>
+      <div className="panel cutting-group-instruction">
+      {error && <div className="error-banner" role="alert">{error}</div>}
+      {progressError && look === "labels" && <div className="error-banner" role="alert">{progressError}</div>}
+      {perRow && !readOnly && waitHint && <div className="warning-inline">{waitHint}</div>}
+      {look === "tubes"
+        ? <DataTable rows={tubeRows} columns={tubeColumns} rowKey={(row) => row.id} label="Трубки группы" compactBelow={Infinity} pageSize={1000} phoneCards={false} />
+        : <DataTable rows={rows} columns={look === "mixed" ? columns : kindColumns[look]} rowKey={rowKey} label={look === "labels" ? "Этикетки по КБ группы" : "КБ группы резки"} compactBelow={Infinity} pageSize={1000} phoneCards={false} />}
       <label className="cutting-instruction-picker">КБ<select value={instruction.id} onChange={(event) => setInstructionId(event.target.value)}>
         {rows.map((row) => <option key={row.id} value={row.id}>{row.item} · {row.name}</option>)}
       </select></label>
       {renderInstruction(instruction, () => setView(""))}
+      </div>
     </PageWindow>}
   </section>;
 }
