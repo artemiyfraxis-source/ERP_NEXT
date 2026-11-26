@@ -7029,7 +7029,7 @@
   "template_id": "mark-conn-paint-цветовая-маркировка-разъёмов-маркером-краской",
   "before_source": "docs/data/operation-templates-marking-1116/payload.json",
   "expected_before_hash": "e47e6ee52ff8a1a2e544fcae4f14b55946d7a286483c04be0cebe89c1e1a5f60",
-  "after_hash": "55fc5e2428a34163cd9dced3adc8d2bc234734ae8ca5bfd2662dc0a296b9c98d",
+  "after_hash": "a24a73dcdfe69ee2409edb1e4565c60178a7de0575ca3c55659179a71900c0de",
   "evidence": {
    "etk_documents": 28,
    "operations": 28,
@@ -7142,7 +7142,7 @@
     {
      "section": "Инструмент",
      "number": "1",
-     "name": "Маркер-краска по артикулу и цвету из ЭТК / BOM",
+     "name": "Маркер-краска по артикулу и цвету из ЭТК / КД",
      "inventory_number": "",
      "program": "",
      "parameters": "",
@@ -7162,7 +7162,7 @@
     {
      "section": "Расходники",
      "number": "1",
-     "name": "Краска маркера по ЭТК / BOM; материалы подготовки поверхности — по инструкции изготовителя",
+     "name": "Краска маркера по ЭТК / КД; материалы подготовки поверхности — по инструкции изготовителя",
      "inventory_number": "",
      "program": "",
      "parameters": "не задано",

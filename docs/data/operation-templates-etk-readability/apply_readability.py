@@ -10,8 +10,8 @@
 What changes: the steps of 24 operation templates (payload.json, built from the production ETK export of 23.11.2026).
 Paragraph steps over 300 characters become one action per step plus separate check rows; every numeric limit, unit,
 standard clause, coverage, tool and safety clause is kept (tests: test_operation_templates_readability.py). In
-MARK_CONN_PAINT the «Вход:» / «Результат:» pseudo-steps and «BOM» go; drying stays visibly «не задано». Name, safety,
-defects, revision and tooling of every card are unchanged.
+MARK_CONN_PAINT the «Вход:» / «Результат:» pseudo-steps and «BOM» go; drying stays visibly «не задано», and its
+marker tooling rows say «по ЭТК / КД». Name, safety, defects and revision of every card are unchanged.
 
 Guards: a code is written only when its one template has the payload's id, its effective content hashes to the
 payload's `expected_before_hash` (the production content the ETKs were built from) and every signature on it is a
@@ -114,14 +114,15 @@ def _sheet_mode(row, sheet) -> bool:
     return sheet is not None and row.saved_by == ERP_TEMPLATE_AUTHOR and not (row.edited and row.edited_at)
 
 
-def _documents(uow, code) -> int:
-    """Read-only: stored ETK documents with an operation of this code (what the refresh job will re-derive)."""
-    count = 0
+def _documents_by_code(uow, codes) -> dict[str, int]:
+    """Read-only, one pass: stored ETK documents with an operation of each code (what the refresh job re-derives)."""
+    counts = dict.fromkeys(codes, 0)
     for document in uow.session.scalars(select(ProjectTechcardRow.document)):
-        if isinstance(document, dict) and any(isinstance(op, dict) and op.get("code") == code
-                                              for op in document.get("operations") or []):
-            count += 1
-    return count
+        if isinstance(document, dict):
+            found = {op.get("code") for op in document.get("operations") or [] if isinstance(op, dict)}
+            for code in found & counts.keys():
+                counts[code] += 1
+    return counts
 
 
 def _columns(row) -> dict:
@@ -143,17 +144,18 @@ def _event(uow, who, now, event_type, details):
                              occurred_at=now, details=details))
 
 
-def apply_readability(uow, *, who, now, payload=None, sheets=None, expect=None):
+def apply_readability(uow, *, who, now, payload=None, sheets=None, expect=None, lock=False):
     """Open UoW only; never commits. → (result, plan, rollback). `expect` — the dry-run plan: exactly these templates,
-    signatures, timestamps and content hashes, or nothing is written."""
+    signatures, timestamps and content hashes, or nothing is written. `lock` — row locks on the templates (the real
+    write); a dry run reads without them."""
     payload = load_payload() if payload is None else payload
     sheets = erp_sheets() if sheets is None else sheets
     result = {key: [] for key in OUTCOMES}
     plan, rollback, writes = [], [], []
     for item in payload:
         code = item["code"]
-        rows = list(uow.session.scalars(select(OperationCardTemplateRow).where(
-            OperationCardTemplateRow.code == code).with_for_update()))
+        query = select(OperationCardTemplateRow).where(OperationCardTemplateRow.code == code)
+        rows = list(uow.session.scalars(query.with_for_update() if lock else query))
         if len(rows) != 1 or rows[0].id != item["template_id"]:
             result["missing"].append(f"{code}: ожидался шаблон {item['template_id']}, найдено {[row.id for row in rows]}")
             plan.append({"code": code, "outcome": "missing", "templates": sorted(row.id for row in rows)})
@@ -184,6 +186,7 @@ def apply_readability(uow, *, who, now, payload=None, sheets=None, expect=None):
             writes.append((item, row, mode, sheet))
     if expect is not None and expect.get("templates") != plan:
         raise ValueError("Шаблоны изменились после пробного прогона — сравните план и запустите пробный прогон заново")
+    documents = _documents_by_code(uow, [item["code"] for item, *_ in writes]) if writes else {}
     for item, row, mode, sheet in writes:
         code = item["code"]
         rollback.append({"code": code, "template": row.id, "after_hash": item["after_hash"], "columns": _columns(row)})
@@ -203,7 +206,7 @@ def apply_readability(uow, *, who, now, payload=None, sheets=None, expect=None):
             "steps": str(len(item["record"]["steps"])), "reason": REASON})
         result["changed"].append(f"{code} [{row.id}]: {len(item['before_steps'])} → {len(item['record']['steps'])} шагов"
                                  f" ({'лист поставки ERP' if mode == 'sheet' else 'правка записи'}); "
-                                 f"ЭТК с операцией: {_documents(uow, code)}")
+                                 f"ЭТК с операцией: {documents[code]}")
     uow.session.flush()
     return result, {"templates": plan}, {"templates": rollback}
 
@@ -258,7 +261,7 @@ def main(argv=None):
             print(f"Откат: {len(restored)} шаблонов — {', '.join(restored)}")
         else:
             expect = json.loads(args.expect.read_text(encoding="utf-8")) if args.expect else None
-            result, plan, rollback = apply_readability(uow, who=actor(), now=now, expect=expect)
+            result, plan, rollback = apply_readability(uow, who=actor(), now=now, expect=expect, lock=args.apply)
             _print("Читаемые карты операций:", result)
             if args.plan_out:
                 args.plan_out.write_text(json.dumps(plan, ensure_ascii=False, indent=1), encoding="utf-8", newline="\n")

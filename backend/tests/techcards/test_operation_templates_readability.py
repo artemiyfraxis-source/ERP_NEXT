@@ -86,8 +86,21 @@ def test_payload_is_the_production_content_and_its_rewrite():
 @pytest.mark.parametrize("item", PAYLOAD, ids=lambda item: item["code"])
 def test_only_the_steps_change(item):
     before, after = normalize_record_edit(_before(item)).as_json(), normalize_record_edit(item["record"]).as_json()
+    if item["code"] == "MARK_CONN_PAINT":  # E1: the marker rows say «по ЭТК / КД», not the internal «BOM»
+        before["tooling"] = json.loads(json.dumps(before["tooling"], ensure_ascii=False).replace("ЭТК / BOM", "ЭТК / КД"))
     assert {key: value for key, value in before.items() if key != "steps"} == \
            {key: value for key, value in after.items() if key != "steps"}
+
+
+def test_no_bom_anywhere_in_the_new_records_or_the_erp_seed_sheets():
+    for item in PAYLOAD:
+        assert "BOM" not in json.dumps(item["record"], ensure_ascii=False), item["code"]
+    for template in ERP:
+        if template["title"].split(" | ", 1)[0] in BY_CODE:  # every row of the sheet: input, tooling, consumables
+            assert "BOM" not in json.dumps(template["rows"], ensure_ascii=False), template["title"]
+    paint = json.dumps([template for template in ERP if template["title"].startswith("MARK_CONN_PAINT |")],
+                       ensure_ascii=False)
+    assert paint.count("ЭТК / КД") >= 3
 
 
 @pytest.mark.parametrize("item", PAYLOAD, ids=lambda item: item["code"])
@@ -141,6 +154,56 @@ def test_paint_marking_keeps_compatibility_drying_and_clean_surfaces_without_dec
     assert "Время и температура сушки — не задано" in text and "совместимость краски с материалом корпуса" in text
     assert "Проверить отсутствие краски на контактах" in text and "СТО ФРАК-001-2026, раздел 4.6" in text
     assert "Вход" not in text and "Результат" not in text and "Норма времени" not in text
+
+
+# Exact (quantity, unit) pairs per row, in order: a swapped limit (15 Н ↔ 35 Н) or a limit moved to another row fails.
+QUANTITY = re.compile(r"(\d+(?:,\d+)?(?:\s*±\s*\d+(?:,\d+)?)?(?:\s*[–…]\s*\d+(?:,\d+)?)?)\)?\s*"
+                      r"(мм²|мм/мин|мм|Н·м|Н|%|мин|кОм|Ом|°С|с)(?![а-яА-Я])"
+                      r"|×\s*(\d+(?:,\d+)?)|(\d+(?:,\d+)?(?:\s*[–…]\s*\d+(?:,\d+)?)?)×")
+QUANTITIES = {
+    "PRS_TERMINAL_auto": {6: [("1,5", "мм")], 16: [("100", "%")]},
+    "US_WELD": {
+        1: [("0,08–200", "мм²")], 2: [("0,35", "мм²"), ("1,00", "мм²"), ("50", "мм")],
+        6: [("0,08–0,35", "мм²"), ("10×", ""), ("0,35–0,75", "мм²"), ("3–7,5×", ""), ("0,75–1,5", "мм²"), ("1,5–3×", ""),
+            ("1,5", "мм²"), ("1,5×", "")],
+        10: [("×100", ""), ("95–120", "%")], 11: [("50 ± 5", "мм/мин")],
+        12: [("0,5", "мм²"), ("15", "Н"), ("1,0", "мм²"), ("35", "Н"), ("2,5", "мм²"), ("70", "Н")],
+        13: [("0,5", "мм²"), ("80", "Н"), ("1,0", "мм²"), ("160", "Н"), ("2,5", "мм²"), ("275", "Н")],
+        18: [("100", "%")], 21: [("400", "мм"), ("10×", "")], 23: [("80", "Н")], 24: [("0,35", "мм²")]},
+    "SDR_COAX_pin": {2: [("250", "°С"), ("10", "°С"), ("240–280", "°С")], 3: [("10", "°С")], 8: [("3", "с"), ("5", "с")],
+                     11: [("100", "%")], 12: [("100", "%"), ("75", "%"), ("75", "%")], 13: [("100", "%")]},
+    "STRIP_COAX_auto": {},
+    "INS_housing_COAX": {4: [("100", "%"), ("3,5", "мм"), ("2,92", "мм")], 5: [("100", "%")],
+                         6: [("100", "%"), ("10×", ""), ("4×", "")]},
+}
+# Exact standard and clause references per row, in order: a citation must stay with the criterion it supports.
+CLAUSE = re.compile(r"\b(?:п|табл|прил|рис)\. [А-ЯA-Z]?\.?[\d.]*\d(?:[–-][\d.]*\d)?|ГОСТ(?: Р)?(?: МЭК)? [\d.]+-\d+")
+CLAUSES = {
+    "PRS_TERMINAL_auto": {
+        1: ["ГОСТ Р 72182.2-2025", "п. 5.2"], 2: ["ГОСТ Р 72182.2-2025", "п. 5.4.6"],
+        5: ["ГОСТ Р 72182.2-2025", "п. 7.1", "табл. 4", "табл. 1", "ГОСТ Р 72182.2-2025", "п. 5.4.6", "табл. 1"],
+        6: ["ГОСТ 23592-96", "п. 4.6.7", "ГОСТ Р 72182.2-2025", "п. 5.5.2"], 8: ["ГОСТ Р 72182.2-2025", "п. 7.2.7"],
+        10: ["ГОСТ 23592-96", "п. 4.6.8"], 11: ["ГОСТ Р 72182.2-2025", "рис. А.14"],
+        12: ["ГОСТ Р 72182.2-2025", "рис. А.13"], 13: ["табл. 5", "ГОСТ Р 72182.2-2025", "табл. 5", "п. 7.2.1"],
+        14: ["ГОСТ Р 72182.2-2025", "п. 7.3.1", "табл. 7"],
+        16: ["ГОСТ Р 72182.2-2025", "ГОСТ Р 72182.2-2025", "п. 7.1", "табл. 4"], 17: ["ГОСТ Р 72182.2-2025"]},
+    "STRIP_COAX_auto": {1: ["ГОСТ 3.1129-93", "п. 6.3"], 3: ["ГОСТ 23592-96", "п. 4.2.2"], 4: ["ГОСТ 3.1129-93", "п. 6.3"],
+                        5: ["ГОСТ 3.1129-93", "п. 6.3"], 6: ["ГОСТ 3.1129-93", "п. 6.3"]},
+}
+
+
+def _quantities(step):
+    return [(m.group(1), m.group(2)) if m.group(1) else (f"×{m.group(3)}", "") if m.group(3) else (f"{m.group(4)}×", "")
+            for m in QUANTITY.finditer(f"{step['text']} || {step['tolerance']}")]
+
+
+@pytest.mark.parametrize("code", sorted(QUANTITIES))
+def test_key_cards_keep_each_limit_with_its_unit_on_its_row(code):
+    steps = BY_CODE[code]["record"]["steps"]
+    assert {int(step["number"]): _quantities(step) for step in steps if _quantities(step)} == QUANTITIES[code]
+    if code in CLAUSES:
+        found = {int(step["number"]): CLAUSE.findall(f"{step['text']} || {step['tolerance']}") for step in steps}
+        assert {number: values for number, values in found.items() if values} == CLAUSES[code]
 
 
 def _ranges(steps):
@@ -301,7 +364,7 @@ def _payload(codes=SUBSET):
 def _run(sessions, *, codes=SUBSET, expect=None, commit=True):
     with _uow(sessions) as uow:
         result, plan, rollback = SCRIPT.apply_readability(uow, who=SCRIPT.actor(), now=NOW, payload=_payload(codes),
-                                                          expect=expect)
+                                                          expect=expect, lock=commit)
         if commit:
             uow.commit()
     return result, plan, rollback
