@@ -1,3 +1,5 @@
+import { LabelDesigner } from "./LabelDesigner";
+import { useCanAct } from "./rights";
 import { useCallback, useRef, useState, type ReactNode } from "react";
 import { failureText } from "./api";
 import { EMPTY, formatMoment } from "./format";
@@ -187,12 +189,19 @@ export function LabelPrinterCardView({ view, reload }: { view: LabelPrinterView;
 }
 
 function LabelPrinterCard({ title, close }: { title: string; close: () => void }) {
+  const canEdit = useCanAct("warehouse");
+  const [dirty,setDirty] = useState(false);
+  const [confirmClose,setConfirmClose] = useState(false);
+  const tryClose = () => dirty ? setConfirmClose(true) : close();
   const load = useCallback((signal: AbortSignal) => warehouseDevicesApi.labels(signal), []);
   const { data, error, reload } = usePolled(load, 5000, "Не удалось загрузить принтер этикеток");
-  return <Shell title={title} close={close}>
+  return <Shell title={title} close={tryClose} width={1440}>
     {error && <div className="error-banner" role="alert">{error}</div>}
     {!data && !error && <p className="empty">Загрузка…</p>}
-    {data && <LabelPrinterCardView view={data} reload={reload} />}
+    {data && <><LabelPrinterCardView view={data} reload={reload} />
+      <section aria-label="Шаблоны этикеток"><h3>Шаблоны этикеток</h3><p className="hint">{data.template_printer ? `Печать использует шаблоны принтера «${data.template_printer}» (из настроек печати).` : "Принтер в настройках печати не выбран — действует общий шаблон."}</p><LabelDesigner initialKind={new URLSearchParams(location.search).get("label_kind")==="intake"?"intake":"lot"} initialCategory="PPM" printerName={data.template_printer ?? ""} readOnly={!canEdit} onDirty={setDirty}/></section>
+    </>}
+    {confirmClose && <PageWindow label="Несохранённый шаблон" close={()=>setConfirmClose(false)} width={480}><section className="panel"><h2>Закрыть без сохранения?</h2><p>В шаблонах этикеток есть несохранённые изменения.</p><div className="header-actions"><button className="primary" onClick={()=>setConfirmClose(false)}>Вернуться к шаблонам</button><button className="secondary" onClick={close}>Закрыть без сохранения</button></div></section></PageWindow>}
   </Shell>;
 }
 

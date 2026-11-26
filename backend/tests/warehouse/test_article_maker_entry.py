@@ -2,6 +2,7 @@
 `warehouse.received` event of «Приёмка» keep the bare article and put the maker into an empty «Производитель»;
 «article-info» looks the bare article up."""
 
+from tests.warehouse.test_api import quick_payload
 from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
@@ -41,10 +42,10 @@ def test_accepted_line_keeps_the_bare_article_and_the_maker_apart(stand):
 
 def test_quick_entry_batches_split_the_article(stand):
     client, sessions = stand
-    response = client.post("/api/stock/batches", json={"items": [
+    response = client.post("/api/stock/batches", json=quick_payload({"items": [
         {"article": "0500588001 @MOLEX", "quantity": "5", "storage_location": "1F4"},
         {"article": "GHR-04V-S", "quantity": "2", "storage_location": "1F5"},
-    ]})
+    ]}))
     assert response.status_code == 200, response.text
     assigned = response.json()["assigned"]
     assert [row["article"] for row in assigned] == ["0500588001", "GHR-04V-S"]

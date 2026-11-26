@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.shared.project_identity import stable_project_key, current_project_name, ProjectIdentityConflict
+
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
@@ -537,6 +539,24 @@ def _project_covered(uow, lot: StockLot, project: str) -> Decimal:
     )
 
 
+def _stock_scope(lot: StockLot, project: str, uow) -> dict:
+    """CSM belongs to the accepted production project, never to customer-name text."""
+    if lot.grn_category != "CSM" or lot.grn_contract_version is None:
+        return {}
+    stable = project
+    if hasattr(uow, "session"):
+        try:
+            if project_key(current_project_name(uow.session, project)) != project_key(project):
+                raise WarehouseValidationError("Давальческий материал: выберите актуальный проект, прежнее имя не допускается")
+            stable = stable_project_key(uow.session, project)
+        except ProjectIdentityConflict as error:
+            raise WarehouseValidationError("Неоднозначная история проекта давальческого материала") from error
+    if not lot.csm_project_id or not project or project_key(stable) != project_key(lot.csm_project_id):
+        raise WarehouseValidationError("Давальческий материал предназначен для другого проекта (заказа клиента)")
+    return {"owner_id": lot.material_owner_id,
+            "customer_order": (lot.grn_context or {}).get("customer_order"), "project_id": lot.csm_project_id}
+
+
 def hold_kit_reserve(command: HoldKitReserveCommand, uow) -> KitReserve | None:
     """The spec row's techcard reserve follows its ГРН: one active reserve per project + КБ + article. Holds
     min(«на партию» − the project's covers on the lot, ДОСТУПНО + what this row already holds there) — partial when
@@ -556,6 +576,8 @@ def hold_kit_reserve(command: HoldKitReserveCommand, uow) -> KitReserve | None:
             raise FulfillmentValidationError("Партия склада не найдена — выберите ГРН заново")
         if command.expected_lot_version is not None and lot.version != command.expected_lot_version:
             raise ConcurrentFulfillmentUpdate("Партия на складе изменилась после загрузки списка — обновите и выберите снова")
+        lot.assert_issuable(on_date=command.now.date())
+        lot.assert_owner(**_stock_scope(lot, project, uow))
     wanted = Decimal("0")
     if lot is not None and command.quantity > 0 and same_unit(command.unit, lot.unit):
         own = sum((reserve.quantity for reserve in current if reserve.lot_id == lot.id), Decimal("0"))
@@ -568,7 +590,7 @@ def hold_kit_reserve(command: HoldKitReserveCommand, uow) -> KitReserve | None:
     lots = release_kit_reserves(current, command.actor, command.now, uow, {lot.id: lot} if lot is not None else None)
     if wanted <= 0:
         return None
-    held = lots[lot.id].reserve(wanted)
+    held = lots[lot.id].reserve(wanted, **_stock_scope(lot, project, uow), on_date=command.now.date())
     uow.warehouse.add(held)
     reserve = KitReserve(
         id=uuid4(), project=project, item_index=item_index, article=article, lot_id=held.id,
@@ -671,6 +693,9 @@ def _reserve_for_kit(
 ) -> tuple[Decimal, StockLot]:
     """How much of `wanted` the kit gets from the lot: the project's «Со склада» reserve first, then the techcard
     reserve of its own project + КБ, then ДОСТУПНО. → (given, the lot to save)."""
+    scope = _stock_scope(lot, project_of(request.purpose), uow)
+    lot.assert_issuable(on_date=now.date())
+    lot.assert_owner(**scope)
     covers = _project_covers(uow, lot, request.purpose)
     reserves = _kit_reserves(uow, lot, request.purpose)
     held = sum((cover.quantity for cover in covers), Decimal("0"))
@@ -681,7 +706,9 @@ def _reserve_for_kit(
     taken = _take_over_covers(covers, give, request, lot, actor, now, uow)
     taken += _take_over_kit_reserves(reserves, give - taken, request, lot, actor, now, uow)
     rest = give - taken
-    return give, (lot.reserve(rest) if rest > 0 else lot)
+    # Even a pure transfer of an existing reserve must CAS against a concurrent quality decision.
+    return give, (lot.reserve(rest, **scope, on_date=now.date()) if rest > 0
+                  else replace(lot, version=lot.version + 1))
 
 
 def _audit(
@@ -1354,7 +1381,8 @@ def _hand_out(
         lot = lots.get(line.lot.lot_id) or uow.warehouse.get(line.lot.lot_id)
         if lot is None:
             raise KeyError(f"Warehouse lot not found: {line.lot.lot_id}")
-        lots[lot.id] = posted[lot.id] = lot.issue_reserved(line.reserved)
+        lots[lot.id] = posted[lot.id] = lot.issue_reserved(
+            line.reserved, **_stock_scope(lot, project_of(request.purpose), uow), on_date=now.date())
         uow.warehouse.add(lots[lot.id])
     # Issue.gs:475-502: one СПИСАНИЕ row per issued position, ОСТАТОК ПОСЛЕ = the lot balance once the
     # whole request is posted (two positions on one lot both show the final balance).
@@ -1568,7 +1596,7 @@ def complete_return(command: CompleteReturnCommand, uow: UnitOfWork) -> Fulfillm
             if lot is None:
                 raise KeyError(f"Warehouse lot not found: {original.lot.lot_id}")
             if disposition.returned_good > 0:
-                lot = lot.return_writeoff(disposition.returned_good)
+                lot = lot.return_writeoff(disposition.returned_good, **_stock_scope(lot, project_of(request.purpose), uow))
             if str(disposition.storage_location or "").strip():
                 lot = lot.move(str(disposition.storage_location))
             uow.warehouse.add(lot)

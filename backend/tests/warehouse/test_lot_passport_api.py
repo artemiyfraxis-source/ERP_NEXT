@@ -1,5 +1,6 @@
 """SK-6 over HTTP: the manual entry takes the lot passport, the stock list returns it."""
 
+from tests.warehouse.test_api import quick_payload
 import pytest
 
 from tests.warehouse.test_api import warehouse_api  # noqa: F401 — fixture
@@ -13,11 +14,11 @@ ITEM = {
 def test_manual_stock_with_passport_is_listed_with_it(warehouse_api):  # noqa: F811
     client, existing = warehouse_api
 
-    response = client.post("/api/stock/batches", json={"items": [{
+    response = client.post("/api/stock/batches", json=quick_payload({"items": [{
         **ITEM, "mass_1": "", "mass_10": 0.5, "mass_100": "4,8", "expiry_date": "2030-05-01",
         "manufacturer": "Molex", "description": "Шайба плоская", "storage_conditions": "Сухо",
         "datasheet": "https://files.test/ds.pdf", "certificate": "РОСС RU.0001",
-    }]})
+    }]}))
     listed = {lot["article"]: lot for lot in client.get("/api/stock").json()["lots"]}
 
     assert response.status_code == 200, response.text
@@ -39,7 +40,7 @@ def test_manual_stock_with_passport_is_listed_with_it(warehouse_api):  # noqa: F
 def test_manual_stock_rejects_a_bad_passport(warehouse_api, extra, status, detail):  # noqa: F811
     client, _ = warehouse_api
 
-    response = client.post("/api/stock/batches", json={"items": [{**ITEM, **extra}]})
+    response = client.post("/api/stock/batches", json=quick_payload({"items": [{**ITEM, **extra}]}))
 
     assert response.status_code == status, response.text
     if detail:
@@ -49,7 +50,7 @@ def test_manual_stock_rejects_a_bad_passport(warehouse_api, extra, status, detai
 def test_manual_stock_mass_beyond_the_column_is_the_row_error(warehouse_api):  # noqa: F811
     client, _ = warehouse_api
 
-    response = client.post("/api/stock/batches", json={"items": [{**ITEM, "mass_1": "1e13"}]})
+    response = client.post("/api/stock/batches", json=quick_payload({"items": [{**ITEM, "mass_1": "1e13"}]}))
 
     assert response.status_code == 200, response.text
     assert (response.json()["added"], response.json()["errors"]) == (
@@ -60,7 +61,7 @@ def test_manual_stock_mass_beyond_the_column_is_the_row_error(warehouse_api):  #
 def test_manual_stock_ignores_an_unreadable_mass_as_supplymap_does(warehouse_api):  # noqa: F811
     client, _ = warehouse_api
 
-    response = client.post("/api/stock/batches", json={"items": [{**ITEM, "mass_1": "abc"}]})
+    response = client.post("/api/stock/batches", json=quick_payload({"items": [{**ITEM, "mass_1": "abc"}]}))
 
     assert response.status_code == 200, response.text
     assert response.json()["lots"][0]["unit_mass_g"] is None

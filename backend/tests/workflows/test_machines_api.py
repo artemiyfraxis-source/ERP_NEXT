@@ -273,7 +273,7 @@ def test_both_ob099_presses_wait_for_their_agent_with_the_catalogue_name(machine
 
 
 @pytest.mark.parametrize("permissions, opens", [
-    ({"production": "view"}, True), ({"myops": "view"}, True), ({"quality": "view"}, True), ({"warehouse": "edit"}, False),
+    ({"production": "view"}, True), ({"myops": "view"}, True), ({"quality": "view"}, True), ({"warehouse": "edit"}, True), ({"warehouse": "view"}, True),
     ({}, False)])
 def test_the_list_opens_for_production_myops_or_quality_view_only(permissions, opens):
     from fastapi import HTTPException

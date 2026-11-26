@@ -1,3 +1,4 @@
+import type { GrnInput } from "./grn";
 /* «Внести позиции» = поставка (шапка) + таблица позиций, каждая принимается на склад отдельно. No React here. */
 import { appendParsedRows, applyGridPaste, dateToIso, hasHeaderRow, parseTsv, type PasteField } from "./gridPaste";
 import type {
@@ -45,7 +46,7 @@ export type AcceptedInfo = {
  *  them until the storekeeper edits them (owner 26.10.2026: catalog > model > nothing). */
 export const MODEL_KEYS: LineKey[] = ["name", "item_type", "manufacturer"];
 
-export type ReceiptLine = Record<LineKey, string> & {
+export type ReceiptLine = Record<LineKey, string> & GrnInput & {
   acceptance_id?: string;
   original?: WarehouseReceiptOriginal;
   learning?: WarehouseReceiptLearningChoice;
@@ -378,7 +379,9 @@ export function headerChanged(saved: WarehouseReceipt, header: ReceiptHeader, sc
 
 export function buildAccept(line: ReceiptLine, header: ReceiptHeader, place: string, labels: number, confirmExpected: boolean): WarehouseReceiptAccept {
   return {
-    ...(line.learning ? { acceptance_id: line.acceptance_id, learning: line.learning } : {}),
+    acceptance_id: line.acceptance_id,
+    grn_category: line.grn_category, grn_context: line.grn_context ?? {}, expiry_required: line.expiry_required ?? false,
+    ...(line.learning ? { learning: line.learning } : {}),
     article: line.article.trim(),
     quantity: line.quantity.trim().replace(",", "."),
     unit: line.unit.trim() || "шт",

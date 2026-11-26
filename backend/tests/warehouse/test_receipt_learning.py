@@ -323,7 +323,7 @@ def test_concurrent_retry_uses_one_transaction_result(tmp_path):
     row = source(sessions)
     receipt = create_receipt(uow(), ReceiptHeader(warehouse="ЦАР", supplier_inn=INN), actor, NOW)
     cmd = AcceptLineCommand(receipt_id=receipt.id, item=ManualStockItem(article="A", quantity="2", warehouse="ЦАР", storage_location="2A1",
-                                                                     name="", item_type="", purpose="Склад", unit="шт"),
+                                                                     name="", item_type="", purpose="Склад", unit="шт", grn_category="PPM"),
                             labels=1, confirm_expected=True, actor=actor, now=NOW, acceptance_id=uuid4(),
                             learning=learning.LearningChoice(file_id=UUID(row["file_id"]), source_line_key=row["source_line_key"], action="remember"))
     barrier = Barrier(2)

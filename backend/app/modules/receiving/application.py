@@ -151,6 +151,8 @@ class UnitOfWork(Protocol):
     def __enter__(self): ...
     def __exit__(self, exc_type, exc, traceback): ...
     def commit(self) -> None: ...
+    def prepare_grns(self, pairs, now: datetime) -> list[ReceivingLine]: ...
+    def command_details(self, key: UUID) -> dict | None: ...
 
 
 class ConcurrentReceivingUpdate(RuntimeError):
@@ -400,7 +402,9 @@ def dispatch_next_receiving_expected(now: datetime, uow: UnitOfWork) -> Receivin
 
 
 def _warehouse_payload(line: ReceivingLine) -> dict:
+    from app.workflows.receiving_stock import GRN_FIELDS, json_value
     return {
+        **{name: json_value(getattr(line, name)) for name in GRN_FIELDS},
         "receiving_line_id": str(line.id),
         # The lot counts each receipt once by this id; a replacement after a «wait» supplier return is a
         # new receipt of the same line (RC-6), so it gets its own.
@@ -455,8 +459,66 @@ def _emit_warehouse_if_ready(line: ReceivingLine, uow: UnitOfWork, actor: Actor,
     return emitted
 
 
+def _replay(command, uow, kind):
+    from app.workflows.receiving_stock import receiving_command_identity
+    key, fingerprint = receiving_command_identity(command, kind)
+    details = uow.command_details(key)
+    if details and details["fingerprint"] != fingerprint:
+        raise ConcurrentReceivingUpdate("Повтор команды приёмки с другим содержанием")
+    return details
+
+
+def _record_command(command, uow, kind, lines, delivery_id=None):
+    from app.workflows.receiving_stock import receiving_command_identity
+    key, fingerprint = receiving_command_identity(command, kind)
+    uow.audit.add(AuditEvent(id=key, aggregate_id=lines[0].id, event_type="receiving.command",
+        actor=command.actor, occurred_at=command.now,
+        details={"fingerprint": fingerprint, "line_ids": [str(line.id) for line in lines],
+                 "delivery_id": str(delivery_id) if delivery_id else None}))
+
+
+NO_QC_CATEGORIES = frozenset({"GOS", "PAM", "FRX", "R&D"})  # mirrors warehouse.grn.NO_QC_CATEGORIES
+
+
+def _quality(line, data, actor, now):
+    if line.grn_contract_version is None:
+        return line
+    # The ВК hold is for PPM/CSM/SUB only (owner); GOS/PAM/FRX/R&D start as «ВК не требуется» on the route's basis.
+    # An inspection act alone never releases a held place: release is an explicit ОТК decision (quality_state).
+    routed = (data.quality_state is None and line.grn_category in NO_QC_CATEGORIES
+              and line.status is ReceivingStatus.ACCEPTED and not line.defect_quantity
+              and not (line.expiry_required and line.expiry_date is None)
+              and not (line.expiry_date and line.expiry_date < now.date()))
+    state = data.quality_state or ("NOT_REQUIRED" if routed else "IQH")
+    basis = data.quality_basis.strip() or (f"ВК не требуется: маршрут {line.grn_category}" if routed else "")
+    if state not in {"IQH", "QTN", "RELEASED", "REJECTED", "NOT_REQUIRED"}:
+        raise ReceivingValidationError("Неизвестное решение ОТК")
+    decided = state in {"RELEASED", "REJECTED", "NOT_REQUIRED"}
+    if state == "NOT_REQUIRED":
+        if line.grn_category not in NO_QC_CATEGORIES:
+            raise ReceivingValidationError("Для этой категории входной контроль обязателен")
+    elif state != "IQH" and not data.quality_authorized:
+        raise ReceivingValidationError("Решение по качеству требует права на раздел «ОТК»")
+    if decided and not basis:
+        raise ReceivingValidationError("Укажите основание решения по качеству")
+    if state in {"RELEASED", "NOT_REQUIRED"}:
+        if line.status is not ReceivingStatus.ACCEPTED or (line.defect_quantity or 0) > 0:
+            raise ReceivingValidationError("Решение принимается только на всё годное место; частичное освобождение недоступно")
+        if (line.expiry_required and line.expiry_date is None) or (line.expiry_date and line.expiry_date < now.date()):
+            raise ReceivingValidationError("Нельзя освободить место: срок годности неизвестен или истёк")
+    status = line.status
+    if state in {"IQH", "QTN", "REJECTED"} and status is ReceivingStatus.ACCEPTED:
+        status = ReceivingStatus.WAITING if state == "IQH" else ReceivingStatus.QUARANTINE
+    return replace(line, status=status, quality_state=state, quality_basis=basis or None,
+        quality_decided_by=actor.id if decided else None, quality_decided_at=now if decided else None,
+        quality_version=(line.quality_version or 0) + 1)
+
+
 def inspect_receiving(command: InspectReceivingCommand, uow: UnitOfWork) -> ReceivingLine:
     with uow:
+        replay = _replay(command, uow, "inspect")
+        if replay:
+            return uow.receiving.get(UUID(replay["line_ids"][0]))
         current = uow.receiving.get(command.line_id)
         if current is None:
             raise KeyError(f"Receiving line not found: {command.line_id}")
@@ -473,17 +535,19 @@ def inspect_receiving(command: InspectReceivingCommand, uow: UnitOfWork) -> Rece
                 str(command.inspection.quality_document_url or "").strip()
             ),
         )
+        current, = uow.prepare_grns([(current, inspection)], command.now)
         inspected = _inspect_line(
             current,
             inspection,
             uow,
             actor=command.actor,
             now=command.now,
-            existing_grns=uow.receiving.all_grns(),
+            existing_grns=(),
             existing_act_numbers=_act_numbers_for(inspection, uow),
             manual_grn_prefix=command.manual_grn_prefix,
         )
         result = _emit_warehouse_if_ready(inspected, uow, command.actor, command.now)
+        _record_command(command, uow, "inspect", [result])
         uow.commit()
         return result
 
@@ -510,6 +574,7 @@ def _inspect_line(
         existing_act_numbers=existing_act_numbers,
         manual_grn_prefix=manual_grn_prefix,
     )
+    inspected = _quality(inspected, inspection, actor, now)
     uow.receiving.add(inspected)
     uow.audit.add(
         AuditEvent(
@@ -523,6 +588,7 @@ def _inspect_line(
                 "from_status": current.status.value,
                 "to_status": inspected.status.value,
                 "verdict": inspected.verdict,
+                **_quality_detail(inspected),
                 **_defect_detail(inspected),
                 **(audit_details or {}),
             },
@@ -537,6 +603,15 @@ def _inspect_line(
 def _defect_detail(line: ReceivingLine) -> dict[str, str]:
     """КОЛ-ВО БРАКА in the journal of a ВК: a re-inspection overwrites the line, the journal keeps each one."""
     return {"defect_quantity": str(line.defect_quantity)} if line.defect_quantity is not None else {}
+
+
+def _quality_detail(line: ReceivingLine) -> dict:
+    if line.grn_contract_version is None:
+        return {}
+    return {"grn": line.grn, "grn_id": str(line.grn_id), "grn_category": line.grn_category,
+            "quality_state": line.quality_state, "quality_basis": line.quality_basis,
+            "quality_version": line.quality_version, "fact_quantity": str(line.fact_quantity),
+            "accepted_quantity": str(line.accepted_quantity)}
 
 
 def _backorder_key(line: ReceivingLine) -> str:
@@ -632,6 +707,9 @@ def inspect_receiving_batches(command: InspectBatchesCommand, uow: UnitOfWork) -
     if len(command.batches) < 2:
         raise ReceivingValidationError("Для разбивки нужно минимум 2 партии")
     with uow:
+        replay = _replay(command, uow, "batches")
+        if replay:
+            return [uow.receiving.get(UUID(value)) for value in replay["line_ids"]]
         current = uow.receiving.get(command.line_id)
         if current is None:
             raise KeyError(f"Receiving line not found: {command.line_id}")
@@ -652,7 +730,8 @@ def inspect_receiving_batches(command: InspectBatchesCommand, uow: UnitOfWork) -
             existing_legacy_ids=uow.receiving.legacy_ids_starting_with(current.legacy_id),
             now=command.now,
         )
-        grns = list(uow.receiving.all_grns())
+        parts = uow.prepare_grns(list(zip(parts, command.batches)), command.now)
+        grns = []
         acts = list(_act_numbers_for(command.batches[0], uow))
         inspected: list[ReceivingLine] = []
         for part, data in zip(parts, command.batches):
@@ -670,6 +749,7 @@ def inspect_receiving_batches(command: InspectBatchesCommand, uow: UnitOfWork) -
                 manual_grn_prefix=command.manual_grn_prefix,
                 existing_act_numbers=acts,
             )
+            line = _quality(line, inspection, command.actor, command.now)
             grns.append(line.grn)
             acts.extend(line.act(kind)[0] for kind in ACT_KINDS)
             uow.receiving.add(line)
@@ -685,6 +765,7 @@ def inspect_receiving_batches(command: InspectBatchesCommand, uow: UnitOfWork) -
                         "from_status": current.status.value,
                         "to_status": line.status.value,
                         "verdict": line.verdict,
+                        **_quality_detail(line),
                         **_defect_detail(line),
                         "batch_of": current.legacy_id,
                         "batch_quantity": str(line.ordered_quantity),
@@ -696,6 +777,7 @@ def inspect_receiving_batches(command: InspectBatchesCommand, uow: UnitOfWork) -
         remainder = current.ordered_quantity - sum(quantities, Decimal("0"))
         if remainder > 0:
             _request_backorder(replace(inspected[0], backorder_quantity=remainder), uow, command.now)
+        _record_command(command, uow, "batches", inspected)
         uow.commit()
         return inspected
 
@@ -991,6 +1073,11 @@ class DeliveryLineInput:
     expiry_date: date | None = None
     series: str = ""
     manual_grn_prefix: str | None = None
+    grn_category: str | None = None
+    grn_context: dict | None = None
+    expiry_required: bool = False
+    quality_state: str | None = None
+    quality_basis: str = ""
 
 
 @dataclass(frozen=True)
@@ -1007,6 +1094,7 @@ class AcceptDeliveryCommand:
     # «Принять по УПД»: supplier texts (casefolded) the caller has shown to be ONE purchasing supplier — by its INN or
     # aliases («Элитан» and «ООО «Элитан»» on two orders). Empty — one exact supplier text, as before.
     supplier_aliases: frozenset[str] = frozenset()
+    quality_authorized: bool = False
 
 
 @dataclass(frozen=True)
@@ -1038,6 +1126,9 @@ def _delivery_inspection(
     return InspectionInput(
         # «Брак» with its quantity is КОЛ-ВО БРАКА of the line (required there, checked by the domain).
         defect_quantity=item.deviation_quantity if nature == MECHANICAL_DAMAGE else None,
+        grn_category=item.grn_category, grn_context=item.grn_context, expiry_required=item.expiry_required,
+        quality_state=item.quality_state, quality_basis=item.quality_basis,
+        quality_authorized=command.quality_authorized,
         fact_quantity=fact,
         document_quantity=document,
         ordered_quantity=current.ordered_quantity,
@@ -1075,6 +1166,10 @@ def accept_delivery(command: AcceptDeliveryCommand, uow: UnitOfWork) -> Delivery
         raise ReceivingValidationError("Позиция указана в поставке дважды")
     command = replace(command, document_number=str(command.document_number or "").strip())
     with uow:
+        replay = _replay(command, uow, "delivery")
+        if replay:
+            return DeliveryResult(UUID(replay["delivery_id"]),
+                                  tuple(uow.receiving.get(UUID(value)) for value in replay["line_ids"]))
         loaded: list[ReceivingLine] = []
         for item in command.lines:
             current = uow.receiving.get(item.line_id)
@@ -1105,7 +1200,9 @@ def accept_delivery(command: AcceptDeliveryCommand, uow: UnitOfWork) -> Delivery
             )
         delivery_id = uuid4()
         today = command.now.date()
-        grns = list(uow.receiving.all_grns())
+        loaded = uow.prepare_grns([(line, _delivery_inspection(line, item, command))
+                                  for line, item in zip(loaded, command.lines)], command.now)
+        grns = []
         acts = list(uow.receiving.act_numbers_with_prefixes(act_number_prefix(kind, today) for kind in ACT_KINDS))
         results: list[ReceivingLine] = []
         placed = 0
@@ -1170,6 +1267,7 @@ def accept_delivery(command: AcceptDeliveryCommand, uow: UnitOfWork) -> Delivery
                 },
             )
         )
+        _record_command(command, uow, "delivery", results, delivery_id)
         uow.commit()
     return DeliveryResult(delivery_id=delivery_id, lines=tuple(results))
 
