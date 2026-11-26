@@ -4,7 +4,7 @@ import { formatMoment, formatNumber, glueUnits, toNumber } from "./format";
 import { VswrChart } from "./VswrChart";
 import { ArinstPartialChart } from "./vnaCapture";
 import { ScreenSwitcher, VnaScreensEditor, lossTitle } from "./VnaScreensEditor";
-import { benchItem, benchMainAction, kitDefaultFixtures, kitMainAction, type KitFixtures } from "./vnaBenchWorkflow";
+import { benchItem, benchMainAction, kitDefaultFixtures, kitMainAction, type KitFixtures, type KitReversed } from "./vnaBenchWorkflow";
 import {
   CALIBRATION_REFUSALS,
   arinstBenchApi,
@@ -781,6 +781,7 @@ function ObjectPanel({ state, session, calibrationValid, canEdit, busy, blockedS
   const [cleaned, setCleaned] = useState(false);
   const [kitSelected, setKitSelected] = useState<string | null>(null);
   const [kitFixtures, setKitFixtures] = useState<KitFixtures>([null, null]);
+  const [kitReversed, setKitReversed] = useState<KitReversed>([false, false]);
   // Только последний запрос плана: ответ на устаревший (сменили оснастку, объект, сеанс) отбрасывается.
   const planRequest = useRef(0);
   const sessionId = session?.id ?? null;
@@ -867,7 +868,7 @@ function ObjectPanel({ state, session, calibrationValid, canEdit, busy, blockedS
   const kitSession = Boolean(kitView) && (!kitTarget || kitView?.kit.id === kitTarget.instrument_id);
   const fixturesInUse = kitDefaultFixtures(kitView, kitFixtures);
   const suggestedGhz = plan && !plan.refusal ? plan.band_mhz[1] / 1000 : null;
-  const action = !kitMode ? benchMainAction(state, target, plan) : kitSession ? kitMainAction(state, kitSelected, fixturesInUse)
+  const action = !kitMode ? benchMainAction(state, target, plan) : kitSession ? kitMainAction(state, kitSelected, fixturesInUse, kitReversed)
     : { kind: "open" as const, label: "Открыть сеанс «Характеристика мер»" };
   const calibrationAction = action.kind === "step" && action.step === "calibration";
   const actionReason = blockedStart ? state.device.refusal ? refusalText(state.device.refusal)
@@ -932,7 +933,8 @@ function ObjectPanel({ state, session, calibrationValid, canEdit, busy, blockedS
     <StepList session={session} calibrationValid={calibrationValid} calibrationReason={state.calibration.reason} /></details>
     : <StepList session={session} calibrationValid={calibrationValid} calibrationReason={state.calibration.reason} />)}
     {kitMode && kitView && kitSession && session && <KitPanel view={kitView} session={session} canEdit={canEdit} busy={busy} act={act}
-      selected={kitSelected} select={setKitSelected} fixtures={fixturesInUse} setFixtures={setKitFixtures} />}
+      selected={kitSelected} select={setKitSelected} fixtures={fixturesInUse} setFixtures={setKitFixtures}
+      reversed={kitReversed} setReversed={setKitReversed} />}
     {kitMode && !kitSession && kitTarget && <div className="panel vna-bench-target">
       <h3>Характеристика мер</h3>
       <p className="vna-bench-hint">{kitTarget.number} — набор мер SMA-MF06. Сеанс откроется на сетке 1 МГц: проход «до 3 ГГц»
@@ -1142,13 +1144,20 @@ export const KIT_STATES: Record<KitPiece["state"], { label: string; tone: string
 
 const mhz = (hz: number) => formatNumber(hz / 1e6, { digits: 0 });
 
-/** Что куда подключить — словами оператора; плоскость отсчёта следует из подключения. */
-export function kitHint(piece: KitPiece, fixtures: string[], torque: string): string {
+const SIDE = { 1: "сторона 1 (маркировка)", 2: "сторона 2" } as const;
+const SIDE_ACCUSATIVE = { 1: "сторону 1 (маркировка)", 2: "сторону 2" } as const;
+/** Сторона оснастки к кабелю: как при её съёмке — сторона 1 к порту 1, сторона 2 к порту 2; развёрнута — другая. */
+const cableSide = (port: 1 | 2, reversed: boolean): 1 | 2 => (reversed ? 3 - port : port) as 1 | 2;
+
+/** Что куда подключить — словами оператора, с названной стороной оснастки; плоскость отсчёта следует из подключения. */
+export function kitHint(piece: KitPiece, fixtures: string[], torque: string, reversed: KitReversed = [false, false]): string {
   const tighten = `SMA затягивайте ключом ${torque}.`;
-  if (piece.kind === "THRU" && piece.gender === "female") return `${piece.label} — между концами кабелей портов 1 и 2, сторона 1 — к порту 1. ${tighten}`;
-  if (piece.kind === "THRU") return `Оснастка ${fixtures[0] ?? "?"} — на кабель порта 1, ${fixtures[1] ?? "?"} — на кабель порта 2, ${piece.label} между ними (сторона 1 — к порту 1). ${tighten}`;
+  if (piece.kind === "THRU" && piece.gender === "female") return `${piece.label} — между концами кабелей портов 1 и 2 (сторона 1 меры — к порту 1). ${tighten}`;
+  if (piece.kind === "THRU") return `Оснастка ${fixtures[0] ?? "?"}: ${SIDE[cableSide(1, reversed[0])]} — к кабелю порта 1; `
+    + `оснастка ${fixtures[1] ?? "?"}: ${SIDE[cableSide(2, reversed[1])]} — к кабелю порта 2; ${piece.label} между ними (сторона 1 меры — к порту 1). ${tighten}`;
   if (piece.gender === "female") return `${piece.label} — прямо на конец кабеля порта 1 (вилка SMA); порт 2 свободен. ${tighten}`;
-  return `Оснастка ${fixtures[0] ?? "?"} — на конец кабеля порта 1, ${piece.label} — на её внешнюю розетку; порт 2 свободен. ${tighten}`;
+  const facing = cableSide(1, reversed[0]);
+  return `Оснастка ${fixtures[0] ?? "?"}: ${SIDE[facing]} — к кабелю порта 1, ${piece.label} — на её ${SIDE_ACCUSATIVE[(3 - facing) as 1 | 2]}; порт 2 свободен. ${tighten}`;
 }
 
 export function kitPlane(piece: KitPiece, fixtures: string[]): string {
@@ -1215,9 +1224,10 @@ function KitRegister({ view, canEdit, busy, act }: { view: KitView; canEdit: boo
   </div>;
 }
 
-function KitPanel({ view, session, canEdit, busy, act, selected, select, fixtures, setFixtures }: {
+function KitPanel({ view, session, canEdit, busy, act, selected, select, fixtures, setFixtures, reversed, setReversed }: {
   view: KitView; session: VnaBenchSession; canEdit: boolean; busy: boolean; act: Act;
   selected: string | null; select: (id: string | null) => void; fixtures: KitFixtures; setFixtures: (value: KitFixtures) => void;
+  reversed: KitReversed; setReversed: (value: KitReversed) => void;
 }) {
   const band = view.bands.find((item) => item.key === view.band) ?? view.bands[0];
   const piece = view.pieces.find((item) => item.id === selected) ?? view.pieces.find((item) => item.in_band && !item.captures[view.band])
@@ -1249,6 +1259,10 @@ function KitPanel({ view, session, canEdit, busy, act, selected, select, fixture
               {view.fixture_choices.map((choice) => <option key={choice.instrument_id} value={choice.instrument_id}>{choice.number} · {choice.name}</option>)}
             </select>
           </label>
+          {value && <label className="vna-bench-check"><input type="checkbox" name={`kit-fixture-reversed-${slot + 1}`}
+            checked={reversed[slot]} disabled={!canEdit || busy}
+            onChange={(event) => { const next = [...reversed] as KitReversed; next[slot] = event.target.checked; setReversed(next); }} />
+            {" "}Оснастка развёрнута: к кабелю порта {slot + 1} — {SIDE[cableSide(slot === 0 ? 1 : 2, true)]}</label>}
           {value && <small className={captured?.current ? "tone-ok" : "muted-text"}>{captured
             ? `${captured.current ? "снята на текущей калибровке" : "снята на прошлой калибровке"}, ${clock(captured.captured_at)} · ${captured.summary}`
             : `в проходе «${band.label}» не снята`}</small>}
@@ -1284,13 +1298,15 @@ function KitPanel({ view, session, canEdit, busy, act, selected, select, fixture
     </table></div>}
     {piece && <div className="vna-bench-active-check">
       <h4>{piece.name} · {piece.label}</h4>
-      <p className="vna-bench-hint">{kitHint(piece, chosenNumbers, view.torque)}</p>
+      <p className="vna-bench-hint">{kitHint(piece, chosenNumbers, view.torque, reversed)}</p>
       <p className="muted-text">Плоскость отсчёта: {kitPlane(piece, chosenNumbers)}</p>
       <KitPreview piece={piece} />
       {piece.latest_revision && <p className={piece.latest_revision.valid ? "num" : "tone-danger"}>
         Ревизия {piece.latest_revision.revision} от {clock(piece.latest_revision.created_at)} · {mhz(piece.latest_revision.f_min_hz)}–{mhz(piece.latest_revision.f_max_hz)} МГц,
         {" "}{formatNumber(piece.latest_revision.points, { digits: 0 })} т.{piece.latest_revision.max_residual !== null && piece.latest_revision.limit !== null
           ? ` · невязка середин ${num(piece.latest_revision.max_residual, 6)} ≤ ${num(piece.latest_revision.limit, 3)}` : ""}
+        {piece.latest_revision.join_step != null && piece.latest_revision.join_limit != null
+          ? ` · скачок на стыке 3000 МГц ${num(piece.latest_revision.join_step, 4)} ${piece.latest_revision.join_step <= piece.latest_revision.join_limit ? "≤" : ">"} ${num(piece.latest_revision.join_limit, 3)}` : ""}
         {piece.latest_revision.reason ? ` · ${piece.latest_revision.reason}` : ""}</p>}
       {canEdit && piece.can_save && <button type="button" className="secondary" disabled={busy || Boolean(session.command)}
         onClick={() => void act("kit-save", () => vnaBenchApi.kitSave(session.id, piece.id, session.version))}>Сохранить {piece.label}</button>}

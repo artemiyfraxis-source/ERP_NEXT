@@ -56,12 +56,15 @@ export function benchMainAction(state: VnaBenchState, target: VnaBenchTarget | n
 
 /** Оснастка розетка–розетка на порт 1 и порт 2 (её номер СИ), выбранная оператором; null — не выбрана. */
 export type KitFixtures = [string | null, string | null];
+/** «Оснастка развёрнута» на порту 1 и 2: к кабелю обращена не та сторона, что при её съёмке. */
+export type KitReversed = [boolean, boolean];
+const NOT_REVERSED: KitReversed = [false, false];
 
 const fixtureNumber = (view: KitView, instrumentId: string) =>
   view.fixture_choices.find((choice) => choice.instrument_id === instrumentId)?.number ?? "оснастку";
 
 /** Что нужно, чтобы снять меру сейчас: выбранная оснастка, снятая на текущей калибровке этого прохода. */
-export function kitPieceCapture(view: KitView, piece: KitPiece, fixtures: KitFixtures): BenchAction {
+export function kitPieceCapture(view: KitView, piece: KitPiece, fixtures: KitFixtures, reversed: KitReversed = NOT_REVERSED): BenchAction {
   if (!piece.in_band) {
     return { kind: "kit-capture", label: `Снять ${piece.label}`, reason: `${piece.name} снимают только в проходе «до 3 ГГц»` };
   }
@@ -81,13 +84,13 @@ export function kitPieceCapture(view: KitView, piece: KitPiece, fixtures: KitFix
   }
   return {
     kind: "kit-capture", label: `Снять ${piece.label}`, pieceId: piece.id,
-    capture: { standard_id: piece.id, fixtures: (slots as string[]).map((instrumentId) => ({ instrument_id: instrumentId })) },
+    capture: { standard_id: piece.id, fixtures: (slots as string[]).map((instrumentId, slot) => ({ instrument_id: instrumentId, reversed: reversed[slot] })) },
   };
 }
 
 /** Одно главное действие «Характеристики мер»: калибровка → меры прохода по порядку → второй проход → сохранить →
  *  активировать. Выбранная оператором мера (selected) идёт вне очереди. Решает сервер; здесь только навигация. */
-export function kitMainAction(state: VnaBenchState, selected: string | null, fixtures: KitFixtures): BenchAction {
+export function kitMainAction(state: VnaBenchState, selected: string | null, fixtures: KitFixtures, reversed: KitReversed = NOT_REVERSED): BenchAction {
   const session = state.session?.status === "open" ? state.session : null;
   const view = session?.characterization;
   if (!session || !view) return { kind: "open", label: "Открыть сеанс «Характеристика мер»" };
@@ -99,9 +102,9 @@ export function kitMainAction(state: VnaBenchState, selected: string | null, fix
   }
   const preparation = benchStepAction(session, state.calibration.valid);
   const chosen = view.pieces.find((piece) => piece.id === selected);
-  if (chosen) return preparation ?? kitPieceCapture(view, chosen, fixtures);
+  if (chosen) return preparation ?? kitPieceCapture(view, chosen, fixtures, reversed);
   const next = view.pieces.find((piece) => piece.in_band && !piece.captures[view.band]);
-  if (next) return preparation ?? kitPieceCapture(view, next, fixtures);
+  if (next) return preparation ?? kitPieceCapture(view, next, fixtures, reversed);
   const other: KitBand = view.band === "low" ? "high" : "low";
   if (view.pieces.some((piece) => piece.bands.includes(other) && !piece.captures[other])) {
     const name = view.bands.find((band) => band.key === other)?.label ?? other;

@@ -1578,8 +1578,11 @@ def start_check(session_id: UUID, payload: CheckInput, principal: Person, now: N
                         if rf.get(r.id).role == "solt_kit" and rf.get(r.id).kit_definition == "6650F27-full"]
                 card_id = _one(uow, kits, "Набор мер 6650F27")
             card, card_rf = _card(uow, card_id)
-            if card_rf.role != "solt_kit":
-                raise Refusal("station_setup", "Ежемесячная проверка — набором мер (роль «Набор SOLT» в карточке)")
+            # Only the full 6650F27 has the passport description the monthly check judges against; an activated
+            # SMA-MF06 is also «Набор SOLT» but its standards are the ERP's own measured curves.
+            if (card_rf.role, card_rf.kit_definition) != ("solt_kit", "6650F27-full"):
+                raise Refusal("station_setup", "Ежемесячная проверка — набором мер 6650F27 (роль «Набор SOLT», "
+                                               "состав «6650F27» в карточке)")
             vna_jobs.control_station(uow.session, row.instrument_serial, now, machine_id=row.machine_id, ops={"read_kit"})
             meta = bench.run("kit_standards", instrument_id=str(card.id), number=card.inventory_number, label=payload.label,
                              selection=payload.selection)
@@ -1671,13 +1674,15 @@ def complete_command(uow, row, command_id, payload, now):
 def _judge(uow, repository, row, command, item, now) -> dict:
     op, result = command.op, command.result
     if op == "acm_calibrate":
+        # Refuse before anything is written: record_batch also queues audit events that a savepoint rollback would
+        # not take back, so a refused calibration must not reach it.
+        if row.snapshot["profile_kind"] == "characterization" and result.get("module_min_hz", 0) > _profile(row).start_hz:
+            raise ProductionValidationError(f"АКМ калибрует от {result['module_min_hz'] / 1e6:g} МГц — сетка характеристики "
+                                            f"начинается с {_profile(row).start_hz / 1e6:g} МГц")
         acm, cables = row.snapshot["acm"], row.snapshot["cables"]
         entries = [dict(instrument_id=acm["id"], end=end, delta=1, kind="calibration") for end in ("A", "B")]
         entries += [dict(instrument_id=c["instrument_id"], end=c["end"], delta=1, kind="calibration") for c in cables]
         _matings(uow, f"vna-calibration-{command.id}", entries, row, now)
-        if row.snapshot["profile_kind"] == "characterization" and result.get("module_min_hz", 0) > _profile(row).start_hz:
-            raise ProductionValidationError(f"АКМ калибрует от {result['module_min_hz'] / 1e6:g} МГц — сетка характеристики "
-                                            f"начинается с {_profile(row).start_hz / 1e6:g} МГц")
         return {}
     if op == "acm_confidence":
         return _confidence(uow, row, command, now)
@@ -1760,11 +1765,9 @@ def _capture_entries(row, item) -> tuple[str, list[dict]]:
             return "measurement", [cable(0 if target == "port1" else 1)]
         return "measurement", [cable(0), cable(1)] if target == "thru" else []   # the bent thru stays connected
     if kind == "kit_characterization":
-        fixtures = [f["instrument_id"] for f in item.get("fixtures", [])] + (
-            [item["instrument_id"]] if item.get("subject") == "fixture" else [])
-        port1_only = item.get("subject") == "piece" and item.get("piece_kind") != "THRU"
-        return "measurement", [e for f in fixtures for e in card(f, "A", "B")] + (
-            [cable(0)] if port1_only else [cable(0), cable(1)])
+        # Decided when the capture was requested (_kit_connections): only the connections that capture made.
+        return "measurement", [dict(instrument_id=m["instrument_id"], end=m["end"], delta=1, kind="measurement")
+                               for m in item.get("matings", [])]
     if kind == "kit_standards":
         if target == "thru":
             return "measurement", card(item["instrument_id"], "A", "B") + [cable(0), cable(1)]
@@ -2117,6 +2120,36 @@ def _fixture_card(uow, instrument_id):
     return card
 
 
+def _kit_connections(row, characterization, arrangement: dict, inner: list[dict]) -> tuple[list[dict], dict]:
+    """10.7 for «Характеристика мер»: the connections this capture actually makes, and what then stays on the cables.
+
+    arrangement: per cable index (0 — port 1, 1 — port 2) what is on its end: None (free), "piece" (the piece itself)
+    or {instrument_id, end} — a fixture side. A fixture side already on that cable since an earlier capture under the
+    same calibration is not mated again (it stays on the cable between captures); the piece mates every time, and so
+    does the fixture side the piece is screwed onto (inner). A calibration takes everything off the cables."""
+    mounted = characterization.get("mounted") or {}
+    current = str(row.calibration_check_id) if row.calibration_check_id else None
+    before = mounted.get("cables", {}) if mounted.get("calibration_check_id") == current else {}
+    cables, matings, after = row.snapshot["cables"], [], {}
+    for index in (0, 1):
+        required = arrangement.get(index)
+        if required is None:
+            continue
+        cable = dict(instrument_id=cables[index]["instrument_id"], end=cables[index]["end"])
+        if required == "piece":
+            matings.append(cable)
+            continue
+        after[str(index)] = required
+        if before.get(str(index)) != required:
+            matings += [cable, required]
+    matings += inner
+    return matings, dict(calibration_check_id=current, cables=after)
+
+
+def _fixture_end(side: int) -> str:
+    return "A" if side == 1 else "B"   # the fixture card's interface 1 / 2 = its side 1 (marked) / 2
+
+
 def _latest(captures, key, value) -> dict:
     """The newest accepted capture of a piece or fixture in each pass."""
     found = {}
@@ -2165,10 +2198,12 @@ def characterization_capture(session_id: UUID, payload: KitCaptureInput, princip
             if payload.fixtures:
                 raise ValueError("Оснастку снимают напрямую между концами кабелей")
             card = _fixture_card(uow, payload.fixture_id)
+            matings, mounted = _kit_connections(row, characterization, {
+                0: dict(instrument_id=str(card.id), end=_fixture_end(1)),
+                1: dict(instrument_id=str(card.id), end=_fixture_end(2))}, [])
             meta = bench.run("kit_characterization", subject="fixture", band=band, instrument_id=str(card.id),
-                             number=card.inventory_number, name=card.name)
-            hint = (f"Оснастка {card.inventory_number} — между концами кабелей: сторона 1 — к кабелю порта 1, сторона 2 — "
-                    f"к порту 2. SMA затягивайте ключом {kc.TORQUE}")
+                             number=card.inventory_number, name=card.name, matings=matings)
+            hint = f"Оснастка {card.inventory_number} — {kc.fixture_hint()}"
         else:
             piece = _piece(uow, characterization, payload.standard_id)
             if band not in kc.bands_for(piece.f_min_hz, piece.f_max_hz):
@@ -2190,12 +2225,22 @@ def characterization_capture(session_id: UUID, payload: KitCaptureInput, princip
                 fixtures.append(dict(instrument_id=str(card.id), number=card.inventory_number, reversed=fixture.reversed,
                                      command_id=found["command_id"], artifact_id=found["artifact_id"],
                                      sha256=found["sha256"]))
+            arrangement, inner = {}, []
+            if not fixtures:
+                arrangement = {0: "piece", 1: "piece"} if piece.kind == "THRU" else {0: "piece"}
+            for port, fixture in enumerate(fixtures, 1):
+                facing = kc.cable_side(port, fixture["reversed"])
+                arrangement[port - 1] = dict(instrument_id=fixture["instrument_id"], end=_fixture_end(facing))
+                inner.append(dict(instrument_id=fixture["instrument_id"], end=_fixture_end(3 - facing)))
+            matings, mounted = _kit_connections(row, characterization, arrangement, inner)
             meta = bench.run("kit_characterization", subject="piece", band=band, standard_id=str(piece.id),
                              piece_label=piece.piece_label, piece_kind=piece.kind, piece_gender=piece.gender,
-                             fixtures=fixtures)
-            hint = kc.connection_hint(piece.kind, piece.gender, piece.piece_label, [f["number"] for f in fixtures])
+                             fixtures=fixtures, matings=matings)
+            hint = kc.connection_hint(piece.kind, piece.gender, piece.piece_label,
+                                      [(f["number"], f["reversed"]) for f in fixtures])
+        snapshot = {**row.snapshot, "characterization": {**characterization, "mounted": mounted}}
         repository.append(row, bench.item_steps(_profile(row), bench_screen(_screen(uow, "engineer")),
-                                                "Развёртка: " + hint, meta), now, error="")
+                                                "Развёртка: " + hint, meta), now, snapshot=snapshot, error="")
     return _act(factory, session_id, principal, now, action)
 
 
@@ -2293,7 +2338,7 @@ def characterization_save(session_id: UUID, standard_id: UUID, payload: Version,
         parts = {e["band"]: _piece_curve(repository, piece, _capture_data(repository, e, e["band"], piece.piece_label),
                                          e["fixtures"], e["band"]) for e in entries}
         curve = kc.merge(parts, piece.f_min_hz, piece.f_max_hz)
-        validation, _ = kc.evidence(curve)
+        validation, _ = kc.evidence(curve, parts)
         try:
             revision = RfKitRepository(uow.session).append_revision(
                 piece.id, expected_version=piece.version, format="s2p" if piece.kind == "THRU" else "s1p",
@@ -2324,9 +2369,11 @@ def _revision_view(kit_id, piece, revision) -> dict | None:
     if revision is None:
         return None
     midpoints = revision.validation.get("midpoints") or {}
+    join = revision.validation.get("join") or {}
     return dict(id=str(revision.id), revision=revision.revision, sha256=revision.sha256,
                 valid=bool(revision.validation.get("valid")), reason=revision.validation.get("reason") or None,
                 max_residual=midpoints.get("max_residual"), limit=midpoints.get("limit"),
+                join_step=join.get("step"), join_limit=join.get("limit"),
                 f_min_hz=revision.f_min_hz, f_max_hz=revision.f_max_hz, points=revision.points,
                 created_at=revision.created_at, created_by=revision.created_by,
                 download=f"/api/production/instruments/{kit_id}/standards/{piece.id}/revisions/{revision.id}/file")
@@ -2472,7 +2519,9 @@ def _arinst_calibration_view(uow, row) -> dict:
         return dict(valid=False, status="required")
     calibration = row.snapshot.get("calibration") or dict(valid=False, status="required")
     stale = _arinst_kit_stale(uow, row.snapshot)
-    if stale and calibration.get("status") in ("acquiring", "verification_required"):
+    # Any calibration built on the pinned generation — acquiring, awaiting verification or already valid — is stale
+    # once another generation is active; «required»/«blocked» hold nothing reusable and keep their own reason.
+    if stale and calibration.get("status") not in ("required", "blocked"):
         return dict(valid=False, status="stale", reason=stale, coefficient_artifact_id=None)
     return calibration
 

@@ -149,3 +149,34 @@ def test_thru_interpolation_validates_reverse_trace_and_preserves_complex_phase(
     with pytest.raises(VnaDataError):
         resample_characterization(curve, (11e6,), orientation="reverse", finer_acquisition=bad,
                                   uncertainty=0.01)
+
+
+def two_pass_curves(offset):
+    """Source nodes 10…210 MHz every 2 MHz; the second pass (from 110 MHz on) is offset by a reconnection."""
+    fine = smooth_curve(FINE)
+    values = tuple(v + (offset if f > 110e6 else 0) for f, v in zip(FINE, fine.s11))
+    finer = CharacterizationCurve("OPEN", FINE, values)
+    source = CharacterizationCurve("OPEN", FINE[::2], values[::2])
+    return source, finer, ((110e6, 112e6),)
+
+
+def test_midpoints_are_validated_within_each_pass_and_the_join_is_excluded():
+    source, finer, joins = two_pass_curves(0.003)
+    with pytest.raises(VnaDataError, match="Невязка"):
+        validate_midpoints(source, finer, uncertainty=0.01)          # 111 MHz mixes the two passes
+    evidence = validate_midpoints(source, finer, uncertainty=0.01, joins=joins)
+    assert evidence.max_residual < evidence.limit and evidence.joins == joins
+    assert evidence.midpoint_count == len(source.frequencies) - 2
+    with pytest.raises(VnaDataError, match="Стык"):
+        validate_midpoints(source, finer, uncertainty=0.01, joins=((110e6, 114e6),))
+
+
+def test_targets_inside_the_join_take_the_owning_pass_sample_or_are_refused():
+    source, finer, joins = two_pass_curves(0.003)
+    args = dict(finer_acquisition=finer, uncertainty=0.01, joins=joins)
+    result = resample_characterization(source, (109.5e6, 111e6, 112.5e6), **args)
+    assert result[1] == finer.s11[FINE.index(111e6)]
+    with pytest.raises(VnaDataError, match="стыка двух калибровок"):
+        resample_characterization(source, (109.5e6, 110.5e6), **args)
+    with pytest.raises(VnaDataError, match="стыка двух калибровок"):
+        resample_characterization(source, (111.5e6,), joins=joins)   # no finer sample to own it

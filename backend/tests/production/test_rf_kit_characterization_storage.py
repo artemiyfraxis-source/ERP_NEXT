@@ -213,11 +213,16 @@ def test_postgresql_lock_order_matches_existing_registry_editors(sessions):
     event.listen(engine, "before_execute", record)
     try:
         with sessions() as session:
+            RfKitRepository(session).register(kit_id, piece(), expected_kit_version=1, actor="QC", now=NOW)
+        writer, statements[:] = list(statements), []
+        with sessions() as session:
             RfKitRepository(session).snapshot(kit_id)
     finally:
         event.remove(engine, "before_execute", record)
-    assert "FROM production_instruments" in statements[0] and statements[0].endswith("FOR UPDATE")
-    assert "FROM production_rf_details" in statements[1] and statements[1].endswith("FOR UPDATE")
+    assert "FROM production_instruments" in writer[0] and writer[0].endswith("FOR UPDATE")
+    assert "FROM production_rf_details" in writer[1] and writer[1].endswith("FOR UPDATE")
+    # A view-only read (GET /standards) takes no row locks at all.
+    assert statements and not any("FOR UPDATE" in statement for statement in statements)
 
 
 @pytest.mark.parametrize("action", ["update", "delete"])

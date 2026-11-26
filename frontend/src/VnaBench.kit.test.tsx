@@ -72,7 +72,10 @@ it("guides the pass: female pieces directly, then the fixture of the current cal
   expect(kitMainAction(state(females), null, ["f8", null])).toMatchObject({ label: "Снять оснастку СИ.008", capture: { fixture_id: "f8" } });
   const fixture = view({ ...females, fixtures: [{ instrument_id: "f8", number: "СИ.008", bands: { low: { captured_at: "", summary: "", current: true } } }] });
   expect(kitMainAction(state(fixture), null, ["f8", null])).toMatchObject({ label: "Снять OPEN-M",
-    capture: { standard_id: "OPEN-male", fixtures: [{ instrument_id: "f8" }] } });
+    capture: { standard_id: "OPEN-male", fixtures: [{ instrument_id: "f8", reversed: false }] } });
+  // «Оснастка развёрнута» goes to the server as `reversed`: the stored fixture curve is then used the other way round.
+  expect(kitMainAction(state(fixture), null, ["f8", null], [true, false])).toMatchObject({
+    capture: { standard_id: "OPEN-male", fixtures: [{ instrument_id: "f8", reversed: true }] } });
   // The same F–F fixture on both ports is refused before the server sees it.
   const thru = view({ ...fixture, pieces: fixture.pieces.map((item) => item.kind === "THRU" && item.gender === "male" ? item : { ...item, captures: { low: capture() } }) });
   expect(kitMainAction(state(thru), null, ["f8", "f8"]).reason).toBe("На порты 1 и 2 нужны разные оснастки");
@@ -100,8 +103,12 @@ it("moves to the second pass, saves, activates and stops when the kit is active"
 
 it("explains the connection and the reference plane with the chosen fixtures and the SMA torque", () => {
   const male = piece("THRU", "male");
-  expect(kitHint(male, ["СИ.008", "СИ.009"], "0,56 Н·м")).toBe("Оснастка СИ.008 — на кабель порта 1, СИ.009 — на кабель порта 2, "
-    + "THRU-M между ними (сторона 1 — к порту 1). SMA затягивайте ключом 0,56 Н·м.");
+  expect(kitHint(male, ["СИ.008", "СИ.009"], "0,56 Н·м")).toBe("Оснастка СИ.008: сторона 1 (маркировка) — к кабелю порта 1; "
+    + "оснастка СИ.009: сторона 2 — к кабелю порта 2; THRU-M между ними (сторона 1 меры — к порту 1). SMA затягивайте ключом 0,56 Н·м.");
+  expect(kitHint(male, ["СИ.008", "СИ.009"], "0,56 Н·м", [true, true])).toContain(
+    "СИ.008: сторона 2 — к кабелю порта 1; оснастка СИ.009: сторона 1 (маркировка) — к кабелю порта 2");
+  expect(kitHint(piece("OPEN", "male"), ["СИ.008"], "0,56 Н·м")).toContain("СИ.008: сторона 1 (маркировка) — к кабелю порта 1, OPEN-M — на её сторону 2");
+  expect(kitHint(piece("OPEN", "male"), ["СИ.008"], "0,56 Н·м", [true, false])).toContain("СИ.008: сторона 2 — к кабелю порта 1, OPEN-M — на её сторону 1 (маркировка)");
   expect(kitPlane(piece("OPEN", "male"), ["СИ.008"])).toBe("внешняя розетка оснастки СИ.008 на кабеле порта 1, оснастка исключена");
   expect(kitHint(piece("OPEN", "female"), [], "0,56 Н·м")).toContain("прямо на конец кабеля порта 1");
 });
@@ -113,7 +120,7 @@ it("scanning the kit opens a characterization session; the list shows states and
   const plan = vi.spyOn(vnaBenchApi, "plan");
   const pieces = ALL.map((item) => item.id === "OPEN-female" ? { ...item, state: "validated" as const, captures: { low: capture() },
     latest_revision: { id: "r1", revision: 1, sha256: "a".repeat(64), valid: true, reason: null, max_residual: 1e-7, limit: 0.001,
-      f_min_hz: 2e6, f_max_hz: 3e9, points: 2999, created_at: "2026-11-23T10:10:00+03:00", created_by: "Контролёр", download: "/file" },
+      join_step: 0.0023, join_limit: 0.01, f_min_hz: 2e6, f_max_hz: 3e9, points: 2999, created_at: "2026-11-23T10:10:00+03:00", created_by: "Контролёр", download: "/file" },
     preview: { band: "low" as const, points: [[2, 0.99, -0.1], [1500, 0.99, -40], [3000, 0.99, -80]] as [number, number, number][] } } : item);
   const opened = state(view({ pieces }));
   const start = vi.spyOn(vnaBenchApi, "startSession").mockResolvedValue(opened);
@@ -135,5 +142,22 @@ it("scanning the kit opens a characterization session; the list shows states and
   // Choosing a piece shows its revision evidence and makes it the main action.
   fireEvent.click(within(rows[1]).getByRole("button", { name: "OPEN female" }));
   expect(within(panel).getByText(/невязка середин/)).toBeTruthy();
+  expect(within(panel).getByText(/скачок на стыке 3000 МГц 0,0023 ≤ 0,01/)).toBeTruthy();
   expect(screen.getByRole("button", { name: "Снять OPEN-F" })).toBeTruthy();
+});
+
+it("«Оснастка развёрнута» turns the hint around and goes with the capture", async () => {
+  const fixtureCaptured = { captured_at: "2026-11-23T10:00:00+03:00", summary: "", current: true };
+  const pieces = ALL.map((item) => item.gender === "female" ? { ...item, captures: { low: capture() } } : item);
+  const opened = state(view({ pieces, fixtures: [{ instrument_id: "f8", number: "СИ.008", bands: { low: fixtureCaptured } }] }));
+  vi.spyOn(vnaBenchApi, "state").mockResolvedValue(opened);
+  render(<VnaBench canEdit />);
+  const panel = await screen.findByRole("region", { name: "Характеристика мер" });
+  fireEvent.change(within(panel).getByLabelText(/Оснастка розетка–розетка, порт 1/), { target: { value: "f8" } });
+  expect(within(panel).getByText(/СИ\.008: сторона 1 \(маркировка\) — к кабелю порта 1, OPEN-M/)).toBeTruthy();
+  fireEvent.click(within(panel).getByLabelText(/Оснастка развёрнута: к кабелю порта 1 — сторона 2/));
+  expect(within(panel).getByText(/СИ\.008: сторона 2 — к кабелю порта 1, OPEN-M — на её сторону 1/)).toBeTruthy();
+  const captured = vi.spyOn(vnaBenchApi, "kitCapture").mockResolvedValue(opened);
+  fireEvent.click(screen.getByRole("button", { name: "Снять OPEN-M" }));
+  await waitFor(() => expect(captured).toHaveBeenCalledWith("s1", 5, { standard_id: "OPEN-male", fixtures: [{ instrument_id: "f8", reversed: true }] }));
 });

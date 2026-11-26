@@ -213,6 +213,8 @@ export interface KitCapture { command_id: string; captured_at: string; summary: 
 export interface KitRevision {
   id: string; revision: number; sha256: string; valid: boolean; reason: string | null;
   max_residual: number | null; limit: number | null; f_min_hz: number; f_max_hz: number; points: number;
+  /** Скачок между проходами на стыке 3000 МГц и его допуск (только у мер, снятых в обоих проходах). */
+  join_step?: number | null; join_limit?: number | null;
   created_at: string; created_by: string; download: string;
 }
 export interface KitPiece {

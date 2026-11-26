@@ -6,6 +6,7 @@ themselves (fixtures removed) on its 1 MHz grid, refuse what is not proven and p
 
 import cmath
 import math
+from collections import Counter
 from uuid import UUID, uuid4
 
 import pytest
@@ -14,6 +15,7 @@ from sqlalchemy import select
 from app.modules.production import kit_characterization_run as kc
 from app.modules.production.infrastructure import ProductionInstrumentRow
 from app.modules.production.kit_characterization_data import CharacterizationCurve, parse_characterization
+from app.modules.production.mating_infrastructure import InstrumentMatingRow
 from app.modules.production.rf_infrastructure import RfDetailsRow, RfRepository
 from app.modules.production.rf_interfaces import RfDetails
 from app.modules.production.rf_kit_characterization import KitStandard
@@ -30,6 +32,7 @@ from tests.production.test_rf_kit_characterization import provenance
 from tests.workflows.test_arinst_bench_api import action as arinst_action, env as arinst_env, poll, ready, send  # noqa: F401
 from tests.workflows.test_arinst_bench_api import post as arinst_post, state as arinst_state
 from tests.workflows.test_vna_bench_api import Agent, env as bench_env, grid, port, post, session_path, state, touchstone  # noqa: F401
+from tests.workflows.test_vna_bench_api import calibrate as calibrate_adapter_session
 
 NOW_ACTOR = "Контролёр"
 PS = 1e-12
@@ -77,12 +80,14 @@ class KitAgent(Agent):
     def __init__(self, env):
         super().__init__(env)
         self.network = None
+        self.high_offset = 0j        # reconnection + recalibration: what the «3–6 ГГц» pass adds to S11
 
     def sweep(self, profile):
         if self.network is None:
             return super().sweep(profile)
         f = grid(profile)
-        values = [self.network(hz) for hz in f]
+        offset = self.high_offset if profile["start_hz"] == kc.BANDS["high"][0] else 0j
+        values = [(lambda v: (v[0] + offset, *v[1:]))(self.network(hz)) for hz in f]
         return touchstone(f, *([v[i] for v in values] for i in range(4)))
 
 
@@ -245,7 +250,11 @@ def test_two_passes_store_the_pieces_themselves_and_activate_the_complete_kit(en
     assert all(s["revision"]["validation"]["valid"] for s in body["standards"])
     with env["sessions"]() as session:
         events = {e.event_type for e in session.scalars(select(AuditEventRow))}
+        activated = session.scalar(select(AuditEventRow).where(AuditEventRow.event_type == "production.rf_kit_activated"))
+        kit_version = session.get(RfDetailsRow, env["ids"]["mf06"]).version
     assert {"production.rf_kit_revision_saved", "production.rf_kit_activated"} <= events
+    # The audit names the kit version the activation created, the one the card now carries.
+    assert activated.details["version"] == kit_version == response.json()["version"]
 
 
 def test_activation_needs_all_eight_validated_and_a_failed_check_blocks_it(env):
@@ -313,6 +322,108 @@ def test_only_sma_mf06_opens_a_characterization_session(env):
     assert "SMA-MF06" in answer["detail"]["message"]
 
 
+def test_a_reconnection_offset_between_the_passes_is_judged_at_the_join_not_by_midpoints(env):
+    """Real passes differ by the reconnection (0.001–0.003): the piece still validates; the step at 3000 MHz is its own
+    check with its own limit, shown with the revision. A step above the allocated uncertainty fails the piece."""
+    load = env["pieces"][("LOAD", "female")]
+    view = open_kit_session(env)
+    view = sweep(env, view, direct(GAMMA[("LOAD", "female")]), {"standard_id": load})
+    view = act(env, view, "/characterization/band", {"band": "high"})
+    view = calibrate(env, view)
+    for offset, valid in ((0.003, True), (0.02, False)):
+        env["stub"].high_offset = offset
+        view = sweep(env, view, direct(GAMMA[("LOAD", "female")]), {"standard_id": load})
+        view = act(env, view, f"/characterization/pieces/{load}/save")
+        revision = pieces(view)[("LOAD", "female")]["latest_revision"]
+        assert revision["valid"] is valid, revision
+        assert revision["join_step"] == pytest.approx(offset) and revision["join_limit"] == kc.JOIN_STEP_LIMIT
+        assert revision["max_residual"] < revision["limit"]   # within each pass the 2 MHz nodes still hold
+    assert "Скачок на стыке проходов 3000 МГц" in revision["reason"]
+    row, curve = revision_curve(env, load)
+    assert row.validation["checks"] == dict(grid=True, band=True, finite=True, midpoints=True, join=False)
+
+
+def ends(env):
+    with env["sessions"]() as session:
+        counts = Counter()
+        for row in session.scalars(select(InstrumentMatingRow)):
+            counts[(str(row.instrument_id), row.side)] += row.delta
+        return counts
+
+
+def labels(env, view):
+    with env["sessions"]() as session:
+        row = session.get(VnaSessionRow, UUID(view["session"]["id"]))
+        return [step["label"] for step in row.steps if step.get("label", "").startswith("Развёртка")], row.snapshot
+
+
+def test_fixture_wear_counts_only_connections_made_and_the_hint_names_each_side(env):
+    view = open_kit_session(env)
+    fa = str(env["ids"]["fa"])
+    _, snapshot = labels(env, view)
+    cable1, cable2 = ((c["instrument_id"], c["end"]) for c in snapshot["cables"])
+    start = ends(env)
+
+    def delta():
+        now = ends(env)
+        return {key: now[key] - start[key] for key in (cable1, cable2, (fa, "A"), (fa, "B")) if now[key] != start[key]}
+
+    networks = fixture_networks()
+    view = sweep(env, view, networks["fa"], {"fixture_id": fa})
+    assert delta() == {cable1: 1, cable2: 1, (fa, "A"): 1, (fa, "B"): 1}
+    assert "сторона 1 (маркировка) — к кабелю порта 1, сторона 2 — к кабелю порта 2" in labels(env, view)[0][-1]
+    # Male OPEN: the fixture stays on the port-1 cable by its side 1; only the piece mates its side 2.
+    for kind in ("OPEN", "LOAD"):
+        view = sweep(env, view, through(networks["fa"], GAMMA[(kind, "male")]),
+                     {"standard_id": env["pieces"][(kind, "male")], "fixtures": [{"instrument_id": fa}]})
+    assert delta() == {cable1: 1, cable2: 1, (fa, "A"): 1, (fa, "B"): 3}
+    assert "СИ.908: сторона 1 (маркировка) — к кабелю порта 1" in labels(env, view)[0][-1]
+    # «Оснастка развёрнута»: side 2 now faces the cable — a new connection of the cable and side B, the piece on side A.
+    view = sweep(env, view, through(networks["fa"], GAMMA[("SHORT", "male")]),
+                 {"standard_id": env["pieces"][("SHORT", "male")], "fixtures": [{"instrument_id": fa, "reversed": True}]})
+    assert not view["session"]["error"], view["session"]["error"]
+    assert delta() == {cable1: 2, cable2: 1, (fa, "A"): 2, (fa, "B"): 4}
+    assert "СИ.908: сторона 2 — к кабелю порта 1, SHORT-M — на её сторону 1 (маркировка)" in labels(env, view)[0][-1]
+    # A female piece goes straight on the cable: the fixture is off, so the next male piece remounts it.
+    view = sweep(env, view, direct(GAMMA[("OPEN", "female")]), {"standard_id": env["pieces"][("OPEN", "female")]})
+    assert delta() == {cable1: 3, cable2: 1, (fa, "A"): 2, (fa, "B"): 4}
+    view = sweep(env, view, through(networks["fa"], GAMMA[("OPEN", "male")]),
+                 {"standard_id": env["pieces"][("OPEN", "male")], "fixtures": [{"instrument_id": fa}]})
+    assert delta() == {cable1: 4, cable2: 1, (fa, "A"): 3, (fa, "B"): 5}
+
+
+def test_an_acm_that_does_not_reach_the_grid_is_refused_before_any_mating_is_written(monkeypatch):
+    """The receipt check normally stops such an ACM first; the bench's own refusal must not write matings either
+    (record_batch also queues audit events and takes the registry lock)."""
+    from types import SimpleNamespace
+    from app.modules.production.domain import ProductionValidationError
+    from app.workflows import vna_bench_api
+    written = []
+    monkeypatch.setattr(vna_bench_api, "_matings", lambda *args: written.append(args))
+    row = SimpleNamespace(snapshot=dict(source="planar", profile_kind="characterization",
+                                        profile=kc.band_profile("low").model_dump(mode="json"),
+                                        acm=dict(id=str(uuid4())), cables=[]))
+    command = SimpleNamespace(id=uuid4(), op="acm_calibrate", result=dict(module_min_hz=9e6))
+    with pytest.raises(ProductionValidationError, match="АКМ калибрует от 9 МГц"):
+        vna_bench_api._judge(None, None, row, command, {}, None)
+    assert written == []
+    command.result["module_min_hz"] = 1e5
+    assert vna_bench_api._judge(None, None, row, command, {}, None) == {} and len(written) == 1
+
+
+def test_the_monthly_check_takes_only_a_6650f27_even_when_the_card_is_named(env):
+    """An activated SMA-MF06 is also «Набор SOLT», but the monthly check judges the 6650F27 passport description."""
+    with env["sessions"]() as session:
+        row = session.get(RfDetailsRow, env["ids"]["mf06"])
+        row.role, row.kit_definition = "solt_kit", "SMA-MF06-characterized"
+        row.characterization_generation, row.characterization_hash = 1, "a" * 64
+        session.commit()
+    view = calibrate_adapter_session(env)
+    answer = post(env, session_path(view, "/checks"), {"version": view["session"]["version"], "kind": "monthly",
+                                                       "instrument_id": str(env["ids"]["mf06"])}, 409)
+    assert answer["detail"]["code"] == "station_setup" and "6650F27" in answer["detail"]["message"]
+
+
 # ---- Arinst: calibration from the ACTIVE generation -------------------------------------------------------------------
 
 ARINST_PROFILE = dict(start_hz=10_000_000, stop_hz=2_990_000_000, points=101, if_bandwidth_hz=1000)
@@ -326,13 +437,19 @@ def truth(kind, gender):
     return GAMMA[(kind, gender)]
 
 
-def stored_curve(kind, gender, top):
-    grid = tuple(2e6 + i * 1e6 for i in range(round((top - 2e6) / 1e6) + 1))
+def stored_curve(kind, gender, top, start=2e6):
+    grid = tuple(start + i * 1e6 for i in range(round((top - start) / 1e6) + 1))
     if kind == "THRU":
         match, loss, ps = THRU[gender]
         s21 = tuple(loss * delay(f, ps) for f in grid)
         return CharacterizationCurve("THRU", grid, (complex(match),) * len(grid), s21, s21, (complex(match),) * len(grid))
     return CharacterizationCurve(kind, grid, tuple(GAMMA[(kind, gender)](f) for f in grid))
+
+
+def pass_parts(kind, gender, top):
+    """The same truth measured in each pass the piece needs (no reconnection offset)."""
+    return {band: stored_curve(kind, gender, min(top, kc.BANDS[band][1]), start=kc.BANDS[band][0])
+            for band in kc.bands_for(0.0, top)}
 
 
 def publish_kit(sessions, now):
@@ -356,7 +473,8 @@ def publish_kit(sessions, now):
                 curve = stored_curve(kind, gender, top)
                 repo.append_revision(piece.id, expected_version=piece.version, format="s2p" if kind == "THRU" else "s1p",
                                      content=kc.content(curve), provenance=provenance(),
-                                     validation=kc.evidence(curve)[0], actor=NOW_ACTOR, now=now)
+                                     validation=kc.evidence(curve, pass_parts(kind, gender, top))[0],
+                                     actor=NOW_ACTOR, now=now)
         session.commit()
     activate(sessions, kit_id, now)
     return kit_id
@@ -479,3 +597,17 @@ def test_a_newer_activation_makes_a_running_calibration_stale(arinst_env):
     refused = arinst_post(arinst_env, f"/sessions/{view['session']['id']}/arinst/confirm",
                           dict(version=view["session"]["version"]), 409)
     assert "переактивирован" in refused["detail"]["message"]
+
+
+def test_a_valid_calibration_on_a_replaced_generation_is_shown_stale(arinst_env):
+    sessions, now = arinst_env[3], arinst_env[2].now
+    kit_id = publish_kit(sessions, now)
+    view = start_calibration(arinst_env, kit_id, set_profile(arinst_env, ready(arinst_env), ARINST_PROFILE))
+    with sessions() as session:   # a calibration that already passed verification on generation 1
+        row = session.get(VnaSessionRow, UUID(view["session"]["id"]))
+        row.snapshot = {**row.snapshot, "calibration": dict(valid=True, status="valid", coefficient_artifact_id=str(uuid4()))}
+        session.commit()
+    assert arinst_state(arinst_env)["calibration"]["status"] == "valid"
+    activate(sessions, kit_id, now)
+    calibration = arinst_state(arinst_env)["calibration"]
+    assert calibration["status"] == "stale" and not calibration["valid"] and "переактивирован" in calibration["reason"]

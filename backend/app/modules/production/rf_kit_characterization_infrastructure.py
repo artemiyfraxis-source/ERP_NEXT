@@ -94,14 +94,17 @@ class RfKitRepository:
     def __init__(self, session: Session):
         self.session = session
 
-    def _kit(self, kit_id: UUID, expected_version: int | None = None) -> RfDetailsRow:
+    def _kit(self, kit_id: UUID, expected_version: int | None = None, *, lock: bool = True) -> RfDetailsRow:
         # Match the existing instrument-tree -> RF lock order. In particular, registering
         # a piece must not acquire its kit FK lock after a concurrent RF editor holds the tree.
-        if self.session.scalar(select(ProductionInstrumentRow.id).where(
-                ProductionInstrumentRow.id == kit_id).with_for_update()) is None:
+        # Readers (lock=False) take no row locks: a view-only GET must not block or queue behind writers.
+        card = select(ProductionInstrumentRow.id).where(ProductionInstrumentRow.id == kit_id)
+        details = select(RfDetailsRow).where(RfDetailsRow.instrument_id == kit_id)
+        if lock:
+            card, details = card.with_for_update(), details.with_for_update()
+        if self.session.scalar(card) is None:
             raise KeyError("Набор СИ не найден")
-        row = self.session.scalar(select(RfDetailsRow).where(RfDetailsRow.instrument_id == kit_id)
-                                  .with_for_update().execution_options(populate_existing=True))
+        row = self.session.scalar(details.execution_options(populate_existing=True))
         if row is None:
             raise KeyError("Набор СИ не найден")
         if (row.role, row.kit_definition) not in (("load_kit", LOADS_DEFINITION), ("solt_kit", CHARACTERIZED_DEFINITION)):
@@ -209,6 +212,7 @@ class RfKitRepository:
                              "revision": revision.revision, "sha256": revision.sha256})
         generation = kit.characterization_generation + 1
         digest = generation_hash(kit_id, generation, manifest)
+        version = kit.version + 1   # the kit version this publication creates (what the audit and caller must see)
         self._advance(kit, role="solt_kit", kit_definition=CHARACTERIZED_DEFINITION,
                       characterization_generation=generation, characterization_hash=digest)
         for standard in standards:
@@ -219,11 +223,12 @@ class RfKitRepository:
             if changed.rowcount != 1:
                 raise ConcurrentProductionUpdate("Мера изменена — обновите карточку")
         self.session.flush()
-        return {"kit_id": str(kit_id), "version": kit.version, "generation": generation, "hash": digest,
+        return {"kit_id": str(kit_id), "version": version, "generation": generation, "hash": digest,
                 "revisions": manifest}
 
     def snapshot(self, kit_id: UUID) -> dict:
-        kit = self._kit(kit_id)
+        """Read-only view: no row locks; the version recheck below detects a concurrent publication."""
+        kit = self._kit(kit_id, lock=False)
         version = kit.version
         rows = self.standards(kit_id)
         current_ids = [row.current_revision_id for row in rows if row.current_revision_id]

@@ -6,6 +6,11 @@ confidence limit). A piece's stored curve is the merged 1 MHz curve cut to its c
 are the interpolation source for Arinst; the odd 1 MHz points are the measured midpoints that validate linear
 interpolation (`arinst_standard_loader.validate_midpoints`), rechecked from the stored bytes on every load.
 
+The join: the source interval 3000…3002 MHz has its ends in different passes (two calibrations and a reconnection), so
+its midpoint is not an interpolation check — validation stays within each pass. The step between the passes, both
+measured at exactly 3000 MHz, is a check of its own (`JOIN_STEP_LIMIT`). Arinst never interpolates across the join:
+a grid point strictly inside it takes the measured 1 MHz sample of its pass (3001 MHz) or is refused.
+
 Male SOL is measured through an F–F fixture characterized in the same pass (same calibration, exact grid) and stored
 de-embedded at the fixture's outer female plane; THRU M–M through one F–F fixture on each cable end. Female pieces
 mate the male cable ends directly. The workflow (`workflows/vna_bench_api.py`) owns sessions, captures and revisions.
@@ -14,6 +19,7 @@ mate the male cable ends directly. The workflow (`workflows/vna_bench_api.py`) o
 from __future__ import annotations
 
 import math
+from bisect import bisect_right
 from dataclasses import asdict
 
 from .arinst_calibration import CalibrationStandard
@@ -33,6 +39,10 @@ POWER_DBM = 0
 # Decided by agent — owner/metrology check: the allocated absolute complex uncertainty of a characterized standard.
 # The loader's midpoint residual limit is min(0.001, 10 % of it) = 0.001.
 ALLOCATED_UNCERTAINTY = 0.01
+# Decided by agent — owner/metrology check: the two passes at 3000 MHz may differ by no more than the allocated
+# uncertainty itself (reconnection + recalibration repeatability, typically 0.001–0.003); a larger step means one pass
+# is not within its allocation and the piece is re-measured.
+JOIN_STEP_LIMIT = ALLOCATED_UNCERTAINTY
 PROCESSING_VERSION = "kit-characterization-bench-v1"
 TORQUE = "0,56 Н·м"
 PREVIEW_POINTS = 121
@@ -75,19 +85,40 @@ def piece_name(kind: str, gender: str) -> str:
     return f"{KIND_NAMES[kind].capitalize() if kind != 'LOAD' else 'Нагрузка'} ({GENDER_NAMES[gender]})"
 
 
-def connection_hint(kind: str, gender: str, label: str, fixtures: list[str]) -> str:
-    """Where the operator connects the piece; the reference plane follows from it."""
+SIDE_NAMES = {1: "сторона 1 (маркировка)", 2: "сторона 2"}
+SIDE_ACCUSATIVE = {1: "сторону 1 (маркировка)", 2: "сторону 2"}
+
+
+def fixture_hint() -> str:
+    """How an F–F fixture is captured: this defines its sides for every later piece capture."""
+    return (f"между концами кабелей: {SIDE_NAMES[1]} — к кабелю порта 1, {SIDE_NAMES[2]} — к кабелю порта 2. "
+            f"SMA затягивайте ключом {TORQUE}")
+
+
+def cable_side(port: int, reversed_: bool) -> int:
+    """The fixture side facing the VNA cable. As captured: side 1 faces port 1, side 2 faces port 2; «развёрнута» —
+    the other side (the stored fixture curve is then used reversed)."""
+    side = 1 if port == 1 else 2
+    return 3 - side if reversed_ else side
+
+
+def connection_hint(kind: str, gender: str, label: str, fixtures: list[tuple[str, bool]]) -> str:
+    """Where the operator connects the piece, each fixture side named; the reference plane follows from it.
+    Fixtures: (number, reversed) — port 1 first."""
     tighten = f"SMA затягивайте ключом {TORQUE}"
     if kind == "THRU" and gender == "female":
-        return f"{label} — между концами кабелей портов 1 и 2 (сторона 1 — к порту 1). {tighten}"
+        return f"{label} — между концами кабелей портов 1 и 2 (сторона 1 меры — к порту 1). {tighten}"
     if kind == "THRU":
-        left, right = (fixtures + ["?", "?"])[:2]
-        return (f"Оснастка {left} — на кабель порта 1, {right} — на кабель порта 2, {label} между ними "
-                f"(сторона 1 — к порту 1). {tighten}")
+        (left, left_reversed), (right, right_reversed) = (list(fixtures) + [("?", False)] * 2)[:2]
+        return (f"Оснастка {left}: {SIDE_NAMES[cable_side(1, left_reversed)]} — к кабелю порта 1; "
+                f"оснастка {right}: {SIDE_NAMES[cable_side(2, right_reversed)]} — к кабелю порта 2; {label} между ними "
+                f"(сторона 1 меры — к порту 1). {tighten}")
     if gender == "female":
         return f"{label} — прямо на конец кабеля порта 1 (вилка SMA); порт 2 свободен. {tighten}"
-    return (f"Оснастка {(fixtures or ['?'])[0]} — на конец кабеля порта 1, {label} — на её внешнюю розетку; "
-            f"порт 2 свободен. {tighten}")
+    number, reversed_ = (list(fixtures) or [("?", False)])[0]
+    outer = 3 - cable_side(1, reversed_)
+    return (f"Оснастка {number}: {SIDE_NAMES[cable_side(1, reversed_)]} — к кабелю порта 1, {label} — на её "
+            f"{SIDE_ACCUSATIVE[outer]}; порт 2 свободен. {tighten}")
 
 
 def plane(kind: str, gender: str, fixtures: list[str]) -> str:
@@ -164,19 +195,53 @@ def decimate(curve: CharacterizationCurve) -> CharacterizationCurve:
     return CharacterizationCurve(curve.kind, curve.frequencies[::2], **{n: getattr(curve, n)[::2] for n in names})
 
 
-def evidence(curve: CharacterizationCurve) -> tuple[dict, str]:
-    """Validation of the merged curve: the 2 MHz source interpolates every measured 1 MHz midpoint within the limit."""
-    checks, reason, details = dict(grid=True, band=True, finite=True), "", {}
+def joins(source: CharacterizationCurve) -> tuple[tuple[float, float], ...]:
+    """The source interval whose ends come from different passes: last node ≤ 3000 MHz to the next (none when the
+    curve lies within one pass)."""
+    grid = source.frequencies
+    if not grid[0] < JUNCTION_HZ < grid[-1]:
+        return ()
+    index = bisect_right(grid, JUNCTION_HZ) - 1
+    return ((grid[index], grid[index + 1]),)
+
+
+def join_step(parts: dict[str, CharacterizationCurve]) -> float | None:
+    """The largest complex difference of the two passes at 3000 MHz, every trace (None: not both passes)."""
+    low, high = parts.get("low"), parts.get("high")
+    if low is None or high is None or JUNCTION_HZ not in low.frequencies or JUNCTION_HZ not in high.frequencies:
+        return None
+    i, j = low.frequencies.index(JUNCTION_HZ), high.frequencies.index(JUNCTION_HZ)
+    names = ("s11", "s21", "s12", "s22") if low.kind == "THRU" else ("s11",)
+    return max(abs(getattr(low, name)[i] - getattr(high, name)[j]) for name in names)
+
+
+def evidence(curve: CharacterizationCurve, parts: dict[str, CharacterizationCurve] | None = None) -> tuple[dict, str]:
+    """Validation of the merged curve: within each pass the 2 MHz source interpolates every measured 1 MHz midpoint
+    within the limit; a curve crossing 3000 MHz also needs both passes there to agree within JOIN_STEP_LIMIT."""
+    checks, reasons, details, join = dict(grid=True, band=True, finite=True), [], {}, {}
+    source = decimate(curve)
+    interval = joins(source)
     try:
-        source = decimate(curve)
-        midpoints = validate_midpoints(source, curve, uncertainty=ALLOCATED_UNCERTAINTY)
+        midpoints = validate_midpoints(source, curve, uncertainty=ALLOCATED_UNCERTAINTY, joins=interval)
         checks["midpoints"] = True
         details = dict(source_sha256=midpoints.source_hash, finer_sha256=midpoints.finer_source_hash,
                        uncertainty=midpoints.uncertainty, limit=midpoints.limit, max_residual=midpoints.max_residual,
-                       midpoint_count=midpoints.midpoint_count, source_spacing_hz=2 * STEP_HZ)
+                       midpoint_count=midpoints.midpoint_count, source_spacing_hz=2 * STEP_HZ,
+                       excluded_join_hz=[list(j) for j in midpoints.joins])
     except VnaDataError as error:
-        checks["midpoints"], reason = False, str(error)
-    return dict(valid=all(checks.values()), checks=checks, midpoints=details, reason=reason,
+        checks["midpoints"] = False
+        reasons.append(str(error))
+    if interval:
+        step = join_step(parts or {})
+        checks["join"] = step is not None and step <= JOIN_STEP_LIMIT
+        join = dict(frequency_hz=JUNCTION_HZ, interval_hz=list(interval[0]), step=step, limit=JOIN_STEP_LIMIT)
+        if step is None:
+            reasons.append(f"Нет замеров обоих проходов на стыке {JUNCTION_HZ / 1e6:g} МГц")
+        elif step > JOIN_STEP_LIMIT:
+            reasons.append(f"Скачок на стыке проходов {JUNCTION_HZ / 1e6:g} МГц {step:.3g} превышает допуск "
+                           f"{JOIN_STEP_LIMIT:g} — переснимите меру в обоих проходах")
+    reason = "; ".join(reasons)
+    return dict(valid=all(checks.values()), checks=checks, midpoints=details, join=join, reason=reason,
                 uncertainty=ALLOCATED_UNCERTAINTY, processing_version=PROCESSING_VERSION), reason
 
 
@@ -224,6 +289,7 @@ def arinst_standard(piece: dict, revision: dict, target: tuple[float, ...], *, k
     """A measured standard resampled onto the exact Arinst grid; refused outside the stored curve, never ideal.
 
     piece: id, piece_label, kind, gender, gender2, f_min_hz, f_max_hz; revision: revision, sha256, content.
+    Across the 3000 MHz join only the measured 1 MHz sample of its pass is used (see the module note).
     """
     curve = parse_characterization(revision["content"], kind=piece["kind"], source_hash=revision["sha256"])
     low, high = curve.frequencies[0], curve.frequencies[-1]
@@ -236,7 +302,8 @@ def arinst_standard(piece: dict, revision: dict, target: tuple[float, ...], *, k
                            revision=revision["revision"], sha256=source_curve.source_hash,
                            characterization_source=f"{source}; {piece['piece_label']} r{revision['revision']} "
                                                    f"sha256={revision['sha256']}",
-                           orientation=orientation, finer_acquisition=curve, uncertainty=ALLOCATED_UNCERTAINTY)
+                           orientation=orientation, finer_acquisition=curve, uncertainty=ALLOCATED_UNCERTAINTY,
+                           joins=joins(source_curve))
     return CalibrationStandard(str(piece["id"]), kit_id, kit_version, piece["kind"], loaded.genders,
                                (piece["f_min_hz"], piece["f_max_hz"]),
                                coefficient_version=f"{revision['revision']}:{revision['sha256']}",
