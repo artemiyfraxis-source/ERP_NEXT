@@ -11,7 +11,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.modules.production.launchable import launch_operations, launch_route, norms_outdated, route_from_document, semifinished_steps
+from app.modules.production.launchable import (
+    launch_operations, launch_route, norms_outdated, route_from_document, semifinished_steps, unknown_time_operations,
+)
 from app.modules.production.launch_ready import planned_operations
 from app.modules.techcards.assembly_schema import generator_to_assembly
 from app.modules.techcards.etk_builder import build_etk
@@ -195,9 +197,26 @@ def test_absent_rows_without_a_valid_legacy_fallback_are_unknown_instead_of_zero
     assert launch_operations(planned.steps, 10)[0].seconds_per_unit == 0
 
 
-def test_known_zero_becoming_unknown_is_an_outdated_norm_even_when_numeric_seconds_stay_zero():
-    document = {"schema_version": 4, "operations": [{"code": "ZERO", "time": [{"norm": "0"}]}]}
+def test_an_unknown_norm_alone_is_not_outdated_only_a_changed_known_part_is():
+    """Review 26.11 (D1): after the revision wave every task with an op without a norm would show «Нормы устарели».
+    Unknown is counted apart («время не задано» in the plan); outdated means the numbers the task runs by differ."""
+    document = {"schema_version": 4, "kit": {"part_quantity": "10"},
+                "operations": [{"code": "ZERO", "time": [{"norm": "0"}]}, {"code": "PART", "time": [{"norm": "1"}, {"norm": ""}]}]}
     task = SimpleNamespace(operations=launch_operations(launch_route(document).steps, 10))
     assert not norms_outdated(task, document)
     document["operations"][0]["time"][0]["norm"] = ""
-    assert norms_outdated(task, document)
+    assert not norms_outdated(task, document)  # known 0 → unknown with the same lower bound
+    document["operations"][1]["time"][0]["norm"] = "2"
+    assert norms_outdated(task, document)  # the known part changed
+
+
+def test_unknown_time_operations_follow_the_etk_operations_of_each_task_operation():
+    document = {"schema_version": 4, "kit": {"part_quantity": "10"},
+                "operations": [{"code": "A", "time": [{"norm": "1"}]}, {"code": "B", "time": [{"norm": ""}]},
+                               {"code": "C", "time": [{"norm": "0"}]}]}
+    plain = SimpleNamespace(operations=launch_operations(launch_route(document).steps, 10))
+    assert unknown_time_operations(plain, document) == {plain.operations[1].id}
+    pf = SimpleNamespace(operations=(SimpleNamespace(id="pf", position=1, etk_ops=(SimpleNamespace(position=1), SimpleNamespace(position=2))),
+                                     SimpleNamespace(id="rest", position=2, etk_ops=(SimpleNamespace(position=3),))))
+    assert unknown_time_operations(pf, document) == {"pf"}
+    assert unknown_time_operations(plain, None) == frozenset()

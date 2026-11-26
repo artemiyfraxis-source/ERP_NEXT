@@ -115,8 +115,9 @@ def test_generated_c1_route_preserves_tube_cut_piece_quantities():
         "edges": [{"from": f"pf-{key}", "to": f"pf-{op['opKey']}", "item": ""}
                   for op in source["ops"] for key in op["dependsOn"]]}
     document = build(source)
-    # Only missing time norms (this hand-made config has no tOp) — no other warning.
-    assert all(text.endswith(": не задана норма времени") for text in document["warnings"])
+    # This hand-made config has no tOp: exactly one missing-norm warning per operation, nothing else.
+    assert document["warnings"] == [f"Операция {position} ({code}): не задана норма времени" for position, code in enumerate(
+        ("CUT_WIRE_auto", "CUT_TUT_short", "INS_TUT", "SDR_W_W", "INS_TUT", "HEAT_TYT_short"), start=1)]
     assert by_key(document, "tube.s1.cut")["result"] == [{"name": "ТУТ-s1 — 25 мм", "norm": "12", "unit": "Шт."}]
     assert any(row["name"] == "ТУТ-s1 — 25 мм" and row["norm"] == "12"
                for row in by_key(document, "tube.s1.preload")["semis"])

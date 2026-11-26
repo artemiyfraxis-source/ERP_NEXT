@@ -1420,6 +1420,11 @@ MANUAL_PIECE_TYPES = {"splice", "insHousing"}
 MANUAL_PRODUCT_TUT_TYPES = {"insTut", "endCap", "foldCore", "stripCable"}
 
 
+def _plain_row(row: Mapping[str, Any]) -> dict[str, str]:
+    """A result row as an input row of the next operation: name, quantity, unit."""
+    return {key: str(row.get(key) or "") for key in ("name", "norm", "unit")}
+
+
 def _tube_segments(op: Mapping[str, Any]) -> list[tuple[Decimal, Decimal]]:
     """(длина, штук на изделие) обычной резки трубки по `tutSegs` — те же случаи, где `_harness_step` пишет
     «Трубка X нарезана: N шт по L мм»; [] — маркировка, прозрачная трубка, оплётка, набор трубок или длины нет."""
@@ -1501,7 +1506,9 @@ def _semis_rows(
     if not norm and operation_type in {"insTut", "endCap", "foldCore", "stripCable"}:
         norm = _format(sum((_number(wire.get("qty"), Decimal(1)) for wire in wires), Decimal(0)) * quantity)
     rows = [_row(previous, norm)]
-    if auxiliary and auxiliary.get("name"):
+    if auxiliary and auxiliary.get("rows"):
+        rows.extend(dict(row) for row in auxiliary["rows"])  # the cut's own rows, one per length (A2)
+    elif auxiliary and auxiliary.get("name"):
         rows.append(_row(str(auxiliary["name"]), auxiliary.get("norm")))
     return rows
 
@@ -3152,14 +3159,15 @@ def _typed_operation(
     if _mark_print(op) and result_rows is not None and _mark_items(op):
         operation["result"] = _printed_mark_rows(op, config)  # ПФ схемы: напечатанные метки, а не «Маркировка нанесена»
     _with_output(operation, single, output, single if is_last else "")
+    shown = code.strip() or str(op.get("type") or "")  # no card code — the operation type, as «нет карточки» says
     if any(not row["norm"] for row in operation["time"]):
-        warnings.append(f"Операция {position} ({code}): не задана норма времени")  # wording of «Ручная сборка»
+        warnings.append(f"Операция {position} ({shown}): не задана норма времени")  # wording of «Ручная сборка»
     issues = _operation_issues(op, config, code, operation["result"])
     if issues:
         operation["warnings"] = issues
         # A blank quantity is said on the operation only: «Ручная сборка» hands the same splice on with the batch
         # (etk-manual-fixes), and the document warnings stay equal on both paths.
-        warnings.extend(f"Операция {position} ({code}): {issue}" for issue in issues if not issue.startswith(UNRESOLVED_QUANTITY))
+        warnings.extend(f"Операция {position} ({shown}): {issue}" for issue in issues if not issue.startswith(UNRESOLVED_QUANTITY))
     label = str(op.get("label") or "").strip()
     if config.get("topologyVersion") == 1:
         operation.update({"opKey": op["opKey"], "dependsOn": deepcopy(op.get("dependsOn", []))})
@@ -4081,7 +4089,10 @@ def _takes_tut(consumer: str, cut: str) -> bool:
 
 
 def _tut_pieces(op: Mapping[str, Any], config: Mapping[str, Any]) -> Decimal:
-    """TUT pieces a TUT cut makes for the batch: «Резка ТУТ» — `tutCount` per item, coax — `units` per item."""
+    """TUT pieces a TUT cut makes for the batch: «Резка ТУТ» — its `tutSegs` (the same source as its result rows),
+    else `tutCount` per item; coax — `units` per item."""
+    if segments := _tube_segments(op):
+        return sum((count for _, count in segments), Decimal(0)) * _part_quantity(config)
     per_item = _coax_units(op) if op.get("type") == "coaxCutTut" else _decimal(op.get("tutCount"))
     return per_item * _part_quantity(config)
 
@@ -4233,7 +4244,9 @@ def _scheme_chain(
                     items = [item for item in edge.item.split("; ") if item.strip()] if source.kit else []
                     if config.get("topologyVersion") == 1 and source.kit and not items:
                         cut = operations[source.ops[-1] - 1]
-                        semis.extend({**row, "norm": _format(_decimal(row["norm"]) * edge.per_unit), "source": where}
+                        # Printed marks are already the batch per inscription; × per_unit would count every row again.
+                        factor = Decimal(1) if _mark_print(cut) else edge.per_unit
+                        semis.extend({**_plain_row(row), "norm": _format(_decimal(row["norm"]) * factor), "source": where}
                                      for row in _kit_rows(cut, config, names[source.key]))
                         continue
                     if not items:
@@ -4281,6 +4294,7 @@ def _generator_chain(
     previous_norm = ""
     chain: list[Mapping[str, Any]] = []
     tut_cuts: list[dict[str, Any]] = []
+    printed: list[dict[str, Any]] = []  # напечатанные метки (печать отдельно от монтажа), ждут своей операции монтажа
     tut_on_wires = False
     coax_grouped = False
     for index, (op, code) in enumerate(zip(operations, codes), start=1):
@@ -4288,16 +4302,20 @@ def _generator_chain(
         output = _chain_output(op, config, [*chain, op])
         if op.get("type") in TUT_CUT_TYPES:
             # A cut split into rows per length (A2) hands the same rows on to the operation that puts them on.
-            split = [{key: row[key] for key in ("name", "norm", "unit")} for row in _result_rows(op, config, result, False, result)
-                     if OUTPUT_TITLE in row] if op.get("type") == "coaxCutTut" else []
+            split = [_plain_row(row) for row in _result_rows(op, config, result, False, result) if OUTPUT_TITLE in row]
             tut_cuts.append({"name": result, "norm": _tut_pieces(op, config), "key": str(op.get("opKey") or ""), "rows": split})
+        if _mark_print(op):
+            printed.extend(_plain_row(row) | {"text": str(mark.get("text") or "").strip()}
+                           for row, mark in zip(_printed_mark_rows(op, config), _mark_items(op)))
         auxiliary = None
         taken = []
         if op.get("type") in {"insTut", "endCap", "coaxInsTut"}:
             consumer = str(op.get("opKey") or "")
             taken = [item for item in tut_cuts if _takes_tut(consumer, item["key"])]
             tut_cuts = [item for item in tut_cuts if item not in taken]
-            auxiliary = {"name": "; ".join(item["name"] for item in taken), "norm": _format(sum((item["norm"] for item in taken), Decimal(0)))}
+            auxiliary = {"name": "; ".join(item["name"] for item in taken), "norm": _format(sum((item["norm"] for item in taken), Decimal(0))),
+                         "rows": [row for item in taken for row in (item["rows"] or [_row(item["name"], _format(item["norm"]))])]
+                         if any(item["rows"] for item in taken) else []}
         tut_on = False
         if op.get("type") == "insTut" and not op.get("harness") and not _mark_tube(op):
             tut_on_wires = True
@@ -4308,6 +4326,12 @@ def _generator_chain(
         if op.get("opKey") in {"coaxProtectIns", "coaxInsLabel"}:
             semis = ([_row(previous_result, previous_norm)] if previous_result else []) + [
                 row for item in taken for row in (item["rows"] or [_row(item["name"], _format(item["norm"]))])]
+        if op.get("type") == "insMark" and op.get("markPhase") == "install" and printed:
+            # Монтаж меток берёт напечатанные метки своих надписей — те же строки и количества, что выдала печать (C2).
+            own = {str(mark.get("text") or "").strip() for mark in _mark_items(op)}
+            taken_marks = [row for row in printed if row["text"] in own]
+            printed = [row for row in printed if row not in taken_marks]
+            semis = [*semis, *({key: row[key] for key in ("name", "norm", "unit")} for row in taken_marks)]
         is_last = index == len(operations)
         rows = None
         if str(op.get("type") or "").startswith("coax") and _coax_cables(config) > 1:

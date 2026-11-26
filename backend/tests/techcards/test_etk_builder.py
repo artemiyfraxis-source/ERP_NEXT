@@ -300,7 +300,8 @@ def test_a_former_side_template_id_resolves_by_the_operation_code_and_the_side_i
         ("ins-terminal-2-54-6-3-монтаж-терминалов", "INS_terminal_2,54-6,3 | Монтаж терминалов (В)"),
     ]
     # Only the missing time norms of this hand-made config are reported (no tOp on the mountings).
-    assert all(item["card"] for item in mounts) and all("не задана норма времени" in text for text in legacy["warnings"])
+    assert all(item["card"] for item in mounts) and legacy["warnings"] == [
+        "Операция 2 (INS_terminal_2,54-6,3): не задана норма времени", "Операция 3 (INS_terminal_2,54-6,3): не задана норма времени"]
     assert legacy["operations"] == current["operations"]
     # an unknown id whose code has no template stays unresolved, as before
     config["ops"][1].update(templateId="gone-a", opNum="NO_SUCH_CODE")
@@ -1189,9 +1190,12 @@ def test_flag_printing_hands_over_loose_printed_marks_not_marked_wires():
     assert all(row["title"] == "Напечатанная метка" for row in printed["result"])
     assert _attrs(printed["result"][0]) == {"Надпись": "XS1", "Материал": "Хлястик", "Назначение": "X1", "На изделие, шт.": "2"}
     assert not any("маркировка нанесена" in row["name"] for row in printed["result"])
-    # Printing takes no wires; installation takes the cut wires (not the printed marks) and then says the marking is on.
+    # Printing takes no wires; installation takes the cut wires and exactly the printed marks — same rows, same batch.
     assert printed["semis"] == []
     assert installed["semis"][0]["name"].startswith("Провода нарезаны")
+    assert [(row["name"], row["norm"], row["unit"]) for row in installed["semis"][1:]] == [
+        (row["name"], row["norm"], row["unit"]) for row in printed["result"]] == [("«XS1»", "28", "Шт."), ("«XS2»", "28", "Шт.")]
+    assert [row["norm"] for row in installed["time"]] == ["2,8"]  # 3 s × (2 + 2) marks × 14 / 60
     assert installed["output"]["title"] == "Жгут подключения"
     assert _attrs(installed["output"]) == {"Состояние": "маркировка нанесена"}
 
@@ -1222,7 +1226,10 @@ def test_side_operation_without_wires_reports_unresolved_input_instead_of_zero_w
     assert [row["norm"] for row in crimp["result"]] == [""]  # unknown stays unknown; the final product keeps its batch
     assert any("не заданы провода" in text for text in crimp["warnings"])
     assert any("не заданы провода" in text for text in mount["warnings"])
-    assert any(text.startswith("Операция 2 (") and "не заданы провода" in text for text in built["warnings"])
+    # No card here: the operation is named by its type, never «Операция 2 ()».
+    assert [text for text in built["warnings"] if "не заданы провода" in text] == [
+        "Операция 1 (prsTerm): не заданы провода — количество результата не определено; укажите провода стороны в генераторе",
+        "Операция 2 (insTerm): не заданы провода — количество результата не определено; укажите провода стороны в генераторе"]
 
 
 def test_operation_with_its_wires_has_no_input_warning():
@@ -1254,3 +1261,16 @@ def test_line_timing_still_counts_without_an_operation_norm():
     built = build_etk({"partQty": 10, "assemblyName": "Кабель", "wires": [{"name": "Провод", "qty": 1, "length": 1000}], "ops": [
         {"type": "cutWire", "opKey": "cutWire", "linearTiming": {"rollSpeed": "1", "takeSeconds": "0"}}]}, CARDS)
     assert built["operations"][0]["time"][0]["norm"] == "0,17"  # 1 m at 1 m/s × 10 pieces = 10 s
+
+
+def test_a_two_length_harness_tube_cut_hands_its_own_rows_to_the_operation_that_puts_them_on():
+    built = build_etk({"partQty": 5, "assemblyName": "Кабель", "wires": [{"name": "Провод", "qty": 1, "length": 500}], "ops": [
+        {"type": "cutWire", "opKey": "cutWire", "tOp": "4"},
+        {"type": "cutTut", "opKey": "cutTut", "tutArt": "ТУТ 6/3мм, черная", "tutCount": 3,
+         "tutSegs": [{"len": "40", "count": 1}, {"len": "25", "count": 2}], "tOp": "3"},
+        {"type": "insTut", "opKey": "insTut", "tutCount": 3, "tOp": "3"},
+    ]}, CARDS)
+    cut, put_on = built["operations"][1:]
+    expected = [{"name": "ТУТ 6/3мм, черная — 40 мм", "norm": "5", "unit": "Шт."}, {"name": "ТУТ 6/3мм, черная — 25 мм", "norm": "10", "unit": "Шт."}]
+    assert [{key: row[key] for key in ("name", "norm", "unit")} for row in cut["result"]] == expected
+    assert put_on["semis"][1:] == expected  # input rows == the previous output rows, 15 pieces on both sides
