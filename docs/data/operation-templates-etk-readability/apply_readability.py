@@ -14,10 +14,11 @@ MARK_CONN_PAINT the «Вход:» / «Результат:» pseudo-steps and «B
 marker tooling rows say «по ЭТК / КД». Name, safety, defects and revision of every card are unchanged.
 
 Guards: a code is written only when its one template has the payload's id, its effective content hashes to the
-payload's `expected_before_hash` (the production content the ETKs were built from) and every signature on it is a
+payload's `expected_before_hash` (the production content recorded in `expected_before`) and every signature is a
 known delivery author. Anything else is reported — `drifted` (unknown content), `protected` (a person saved or edited
 it), `missing` — and left untouched; `unchanged` — already the new content (e.g. the release's ERP seed got there).
-An ERP-delivered card without a record edit (CTRL_VSWR_coax / MARK_CONN_PAINT as seeded) is rewritten as the seed sheet
+A card already equal to the target (CTRL_VSWR_coax / MARK_CONN_PAINT once the release seed rewrote them) is `unchanged`:
+nothing is written or journaled. An ERP-delivered card without a record edit is otherwise rewritten as the seed sheet
 of this release (`techcard-library-erp.json`, signed as the ERP delivery, so later seeds keep owning it); every other
 card gets a record edit signed by this script, as the 22.10/23.10 audits wrote them.
 
@@ -204,7 +205,7 @@ def apply_readability(uow, *, who, now, payload=None, sheets=None, expect=None, 
         _event(uow, who, now, "techcards.operation_template_readability", {
             "code": code, "mode": mode, "before": item["expected_before_hash"], "after": item["after_hash"],
             "steps": str(len(item["record"]["steps"])), "reason": REASON})
-        result["changed"].append(f"{code} [{row.id}]: {len(item['before_steps'])} → {len(item['record']['steps'])} шагов"
+        result["changed"].append(f"{code} [{row.id}]: {len(item['expected_before']['steps'])} → {len(item['record']['steps'])} шагов"
                                  f" ({'лист поставки ERP' if mode == 'sheet' else 'правка записи'}); "
                                  f"ЭТК с операцией: {documents[code]}")
     uow.session.flush()

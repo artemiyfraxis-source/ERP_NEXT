@@ -50,7 +50,12 @@ SCRIPT = _script()
 
 
 def _before(item) -> dict:
-    """The production record the ETKs were built from: the last delivery that wrote this code (`before_source`)."""
+    """The production record now (prod copy 26.11): what the script must find before it writes."""
+    return item["expected_before"]
+
+
+def _source(item) -> dict:
+    """The delivery that wrote this content (`before_source`), before later in-place production rewrites."""
     data = json.loads((ROOT / item["before_source"]).read_text(encoding="utf-8"))
     if isinstance(data, dict):  # the 18.11 VSWR delivery: the template sheet itself
         card = parse_operation_template(source_id=data["id"], title=data["title"], category=data["category"], rows=data["rows"])
@@ -75,9 +80,16 @@ def test_payload_is_the_production_content_and_its_rewrite():
     assert sum(item["evidence"]["long_step_operations"] for item in PAYLOAD) == 161
     assert BY_CODE["MARK_CONN_PAINT"]["evidence"]["pseudo_step_operations"] == 28
     for item in PAYLOAD:
-        before = _before(item)
-        assert SCRIPT.record_hash(before) == item["expected_before_hash"], item["code"]
-        assert normalize_record_edit(before).as_json()["steps"] == item["before_steps"], item["code"]
+        # The guard hashes exactly the recorded production content.
+        assert SCRIPT.record_hash(item["expected_before"]) == item["expected_before_hash"], item["code"]
+        assert normalize_record_edit(item["expected_before"]).as_json() == item["expected_before"], item["code"]
+        # Provenance: the delivery's record plus only the documented in-place inventory renumbering of production
+        # (equipment_inventory_rewrite changed the record edits without touching edited_at).
+        source = normalize_record_edit(_source(item)).as_json()
+        rewrites = item["prod_rewrites"].get("inventory_numbers", {}) if item["prod_rewrites"] else {}
+        for tool in source["tooling"]:
+            tool["inventory_number"] = rewrites.get(tool["inventory_number"], tool["inventory_number"])
+        assert source == item["expected_before"], item["code"]
         assert SCRIPT.record_hash(item["record"]) == item["after_hash"] != item["expected_before_hash"], item["code"]
         assert len(item["step_origin"]) == len(item["record"]["steps"])
         assert item["step_origin"] == sorted(item["step_origin"])
@@ -112,7 +124,7 @@ def test_steps_are_short_actions_and_checks_without_pseudo_steps(item):
     assert {"Операция", "Контроль"} >= {step["kind"] for step in steps}
     assert any(step["kind"] == "Контроль" for step in steps)
     # A replaced paragraph becomes several rows; untouched steps keep their text.
-    before = item["before_steps"]
+    before = item["expected_before"]["steps"]
     for index, step in enumerate(before, start=1):
         rows = [row for row, origin in zip(steps, item["step_origin"]) if origin == index]
         if len(step["text"]) > 300:
@@ -140,7 +152,7 @@ def _facts(steps) -> set[str]:
 
 @pytest.mark.parametrize("item", PAYLOAD, ids=lambda item: item["code"])
 def test_every_limit_unit_reference_and_coverage_survives(item):
-    before = item["before_steps"]
+    before = item["expected_before"]["steps"]
     if item["code"] == "MARK_CONN_PAINT":
         # The dropped declarations: input = the kit rows, result = the checks; the norm prose is the time block's.
         before = [step for step in before if not PSEUDO.match(step["text"])]
@@ -459,3 +471,26 @@ def test_rollback_restores_the_columns_and_refuses_after_a_later_edit(sessions):
         uow.commit()
     with _uow(sessions) as uow, pytest.raises(ValueError, match="изменился после записи"):
         SCRIPT.rollback_readability(rollback, uow, who=SCRIPT.actor(SCRIPT.ROLLBACK_AUTHOR), now=NOW)
+
+
+def test_seed_owned_cards_already_rewritten_by_the_release_seed_are_unchanged(sessions):
+    """On production both ERP cards are seed sheets (no record edit): the deploy seed writes them first; the script then
+    finds the target content and writes nothing — no event, no second write."""
+    seeded = seed_erp_templates(SeedErpTemplatesCommand(tuple(ERP), ACTOR, NOW), SqlAlchemyTechcardsUnitOfWork(sessions))
+    assert {"CTRL_VSWR_coax | Контроль КСВН", "MARK_CONN_PAINT | Цветовая маркировка разъёмов маркером-краской"} <= set(
+        seeded["created"])
+    codes = ["CTRL_VSWR_coax", "MARK_CONN_PAINT"]
+    result, plan, rollback = _run(sessions, codes=codes)
+    assert [(entry["outcome"], entry["mode"]) for entry in plan["templates"]] == [("unchanged", "sheet")] * 2
+    assert result["unchanged"] and not result["changed"] and rollback == {"templates": []}
+    with sessions() as session:
+        assert not session.scalars(select(AuditEventRow).where(
+            AuditEventRow.event_type == "techcards.operation_template_readability")).all()
+
+
+@pytest.mark.parametrize("item", [item for item in PAYLOAD if item["prod_rewrites"]], ids=lambda item: item["code"])
+def test_the_new_records_keep_the_production_instrument_numbers(item):
+    """Production renumbered the instruments in place; the delivery file's old numbers must not come back."""
+    rewrites = item["prod_rewrites"]["inventory_numbers"]
+    numbers = {tool["inventory_number"] for tool in item["record"]["tooling"]}
+    assert set(rewrites.values()) <= numbers and not set(rewrites) & numbers
