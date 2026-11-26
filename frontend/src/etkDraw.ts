@@ -3,13 +3,13 @@
 // документ без React, поэтому рисунок — готовая разметка. Геометрия и подписи — как в SUPPLYMAP; разъёмы — рисунками
 // серий из connectorArt.ts (владелец 30.09: одна общая иконка на все разъёмы непонятна).
 import { coaxClampEtk, coaxMountEtk, coaxPartsEtk } from "./etkCoaxOpArt";
+import { coaxOpState, contactKind, contactName, wrapSvgText } from "./etkPfCoaxArt";
 import { coaxEndNames, coaxEndTitle, coaxKindTitle } from "./coaxNames";
 import { connectorFace, connectorFaceUnits, connectorSummary, wireColor, type HousingBody, type Mate, type Roof } from "./connectorArt";
 import { connectorTopView } from "./connectorTopView";
 import { pinCoreColor, pinCoreName } from "./etkCoreColors";
 import { wireEndArt } from "./etkDefectArt";
 import { solderMode } from "./etkOperation";
-import { wrapSvgText } from "./etkPfCoaxArt";
 export { coaxEndNames, coaxEndTitle, coaxKindTitle };
 
 type Row = Record<string, unknown>;
@@ -64,7 +64,7 @@ function mm(value: unknown): string {
 }
 
 function dim(x1: number, x2: number, y: number, label: string): string {
-  return `<line x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="#17272b" stroke-width="1" marker-start="url(#etkA)" marker-end="url(#etkA)"/>` +
+  return `<line data-role="dimension" x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" stroke="#17272b" stroke-width="1" marker-start="url(#etkA)" marker-end="url(#etkA)"/>` +
     `<text x="${(x1 + x2) / 2}" y="${y - 6}" text-anchor="middle" font-size="12" fill="#17272b">${esc(label)}</text>`;
 }
 
@@ -291,12 +291,12 @@ function coaxCutStripSketch(fields: Row): string {
       const from = i ? num(bounds[i - 1].value) * scale : 0, until = num(b.value) * scale;
       const layer = layers[i], y = cy - 30 - i * 26;
       body += band(layer, from, until, heights[layer], fills[layer]) +
-        `<line x1="${x(until)}" y1="${y - 4}" x2="${x(until)}" y2="${cy - heights[layer] / 2}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +
+        `<line x1="${x(until)}" y1="${y - 4}" x2="${x(until)}" y2="${cy - heights[layer] / 2}" stroke="#55666b" stroke-width=".7" data-role="extension"/>` +
         dim(Math.min(tip, x(until)), Math.max(tip, x(until)), y, "") +
         `<text x="${tip + (mirror ? -4 : 4)}" y="${y - 6}" text-anchor="${mirror ? "end" : "start"}" font-size="13">${esc([b.value, b.tolerance].filter(Boolean).join(" "))}</text>`;
     });
     body += band("jacket", span, Math.abs(to - tip), 36, "#222") +
-      `<line x1="${tip}" y1="${cy - 34 - (bounds.length - 1) * 26}" x2="${tip}" y2="${cy + 20}" stroke="#9aa7ad" stroke-dasharray="3 3"/>`;
+      `<line x1="${tip}" y1="${cy - 34 - (bounds.length - 1) * 26}" x2="${tip}" y2="${cy + 20}" stroke="#55666b" stroke-width=".7" data-role="extension"/>`;
   });
   if (error) return error;
   // The two jacket halves meet; the conventional break only shortens the long body on paper.
@@ -305,7 +305,7 @@ function coaxCutStripSketch(fields: Row): string {
   const cut = str(fields.lengthKd).replace(/\s*мм\s*$/i, "").trim();
   let y = cy + 54;
   const lengthDimension = (text: string) => {
-    body += [edge, W - edge].map((x) => `<line x1="${x}" y1="${cy + 22}" x2="${x}" y2="${y + 5}" stroke="#9aa7ad" stroke-dasharray="3 3"/>`).join("") + dim(edge, W - edge, y, text);
+    body += [edge, W - edge].map((x) => `<line x1="${x}" y1="${cy + 22}" x2="${x}" y2="${y + 5}" stroke="#55666b" stroke-width=".7" data-role="extension"/>`).join("") + dim(edge, W - edge, y, text);
     y += 34;
   };
   // Резчику нужна только длина реза; L готового изделия и припуски — расчёт технолога (владелец 17.11), не на эскиз.
@@ -350,12 +350,12 @@ function coaxProgramSketch(c: Row, title: string, program: Row): string {
     const from = i ? num(bounds[i - 1].value) : 0, to = num(b.value), [name, h, fill] = bands[i];
     body += `<rect data-band="${name}" x="${X(from)}" y="${cy - h / 2}" width="${X(to) - X(from)}" height="${h}" fill="${fill}" stroke="#8d9297"/>`;
     const y = cy - 30 - i * 24;
-    body += `<line x1="${X(to)}" y1="${y - 4}" x2="${X(to)}" y2="${cy - h / 2}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +
+    body += `<line x1="${X(to)}" y1="${y - 4}" x2="${X(to)}" y2="${cy - h / 2}" stroke="#55666b" stroke-width=".7" data-role="extension"/>` +
       dim(x0, X(to), y, "") + `<text x="${x0}" y="${y - 6}" font-size="13">${esc(`${str(b.label)} = ${str(b.value)} ${str(b.tolerance)} мм`)}</text>`;
   });
   body += `<rect data-band="jacket" x="${X(end)}" y="${cy - 18}" width="170" height="36" rx="4" fill="#222"/>` +
     `<text x="525" y="${cy + 4}" text-anchor="middle" font-size="12" fill="#fff">${esc(c.cable || "кабель")}</text>` +
-    `<line x1="${x0}" y1="${cy - 30 - (bounds.length - 1) * 24 - 4}" x2="${x0}" y2="${cy + 20}" stroke="#9aa7ad" stroke-dasharray="3 3"/>`;
+    `<line x1="${x0}" y1="${cy - 30 - (bounds.length - 1) * 24 - 4}" x2="${x0}" y2="${cy + 20}" stroke="#55666b" stroke-width=".7" data-role="extension"/>`;
   return svg(W, cy + 30, body) + description;
 }
 
@@ -401,10 +401,10 @@ function coaxSketch(c: Row, caption: string): string {
   if (!flush) body += band("conductor", x0, X(L[0]), 8, "#e08a2c", "#17272b");
   present.forEach((i, n) => {
     const y = cy - 30 - n * 24, x = X(L[i]), top = i === 0 ? 8 : i === 1 && !has[2] ? 28 : i === 1 ? 22 : has[1] ? 28 : 22;
-    body += `<line x1="${x}" y1="${y - 4}" x2="${x}" y2="${cy - (i === 2 || present.length === 1 ? 18 : top / 2)}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +
+    body += `<line x1="${x}" y1="${y - 4}" x2="${x}" y2="${cy - (i === 2 || present.length === 1 ? 18 : top / 2)}" stroke="#55666b" stroke-width=".7" data-role="extension"/>` +
       dim(x0, x, y, `${labels[i]} = ${mm(c[keys[i]])}`);
   });
-  body += `<line x1="${x0}" y1="${cy - 30 - (present.length - 1) * 24 - 4}" x2="${x0}" y2="${cy + 20}" stroke="#9aa7ad" stroke-dasharray="3 3"/>`;
+  body += `<line x1="${x0}" y1="${cy - 30 - (present.length - 1) * 24 - 4}" x2="${x0}" y2="${cy + 20}" stroke="#55666b" stroke-width=".7" data-role="extension"/>`;
   const ds = ["d1", "d2", "d3"].filter((key) => c[key]).map((key) => `${key.toUpperCase()} = ${mm(c[key])}`);
   if (ds.length) body += `<text x="${x0}" y="${cy + 42}" font-size="12" fill="#5f7470">Ø: ${esc(ds.join(" · "))}</text>`;
   // Заголовок рисунка — над ним: какая сторона и под какой разъём разделка (а не мелкая подпись сбоку).
@@ -463,7 +463,7 @@ function coaxCutSketch(operation: Row): string {
   const tolerance = etkTolerance(f.cutTolerance), length = mm(str(f.lengthKd).replace(/мм$/, "")) || "по КД";
   const cy = 46;
   const body = coaxJacket(40, 470, cy, cable) +
-    [40, 470].map((x) => `<line x1="${x}" y1="${cy - 26}" x2="${x}" y2="${cy + 52}" stroke="#9aa7ad" stroke-dasharray="3 3"/>`).join("") +
+    [40, 470].map((x) => `<line x1="${x}" y1="${cy - 26}" x2="${x}" y2="${cy + 52}" stroke="#55666b" stroke-width=".7" data-role="extension"/>`).join("") +
     dim(40, 470, cy + 46, `L = ${length}${tolerance ? ` ${tolerance}` : ""}`) +
     coaxFace(556, cy) + caption(556, cy + 46, "торец: рез 90°", "middle") + caption(556, cy + 62, "слои не смяты", "middle");
   return svg(640, cy + 74, body);
@@ -476,7 +476,7 @@ function coaxTutSketch(operation: Row): string {
   const amount = str(part.norm) ? `на партию: ${str(part.norm)} ${str(part.unit).replace(/\.$/, "").toLowerCase()}` : "";
   const body = coaxSleeve(160, 440, cy, 30, "tube") +
     `<text x="300" y="${cy + 4}" text-anchor="middle" font-size="12" fill="#fff">${esc(str(part.art) || "ТУТ")}</text>` +
-    [160, 440].map((x) => `<line x1="${x}" y1="${cy - 24}" x2="${x}" y2="${cy + 46}" stroke="#9aa7ad" stroke-dasharray="3 3"/>`).join("") +
+    [160, 440].map((x) => `<line x1="${x}" y1="${cy - 24}" x2="${x}" y2="${cy + 46}" stroke="#55666b" stroke-width=".7" data-role="extension"/>`).join("") +
     dim(160, 440, cy + 40, `L = ${length}`) +
     `<circle cx="540" cy="${cy}" r="22" fill="${CX.tube}"/><circle cx="540" cy="${cy}" r="16" fill="#fff" stroke="${CX.ink}" stroke-width=".6"/>` +
     caption(540, cy + 40, "сечение круглое", "middle") + (amount ? caption(300, cy + 66, amount, "middle") : "");
@@ -500,13 +500,23 @@ function coaxEndBase(c: Row, x0: number, span: number, cy: number, braidOver = f
     `<rect x="${x0}" y="${cy - 4}" width="${g.x1 - x0}" height="8" fill="${CX.cu}" stroke="${CX.ink}" stroke-width=".6"/>`;
 }
 
-/** Центральный контакт на жиле: хвостовик с отверстием под пайку (припой), буртик и рабочая часть влево. */
-function coaxPin(x0: number, xEnd: number, cy: number, solder: boolean): string {
-  return `<rect x="${x0 - 70}" y="${cy - 3}" width="44" height="6" fill="${CX.metal}" stroke="${CX.metalEdge}"/>` +
-    `<path d="M${x0 - 70},${cy - 3} L${x0 - 80},${cy} L${x0 - 70},${cy + 3} z" fill="${CX.metal}" stroke="${CX.metalEdge}"/>` +
-    `<rect x="${x0 - 26}" y="${cy - 8}" width="6" height="16" fill="${CX.metal}" stroke="${CX.metalEdge}"/>` +
-    `<rect x="${x0 - 20}" y="${cy - 7}" width="${xEnd - x0 + 20}" height="14" rx="1" fill="${CX.metal}" stroke="${CX.metalEdge}"/>` +
-    (solder ? `<rect x="${x0 - 16}" y="${cy - 3.5}" width="${xEnd - x0 + 12}" height="7" fill="#c9ced3"/><rect x="${x0 - 16}" y="${cy - 1.5}" width="${xEnd - x0 + 12}" height="3" fill="${CX.cu}" opacity=".45"/>` : "");
+/** Центральный контакт на жиле: хвостовик (чашка с припоем или гильза обжима), буртик и рабочая часть влево — у вилки
+ *  штырь с фаской, у розетки гнездо: втулка с открытым отверстием со стороны лица, без острия (S2 ревью 23.11). */
+function coaxPin(x0: number, xEnd: number, cy: number, solder: boolean, gender: "socket" | "pin" | "unknown"): string {
+  const work = gender === "unknown"
+    ? `<rect x="${x0 - 74}" y="${cy - 4}" width="48" height="8" rx="1" fill="${CX.metal}" stroke="${CX.metalEdge}"/>`
+    : gender === "socket"
+    ? `<rect x="${x0 - 80}" y="${cy - 6}" width="54" height="12" fill="${CX.metal}" stroke="${CX.metalEdge}"/>` +
+      `<rect data-part="socket-bore" x="${x0 - 80}" y="${cy - 2.5}" width="22" height="5" fill="${CX.tube}"/>` +
+      `<line x1="${x0 - 58}" y1="${cy}" x2="${x0 - 44}" y2="${cy}" stroke="${CX.tube}" stroke-width=".8"/>`
+    : `<rect x="${x0 - 70}" y="${cy - 3}" width="44" height="6" fill="${CX.metal}" stroke="${CX.metalEdge}"/>` +
+      `<path data-part="pin-tip" d="M${x0 - 70},${cy - 3} L${x0 - 80},${cy} L${x0 - 70},${cy + 3} z" fill="${CX.metal}" stroke="${CX.metalEdge}"/>`;
+  const barrel = `<rect x="${x0 - 20}" y="${cy - 7}" width="${xEnd - x0 + 20}" height="14" rx="1" fill="${CX.metal}" stroke="${CX.metalEdge}"/>`;
+  const join = solder
+    ? `<rect x="${x0 - 16}" y="${cy - 3.5}" width="${xEnd - x0 + 12}" height="7" fill="#c9ced3"/><rect x="${x0 - 16}" y="${cy - 1.5}" width="${xEnd - x0 + 12}" height="3" fill="${CX.cu}" opacity=".45"/>`
+    : [0.2, 0.45, 0.7].map((k) => `<line x1="${x0 - 20 + (xEnd - x0 + 20) * k}" y1="${cy - 7}" x2="${x0 - 20 + (xEnd - x0 + 20) * k}" y2="${cy + 7}" stroke="${CX.metalEdge}" stroke-width=".8"/>`).join("");
+  return `<g data-part="contact" data-state="${gender}">${work}` +
+    `<rect x="${x0 - 26}" y="${cy - 8}" width="6" height="16" fill="${CX.metal}" stroke="${CX.metalEdge}"/>${barrel}${join}</g>`;
 }
 
 /** Операции конца коаксиала: пайка (обжим) центрального контакта, корпус разъёма, пайка экрана, крышка. */
@@ -523,10 +533,10 @@ function coaxEndSketch(operation: Row): string {
     return svg(640, cy + 78, body);
   }
   if (type === "coaxPin" || type === "coaxPinCrimp") {
-    body += coaxEndBase(end, x0, span, cy) + coaxPin(x0, xPin, cy, !crimp) +
-      `<line x1="${xPin}" y1="${cy + 10}" x2="${xPin}" y2="${cy + 34}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +
-      `<line x1="${g.x1}" y1="${cy + 12}" x2="${g.x1}" y2="${cy + 34}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +
-      caption(x0 - 80, cy - 22, `Центральный контакт: ${crimp ? "обжать" : "припаять"} на жилу`) +
+    body += coaxEndBase(end, x0, span, cy) + coaxPin(x0, xPin, cy, !crimp, contactKind(end)) +
+      `<line x1="${xPin}" y1="${cy + 10}" x2="${xPin}" y2="${cy + 34}" stroke="#55666b" stroke-width=".7" data-role="extension"/>` +
+      `<line x1="${g.x1}" y1="${cy + 12}" x2="${g.x1}" y2="${cy + 34}" stroke="#55666b" stroke-width=".7" data-role="extension"/>` +
+      caption(x0 - 80, cy - 22, `Центральный контакт${contactKind(end) === "unknown" ? "" : ` (${contactName(end)})`}: ${crimp ? "обжать" : "припаять"} на жилу`) +
       caption(g.x1 + 6, cy + 32, "зазор до диэлектрика — по КД");
     if (g.ok) body += caption(x0, cy + 56, `L1 = ${mm(end.l1)} · L2 = ${mm(end.l2)} · L3 = ${mm(end.l3)}`);
     return svg(640, cy + (g.ok ? 66 : 46), body);
@@ -536,14 +546,18 @@ function coaxEndSketch(operation: Row): string {
     const art = coaxClampEtk(end, sideCaption(end), "Оплётку расправить по конусу и обрезать, корпус собрать, гайку затянуть");
     return svg(640, art.height, art.body);
   }
-  // Корпус: настоящий боковой вид SMA в разрезе, контакт в изоляторе, оплётка расправлена по хвостовику; пайка экрана / крышка — тот же вид с подписью.
+  // Корпус, пайка экрана, крышка: разъём СВОЕГО семейства (S1 ревью 23.11) в состоянии после операции — по её коду: контакт во
+  // вставке, пластмассовый корпус, уплотнитель и крышка, угловой корпус; без проверенной геометрии — схема с пометкой.
+  const code = str(operation.code).toUpperCase();
   const mount: Record<string, string> = {
-    coaxHousing: "Корпус надвинуть до упора: контакт зафиксирован в изоляторе",
+    coaxHousing: /_HOUSING$/.test(code) ? "Узел вставить в пластмассовый корпус до фиксации" : /_CONTACT$/.test(code)
+      ? "Контакт ввести в металлический корпус до фиксации" : "Корпус надвинуть до упора: контакт зафиксирован в изоляторе",
     coaxSolderShield: "Экран припаять к корпусу по окружности",
-    coaxCapCrimp: "Крышку надеть и обжать", coaxCapScrew: "Крышку завернуть до упора",
+    coaxCapCrimp: /_RA_CAP$/.test(code) ? "Металлическую крышку запрессовать заподлицо" : "Крышку надеть и обжать",
+    coaxCapScrew: /_SEAL$/.test(code) ? "Уплотнитель и крышку установить без перекоса" : "Крышку завернуть до упора",
   };
   if (mount[type]) {
-    const art = coaxMountEtk(end, sideCaption(end), mount[type]);
+    const art = coaxMountEtk(end, sideCaption(end), mount[type], coaxOpState(type, str(operation.code), end));
     return svg(640, art.height, art.body);
   }
   const tail = g.x3 + 16;
@@ -751,7 +765,7 @@ export function etkDrawCrimp(operation: Row): string {
   const P = (d: string, fill?: string | null, sw?: string) => `<path d="${d}" fill="${fill || "none"}" stroke="${edge}" stroke-width="${sw || ".8"}"/>`;
   const call = (x: number, ty: number, px: number, py: number, text: string) => {
     const y1 = ty < py ? ty + 4 : ty - 12;
-    return `<line x1="${x}" y1="${y1}" x2="${px}" y2="${py}" stroke="#9aa7ad" stroke-width=".8"/>` +
+    return `<line data-role="leader" x1="${x}" y1="${y1}" x2="${px}" y2="${py}" stroke="#9aa7ad" stroke-width=".8"/>` +
       `<circle cx="${px}" cy="${py}" r="1.8" fill="#9aa7ad"/>` +
       `<text x="${x}" y="${ty}" text-anchor="middle" font-size="11" fill="#5f7470">${text}</text>`;
   };
@@ -768,7 +782,7 @@ export function etkDrawCrimp(operation: Row): string {
     `<rect x="182" y="${y(12)}" width="7" height="2.5" fill="${tin}" stroke="${edge}" stroke-width=".5"/>` +
     P(`M198,${y(-12)} Q220,${y(-17)} 242,${y(-12)} L244,${y(12)} L196,${y(12)} z`, tin) +
     P(`M204,${y(-13)} q2,-9 10,-7 q5,2 2,7`, tin) + P(`M236,${y(-13)} q-2,-9 -10,-7 q-5,2 -2,7`, tin) +
-    ln(220, y(-15), 220, y(10), ' stroke-dasharray="2 2" stroke-opacity=".5"') +
+    ln(220, y(-15), 220, y(10), ' stroke-dasharray="2 2" stroke-opacity=".5" data-role="hidden"') +
     P(`M290,${y(-9)} Q314,${y(-12)} 338,${y(-9)} L338,${y(12)} L290,${y(12)} z`, tin) +
     P(`M290,${y(-9)} L283,${y(-13)} L283,${y(12)} L290,${y(12)}`, tin, ".7") +
     ln(292, y(-5), 336, y(-5), ' stroke-width=".6"') +
@@ -786,7 +800,7 @@ export function etkDrawCrimp(operation: Row): string {
     call(468, 30, 468, cy - 14, "контактная часть · фиксатор") +
     call(262, cy + 38, 264, cy + 3, "окно") +
     call(356, cy + 38, 350, cy + 3, "выход жил") +
-    `<line x1="326" y1="${cy - 20}" x2="326" y2="${cy + 20}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +
+    `<line x1="326" y1="${cy - 20}" x2="326" y2="${cy + 20}" stroke="#55666b" stroke-width=".7" data-role="extension"/>` +
     `<line x1="326" y1="${cy - 9}" x2="326" y2="${cy + 12}" stroke="${edge}" marker-start="url(#etkA)" marker-end="url(#etkA)"/>` +
     `<text x="300" y="${cy + 62}" font-size="12" fill="${edge}">Высота обжима по жиле: ${esc(f.crimpHeight ? `${str(f.crimpHeight)} мм` : "⚠ нет в БД.ТЕР")}</text>` +
     `<text x="24" y="${cy + 62}" font-size="12" fill="${edge}">Отрыв: ${esc(f.pullForce ? `${str(f.pullForce)} Н` : "—")}</text>`;
@@ -1042,8 +1056,8 @@ export function etkDrawTwist(operation: Row): string {
       `<text x="${x1 + 12}" y="${cy + 11}" font-size="10.5" fill="#17272b">${esc(p[1])}</text>`;
   });
   const yd = 30 + pairs.length * rowH - 16;
-  body += `<line x1="${x0}" y1="${yd - 18}" x2="${x0}" y2="${yd + 4}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +
-    `<line x1="${x0 + per}" y1="${yd - 18}" x2="${x0 + per}" y2="${yd + 4}" stroke="#9aa7ad" stroke-dasharray="3 3"/>` +
+  body += `<line x1="${x0}" y1="${yd - 18}" x2="${x0}" y2="${yd + 4}" stroke="#55666b" stroke-width=".7" data-role="extension"/>` +
+    `<line x1="${x0 + per}" y1="${yd - 18}" x2="${x0 + per}" y2="${yd + 4}" stroke="#55666b" stroke-width=".7" data-role="extension"/>` +
     dim(x0, x0 + per, yd, `шаг ${t.pitch ? `${str(t.pitch)} мм` : "по КД"}`);
   return svg(W + 180, yd + 12, body);
 }
