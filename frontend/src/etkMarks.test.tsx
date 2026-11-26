@@ -84,7 +84,7 @@ it("a label output list without instructions still gets a Result block, never an
   operation.type = "coaxCutTut";
   operation.card.steps = [];
   render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
-  const table = await screen.findByRole("table", { name: "Метки по КД" });
+  const table = await screen.findByRole("table", { name: "Что напечатано" });
   expect(screen.getByRole("region", { name: "Результат" })).toContainElement(table);
   expect(screen.queryByRole("region", { name: "Ход операции" })).toBeNull();
   const html = buildPrintDocumentHtml("ТК", etkPrintPages(card, []));
@@ -192,21 +192,23 @@ it("shows 17 label kinds and 45 pieces for a 15-piece 708К task, correcting an 
   ] });
   const operation = ((card.document as Record<string, unknown>).operations as Record<string, unknown>[])[0];
   operation.code = "PRINT_MARK_LABEL";
+  (operation.card as { steps: unknown[] }).steps = [{ number: "1", kind: "Операция", text: "Напечатать этикетки партии." }];
   operation.result = [{ name: "Напечатанные этикетки: 3 шт.", norm: "45", unit: "Шт." }];
   operation.time = [{ name: "Напечатанные этикетки: 3 шт.", norm: "0" }];
   const original = structuredClone(card);
   const serial = { first: 1, last: 15, task: "ПЗ-1" };
   render(<EtkSheet card={card} principal={principal} onChange={() => undefined} task serial={serial} />);
-  const table = await screen.findByRole("table", { name: "Метки по КД" });
+  const table = await screen.findByRole("table", { name: "Что напечатано" });
   fireEvent.click(within(screen.getByRole("region", { name: "Результат" })).getByRole("heading", { level: 4 }));
-  expect(within(table).getAllByRole("row")).toHaveLength(18);
+  expect(within(table).getAllByRole("row")).toHaveLength(19);
   expect(within(table).getByText("FRX.708К.120907/AA.000001")).toBeVisible();
   expect(within(table).getByText("FRX.708К.120907/AA.000015")).toBeVisible();
   expect(within(table).getAllByText("× 15")).toHaveLength(2);
-  expect(within(screen.getByRole("region", { name: "Результат" })).getByText("Этикетки: 17 видов, 45 шт.")).toBeInTheDocument();
+  expect(within(screen.getByRole("region", { name: "Результат" })).getByText("Напечатанные этикетки")).toBeInTheDocument();
+  expect(within(table).getByText("Итого: 17 видов, 45 шт.")).toBeInTheDocument();
   const pages = etkPrintPages(card, [], {}, serial);
   const printed = buildPrintDocumentHtml("ЭТК", pages);
-  expect(printed.replaceAll("\u00a0", " ")).toContain("Этикетки: 17 видов, 45 шт.");
+  expect(printed.replaceAll("\u00a0", " ")).toContain("Итого: 17 видов, 45 шт.");
   expect(printed).not.toContain("Напечатанные этикетки: 3 шт.");
   const labelBlock = pages.at(-1)!.blocks[0];
   if (!("table" in labelBlock)) throw new Error("Expected the label list table");
@@ -241,4 +243,78 @@ it("shows the tolerances of the steps in a column of their own, a line per value
   const html = buildPrintDocumentHtml("ТК", etkPrintPages(card, []));
   expect(html).toContain("Сторона В: 2–3 мм\nЗазор: 0,5–1,5 мм");
   expect(html).toContain("± 10 °C\nВремя: ≤ 2,0 сек");
+});
+
+it("a label installation (even with a stale printer code) keeps its table as a placement spec in Input, not in Result, on screen and in print", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  const card = techcard({ marks });
+  const operation = (card.document as { operations: Array<Record<string, unknown>> }).operations[0];
+  operation.code = "PRINT_MARK_LABEL";
+  operation.title = "Наклейка этикеток маркировки";
+  (operation.card as { name: string }).name = "Наклейка этикеток маркировки";
+  operation.result = [{ name: "Кабель с метками", norm: "10", unit: "Шт." }];
+  render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
+  const table = await screen.findByRole("table", { name: "Места установки меток" });
+  expect(screen.getByRole("region", { name: "Вход" })).toContainElement(table);
+  expect(screen.getByRole("region", { name: "Результат" })).not.toContainElement(table);
+  expect(within(table).queryByText(/Итого/)).toBeNull();
+  const html = buildPrintDocumentHtml("ТК", etkPrintPages(card, []));
+  expect(html).toMatch(/1\. Вход[\s\S]*Места установки меток[\s\S]*Что маркируем[\s\S]*2\. Оснастка/);
+  expect(html).not.toMatch(/Результат[\s\S]*Что маркируем/);
+  expect(html).not.toContain("Напечатанные этикетки");
+});
+
+it("a label print shows the noun «Напечатанные этикетки», its rows and a total in the footer, on screen and in print", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  const card = techcard({ marks });
+  const operation = (card.document as { operations: Array<Record<string, unknown>> }).operations[0];
+  operation.code = "PRINT_MARK_LABEL";
+  (operation.card as { steps: unknown[] }).steps = [{ number: "1", kind: "Операция", text: "Напечатать этикетки партии." }];
+  operation.title = "Печать этикеток";
+  (operation.card as { name: string }).name = "Печать этикеток";
+  operation.result = [{ name: "Напечатанные этикетки: 3 шт.", norm: "30", unit: "Шт." }];
+  render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
+  const table = await screen.findByRole("table", { name: "Что напечатано" });
+  const result = screen.getByRole("region", { name: "Результат" });
+  expect(result).toContainElement(table);
+  expect(within(result).getByText("Напечатанные этикетки")).toBeInTheDocument();
+  expect(within(table).getByText("Итого: 2 вида, 30 шт.")).toBeInTheDocument();
+  const html = buildPrintDocumentHtml("ТК", etkPrintPages(card, [])).replaceAll(" ", " ");
+  expect(html).toMatch(/Результат[\s\S]*Напечатанные этикетки[\s\S]*Что напечатано[\s\S]*Что маркируем[\s\S]*Итого: 2 вида, 30 шт\./);
+});
+
+it("an unknown operation norm prints «не задано» in the route, never an empty or zero cell", () => {
+  const card = techcard({});
+  const operation = (card.document as { operations: Array<Record<string, unknown>> }).operations[0];
+  operation.times = { operation_seconds: "", setup_seconds: "" };
+  expect(buildPrintDocumentHtml("ТК", etkPrintPages(card, []))).toMatch(/<td>не задано<\/td>/);
+});
+
+it("the unserialised print footer spans every column, an install hides the empty-input line, and a missing time key prints «не задано»", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  const print = techcard({ marks });
+  const printOp = (print.document as { operations: Array<Record<string, unknown>> }).operations[0];
+  printOp.code = "PRINT_MARK_LABEL";
+  printOp.card = { name: "Печать этикеток", steps: [{ number: "1", kind: "Операция", text: "Напечатать этикетки партии." }], tooling: [] };
+  printOp.components = [];
+  const { unmount } = render(<EtkSheet card={print} principal={principal} onChange={() => undefined} />);
+  const table = await screen.findByRole("table", { name: "Что напечатано" });
+  const head = within(table).getAllByRole("columnheader").length;
+  expect(table.querySelector("tfoot td")?.getAttribute("colspan")).toBe(String(head));
+  unmount();
+  const install = techcard({ marks });
+  const op = (install.document as { operations: Array<Record<string, unknown>> }).operations[0];
+  op.code = "INS_MARK_LABEL";
+  op.card = { name: "Наклейка этикеток маркировки", steps: [], tooling: [] };
+  op.components = [];
+  op.times = {};
+  render(<EtkSheet card={install} principal={principal} onChange={() => undefined} />);
+  expect(await screen.findByRole("table", { name: "Места установки меток" })).toBeInTheDocument();
+  expect(screen.queryByText(/на входе нет/)).toBeNull();
+  const html = buildPrintDocumentHtml("ТК", etkPrintPages(install, []));
+  expect(html).not.toContain("на входе нет");
+  expect(html).toMatch(/<td>не задано<\/td>/);
 });

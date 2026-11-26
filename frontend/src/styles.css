@@ -3029,7 +3029,7 @@ details.tc-ro[open] > summary { margin-bottom: 8px; }
 .etk-result { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 40px; }
 /* Метки по КД в «Ходе операции» маркировки — та же таблица, что у результата. */
 .etk-marks { width: 100%; margin-bottom: 10px; border-collapse: collapse; border: 1px solid var(--border); font-size: 13px; }
-.etk-marks caption { padding: 0 0 4px; text-align: left; font-size: 12px; font-weight: 700; color: var(--foreground); }
+.etk-marks caption { padding: 6px 0 4px; text-align: left; font-size: 12px; font-weight: 700; color: var(--foreground); }
 .etk-marks th { padding: 6px 10px; text-align: left; font-size: 12px; font-weight: 600; color: var(--muted-foreground); background: var(--accent); white-space: nowrap; }
 .etk-marks td { padding: 6px 10px; border-top: 1px solid var(--border); vertical-align: top; }
 .etk-marks .num { width: 1%; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
