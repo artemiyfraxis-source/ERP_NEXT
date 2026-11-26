@@ -47,7 +47,51 @@ function serve(overview: AccessOverview = OVERVIEW) {
   });
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); window.localStorage.clear(); });
+
+it("persists collapsed matrix groups for the viewer and keeps unsaved cells visible in their header", async () => {
+  serve();
+  const first = render(<AccessPage viewerId="viewer-a" />);
+  await screen.findByLabelText("Склад · Бригадир");
+  fireEvent.change(screen.getByLabelText("Склад · Бригадир"), { target: { value: "view" } });
+  fireEvent.change(screen.getByLabelText("Склад · Оператор"), { target: { value: "edit" } });
+  const group = screen.getByRole("button", { name: /^Склад ·/ });
+  expect(group).toHaveAttribute("aria-expanded", "true");
+  expect(group).toHaveTextContent("2 не сохранено");
+  fireEvent.click(group);
+  expect(group).toHaveAttribute("aria-expanded", "false");
+  expect(group).toHaveTextContent("2 не сохранено");
+  expect(screen.queryByLabelText("Склад · Бригадир")).toBeNull();
+  expect(screen.getByRole("button", { name: "Сохранить доступы уровней" })).toBeEnabled();
+  fireEvent.click(group);
+  expect(screen.getByLabelText("Склад · Бригадир")).toHaveValue("view");
+  fireEvent.click(group);
+  fireEvent.click(screen.getByRole("button", { name: "Отменить правки" }));
+  expect(group).not.toHaveTextContent("не сохранено");
+  first.unmount();
+  const second = render(<AccessPage viewerId="viewer-a" />);
+  expect(await screen.findByRole("button", { name: /^Склад ·/ })).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByLabelText("Склад · Бригадир")).toBeNull();
+  second.unmount();
+  render(<AccessPage viewerId="viewer-b" />);
+  expect(await screen.findByRole("button", { name: /^Склад ·/ })).toHaveAttribute("aria-expanded", "true");
+  expect(screen.getByLabelText("Склад · Бригадир")).toBeVisible();
+});
+
+it("saves changed permissions in collapsed groups with complete untouched rows", async () => {
+  let saved: unknown;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if (init?.method === "PUT") { saved = JSON.parse(String(init.body)); return json({}); }
+    return json(OVERVIEW);
+  });
+  render(<AccessPage viewerId="viewer-a" />);
+  fireEvent.change(await screen.findByLabelText("Склад · Бригадир"), { target: { value: "view" } });
+  fireEvent.click(screen.getByRole("button", { name: /^Склад ·/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Сохранить доступы уровней" }));
+  await waitFor(() => expect(saved).toEqual({ matrix: {
+    ...OVERVIEW.matrix, foreman: { ...OVERVIEW.matrix.foreman, warehouse: "view" },
+  } }));
+});
 
 it.each(["levels", "people"])("hides print/scan rows but preserves their complete %s save payload", async (tab) => {
   const saved: unknown[] = [];
@@ -65,7 +109,7 @@ it.each(["levels", "people"])("hides print/scan rows but preserves their complet
     if (String(input) === "/api/auth/access") return json(overview);
     throw new Error(`Unexpected request: ${String(input)}`);
   });
-  render(<AccessPage />);
+  render(<AccessPage viewerId="viewer-a" />);
   await screen.findByLabelText("Склад · Бригадир");
   if (tab === "people") {
     fireEvent.click(screen.getByRole("button", { name: "Исключения по сотрудникам" }));
@@ -90,8 +134,8 @@ it("groups existing permission keys by navigation and lists their shared screens
     { key: "procurement", label: "Снабжение" },
     { key: "operations", label: "Системный журнал" },
   ] });
-  render(<AccessPage />);
-  expect(await screen.findByText("Ресурсное планирование · Оборудование · Ручная работа · Производственный план")).toBeInTheDocument();
+  render(<AccessPage viewerId="viewer-a" />);
+  expect(await screen.findByText("Ресурсное планирование · Оборудование · Производственный план")).toBeInTheDocument();
   expect(screen.getByText("Снабжение · Первичная документация · Закупка")).toBeInTheDocument();
   const table = screen.getByRole("table");
   for (const group of ["Производство", "Снабжение", "Администрирование"]) {
@@ -110,7 +154,7 @@ it("computes a level's sections as what it has with nothing stored plus the stor
 
 it("«Уровни × разделы»: one column per level with the owner's names, in the owner's order, no «Администратор»", async () => {
   serve();
-  render(<AccessPage />);
+  render(<AccessPage viewerId="viewer-a" />);
   await screen.findByLabelText("Склад · Бригадир");
   expect(screen.getByRole("button", { name: "Уровни × разделы" })).toHaveClass("active");
   expect(screen.queryByText("Роли × разделы")).toBeNull();
@@ -124,23 +168,23 @@ it("«Уровни × разделы»: one column per level with the owner's na
 
 it("the existing sections have one editable row for the six matrix levels", async () => {
   serve();
-  render(<AccessPage />);
+  render(<AccessPage viewerId="viewer-a" />);
   await screen.findByLabelText("Склад · Бригадир");
   const table = screen.getByRole("table");
-  for (const name of ["Оборудование · Ручная работа · Задания", "ОТК", "Приёмка с производства — складские действия"]) {
+  for (const name of ["Оборудование · Задания", "ОТК", "Приёмка с производства — складские действия"]) {
     const row = within(table).getByText(name).closest("tr") as HTMLElement;
     expect(within(row).getAllByRole("combobox")).toHaveLength(6);
     for (const level of ["Коммерческое руководство", "Технический руководитель", "Менеджер по проектам", "Кладовщик", "Бригадир", "Оператор"]) {
       expect(screen.getByLabelText(`${name} · ${level}`)).toBeInTheDocument();
     }
   }
-  expect((screen.getByLabelText("Оборудование · Ручная работа · Задания · Бригадир") as HTMLSelectElement).value).toBe("edit");
+  expect((screen.getByLabelText("Оборудование · Задания · Бригадир") as HTMLSelectElement).value).toBe("edit");
   expect((screen.getByLabelText("Приёмка с производства — складские действия · Оператор") as HTMLSelectElement).value).toBe("");
 });
 
 it("superadmin is fixed «полный» with a drawn padlock and a tooltip, never an editable cell", async () => {
   serve();
-  render(<AccessPage />);
+  render(<AccessPage viewerId="viewer-a" />);
   expect(await screen.findByText("всегда полный доступ")).toBeInTheDocument();
   for (const level of ["Суперадминистратор"]) {
     for (const section of SECTIONS) expect(screen.queryByLabelText(`${section.label} · ${level}`)).toBeNull();
@@ -159,7 +203,7 @@ it("superadmin is fixed «полный» with a drawn padlock and a tooltip, nev
 
 it("keeps the screen short: no explanation paragraph, a one-line legend with a «?» tooltip, plain section names", async () => {
   serve();
-  const { container } = render(<AccessPage />);
+  const { container } = render(<AccessPage viewerId="viewer-a" />);
   await screen.findByLabelText("Склад · Бригадир");
   expect(container.querySelector("p.page-sub")).toBeNull();
   const legend = screen.getByRole("group", { name: "Обозначения" });
@@ -171,11 +215,11 @@ it("keeps the screen short: no explanation paragraph, a one-line legend with a �
 
 it("shows each cell as a chip in the tone of its mode; an empty or stored «закрыт» cell is the same pale «закрыт»", async () => {
   serve();
-  render(<AccessPage />);
+  render(<AccessPage viewerId="viewer-a" />);
   await screen.findByLabelText("Склад · Бригадир");
   const chip = (label: string) => screen.getByLabelText(label).parentElement as HTMLElement;
-  expect(chip("Оборудование · Ручная работа · Задания · Бригадир")).toHaveTextContent(/^полный/);
-  expect(chip("Оборудование · Ручная работа · Задания · Бригадир")).toHaveClass("tone-ok", "access-set");
+  expect(chip("Оборудование · Задания · Бригадир")).toHaveTextContent(/^полный/);
+  expect(chip("Оборудование · Задания · Бригадир")).toHaveClass("tone-ok", "access-set");
   // Склад: a stored «none» and Заявки: nothing stored both read as a closed section, and neither is a change.
   for (const label of ["Склад · Бригадир", "Заявки · Бригадир"]) {
     expect(chip(label)).toHaveTextContent(/^закрыт/);
@@ -202,14 +246,14 @@ it("saves the whole level matrix to /access/levels, without the rows that open n
     throw new Error(`Unexpected request: ${path}`);
   });
 
-  render(<AccessPage />);
+  render(<AccessPage viewerId="viewer-a" />);
   await screen.findByLabelText("Склад · Бригадир");
   const save = screen.getByRole("button", { name: "Сохранить доступы уровней" });
   expect(save).toBeDisabled();
   fireEvent.change(screen.getByLabelText("Заявки · Коммерческое руководство"), { target: { value: "" } }); // the only cell of the row
   fireEvent.change(screen.getByLabelText("ОТК · Технический руководитель"), { target: { value: "view" } });
   fireEvent.change(screen.getByLabelText("Склад · Бригадир"), { target: { value: "edit" } });
-  fireEvent.change(screen.getByLabelText("Оборудование · Ручная работа · Задания · Оператор"), { target: { value: "edit" } });
+  fireEvent.change(screen.getByLabelText("Оборудование · Задания · Оператор"), { target: { value: "edit" } });
   expect(save).toBeEnabled();
   fireEvent.click(save);
 
@@ -233,7 +277,7 @@ it("shows the server's refusal of a save in the error banner", async () => {
     throw new Error(`Unexpected request: ${path}`);
   });
 
-  render(<AccessPage />);
+  render(<AccessPage viewerId="viewer-a" />);
   fireEvent.change(await screen.findByLabelText("Склад · Оператор"), { target: { value: "view" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить доступы уровней" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Неизвестный раздел «чужой».");
@@ -242,7 +286,7 @@ it("shows the server's refusal of a save in the error banner", async () => {
 
 it("highlights unsaved cells, shows the note and takes the changes back", async () => {
   serve();
-  render(<AccessPage />);
+  render(<AccessPage viewerId="viewer-a" />);
   const warehouse = await screen.findByLabelText("Склад · Бригадир");
   const save = screen.getByRole("button", { name: "Сохранить доступы уровней" });
   const cancel = screen.getByRole("button", { name: "Отменить правки" });
@@ -266,7 +310,7 @@ it("highlights unsaved cells, shows the note and takes the changes back", async 
 
 it("a cell set and set back is no change (the row left empty equals the row never stored)", async () => {
   serve();
-  render(<AccessPage />);
+  render(<AccessPage viewerId="viewer-a" />);
   const requests = await screen.findByLabelText("Заявки · Оператор");
   fireEvent.change(requests, { target: { value: "view" } });
   expect(screen.getByText("Есть несохранённые правки")).toBeInTheDocument();
@@ -287,7 +331,7 @@ it("edits one person's exceptions against what the level gives", async () => {
     throw new Error(`Unexpected request: ${path}`);
   });
 
-  render(<AccessPage />);
+  render(<AccessPage viewerId="viewer-a" />);
   fireEvent.click(await screen.findByRole("button", { name: "Исключения по сотрудникам" }));
   const person = screen.getByLabelText("Сотрудник");
   expect(within(person).getByRole("option", { name: "Бригадиров · Бригадир · исключений: 1" })).toBeInTheDocument();
@@ -307,7 +351,7 @@ it("edits one person's exceptions against what the level gives", async () => {
 
   fireEvent.change(screen.getByLabelText("Исключение: Склад"), { target: { value: "view" } });
   fireEvent.change(screen.getByLabelText("Исключение: ОТК"), { target: { value: "" } });
-  fireEvent.change(screen.getByLabelText("Исключение: Оборудование · Ручная работа · Задания"), { target: { value: "none" } });
+  fireEvent.change(screen.getByLabelText("Исключение: Оборудование · Задания"), { target: { value: "none" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить исключения" }));
 
   await waitFor(() => expect(saved).toEqual([{ access: { warehouse: "view", myops: "none" } }]));
@@ -316,7 +360,7 @@ it("edits one person's exceptions against what the level gives", async () => {
 
 it("a person of a full level has only the padlock: nothing to edit, nothing to save", async () => {
   serve();
-  const { container } = render(<AccessPage />);
+  const { container } = render(<AccessPage viewerId="viewer-a" />);
   fireEvent.click(await screen.findByRole("button", { name: "Исключения по сотрудникам" }));
   expect(container.querySelector("p.page-sub")).not.toBeNull(); // the empty state says what to do next
   fireEvent.change(screen.getByLabelText("Сотрудник"), { target: { value: "u1" } });

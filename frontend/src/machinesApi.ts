@@ -1,11 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, failureText } from "./api";
+import { api, failureText, type TaskMachineAction } from "./api";
 import type { WarehouseStation } from "./warehouseDevicesApi";
 
 /* «Станки» (владелец 18.11.2026: «в разделе производство — станки: всё, что мы подключили, и управление ими»), часть 1 —
    только чтение. Сервер: `workflows/machines_api.py`, правила и расшифровка ПЛК — `production/machines.py`. */
 
 export type Tone = "ok" | "warn" | "danger" | "info" | "neutral";
+
+/** Only MachinesPage builds this context, from the server's machine-actions response. */
+export interface MachineTaskContext {
+  taskId: string;
+  operationId: string;
+  action: TaskMachineAction;
+  loadRequested: boolean;
+}
 
 export interface MachineLink {
   code: "ok" | "port_busy" | "no_plc" | "no_service" | "stale" | "not_installed";

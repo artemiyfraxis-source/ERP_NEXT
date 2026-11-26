@@ -132,7 +132,10 @@ def op_stages(ops: Sequence[RouteOp]) -> dict[int, str]:
     (twisting, marking, wrapping) prepares the next crimp or side, and after the last side — the finished product."""
     ordered = sorted(ops, key=lambda op: op.position)
     if any(op.key == "coaxFakraCutStrip" for op in ops):
+        covered_labels = any(op.key == "coaxProtectIns" for op in ops)
+        last_side = max((op.position for op in ops if _side(op)), default=0)
         return {op.position: _cut_stage(op) if op.type in WIRE_CUTS | TUBE_CUTS else
+                FINAL if covered_labels and op.key == "coaxInsLabel" and op.position > last_side else
                 MARKED if op.type in {"coaxInsSleeve", "coaxInsTut"} else _side(op) or FINAL for op in ops}
 
     def assembly(op: RouteOp) -> bool:
@@ -171,6 +174,28 @@ def op_stages(ops: Sequence[RouteOp]) -> dict[int, str]:
     return result
 
 
+def validate_coax_finishing(route: Route, ops: Sequence[RouteOp]) -> None:
+    """Check newly built/manual routes, never mutate a pinned issued document on read."""
+    by_key = {op.key: op for op in ops}
+    final = route.final
+    colors = [op.position for op in ops if op.type == "coaxConnColor"]
+    if colors and list(final.ops[-len(colors):]) != colors:
+        raise RouteError("Цветовая маркировка разъёмов должна завершать итоговый ПФ")
+    if not {"coaxProtectIns", "coaxInsLabel", "coaxHeat"}.issubset(by_key):
+        return
+    label, heat = by_key["coaxInsLabel"].position, by_key["coaxHeat"].position
+    if label not in final.ops or heat not in final.ops or final.ops.index(heat) != final.ops.index(label) + 1:
+        raise RouteError("Наклейка этикеток должна быть в итоговом ПФ непосредственно перед усадкой прозрачной ТУТ")
+    later = set(final.ops[final.ops.index(heat) + 1:])
+    if any(op.position in later and op.type not in {"coaxVswr", "coaxConnColor"} for op in ops):
+        raise RouteError("Наклейку этикеток и усадку прозрачной ТУТ выполняют после сборки разъёмов")
+    printed = by_key.get("coaxPrintLabel")
+    if printed:
+        source = next(block for block in route.blocks if printed.position in block.ops)
+        if source.key != final.key and not any(edge.source == source.key and edge.target == final.key for edge in route.edges):
+            raise RouteError("Напечатанные этикетки должны поступать в итоговый ПФ")
+
+
 def _title(stage: str, ops: Sequence[RouteOp], printed: bool = False) -> str:
     """`printed` — the scheme has the TP80E ПФ «Напечатанная маркировка» too: the Godex one is named by what it holds."""
     if stage == PRINTED:
@@ -183,7 +208,9 @@ def _title(stage: str, ops: Sequence[RouteOp], printed: bool = False) -> str:
         tubes = [op for op in ops if op.code.upper().startswith("PRINT_MARK_TUBE")]
         return "Маркировочные трубки" if len(tubes) == len(ops) else "Этикетки и маркировочные трубки" if tubes else "Этикетки"
     if stage == MARKED:
-        return "Кабель с метками и деталями"
+        if any(op.key in {"coaxInsLabel", "coaxInsTut"} for op in ops):
+            return "Кабель с метками и деталями"
+        return "Кабель с трубками и деталями" if any(op.key == "coaxProtectIns" for op in ops) else "Кабель с деталями"
     if stage == WIRES:
         if ops and all(op.type == "coaxCut" or _cable_strip(op) for op in ops):
             stripped = any(_cable_strip(op) or _COAX_CUT_STRIP.match(op.code.upper()) for op in ops)

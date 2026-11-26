@@ -153,7 +153,7 @@ it("renders the generated coax route with the cable cut, labels and tubes as sep
   fireEvent.click(screen.getByRole("button", { name: "Подтвердить L" }));
   const scheme = await screen.findByRole("region", { name: "Схема полуфабрикатов" });
   expect([...container.querySelectorAll(".rc-card .rc-title")].map((el) => el.textContent)).toEqual([
-    "Нарезанный и разделанный кабель", "Этикетки", "Нарезанные трубки", "Кабель с метками и деталями", "Сторона А собрана",
+    "Нарезанный и разделанный кабель", "Этикетки", "Нарезанные трубки", "Кабель с трубками и деталями", "Сторона А собрана",
     "Сторона В собрана", "Готовый кабель",
   ]);
   expect(within(scheme).getByText("автоматическая")).toBeInTheDocument();

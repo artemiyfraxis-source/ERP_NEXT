@@ -8,7 +8,7 @@ import pytest
 
 from app.modules.techcards.etk_builder import _resolve_card, _result_name, _suffix, _term_count, _topology, build_etk
 from app.modules.techcards.operation_cards import OperationCardStep, OperationCardTemplate, parse_operation_library
-from app.modules.techcards.project_cards import ProjectTechcard, TechcardValidationError
+from app.modules.techcards.project_cards import ProjectTechcard, TechcardValidationError, operation_key
 from app.modules.references.technology import TerminalRecord
 from app.workflows.techcard_build import enrich_terminal_norms
 
@@ -964,10 +964,10 @@ def test_shrinks_of_tubes_on_both_sides_get_their_own_words_and_distinct_etk_key
         {"type": "heatTut", "opKey": "heatJsB", "side": "B", "templateId": "heat-tyt-short-усадка", "tutCount": 1, **tube},
     ]
     built = build_etk({"assemblyName": "Кабель", "partQty": 10, "wires": [dict(wire)], "ops": ops}, CARDS)["operations"]
-    keys = [(item["code"], item["connector"], item["side"]) for item in built]
+    keys = [operation_key(item) for item in built]
     assert len(set(keys)) == len(keys)
     assert [item["connector"] for item in built[1:]] == [
-        "ТУТ 6/3мм поверх разъёма", "ТУТ 6/3мм на место разделки", "ТУТ 6/3мм поверх разъёма · 4",
+        "ТУТ 6/3мм поверх разъёма", "ТУТ 6/3мм на место разделки", "ТУТ 6/3мм поверх разъёма",
         "поверх разъёма А1", "на месте разделки А", "поверх разъёма В1", "на месте разделки В",
     ]
     assert built[-1]["side"] == "B"

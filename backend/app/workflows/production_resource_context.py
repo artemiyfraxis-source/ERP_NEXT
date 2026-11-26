@@ -157,7 +157,7 @@ class SqlAlchemyProductionResourceContext:
             card = built[index].get("card") if isinstance(built[index], dict) else None
             tooling = card.get("tooling") if isinstance(card, dict) else None
             if not isinstance(tooling, list):
-                raise ResourceConflict("Оборудование операции не определено; ручная работа не предполагается")
+                raise ResourceConflict("Оборудование операции не определено")
             models = set()
             for tool in tooling:
                 if not isinstance(tool, dict):

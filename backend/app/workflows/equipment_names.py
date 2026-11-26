@@ -20,8 +20,7 @@ from sqlalchemy.orm import Session
 from app.modules.references.domain import EQUIPMENT_TABS, ReferenceValidationError
 from app.modules.references.equipment import CODE_KEY, NAME_KEYS, base_value, display_name, field, name_of
 from app.modules.references.equipment_catalogs import CATALOG_TABLES, CATALOG_TYPES
-from app.modules.references.infrastructure import (EquipmentModelRow, EquipmentOperationLinkRow, EquipmentTemplateToolRow,
-                                                   SqlAlchemyTechOperationRepository)
+from app.modules.references.infrastructure import EquipmentModelRow, EquipmentOperationLinkRow, EquipmentTemplateToolRow
 from app.shared.clock import moscow_now
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
@@ -52,7 +51,8 @@ def proposed_name(record):
 
 
 def plan(session):
-    repository = SqlAlchemyTechOperationRepository(session)
+    from app.workflows.instrument_catalog import InstrumentReferenceRepository
+    repository = InstrumentReferenceRepository(session)
     models = {row.id: row for row in session.scalars(select(EquipmentModelRow))}
     operations, templates = {}, {}
     for link in session.scalars(select(EquipmentOperationLinkRow)):
@@ -67,7 +67,9 @@ def plan(session):
             continue
         result.append({"unit_id": str(record.id), "model_id": str(record.equipment_model_id),
             "catalog": record.tab.value, "catalog_label": CATALOG_TYPES[record.tab.value],
-            "role": models[record.equipment_model_id].role, "current": name_of(record.fields), "proposed": name,
+            "role": models[record.equipment_model_id].role if record.equipment_model_id in models else "",
+            "instrument_version": repository.instrument_catalog.version(record.id) if record.tab.value == "ob_measuring" else None,
+            "current": name_of(record.fields), "proposed": name,
             "current_display": record.display_text, "proposed_display": display,
             "fingerprint": fingerprint(record), "evidence": "Stored passport fields only; no new specifications",
             "confidence": "normalization_only", "operation_ids": sorted(set(operations.get(record.equipment_model_id, []))),
@@ -76,7 +78,9 @@ def plan(session):
 
 
 def apply_reviewed(session, entries):
-    repository = SqlAlchemyTechOperationRepository(session)
+    from app.workflows.instrument_catalog import InstrumentReferenceRepository
+    from app.modules.production.quality import UpdateInstrumentCommand
+    repository = InstrumentReferenceRepository(session)
     accepted, seen = [], set()
     for entry in entries:
         if entry.get("approved") is not True:
@@ -97,6 +101,15 @@ def apply_reviewed(session, entries):
         accepted.append((record, name, entry))
     audit = SqlAlchemyAuditRepository(session)
     for record, name, entry in accepted:
+        if record.tab.value == "ob_measuring":
+            version = entry.get("instrument_version")
+            if not isinstance(version, int) or version < 1:
+                raise ReferenceValidationError("Для правки СИ нужен новый список с версией единого реестра")
+            catalog = repository.instrument_catalog
+            item = catalog.resolve(record.id)
+            catalog.catalog.update(UpdateInstrumentCommand(item.id, version, {"name": name}, ACTOR,
+                                                           moscow_now(), "references", catalog.legacy_id(item.id)))
+            continue
         fields = dict(record.fields)
         for key in NAME_KEYS:
             if key in fields:

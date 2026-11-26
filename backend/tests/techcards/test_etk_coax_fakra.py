@@ -30,7 +30,7 @@ def test_new_fakra_route_independent_preparations_and_label_inputs(fixture):
     ops = doc["operations"]
     # Cutting the cable, printing labels and cutting tubes are separate ПФ without inputs (owner 20.11).
     assert [block["name"] for block in doc["route"]["blocks"]][:-1] == [
-        "Нарезанный и разделанный кабель", "Этикетки", "Нарезанные трубки", "Кабель с метками и деталями",
+        "Нарезанный и разделанный кабель", "Этикетки", "Нарезанные трубки", "Кабель с трубками и деталями",
         "Сторона А собрана", "Сторона В собрана"]
     assert len(doc["route"]["blocks"]) == 7
     assert [block["ops"] for block in doc["route"]["blocks"][:3]] == [[1], [2], [3]]
@@ -45,9 +45,10 @@ def test_new_fakra_route_independent_preparations_and_label_inputs(fixture):
     assert _inputs(ops[2]) == {"ТУТ 4/2мм, прозрачная": ("1,875", "М.")}
     assert ops[3]["semis"][1]["name"] == ops[2]["result"][0]["name"]
     assert ops[3]["semis"][1]["norm"] == "45"
-    assert ops[6]["semis"][1]["name"] == ops[1]["result"][0]["name"]
-    assert ops[6]["semis"][1]["norm"] == "45"
-    texts = " ".join(step["text"] for step in ops[6]["card"]["steps"])
+    label = next(op for raw, op in zip(doc["build_config"]["ops"], ops) if raw.get("opKey") == "coaxInsLabel")
+    assert label["semis"][1]["name"] == ops[1]["result"][0]["name"]
+    assert label["semis"][1]["norm"] == "45"
+    texts = " ".join(step["text"] for step in label["card"]["steps"])
     for mark in config["coax"]["marks"]:
         assert mark["text"] in texts
     assert "100 мм" in texts
@@ -86,6 +87,72 @@ def test_label_tape_is_a_printer_consumable_while_output_counts_labels():
     assert any("лента из состава не расходуется" in text for text in doc["warnings"])
     assert output["result"][0]["norm"] == "45"
     assert build_etk(config, _fresh_cards(config))["operations"] == doc["operations"]
+
+
+@pytest.mark.parametrize("cables,assembly_mark", [(1, False), (4, False), (4, True)])
+def test_all_printed_label_texts_have_output_rows_with_actual_quantities(cables, assembly_mark):
+    config = deepcopy(FRESH[0]["config"])
+    config["coax"]["cables"] = cables
+    printed = next(op for op in config["ops"] if op["opKey"] == "coaxPrintLabel")
+    if assembly_mark:
+        printed["marks"][0]["scope"] = "assembly"
+    output = next(op for op in build_etk(config, _fresh_cards(config))["operations"] if op["code"] == "PRINT_MARK_LABEL")
+    assert [mark["text"] for mark in output["fields"]["marks"]] == [mark["text"] for mark in printed["marks"]]
+    expected = [1 if assembly_mark else cables, cables, cables]
+    assert [mark["qty"] for mark in output["fields"]["marks"]] == [str(qty) for qty in expected]
+    assert [mark["batch"] for mark in output["fields"]["marks"]] == [str(qty * 15) for qty in expected]
+
+
+def test_serial_tube_marks_remain_available_at_printing_without_duplicate_install_rows():
+    marks = [{"text": "RTK-{№:3}", "place": "A"}, {"text": "Camera", "place": "B"}]
+    config = {"mode": "coax", "partQty": 15, "coax": {
+        "cableArt": "RTK 031", "cableLength": 1000, "markMaterial": "tube", "marks": marks,
+        "tutArt": "ТУТ 4/2", "tutLength": 20,
+    }, "ops": [
+        {"type": "coaxCutTut", "opKey": "coaxCutTut", "templateId": "PRINT_MARK_TUBE",
+         "markMaterial": "tube", "marks": marks, "units": 2, "tOp": "2"},
+        {"type": "coaxInsTut", "opKey": "coaxInsTut", "templateId": "INS_TUT",
+         "markMaterial": "tube", "marks": marks, "units": 2, "tOp": "2"},
+    ]}
+    printed, installed = build_etk(config, _fresh_cards(config))["operations"]
+    assert [row["text"] for row in printed["fields"]["marks"]] == ["RTK-{№:3}", "Camera"]
+    assert all(row["material"] == "Термотрубка" and row["qty"] == "1" and row["batch"] == "15"
+               for row in printed["fields"]["marks"])
+    assert "marks" not in installed["fields"]
+
+
+@pytest.mark.parametrize("seconds,expected", [(None, ""), ("", ""), (0, "0"), ("0", "0"), ("4", "3")])
+def test_label_print_time_distinguishes_missing_norm_from_explicit_zero(seconds, expected):
+    config = deepcopy(FRESH[0]["config"])
+    printed = next(op for op in config["ops"] if op["opKey"] == "coaxPrintLabel")
+    printed["tOp"] = seconds
+    doc = build_etk(config, _fresh_cards(config))
+    output = next(op for op in doc["operations"] if op["code"] == "PRINT_MARK_LABEL")
+    assert output["time"][0]["norm"] == expected
+    assert output["times"]["operation_seconds"] == ("" if seconds is None else str(seconds))
+    assert any("PRINT_MARK_LABEL" in text and "норма времени не задана" in text for text in doc["warnings"]) == (expected == "")
+
+
+def test_three_label_shrinks_hand_over_the_cable_batch_not_three_actions():
+    config = deepcopy(FRESH[0]["config"])
+    doc = build_etk(config, _fresh_cards(config))
+    heat = next(op for op in doc["operations"] if op["type"] == "coaxHeat")
+    assert heat["result"][0]["name"].startswith("Кабель RTK 031")
+    assert "ТУТ усажены" in heat["result"][0]["name"]
+    assert heat["result"][0]["norm"] == "15"
+    assert "×3" not in heat["result"][0]["name"]
+
+
+def test_saved_coax_scheme_names_inner_heat_result_as_product_not_operation_count():
+    config = {"mode": "coax", "partQty": 15, "assemblyName": "Кабельная сборка",
+              "coax": {"cableArt": "RTK 031", "cableLength": 4855}, "ops": [
+                  {"type": "coaxHeat", "opKey": "coaxHeat", "label": "3 усадки", "units": 3,
+                   "templateId": CARD["HEAT_TYT_short"].source_id},
+                  {"type": "coaxCapScrew", "opKey": "coaxCapScrew", "units": 1,
+                   "templateId": CARD["INS_TUT"].source_id}],
+              "route": {"source": "generated", "blocks": [{"key": "final", "name": "Кабельная сборка", "ops": [1, 2], "final": True}], "edges": []}}
+    heat = build_etk(config, CARDS)["operations"][0]
+    assert heat["result"] == [{"name": "Кабель RTK 031 4855 мм; ТУТ усажены", "norm": "15", "unit": "Шт."}]
 
 
 @pytest.mark.parametrize("cables", [1, 4])

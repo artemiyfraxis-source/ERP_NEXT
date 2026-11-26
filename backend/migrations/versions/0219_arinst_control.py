@@ -10,7 +10,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "0219_arinst_control"
-down_revision = "0216_equipment_screen_group"
+down_revision = "0217_unify_instrument_catalog"
 branch_labels = None
 depends_on = None
 DESTRUCTIVE = False

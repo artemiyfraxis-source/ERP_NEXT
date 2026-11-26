@@ -18,7 +18,7 @@ from app.modules.production.machine_writes import MachineWriteRow
 from app.shared.clock import MOSCOW
 from app.shared.persistence import AuditEventRow
 from tests.identity.test_api_tokens import _csrf, tokens_api  # noqa: F401
-from tests.workflows.test_machine_writes_api import (AGENT, CARD, NEXT, _claimed_writes, _job, _result,
+from tests.workflows.test_machine_writes_api import (AGENT_NEW as AGENT, CARD, NEXT, _claimed_writes, _confirmed_body, _job, _result,
                                                      _text_at)
 from tests.workflows.test_machines_api import WORDS, _bridge, _report, machines_api  # noqa: F401
 
@@ -27,6 +27,7 @@ START = 0x10001  # D649 = 1, D650 = 1 in WORDS
 
 
 def _post(client, path, body):
+    body = _confirmed_body(client, path, body)
     return client.post(path, json=body, headers=_csrf(client))
 
 
@@ -63,10 +64,14 @@ class Machine:
         assert claimed["id"] == command_id
         readback = {str(block["addr"] + index): word for block in claimed["blocks"]
                     for index, word in enumerate(block["values"])}
+        for bit in claimed.get("bits", []):
+            address, mask = str(bit["addr"]), 1 << bit["bit"]
+            previous = self.held.get(address, self.last.get(address, 0))
+            readback[address] = previous | mask if bit["value"] else previous & ~mask
         self.held.update(readback)
         if fresh:
             self.report()
-        assert _result(self.bridge, command_id, readback).json()["status"] == "done"
+        assert _result(self.bridge, command_id, readback, agent=AGENT).json()["status"] == "done"
         self.clock.now += timedelta(seconds=1)
         return readback
 
@@ -131,7 +136,7 @@ def test_a_reset_counter_or_a_failed_write_never_gives_a_machine_count(machines_
     assert admin.get(f"/api/production/machines/runs/cutting/{group_id}").json()["runs"][0]["count"] is None
 
 
-def test_the_same_job_written_again_keeps_its_start_another_job_closes_the_first(machines_api):
+def test_the_same_job_keeps_its_start_and_another_length_requires_closing_it_first(machines_api):
     sessions, clock, admin, ob019, _ = machines_api
     machine = Machine(admin, clock)
     group_id = _job(sessions)
@@ -147,10 +152,13 @@ def test_the_same_job_written_again_keeps_its_start_another_job_closes_the_first
     machine.written(again.json()["id"])
     run = admin.get(RUN).json()["run"]
     assert (run["counter_start"], run["done"], run["quantity"]) == (START, 2, 12)
-    other = _post(admin, RUN, {**body, "length_mm": "150"}).json()["id"]
+    blocked = _post(admin, RUN, {**body, "length_mm": "150"})
+    assert blocked.status_code == 409 and "сначала завершите или прервите его" in blocked.json()["detail"]
+    assert _post(admin, RUN + "/close", {"run_id": run["id"]}).status_code == 200
     with sessions() as session:
         old = runs.info(session.get(MachineWriteRow, UUID(run["id"])))
-    assert (old["closed_why"], old["machine_count"]) == ("Передано другое задание", 2)
+    assert old["machine_count"] == 2 and old["closed_at"]
+    other = _post(admin, RUN, {**body, "length_mm": "150"}).json()["id"]
     assert admin.get(RUN).json()["run"]["id"] == other
 
 
@@ -282,10 +290,10 @@ def test_a_manual_job_closed_in_its_own_window_closes_its_run_and_the_write_stay
     job = _post(admin, "/api/production/manual-jobs", {"equipment_id": str(ob019), "purpose": "Проба",
                                                        "quantity_planned": 4}).json()
     sent = _post(admin, RUN, {"kind": "manual", "job_id": job["id"]}).json()["id"]
-    # Cancelled in «Ручная работа» while the runner is still writing: the run closes in the same transaction…
+    # Cancelled in «Работа» while the runner is still writing: the run closes in the same transaction…
     cancelled = _post(admin, f"/api/production/manual-jobs/{job['id']}/cancel", {"version": 1, "reason": "не тот провод"})
     assert cancelled.status_code == 200, cancelled.text
-    assert admin.get(RUN).json()["run"]["closed_why"] == "Ручная работа отменена"
+    assert admin.get(RUN).json()["run"]["closed_why"] == "Работа отменена"
     # …and the runner's true answer is still recorded as written and checked.
     machine.written(sent)
     with sessions() as session:
@@ -301,7 +309,7 @@ def test_a_manual_job_closed_in_its_own_window_closes_its_run_and_the_write_stay
                  {"version": version, "good": 4, "material": "pending"})
     assert done.status_code == 200, done.text
     run = admin.get(RUN).json()["run"]
-    assert (run["stage"], run["closed_why"], run["machine_count"]) == ("closed", "Ручная работа завершена", 4)
+    assert (run["stage"], run["closed_why"], run["machine_count"]) == ("closed", "Работа завершена", 4)
 
 
 def test_the_hand_in_sums_every_run_of_a_length_not_handed_in_yet(machines_api):

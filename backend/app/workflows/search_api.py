@@ -23,6 +23,7 @@ from app.modules.identity.infrastructure import IdentityUserRow
 from app.modules.procurement.infrastructure import ProcurementLineRow
 from app.modules.production.infrastructure import ProductionTaskRow
 from app.modules.references.infrastructure import _record_union
+from app.modules.references.domain import TechOperationTab
 from app.modules.references.infrastructure import CoaxCableRow, EquipmentModelRow, HookupWireRow, ReferenceEntryRow, TechOperationRecordRow, EquipmentRecordRow, WireGaugeRow
 from app.modules.shipping.infrastructure import FinishedGoodRow, ShipmentLineRow, ShipmentRow
 from app.modules.techcards.infrastructure import OperationCardTemplateRow, ProjectTechcardRow
@@ -296,7 +297,7 @@ def _db_place(tab: str, fields: dict) -> tuple[str, str, str] | None:
 
 def _database(session: Session, words: list[str], patterns: list[str], keys: set[str]) -> list[dict]:
     row = _record_union().c
-    stored = [tab for tab in _DB_STORED_TABS if tab != "op" or "erptctpl" in keys]
+    stored = [tab for tab in _DB_STORED_TABS if tab != "ob_measuring" and (tab != "op" or "erptctpl" in keys)]
     if "erpref" not in keys:
         stored = [tab for tab in stored if tab == "op"]
     found: list[dict] = []
@@ -312,6 +313,12 @@ def _database(session: Session, words: list[str], patterns: list[str], keys: set
         found.append(_result(G_DB, text[:140], f"База данных → {place[1]}", "references", tab=place[0], q=text[:80]))
         if len(found) >= PER_GROUP:
             break
+    if "erpref" in keys and len(found) < PER_GROUP:
+        from app.workflows.instrument_catalog import InstrumentReferenceRepository
+        for item in InstrumentReferenceRepository(session).list(
+                tab=TechOperationTab.MEASURING, query=" ".join(words), limit=PER_GROUP - len(found)):
+            found.append(_result(G_DB, item.display_text[:140], "База данных → Средства измерений", "references",
+                                 tab="ob_measuring", instrument=str(item.id)))
     return found
 
 
@@ -363,7 +370,8 @@ def _equipment(session: Session, words: list[str]) -> list[dict]:
     model, unit = EquipmentModelRow, EquipmentRecordRow
     columns = [unit.id, unit.tab, unit.display_text, model.name, model.article, model.maker]
     statement = (select(*columns).join(model, unit.equipment_model_id == model.id)
-                 .where(_contains([unit.display_text, unit.normalized_search, model.name, model.article, model.maker], words, session))
+                 .where(unit.tab != "ob_measuring",
+                        _contains([unit.display_text, unit.normalized_search, model.name, model.article, model.maker], words, session))
                  .order_by(model.name, unit.sort_key, unit.id).limit(PER_GROUP))
     return [_result(G_EQUIPMENT, _dot(name, article, text), _dot(f"База данных → {_PLAIN_TABS[tab][1]}", maker),
                     "references", tab=tab, equipment=str(unit_id))

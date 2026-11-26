@@ -120,10 +120,13 @@ def workload(
             (site_of.get(operator_id, "") for task in own if not task.handed_to for operation in task.operations
              for operator_id in {*operation.operator_ids, *(share.operator_id for share in operation.shares)}),
         )
-        kb = KbLoad(project, card.index, card.name, card.quantity, done, site, unit_hours(card.route.steps), note)
+        unknown = sum(step.unknown_operations for step in card.route.steps)
+        if unknown:
+            note = "; ".join(filter(None, (note, f"Норма времени не задана: {unknown} оп.")))
+        kb = KbLoad(project, card.index, card.name, card.quantity, done, site, unit_hours(card.route.steps), note, unknown)
         if card.quantity is None:
             no_run.append(f"{project} {card.index}")
-        elif kb.hours <= 0:
+        elif kb.hours <= 0 and not (unknown and kb.remaining > 0):
             continue
         grouped.setdefault(project, []).append(kb)
         customers.setdefault(project, card.customer or (good.customer if good else ""))
@@ -150,6 +153,7 @@ def workload(
     rows = []
     for item in projects:
         result = plan.forecasts.get(item.project)
+        unknown = sum(kb.unknown_operations for kb in item.kbs)
         by_kind: dict[str, Decimal] = {}
         for kb in item.kbs:
             for kind, hours in kb.by_kind.items():
@@ -157,17 +161,19 @@ def workload(
         rows.append({
             "project": item.project, "customer": item.customer, "deadline": _iso(item.deadline),
             "hours": _hours(item.hours),
+            **({"unknown_operations": unknown} if unknown else {}),
             "by_site": {site: _hours(hours) for site, hours in item.by_site.items()},
             "by_kind": kinds_of(by_kind),
-            "ready": _iso(result.ready) if result else None,
-            "status": result.status if result else "нет часов",
-            "slack_days": result.slack_days if result else None,
+            "ready": _iso(result.ready) if result and not unknown else None,
+            "status": "неполные нормы" if unknown else result.status if result else "нет часов",
+            "slack_days": result.slack_days if result and not unknown else None,
             "order": order.get(item.project, len(order)),
             "kbs": [{
                 "index": kb.index, "name": kb.name, "run": kb.run,
                 "done": float(kb.done.quantity), "done_source": kb.done.source,
                 "remaining": float(kb.remaining), "hours": _hours(kb.hours),
                 "unit_hours": round(float(sum(kb.per_unit.values(), ZERO)), 3),
+                **({"unknown_operations": kb.unknown_operations} if kb.unknown_operations else {}),
                 "site": kb.site, "site_note": kb.site_note, "by_kind": kinds_of(kb.by_kind),
             } for kb in sorted(item.kbs, key=lambda kb: kb.index)],
         })

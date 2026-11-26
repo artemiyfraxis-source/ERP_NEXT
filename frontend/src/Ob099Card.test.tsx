@@ -42,7 +42,7 @@ function card(overrides: Partial<Ob099MachineCard> = {}): Ob099MachineCard {
   };
 }
 
-afterEach(() => { vi.restoreAllMocks(); });
+afterEach(() => { vi.restoreAllMocks(); window.history.replaceState({}, "", "/"); });
 
 it("shows the press state, job, crimp height, blade wear and the day's crimps with NG reasons and alarms", () => {
   render(<Ob099CardView card={card()} />);
@@ -81,4 +81,13 @@ it("opens the press card from «Оборудование»", async () => {
   fireEvent.click(within(await screen.findByRole("region", { name: "Опрессовка" })).getByText("ОБ.099.1"));
   const dialog = await screen.findByRole("dialog", { name: /ОБ\.099\.1/ });
   expect(await within(dialog).findByText("2,500 мм ± 0,050")).toBeTruthy();
+});
+
+it("incoming instruction context remains monitoring only, even for a load URL", () => {
+  render(<Ob099CardView card={card()} incoming={{ taskId: "t1", operationId: "o1", loadRequested: true, action: {
+    etk_position: 3, equipment_id: "u99", inventory_number: "ОБ.099.1", display_name: "Опрессовка", model: null, card_kind: "ob099",
+    connectivity: { state: "ok", fresh: true, last_seen: null }, open_permitted: true, load_permitted: false, can_open: true, can_load: false,
+    source: null, blocker: "Загрузка задания на пресс не поддерживается" } }} />);
+  expect(screen.getByText(/Операция ЭТК 3 · из задания/)).toBeVisible();
+  expect(screen.queryByRole("button", { name: /Загрузить|Пуск/ })).not.toBeInTheDocument();
 });

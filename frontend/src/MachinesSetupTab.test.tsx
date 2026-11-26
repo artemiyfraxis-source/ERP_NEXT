@@ -20,6 +20,7 @@ const TASKS = [task("t-new", "m1", "New"), task("t-work", "m2", "InProgress"), t
 const page = <T,>(items: T[]) => ({ items, limit: 100, offset: 0 });
 
 beforeEach(() => {
+  window.history.replaceState({}, "", "/");
   vi.resetAllMocks();
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response(JSON.stringify({ now: "", rows: [], families: [] }),
     { status: 200, headers: { "Content-Type": "application/json" } }));
@@ -43,7 +44,7 @@ it("hosts the setup task list with every step of the old «Наладка» scre
   render(<MachinesPage setupViewer canWrite />);
   const tab = await screen.findByRole("tab", { name: "Запросы на наладку" });
   expect(screen.getAllByRole("tab").map((item) => item.textContent?.replace(/\d+$/, ""))).toEqual(
-    ["Запросы на наладку", "Всё оборудование"]);
+    ["Запросы на наладку", "Всё оборудование", "Журнал работ"]);
   fireEvent.click(tab);
   expect(tab.getAttribute("aria-selected")).toBe("true");
   expect(await screen.findByRole("button", { name: "Назначить наладку" })).toBeTruthy();

@@ -285,7 +285,10 @@ function cutStage(op: RouteOp): GenStage | null {
 export function opStages(ops: readonly RouteOp[]): Map<number, GenStage> {
   const sorted = [...ops].sort((a, b) => a.position - b.position);
   if (ops.some((op) => op.key === "coaxFakraCutStrip")) {
+    const coveredLabels = ops.some((op) => op.key === "coaxProtectIns");
+    const lastSide = Math.max(0, ...ops.filter((op) => op.side).map((op) => op.position));
     return new Map(ops.map((op): [number, GenStage] => [op.position, WIRE_CUTS.has(op.type) || TUBE_CUTS.has(op.type) ? cutStage(op)!
+      : coveredLabels && op.key === "coaxInsLabel" && op.position > lastSide ? "final"
       : op.type === "coaxInsSleeve" || op.type === "coaxInsTut" ? "marked" : op.side || "final"]));
   }
   const assembly = (op: RouteOp) => !!op.side && !cutStage(op) && !wireEndPrep(op) && !CONTACT_SOLDERS.has(op.type);
@@ -334,7 +337,8 @@ function genTitle(stage: GenStage, final: boolean, ops: RouteOp[], printed = fal
     const tubes = ops.filter((op) => op.code.toUpperCase().startsWith("PRINT_MARK_TUBE")).length;
     return tubes === ops.length ? "Маркировочные трубки" : tubes ? "Этикетки и маркировочные трубки" : "Этикетки";
   }
-  if (stage === "marked") return "Кабель с метками и деталями";
+  if (stage === "marked") return ops.some((op) => op.key === "coaxInsLabel" || op.key === "coaxInsTut")
+    ? "Кабель с метками и деталями" : ops.some((op) => op.key === "coaxProtectIns") ? "Кабель с трубками и деталями" : "Кабель с деталями";
   if (stage === "wires") {
     if (ops.length && ops.every((op) => op.type === "coaxCut" || isCableStrip(op))) {
       const stripped = ops.some((op) => isCableStrip(op) || COAX_CUT_STRIP.test(op.code.toUpperCase()));

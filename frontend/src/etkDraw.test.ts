@@ -26,6 +26,66 @@ it.each(["HFM", "Amphenol"])("keeps %s drawing bases explicit instead of reinter
   expect(html).not.toContain("Размеров разделки нет");
 });
 
+describe("printed tape labels", () => {
+  const marks = [
+    { text: "120907/AA, дата, № монтажника", qty: "1" },
+    { text: "Camera 14 → Splitter B C6", qty: "4" },
+    { text: "<Этикетка & надпись>", qty: "2" },
+    { text: "Последняя этикетка", qty: "3" },
+  ];
+
+  it("draws every printed label separately, retaining its full text and count, without a cable", () => {
+    const drawing = etkFigure({ type: "coaxCutTut", code: "PRINT_MARK_LABEL", fields: { marks } });
+    const document = new DOMParser().parseFromString(drawing, "image/svg+xml");
+    expect(document.querySelector("parsererror")).toBeNull();
+    const labels = [...document.querySelectorAll("[data-mark-label]")];
+    expect(labels).toHaveLength(4);
+    expect(labels.map((label) => label.getAttribute("aria-label"))).toEqual(marks.map((mark) => mark.text));
+    expect(labels.map((label) => [...label.querySelectorAll("text")].at(-1)!.textContent)).toEqual(["×1", "×4", "×2", "×3"]);
+    expect(document.querySelectorAll("rect")).toHaveLength(4);
+    expect(drawing).not.toContain("#6b7c86");
+    const firstRow = labels.slice(0, 3).map((label) => label.querySelector("rect")!);
+    expect(new Set(firstRow.map((rect) => rect.getAttribute("y"))).size).toBe(1);
+    expect(Number(firstRow[0].getAttribute("x")) + Number(firstRow[0].getAttribute("width"))).toBeLessThan(Number(firstRow[1].getAttribute("x")));
+    expect(Number(labels[3].querySelector("rect")!.getAttribute("y"))).toBeGreaterThan(Number(firstRow[0].getAttribute("y")) + Number(firstRow[0].getAttribute("height")));
+  });
+
+  it("supports saved coaxMarks and generator operation keys; installation is not a print sketch", () => {
+    expect(etkFigure({ type: "coaxCutTut", opKey: "coaxPrintLabel", fields: { coaxMarks: [{ text: "КБ1" }] } })).toContain(">×1<");
+    expect(etkFigure({ type: "cutTut", tmplHint: "PRINT_MARK_LABEL", marks: [{ text: "КБ1", qty: 2 }] })).toContain(">×2<");
+    expect(etkFigure({ type: "coaxInsTut", code: "INS_MARK_LABEL", fields: { coaxMarks: marks } })).not.toContain("data-mark-label");
+    expect(etkFigure({ type: "coaxCutTut", code: "PRINT_MARK_LABEL" })).toContain("Надписи этикеток не заданы");
+  });
+
+  it("draws the real wire-label builder output when PRINT_MARK_LABEL replaces unavailable TP80E", () => {
+    // From test_etk_wire_marks.wire_mark_config(), built with PRINT_MARK_LABEL: no fields.marks are emitted.
+    const texts = ["XS1.1 to X2.2", "X2.2 to XS1.1", "XS1.2 to С1", "С1 to XS1.2"];
+    const operation = { type: "cutTut", code: "PRINT_MARK_LABEL", fields: { markMedia: { kind: "tape", sizeMm: 9 } },
+      result: texts.map((text) => ({ name: `${text} — 15 мм`, norm: "500", unit: "Шт." })) };
+    const drawing = etkFigure(operation), document = new DOMParser().parseFromString(drawing, "image/svg+xml");
+    const labels = [...document.querySelectorAll("[data-mark-label]")];
+    expect(labels.map((label) => label.getAttribute("aria-label"))).toEqual(texts);
+    expect(labels.map((label) => [...label.querySelectorAll("text")].at(-1)!.textContent)).toEqual(texts.map(() => "×500"));
+    expect(document.querySelectorAll("rect")).toHaveLength(texts.length);
+    expect(drawing).not.toMatch(/Надписи этикеток не заданы|#6b7c86|15 мм/);
+  });
+
+  it("preserves length-free result text and reads structured marking pieces when results are absent", () => {
+    const output = etkFigure({ type: "cutTut", code: "PRINT_MARK_LABEL", result: [
+      { name: "XS1.1 to X2.2 длинная надпись", norm: "25" },
+    ] });
+    expect(output).toContain('aria-label="XS1.1 to X2.2 длинная надпись"');
+    expect(output).toContain(">×25<");
+    const pieces = etkFigure({ type: "cutTut", code: "PRINT_MARK_LABEL", fields: { tutParts: [
+      { art: "Маркировка «A6» 4/2мм", count: 3, len: "15" }, { name: "Маркировка «I3» 4/2мм", count: 4, len: "15" },
+    ] } });
+    expect(pieces).toContain('aria-label="A6"');
+    expect(pieces).toContain('aria-label="I3"');
+    expect(pieces).toContain(">×3<");
+    expect(pieces).toContain(">×4<");
+  });
+});
+
 describe("etkParams (шапка: Сторона А | Общие | Сторона В)", () => {
   const find = (items: ReadonlyArray<readonly [string, string, ...unknown[]]>) => Object.fromEntries(items.map(([label, value]) => [label, value]));
 

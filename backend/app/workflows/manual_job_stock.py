@@ -1,4 +1,4 @@
-"""«Ручная работа»: the material of a finished job (plan «Станки вне проекта», slice S3, 20.11.2026).
+"""«Работа»: the material of a finished job (plan «Станки вне проекта», slice S3, 20.11.2026).
 
 A job never writes stock off by itself. A finished job whose material «Ждёт решения склада» is decided here, once:
 - `GET  /api/production/manual-jobs/{id}/material?q=` → the job, what it used (pieces = good + defect, the length), the
@@ -191,7 +191,7 @@ def material_view(session: Session, row: jobs.ManualJobRow, principal: Principal
 def _job(session: Session, job_id: UUID) -> jobs.ManualJobRow:
     row = session.get(jobs.ManualJobRow, job_id)
     if row is None:
-        raise KeyError("Ручная работа не найдена")
+        raise KeyError("Работа не найдена")
     return row
 
 
@@ -212,7 +212,7 @@ def issue_lots(sessions, job_id: UUID, payload: IssuePayload, principal: Princip
         number = jobs.number_text(row.number)
         machine = session.get(EquipmentMachineRow, row.equipment_id)
         inventory = _inventory(machine) if machine else ""
-        reason = (f"Ручная работа {number}" + (f", {inventory}" if inventory else "") + f": {row.purpose}")[:500]
+        reason = (f"Работа {number}" + (f", {inventory}" if inventory else "") + f": {row.purpose}")[:500]
         written: dict[UUID, str] = {}
         for line in lines:
             lot = uow.warehouse.get(line.lot_id)
@@ -224,7 +224,7 @@ def issue_lots(sessions, job_id: UUID, payload: IssuePayload, principal: Princip
                 raise jobs.ManualJobInvalid(f"Партия {_label(lot)}: доступно {_shown_qty(lot.available, lot.unit)}, "
                                             f"а списываете {_shown_qty(line.quantity, lot.unit)}")
             command = WriteOffCommand(lot_id=lot.id, expected_version=line.lot_version, quantity=line.quantity,
-                                      purpose=f"Ручная работа {number}", reason=reason, actor=principal.actor, now=now,
+                                      purpose=f"Работа {number}", reason=reason, actor=principal.actor, now=now,
                                       source_key=source_key(row.id, lot.id))
             write_off(command, uow)
             session.add(jobs.ManualJobIssueRow(id=uuid4(), job_id=row.id, lot_id=lot.id, quantity=line.quantity,
@@ -266,7 +266,7 @@ def material(job_id: UUID, principal: JournalReader, factory: Factory,
     with factory() as uow:
         row = uow.session.get(jobs.ManualJobRow, job_id)
         if row is None:
-            raise HTTPException(404, "Ручная работа не найдена")
+            raise HTTPException(404, "Работа не найдена")
         return material_view(uow.session, row, principal, q)
 
 

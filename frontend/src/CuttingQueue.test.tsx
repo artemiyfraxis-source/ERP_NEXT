@@ -183,7 +183,8 @@ it("hides nothing when «Все станки» or the whole load fails", async (
   failLoad = true;
   fireEvent.click(screen.getByRole("button", { name: "Обновить" }));
   expect(await screen.findByRole("alert")).toHaveTextContent("Нет связи");
-  expect(listed).toHaveBeenLastCalledWith(new Set());
+  // onRows is called from a passive effect, which may flush just after the alert appears: wait for it.
+  await waitFor(() => expect(listed).toHaveBeenLastCalledWith(new Set()));
 });
 
 it("lists «Все станки» first and asks for machine_id=all", async () => {
