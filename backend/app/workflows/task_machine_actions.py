@@ -17,11 +17,11 @@ from app.modules.production.api import _etk_task_access, production_uow_factory,
 from app.modules.production.application import ConcurrentProductionUpdate
 from app.modules.production.autoplan_api import references_uow_factory
 from app.modules.production.cutting import CABLE_CUTS
-from app.modules.production.cutting_api import queue_rows as cutting_queue_view
+from app.modules.production.cutting_api import equipment_rows as cutting_rows
 from app.modules.production.domain import EtkOperation, ProductionStatus, ProductionValidationError
 from app.modules.production.launchable import route_from_document
 from app.modules.production.marking_sources import MAX_LABELS, check_materials, labels
-from app.modules.production.machine_queue_api import queue as machine_queue_view
+from app.modules.production.machine_queue_api import equipment_rows as machine_rows
 from app.modules.production.resource_assignment_infrastructure import (
     ResourceAllocationMachineRow, ResourceAllocationMemberRow, ResourceAllocationRow,
 )
@@ -184,7 +184,7 @@ def _ob019_problem(uow, link, unit, group, source, now):
 
 
 def _source(uow, task, operation, part, built, member, group, kind, link, unit, principal,
-            now, factory, techcards_factory, references_factory):
+            now, techcards_factory, references_factory):
     if task.status is not ProductionStatus.RUNNING:
         raise ValueError("Задание не запущено или уже закрыто")
     if kind == "ob019":
@@ -257,9 +257,10 @@ def _source(uow, task, operation, part, built, member, group, kind, link, unit, 
     if kind == "ob099":
         return None, "Этот станок поддерживает только наблюдение — загрузка задания не предусмотрена"
     cutting = str(built.get("type") or "") in CABLE_CUTS
-    queue = (cutting_queue_view(principal, factory, techcards_factory, references_factory, equipment_id=unit.id)
-             if cutting else machine_queue_view(unit.id, principal, factory, techcards_factory, references_factory))
-    row = next((row for row in queue["rows"] if row["task_id"] == str(task.id)
+    # On THIS uow: a second production UoW here would wait forever for the resource lock this one holds (prod 23.11).
+    rows = (cutting_rows(uow, principal, techcards_factory, references_factory, unit.id)
+            if cutting else machine_rows(uow, unit.id, principal, techcards_factory, references_factory))
+    row = next((row for row in rows if row["task_id"] == str(task.id)
                 and row["operation_id"] == str(operation.id)
                 and (cutting or row["etk_position"] == part.position)), None)
     if row is None:
@@ -309,7 +310,7 @@ def operation_machine_actions(task_id: UUID, operation_id: UUID,
             if not blocker:
                 try:
                     source, blocker = _source(uow, task, operation, part, built, member, group, kind, link, unit,
-                        principal, now, factory, techcards_factory, references_factory)
+                        principal, now, techcards_factory, references_factory)
                 except (KeyError, ValueError, ArithmeticError, PermissionError, ProductionValidationError,
                         ConcurrentProductionUpdate, machine_writes.MachineCommandRefused, machines.MachineWriteInvalid) as error:
                     blocker = str(error.args[0])

@@ -1,5 +1,6 @@
 """Transactional behavior only; SQLite does not prove PostgreSQL concurrent exclusion."""
 
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -137,3 +138,59 @@ def test_batch_internal_conflict_does_not_delete_existing_reservations(db):
         store.replace_plans(((first, (MACHINE,), WINDOW), (second, (MACHINE,), WINDOW)))
     assert store.generation() == generation
     assert len(list(db.scalars(select(ResourceReservationRow)))) == 1
+
+
+class _PostgresSession:
+    """Statements of `acquire` on PostgreSQL, without a server: the advisory lock times out or is granted."""
+
+    def __init__(self, sqlstate=None):
+        self.sqlstate, self.statements = sqlstate, []
+        self.no_autoflush = nullcontext()
+
+    def get_bind(self):
+        return type("Bind", (), {"dialect": type("Dialect", (), {"name": "postgresql"})()})()
+
+    def scalar(self, statement):
+        self.statements.append(str(statement))
+        return "0"
+
+    def execute(self, statement, params=None):
+        self.statements.append((str(statement), params))
+        if "pg_advisory_xact_lock" in str(statement) and self.sqlstate:
+            from sqlalchemy.exc import OperationalError
+            raise OperationalError(str(statement), params, type("Orig", (Exception,), {"sqlstate": self.sqlstate})())
+
+
+def test_lock_wait_is_limited_only_for_the_generation_lock_and_restored():
+    session = _PostgresSession()
+    SqlAlchemyResourceClaims(session).acquire()
+    set_wait, lock, restore = session.statements[1:]
+    assert set_wait[1] == {"wait": "5s"} and "pg_advisory_xact_lock" in lock[0] and restore[1] == {"value": "0"}
+
+
+def test_lock_timeout_is_a_retryable_busy_error_and_other_db_errors_pass():
+    from sqlalchemy.exc import OperationalError
+    from app.modules.production.resource_claims import ResourcesBusy
+
+    with pytest.raises(ResourcesBusy, match="Производство занято"):
+        SqlAlchemyResourceClaims(_PostgresSession("55P03")).acquire()
+    assert not issubclass(ResourcesBusy, ValueError)  # handlers map ValueError to 409/422; this must reach the 503
+    with pytest.raises(OperationalError):
+        SqlAlchemyResourceClaims(_PostgresSession("57014")).acquire()
+
+
+def test_busy_production_answers_503_with_retry_after():
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.modules.production.resource_claims import ResourcesBusy
+
+    def busy():
+        raise ResourcesBusy("Производство занято другим запросом — повторите через несколько секунд")
+
+    app.add_api_route("/api/test-only/production-busy", busy)
+    try:
+        response = TestClient(app).get("/api/test-only/production-busy")
+    finally:
+        app.router.routes.pop()
+    assert response.status_code == 503 and response.headers["retry-after"] == "5"
+    assert response.json() == {"detail": "Производство занято другим запросом — повторите через несколько секунд"}
