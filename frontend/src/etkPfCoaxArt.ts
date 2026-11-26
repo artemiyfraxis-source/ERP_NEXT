@@ -124,10 +124,18 @@ export function wrapSvgText(value: string, columns: number): string[] {
 }
 
 /** Компактный рисунок ПФ: холст 320, класс `etk-pf-compact` — карточка не ужимает его по высоте (EtkRouteDiagram.css). */
+/** Короткий детерминированный хеш: id узора уникален для каждого рисунка — несколько SVG на одной странице не делят id. */
+export function svgId(prefix: string, body: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < body.length; i += 1) hash = Math.imul(hash ^ body.charCodeAt(i), 16777619);
+  return `${prefix}-${(hash >>> 0).toString(36)}`;
+}
 function svg(height: number, body: string): string {
+  const braid = svgId("pfBraid", body);
   return `<svg class="etk-svg etk-pf-svg etk-pf-compact" viewBox="0 0 ${W} ${f(height)}" width="100%" preserveAspectRatio="xMinYMin meet" xmlns="http://www.w3.org/2000/svg">` +
-    `<defs><pattern id="pfBraid" width="7" height="7" patternUnits="userSpaceOnUse"><rect width="7" height="7" fill="#9aa1a6"/>` +
-    `<path d="M0,0 L7,7 M7,0 L0,7" stroke="#4b5257" stroke-width="1.1"/></pattern></defs>${body}</svg>`;
+    `<defs><pattern id="${braid}" width="7" height="7" patternUnits="userSpaceOnUse"><rect width="7" height="7" fill="#9aa1a6"/>` +
+    `<path d="M0,0 L7,7 M7,0 L0,7" stroke="#4b5257" stroke-width="1.1"/></pattern></defs>` +
+    `${body.replaceAll("url(#pfBraid)", `url(#${braid})`).replaceAll("url(#etkBraid)", `url(#${braid})`)}</svg>`;
 }
 
 /** Табличка под рисунком: метка (А, В, M1…) жирным и расшифровка с переносом; строка — 15 единиц, шрифт 11. */
@@ -145,9 +153,9 @@ function legendRows(entries: Array<[string, string]>, top: number): { body: stri
 
 // ── Семейство разъёма, пол и стадия ──
 
-export type CoaxFamily = "sma" | "sma-ra" | "fakra" | "fakra-ra" | "fakra-bh" | "hfm" | "n" | "tnc" | "mmcx" | "other";
+export type CoaxFamily = "sma" | "rp-sma" | "sma-ra" | "fakra" | "fakra-ra" | "fakra-bh" | "hfm" | "n" | "tnc" | "mmcx" | "angled" | "other";
 const FAMILY_TITLE: Record<CoaxFamily, string> = {
-  sma: "SMA", "sma-ra": "SMA угловой", fakra: "FAKRA прямой", "fakra-ra": "FAKRA угловой", "fakra-bh": "FAKRA проходной",
+  sma: "SMA", "rp-sma": "RP-SMA", "sma-ra": "SMA угловой", angled: "угловой", fakra: "FAKRA прямой", "fakra-ra": "FAKRA угловой", "fakra-bh": "FAKRA проходной",
   hfm: "HFM", n: "N", tnc: "TNC", mmcx: "MMCX", other: "разъём",
 };
 
@@ -157,18 +165,35 @@ export function coaxFamily(end: Row): CoaxFamily {
   const angled = /R\s*\/\s*A|угл/i.test(text);
   if (/HFM/i.test(text)) return "hfm";
   if (/FAKRA/i.test(text)) return angled ? "fakra-ra" : /bulkhead|проходн/i.test(text) ? "fakra-bh" : "fakra";
-  if (/MMCX/i.test(text)) return "mmcx";
-  if (/(^|[^A-Z])(RP-)?SMA(?![A-Z])/i.test(text)) return angled ? "sma-ra" : "sma";
+  if (/MMCX/i.test(text)) return angled ? "angled" : "mmcx";
+  if (/(^|[^A-Z])(RP-)?SMA(?![A-Z])/i.test(text)) return angled ? "sma-ra" : /RP-SMA/i.test(text) ? "rp-sma" : "sma";
+  // Угловые N, TNC, MMCX и прочие: проверенного вида нет — общий угловой вариант схемой, а не прямой разъём.
+  if (angled) return "angled";
   if (/TNC/i.test(text)) return "tnc";
   if (/(^|[\s(])N-(Male|Female)/i.test(kind) || /^N-/i.test(str(end.type))) return "n";
   return "other";
 }
-export const coaxFamilyTitle = (end: Row) => FAMILY_TITLE[coaxFamily(end)];
+export function coaxFamilyTitle(end: Row): string {
+  const family = coaxFamily(end);
+  if (family !== "angled") return FAMILY_TITLE[family];
+  const base = `${coaxEndNames(end).kind} ${str(end.type)}`.match(/RP-TNC|TNC|MMCX|MCX|BNC|N(?=-)/i)?.[0];
+  return base ? `${base.toUpperCase()} угловой` : "угловой разъём";
+}
 /** Есть ли у семейства проверенный боковой вид. Нет — рисуется схема с пометкой «без масштаба». */
-export const coaxGeometryKnown = (end: Row) => coaxFamily(end) === "sma";
+export const coaxGeometryKnown = (end: Row) => coaxFamily(end) === "sma" && contactKind(end) !== "unknown";
 
 /** Разъём конца: вилка (штыри) или розетка (гнёзда); типа нет — вилкой по умолчанию. */
 export const isFemale = (end: Row) => coaxEndNames(end).word === "розетка";
+/** Контакт конца: гнездо у розетки, штырь у вилки; пол не задан или обратная полярность (RP-) — нейтральный контакт без
+ *  острия и без отверстия: пол не угадывается. */
+export type ContactKind = "socket" | "pin" | "unknown";
+export function contactKind(end: Row): ContactKind {
+  const { kind, word } = coaxEndNames(end);
+  if (/(^|[^A-Z])RP-/i.test(`${kind} ${str(end.type)}`)) return "unknown";
+  return word === "розетка" ? "socket" : word === "вилка" ? "pin" : "unknown";
+}
+const CONTACT_NAME: Record<ContactKind, string> = { socket: "гнездо", pin: "штырь", unknown: "контакт" };
+export const contactName = (end: Row) => CONTACT_NAME[contactKind(end)];
 
 /** Что на конце уже есть. `shield`: гильза экрана не надета / надета (не обжата) / обжата / зажим / экран припаян.
  *  `tube`: трубка на конце (не прозрачная поверх этикеток) — нет / надвинута / усажена. */
@@ -181,6 +206,7 @@ export const EMPTY_STATE: CoaxEndState = { contact: false, insert: false, suppor
 
 const clampShield = (end: Row) => /прижим|зажим/i.test(str(end.shield));
 const crimpShield = (end: Row) => !clampShield(end) && !/внутри/i.test(str(end.pinType)) && coaxFamily(end) !== "sma-ra";
+const ANGLED: CoaxFamily[] = ["fakra-ra", "sma-ra", "angled"];
 
 /** Состояние конца после ОДНОЙ операции монтажа — по её виду и коду (стадии маршрутов 708К: контакт во вставке → гильза
  *  обжата → пластмассовый корпус → уплотнитель и крышка; угловой FAKRA: контакт → гильза → металлическая крышка → корпус). */
@@ -211,10 +237,14 @@ function barrelArt(x2: number, solder: boolean): string {
 
 /** Центральный контакт: гнездо у розетки (втулка с открытым отверстием со стороны лица, без острия), штырь у вилки
  *  (стержень с фаской). Хвостовик — чашка с припоем или гильза обжима на жиле. */
-export function contactPart(female: boolean, x1: number, x2: number, solder: boolean): Part {
-  const barrel = x2 - 20;
+export function contactPart(kind: ContactKind | boolean, x1: number, x2: number, solder: boolean): Part {
+  const barrel = x2 - 20, gender: ContactKind = kind === true ? "socket" : kind === false ? "pin" : kind;
   let art = barrelArt(x2, solder);
-  if (female) {
+  if (gender === "unknown") {
+    art += rect(x1 + 4, barrel, -3.4, 6.8, BRASS, EDGE, 1);
+    return part("contact", "контакт", [x1 + 24, 0], art, "unknown");
+  }
+  if (gender === "socket") {
     art += rect(x1, barrel, -4.5, 9, BRASS, EDGE) + `<rect data-part="socket-bore" x="${f(x1)}" y="-2" width="16" height="4" fill="${TUBE}"/>` +
       line(x1 + 16, 0, x1 + 26, 0, TUBE, .8);
     return part("contact", "гнездо", [x1 + 32, 0], art, "socket");
@@ -265,12 +295,12 @@ function tailParts(end: Row, state: CoaxEndState, jacketTo: number, from = 96): 
  *  у розетки); остальные семейства — схема из их деталей: пластмассовый корпус FAKRA/HFM, четыре канала HFM, угловой корпус,
  *  крышка, диск проходного FAKRA. Контакт — гнездо или штырь по полу конца. */
 export function connectorParts(end: Row, state: CoaxEndState, jacketTo = 190): Part[] {
-  const family = coaxFamily(end), female = isFemale(end), solder = /пайк/i.test(str(end.pinType));
+  const family = coaxFamily(end), gender = contactKind(end), female = gender === "socket", solder = /пайк/i.test(str(end.pinType));
   const parts: Part[] = [];
   const insulator = (x1: number, x2: number, r: number, anchorX = (x1 + x2) / 2) =>
     part("insulator", "изолятор", [anchorX, -(r + 4.5) / 2], rect(x1, x2, -r, r * 2, DIEL, EDGE));
   const tail = () => tailParts(end, state, jacketTo);
-  if (family === "fakra-ra" || family === "sma-ra") {
+  if (ANGLED.includes(family)) {
     // Угловой: ось стыковки вертикальна (лицо внизу), кабель входит справа; контакт — колено с гнездом/штырём вниз.
     if (state.housing) parts.push(part("housing", "пластмассовый корпус", [-4, 20], rect(-8, 54, -24, 80, PLASTIC, INK, 3)));
     let body = rect(0, 44, -14, 28, METAL, EDGE) + walls(44, 96, 5.5, 9) + rect(6, 11, 14, 40, METAL, EDGE) + rect(33, 38, 14, 40, METAL, EDGE);
@@ -278,10 +308,11 @@ export function connectorParts(end: Row, state: CoaxEndState, jacketTo = 190): P
     parts.push(part("body", family === "sma-ra" ? "угловой корпус" : "металлический корпус", [40, -10], body));
     parts.push(part("insulator", "изолятор", [30, 30], rect(11, 33, 14, 38, DIEL, EDGE) + rect(8, 44, -7, 14, DIEL, EDGE)));
     // Контакт-колено: на жиле — хвостовик, вниз к лицу — гнездо (отверстие внизу) или штырь с фаской.
-    const tip = female
+    const tip = gender === "socket"
       ? rect(17.5, 26.5, 8, 42, BRASS, EDGE) + `<rect data-part="socket-bore" x="20" y="34" width="4" height="16" fill="${TUBE}"/>`
-      : rect(20, 24, 8, 36, BRASS, EDGE) + `<polygon data-part="pin-tip" points="22,50 20,44 24,44" fill="${BRASS}" stroke="${EDGE}" stroke-width=".8"/>`;
-    parts.push(part("contact", female ? "гнездо" : "штырь", [22, 24], rect(18, 84, -3, 6, BRASS, EDGE) + tip + barrelArt(104, solder), female ? "socket" : "pin"));
+      : gender === "pin" ? rect(20, 24, 8, 36, BRASS, EDGE) + `<polygon data-part="pin-tip" points="22,50 20,44 24,44" fill="${BRASS}" stroke="${EDGE}" stroke-width=".8"/>`
+        : rect(19, 25, 8, 40, BRASS, EDGE, 1);
+    parts.push(part("contact", CONTACT_NAME[gender], [22, 24], rect(18, 84, -3, 6, BRASS, EDGE) + tip + barrelArt(104, solder), gender));
     if (state.cap) parts.push(part("cap", "крышка", [22, -16], rect(0, 44, -18, 4, METAL, INK, 1)));
     else parts.push(part("window", "окно", [22, -12.5], rect(14, 30, -14, 3, "#fff", EDGE)));
     return [...parts, ...tail()];
@@ -294,7 +325,7 @@ export function connectorParts(end: Row, state: CoaxEndState, jacketTo = 190): P
     }
     parts.push(part("body", "металлический корпус", [28, -7.8], walls(0, 56, 6.5, 9) + walls(56, 90, 6.5, 11) + knurl(56, 90, 6.5, 11) + walls(90, 112, 5, 7.5)));
     parts.push(insulator(2, 90, 6.5, 70));
-    parts.push(contactPart(female, 6, 104, solder));
+    parts.push(contactPart(gender, 6, 104, solder));
     return [...parts, ...tail()];
   }
   if (family === "fakra" || family === "fakra-bh") {
@@ -312,10 +343,10 @@ export function connectorParts(end: Row, state: CoaxEndState, jacketTo = 190): P
     parts.push(part("body", "металлический корпус", [30, -9.5], body));
     parts.push(insulator(2, family === "fakra-bh" ? 54 : 92, 8, 46));
     if (family === "fakra-bh") parts.push(part("disc", "диск", [58, -6], rect(54, 62, -8, 16, "#e9e2cf", INK)));
-    parts.push(contactPart(female, female ? 8 : 4, 104, solder));
+    parts.push(contactPart(gender, female ? 8 : 4, 104, solder));
     return [...parts, ...tail()];
   }
-  if (family === "sma") {
+  if (family === "sma" && gender !== "unknown") {
     if (female) {
       parts.push(part("body", "корпус с резьбой", [22, -9], walls(0, 44, 7, 11) + knurl(0, 44, 7, 11) +
         walls(44, 92, 10, 16) + line(60, -16, 60, -10) + line(76, -16, 76, -10) + line(60, 10, 60, 16) + line(76, 10, 76, 16) + walls(92, 112, 5.5, 8)));
@@ -330,14 +361,15 @@ export function connectorParts(end: Row, state: CoaxEndState, jacketTo = 190): P
     }
     return [...parts, ...tail()];
   }
-  // N, TNC, MMCX и прочие: схема — корпус (гайка с резьбой у N/TNC, защёлка MMCX), изолятор, контакт.
+  // N, TNC, RP-SMA, MMCX и прочие: схема — корпус (гайка с резьбой у N/TNC/RP-SMA и SMA без пола, защёлка MMCX), изолятор, контакт.
   let body = walls(60, 96, 8, 14) + walls(96, 112, 5.5, 8);
-  if (family === "n" || family === "tnc") body += walls(0, 60, 16, 22) + knurl(0, 60, 16, 22, 4) + walls(20, 60, 8, 16);
+  const threaded = family === "n" || family === "tnc" || family === "rp-sma" || family === "sma";
+  if (threaded) body += walls(0, 60, 16, 22) + knurl(0, 60, 16, 22, 4) + walls(20, 60, 8, 16);
   else if (family === "mmcx") body += walls(0, 60, 6, 9) + rect(0, 5, -11, 4, METAL, EDGE) + rect(0, 5, 7, 4, METAL, EDGE);
   else body += walls(0, 60, 8, 12);
-  parts.push(part("body", family === "n" || family === "tnc" ? "гайка с резьбой" : "корпус", family === "n" || family === "tnc" ? [30, -19] : [30, -7.5], body));
+  parts.push(part("body", threaded ? "гайка с резьбой" : "корпус", threaded ? [30, -19] : [30, -7.5], body));
   parts.push(insulator(family === "mmcx" ? 2 : 22, 92, family === "mmcx" ? 6 : 8, 76));
-  parts.push(contactPart(female, 6, 104, solder));
+  parts.push(contactPart(gender, 6, 104, solder));
   return [...parts, ...tail()];
 }
 
@@ -346,10 +378,10 @@ export const partsSvg = (parts: Part[]) => parts.map((item) => item.svg).join(""
 /** Вертикальный размах деталей разъёма: для подбора масштаба. */
 export function partsExtent(end: Row, state: CoaxEndState): [number, number] {
   const family = coaxFamily(end);
-  if (family === "fakra-ra" || family === "sma-ra") return [state.housing ? -24 : -18, state.housing ? 56 : 54];
+  if (ANGLED.includes(family)) return [state.housing ? -24 : -18, state.housing ? 56 : 54];
   if (family === "hfm") return [state.housing ? -36 : -14, state.housing ? 16 : 14];
   if (family === "fakra" && (state.housing || state.cap)) return [state.housing ? -32 : -17, state.housing ? 26 : 17];
-  if (family === "n" || family === "tnc") return [-22, 22];
+  if (family === "n" || family === "tnc" || family === "rp-sma" || (family === "sma" && contactKind(end) === "unknown")) return [-22, 22];
   return [-17, 17];
 }
 
@@ -366,16 +398,16 @@ export function stepsOf(end: Row, x0: number, span: number): { x1: number; x2: n
 /** Рисунок (без подписей) разделанного конца, сторона А — конец слева: оболочка до `jacketTo`, оплётка, диэлектрик, жила
  *  и, если `contact`, центральный контакт на жиле — штырь у вилки, гнездо у розетки, на припое или обжатый. */
 export function endGraphics(end: Row, x0: number, cy: number, steps: { x1: number; x2: number; x3: number }, jacketTo: number, braid: string, contact = true): string {
-  const { x1, x2, x3 } = steps, female = isFemale(end);
+  const { x1, x2, x3 } = steps, gender = contactKind(end);
   let art = rect(x3, jacketTo, cy - 16, 32, JACKET, "#000", 4) +
     rect(x2, x3, cy - 12, 24, braid) + rect(x1, x2, cy - 9, 18, DIEL, INK) + rect(x0, x1, cy - 2.5, 5, COPPER, INK);
   if (!contact) return art;
   const solder = !/обжим/i.test(str(end.pinType));
-  art += `<g data-part="contact" data-state="${female ? "socket" : "pin"}">` + rect(x0 - 4, x1 - 2, cy - 5.5, 11, BRASS) +
+  art += `<g data-part="contact" data-state="${gender}">` + rect(x0 - 4, x1 - 2, cy - 5.5, 11, BRASS) +
     (solder ? `<ellipse cx="${f((x0 + x1) / 2)}" cy="${f(cy)}" rx="${f((x1 - x0) * 0.36)}" ry="4.6" fill="${SOLDER}" stroke="${EDGE}" stroke-width=".8"/>`
       : [0.25, 0.5, 0.75].map((k) => line(x0 + (x1 - x0) * k, cy - 5.5, x0 + (x1 - x0) * k, cy + 5.5, EDGE, .7)).join("")) +
     rect(x0 - 8, x0 - 4, cy - 8, 16, BRASS);
-  art += female
+  art += gender === "unknown" ? rect(x0 - 30, x0 - 8, cy - 4, 8, BRASS, EDGE, 1) : gender === "socket"
     ? rect(x0 - 32, x0 - 8, cy - 5.5, 11, BRASS) + `<rect data-part="socket-bore" x="${f(x0 - 32)}" y="${f(cy - 2.6)}" width="10" height="5.2" fill="${TUBE}"/>`
     : rect(x0 - 32, x0 - 8, cy - 2.6, 5.2, BRASS) + `<polygon data-part="pin-tip" points="${f(x0 - 38)},${f(cy)} ${f(x0 - 32)},${f(cy - 2.6)} ${f(x0 - 32)},${f(cy + 2.6)}" fill="${BRASS}" stroke="${EDGE}" stroke-width=".8"/>`;
   return art + "</g>";
@@ -394,8 +426,8 @@ export function coaxContactDrawing(side: Side, end: Row): string {
   const crimp = /обжим/i.test(str(end.pinType));
   let body = label(4, 14, sideTitle(side, end, false), 12, 700, INK, "start") +
     (mirror ? `<g transform="translate(${W},0) scale(-1,1)">${art}</g>` : art);
-  const female = isFemale(end);
-  body += label(mirror ? W - 4 : 4, cy + 40, `${female ? "гнездо" : "штырь"} ${crimp ? (female ? "обжато" : "обжат") : (female ? "припаяно" : "припаян")} на жиле`, 11, 600, INK, mirror ? "end" : "start");
+  const gender = contactKind(end), neuter = gender === "socket", done = crimp ? (neuter ? "обжато" : "обжат") : (neuter ? "припаяно" : "припаян");
+  body += label(mirror ? W - 4 : 4, cy + 40, `${contactName(end)} ${done} на жиле`, 11, 600, INK, mirror ? "end" : "start");
   return svg(cy + 48, body);
 }
 
@@ -422,19 +454,24 @@ const COLOR_HEX: Record<string, string> = { WH: "#ffffff", BU: "#2463c7", GN: "#
 
 export type CoaxAssemblyState = {
   marks?: Array<{ text: string; place: string }>; protect?: string; color?: { color: string; code: string } | null;
-  ends?: [CoaxEndState, CoaxEndState]; lengthNote?: string;
+  ends?: [CoaxEndState, CoaxEndState]; lengthNote?: string; lengthSource?: LengthSource;
 };
+
+/** Готовый конец изделия (что стоит на нём после всех операций семейства): для старых ЭТК, у которых маршрут не
+ *  содержит операций монтажа, — иначе изделие рисовалось бы голым кабелем. */
+export function coaxFinalState(end: Row, tube: string): CoaxEndState {
+  const family = coaxFamily(end);
+  return { contact: true, insert: true, support: family === "hfm", housing: /fakra|hfm/.test(family) && family !== "fakra-bh",
+    cap: ["fakra", "fakra-ra", "sma-ra"].includes(family), shield: clampShield(end) ? "clamp" : crimpShield(end) ? "crimped" : "soldered",
+    tube: tube ? "shrunk" : "none", tubeName: tube };
+}
 
 /** Вся сборка: разъёмы А и В своего семейства, кабель, этикетки M1… на своих местах (без выдуманных расстояний) и
  *  прозрачные ТУТ поверх них, цвет разъёмов, размер L готового изделия между лицами разъёмов. Под рисунком — табличка:
  *  «А», «В», M1… с полными названиями — длинные названия разъёмов не налезают друг на друга. */
 export function coaxAssemblyDrawing(a: Row, b: Row, lengthMm: string, tube: string, cable: string, extra: CoaxAssemblyState = {}): string {
-  const s = 0.42, top = 22, finalState = (end: Row): CoaxEndState => ({
-    contact: true, insert: true, support: coaxFamily(end) === "hfm", housing: /fakra|hfm/.test(coaxFamily(end)) && coaxFamily(end) !== "fakra-bh",
-    cap: ["fakra", "fakra-ra", "sma-ra"].includes(coaxFamily(end)), shield: clampShield(end) ? "clamp" : crimpShield(end) ? "crimped" : "soldered",
-    tube: tube ? "shrunk" : "none", tubeName: tube,
-  });
-  const states = extra.ends ?? [finalState(a), finalState(b)];
+  const s = 0.42, top = 22;
+  const states = extra.ends ?? [coaxFinalState(a, tube), coaxFinalState(b, tube)];
   const extents = [partsExtent(a, states[0]), partsExtent(b, states[1])];
   const cy = top + 6 - Math.min(extents[0][0], extents[1][0]) * s;
   const reach = 160, place = (end: Row, state: CoaxEndState, mirror: boolean) =>
@@ -474,9 +511,14 @@ export function coaxAssemblyDrawing(a: Row, b: Row, lengthMm: string, tube: stri
     ...tags,
   ];
   if (extra.protect && marks.length) entries.push(["ТУТ", `${extra.protect} поверх этикеток, усажена`]);
-  if (tube) entries.push(["ТУТ", `${tube} на концах, усажена`]);
+  // Трубки на концах — из того же состояния, что нарисовано: текст не расходится с рисунком.
+  const tubeText = (state: CoaxEndState) => state.tube === "none" ? "" : `${tubeShort(state.tubeName) || state.tubeName || "трубка"} — ${state.tube === "shrunk" ? "усажена" : "надвинута, не усажена"}`;
+  const [tubeA, tubeB] = states.map(tubeText);
+  if (tubeA && tubeA === tubeB) entries.push(["ТУТ", tubeA.replace(" — ", " на концах — ")]);
+  else { if (tubeA) entries.push(["ТУТ", `конец А: ${tubeA}`]); if (tubeB) entries.push(["ТУТ", `конец В: ${tubeB}`]); }
   if (color) entries.push(["Цвет", `разъёмов: ${extra.color!.color} (${extra.color!.code})`]);
-  entries.push(["L", lengthMm ? `длина готового изделия по КД${extra.lengthNote ? ` · ${extra.lengthNote}` : ""}` : "длины готового изделия в данных нет — по КД"]);
+  const source = extra.lengthSource === "name" ? "из названия изделия" : extra.lengthSource === "drawing" ? "из формы генератора (длина по чертежу)" : "по КД";
+  entries.push(["L", lengthMm ? `длина готового изделия ${source}${extra.lengthNote ? ` · ${extra.lengthNote}` : ""}` : "длины готового изделия в данных нет — по КД"]);
   if (cable) entries.push(["Кабель", cable]);
   const legend = legendRows(entries, yd + 10);
   return svg(yd + 10 + legend.height + 4, body + legend.body);
@@ -538,15 +580,19 @@ function coaxTubeCutDrawing(operations: Row[]): string | null {
 /** Длина готового изделия по КД: сохранённая `finishedLength` (основа длины — «готовое изделие»), иначе длина по чертежу
  *  из формы генератора, иначе из названия («… 275mm»). Длина реза в размер «лицо — лицо» НЕ подставляется. `note` —
  *  расхождение с названием. */
-export function assemblyLength(config: Row, name: string): { value: string; note: string } {
+export type LengthSource = "finished" | "drawing" | "name";
+export function assemblyLength(config: Row, name: string): { value: string; note: string; source?: LengthSource } {
   const coax = obj(config.coax), state = obj(obj(config.gen_state).S);
   const named = num(name.match(/(\d+(?:[.,]\d+)?)\s*(?:mm|мм)\b/i)?.[1]);
   const text = (value: number) => String(value).replace(".", ",");
-  let value = 0;
-  if (str(coax.lengthBasis) === "finished" || num(coax.finishedLength) > 0) value = num(coax.finishedLength);
-  else value = num(state.drawingLength) || num(state.sharedLengthText) || named;
+  let value = 0, source: LengthSource = "name";
+  // Основа «резка»: длины готового изделия в данных нет — только из названия; длина по чертежу формы — не «по КД».
+  if (str(coax.lengthBasis) === "cut") value = named;
+  else if (str(coax.lengthBasis) === "finished" || num(coax.finishedLength) > 0) { value = num(coax.finishedLength); source = "finished"; }
+  else if (num(state.drawingLength) || num(state.sharedLengthText)) { value = num(state.drawingLength) || num(state.sharedLengthText); source = "drawing"; }
+  else value = named;
   if (!(value > 0)) return { value: "", note: "" };
-  return { value: text(value), note: named > 0 && named !== value ? `в названии ${text(named)} мм — сверить с КД` : "" };
+  return { value: text(value), source, note: source !== "name" && named > 0 && named !== value ? `в названии ${text(named)} мм — сверить с КД` : "" };
 }
 
 const sideOf = (value: unknown): Side | "" => (/^(A|А)$/i.test(str(value).trim()) ? "A" : /^(B|В)$/i.test(str(value).trim()) ? "B" : "");
@@ -611,9 +657,11 @@ export function coaxPfArt(group: EtkPfGroup, operations: Row[], config: Row, doc
     const color = obj(coax.connColor), states: [CoaxEndState, CoaxEndState] = [coaxEndStateAt(doc, "A", upto, end("A")), coaxEndStateAt(doc, "B", upto, end("B"))];
     const known = Object.keys(document).length > 0;
     return coaxAssemblyDrawing(end("A"), end("B"), length.value, covers ? "" : tube, cableName || "кабель", {
-      marks, protect: covers ? tube || "прозрачная ТУТ" : "", lengthNote: length.note,
+      marks, protect: covers ? tube || "прозрачная ТУТ" : "", lengthNote: length.note, lengthSource: length.source,
       color: str(color.method) && str(color.method) !== "none" && str(color.code) ? { color: str(color.color), code: str(color.code) } : null,
-      ends: known ? states : undefined,
+      // Маршрут без операций монтажа конца (старые ЭТК) — готовый конец, а не голый кабель.
+      ends: known ? states.map((state, index) => (state.insert || state.shield === "crimped" ? state
+        : coaxFinalState(end(index ? "B" : "A"), covers ? "" : tube))) as [CoaxEndState, CoaxEndState] : undefined,
     });
   }
   const sides = [...new Set(operations.map((operation) => sideOf(obj(obj(operation.fields).coaxEnd).side)).filter(Boolean))] as Side[];

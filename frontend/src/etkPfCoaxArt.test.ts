@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assemblyLength, coaxAssemblyDrawing, coaxEndStateAt, coaxFamily, coaxPfArt } from "./etkPfCoaxArt";
+import { assemblyLength, coaxAssemblyDrawing, coaxEndStateAt, coaxFamily, coaxFamilyTitle, coaxGeometryKnown, coaxMountedDrawing, coaxPfArt, contactKind, EMPTY_STATE } from "./etkPfCoaxArt";
 import type { EtkPfGroup } from "./etkRoute";
 
 const parse = (markup: string) => new DOMParser().parseFromString(markup, "image/svg+xml");
@@ -21,8 +21,8 @@ describe("final assembly: finished length, not the cut length (S3)", () => {
   });
 
   it("an explicit name conflict keeps the saved finished length and says so; missing length is marked, never replaced by the cut", () => {
-    expect(assemblyLength({ coax: { lengthBasis: "finished", finishedLength: "1200" } }, "Сборка 1250mm")).toEqual({ value: "1200", note: "в названии 1250 мм — сверить с КД" });
-    expect(assemblyLength({ coax: { lengthBasis: "finished", finishedLength: "" , cableLength: 1250 } }, "Сборка")).toEqual({ value: "", note: "" });
+    expect(assemblyLength({ coax: { lengthBasis: "finished", finishedLength: "1200" } }, "Сборка 1250mm")).toMatchObject({ value: "1200", note: "в названии 1250 мм — сверить с КД", source: "finished" });
+    expect(assemblyLength({ coax: { lengthBasis: "finished", finishedLength: "" , cableLength: 1250 } }, "Сборка")).toMatchObject({ value: "", note: "" });
     expect(assemblyLength({ coax: { cableLength: 285 } }, "SMA-Male to SMA-Female RG316 275mm").value).toBe("275");
     expect(assemblyLength({ coax: { cableLength: 285 } }, "Сборка без длины").value).toBe("");
     const svg = coaxPfArt(group({ name: "Сборка" }), [{ position: 1, type: "coaxHeat" }], { mode: "coax", coax: { cableLength: 1250, sideA: fakraF, sideB: fakraF } })!;
@@ -89,7 +89,7 @@ describe("route state of an end (S10)", () => {
 describe("connector family dispatch", () => {
   it.each([
     [fakraF, "fakra"], [fakraRA, "fakra-ra"], [fakraBH, "fakra-bh"], [hfm, "hfm"], [{ connectorType: "SMA-Female bulkhead" }, "sma"],
-    [{ connectorType: "SMA-Male R/A" }, "sma-ra"], [{ connectorType: "RP-SMA-Male" }, "sma"], [{ connectorType: "N-Female" }, "n"],
+    [{ connectorType: "SMA-Male R/A" }, "sma-ra"], [{ connectorType: "RP-SMA-Male" }, "rp-sma"], [{ connectorType: "N-Female R/A" }, "angled"], [{ connectorType: "TNC-Male угловой" }, "angled"], [{ connectorType: "MMCX-Male R/A" }, "angled"], [{ connectorType: "N-Female" }, "n"],
     [{ connectorType: "TNC-Male" }, "tnc"], [{ connectorType: "RP-TNC-Male" }, "tnc"], [{ connectorType: "MMCX-Male" }, "mmcx"], [{ connector: "X-1" }, "other"],
   ])("%o → %s", (end, family) => expect(coaxFamily(end)).toBe(family));
 });
@@ -114,3 +114,61 @@ function expectNoTextOverlap(markup: string) {
     expect(overlap, `${a.text} × ${b.text}`).toBe(false);
   }
 }
+
+describe("review #1037", () => {
+  it("legend tube text follows the drawn end state, also when the ends differ", () => {
+    const loose = { ...EMPTY_STATE, contact: true, insert: true, shield: "crimped" as const, tube: "loose" as const, tubeName: "ТУТ 4/2мм, черная" };
+    const shrunk = { ...loose, tube: "shrunk" as const };
+    const mixed = texts(coaxAssemblyDrawing(fakraF, fakraF, "500", "ТУТ 4/2", "RG316", { ends: [loose, shrunk] })).join(" ");
+    expect(mixed).toContain("конец А: ТУТ 4/2 — надвинута, не усажена");
+    expect(mixed).toContain("конец В: ТУТ 4/2 — усажена");
+    const none = texts(coaxAssemblyDrawing(fakraF, fakraF, "500", "ТУТ 4/2", "RG316", { ends: [{ ...loose, tube: "none" }, { ...loose, tube: "none" }] })).join(" ");
+    expect(none).not.toMatch(/усажена|надвинута/);
+    expect(texts(coaxAssemblyDrawing(fakraF, fakraF, "500", "ТУТ 4/2", "RG316", { ends: [shrunk, shrunk] }))).toContain("ТУТ 4/2 на концах — усажена");
+  });
+
+  it("a legacy ETK whose route has no assembly operation still draws the finished ends, not a bare cable", () => {
+    const config = { mode: "coax", coax: { tutArt: "ТУТ 4/2мм, черная", sideA: { type: "SMA-male", pinType: "пайка" }, sideB: { type: "SMA-female", pinType: "пайка" } } };
+    const document = { build_config: config, operations: [{ position: 1, type: "coaxHeat", code: "HEAT_TYT_short" }], route: { blocks: [{ key: "f", ops: [1] }] } };
+    const svg = coaxPfArt(group({ name: "Сборка 275mm" }), document.operations, config, document)!;
+    expect(svg.match(/data-part="contact"/g)).toHaveLength(2);
+    expect(svg.match(/data-part="body"/g)).toHaveLength(2);
+    expect(svg.match(/data-part="tube" data-state="shrunk"/g)).toHaveLength(2);
+  });
+
+  it("unknown gender gives a neutral contact; RP-SMA and angled N/TNC/MMCX are schematics, never the straight SMA section", () => {
+    expect(contactKind({ connectorType: "SMA" })).toBe("unknown");
+    const neutral = coaxMountedDrawing("A", { connectorType: "MHF1-plug" }, { ...EMPTY_STATE, contact: true, insert: true });
+    expect(neutral).toContain('data-part="contact" data-state="unknown"');
+    expect(neutral).not.toMatch(/pin-tip|socket-bore/);
+    expect(coaxGeometryKnown({ connectorType: "RP-SMA-Male", gender: "вилка" })).toBe(false);
+    expect(coaxGeometryKnown({ connectorType: "SMA", gender: "" })).toBe(false);
+    expect(coaxGeometryKnown({ connectorType: "SMA-Male", gender: "вилка" })).toBe(true);
+    expect(coaxMountedDrawing("A", { connectorType: "RP-SMA-Male", gender: "вилка" }, { ...EMPTY_STATE, insert: true })).toContain('data-geometry="schematic"');
+    expect(coaxFamilyTitle({ connectorType: "N-Female R/A" })).toBe("N угловой");
+    expect(coaxFamilyTitle({ connectorType: "MMCX-Male угловой" })).toBe("MMCX угловой");
+    expect(coaxMountedDrawing("B", { connectorType: "TNC-Male R/A", gender: "вилка" }, { ...EMPTY_STATE, insert: true })).toMatch(/data-geometry="schematic"[^]*data-part="window"/);
+  });
+
+  it("every SVG defines the pattern it uses under its own id", () => {
+    const one = coaxMountedDrawing("A", fakraF, { ...EMPTY_STATE, insert: true, shield: "loose" });
+    const two = coaxAssemblyDrawing(fakraF, fakraBH, "100", "", "RTK 031");
+    const ids = [one, two].map((markup) => {
+      const used = [...markup.matchAll(/url\(#([^)]+)\)/g)].map((match) => match[1]);
+      for (const id of used) expect(markup).toContain(`id="${id}"`);
+      return markup.match(/<pattern id="([^"]+)"/)![1];
+    });
+    expect(ids[0]).not.toBe(ids[1]);
+    expect(one).not.toContain("url(#etkBraid)");
+  });
+
+  it("length basis «cut»: the product length only from the name; a generator drawing length is not labelled «по КД»", () => {
+    const S = { drawingLength: 900 };
+    expect(assemblyLength({ coax: { lengthBasis: "cut", cableLength: 1250 }, gen_state: { S } }, "Сборка 1200mm")).toMatchObject({ value: "1200", source: "name" });
+    expect(assemblyLength({ coax: { lengthBasis: "cut", cableLength: 1250 }, gen_state: { S } }, "Сборка").value).toBe("");
+    expect(assemblyLength({ coax: {}, gen_state: { S } }, "Сборка")).toMatchObject({ value: "900", source: "drawing" });
+    const svg = coaxPfArt(group({ name: "Сборка" }), [{ position: 1, type: "coaxHeat" }], { mode: "coax", gen_state: { S }, coax: { sideA: fakraF, sideB: fakraF } })!;
+    expect(texts(svg).join(" ")).toContain("длина готового изделия из формы генератора (длина по чертежу)");
+    expect(texts(svg).join(" ")).not.toContain("по КД");
+  });
+});

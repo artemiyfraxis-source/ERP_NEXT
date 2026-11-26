@@ -9,7 +9,7 @@ import { coaxKindTitle } from "./coaxNames";
 import { tubeShort } from "./etkPfScheme";
 import {
   BRASS, callouts, coaxFamily, coaxFamilyTitle, coaxGeometryKnown, connectorParts, DIEL, dimension, EDGE, EMPTY_STATE, endGraphics, extensionLine,
-  INK, isFemale, JACKET, label, line, METAL, MUTED, partsExtent, partsSvg, rect, stepsOf, THIN, TUBE, type Callout, type CoaxEndState,
+  INK, contactKind, JACKET, label, line, METAL, MUTED, partsExtent, partsSvg, rect, stepsOf, THIN, TUBE, type Callout, type CoaxEndState,
 } from "./etkPfCoaxArt";
 
 type Row = Record<string, unknown>;
@@ -96,11 +96,11 @@ export function coaxMountEtk(end: Row, title: string, hint: string, state: CoaxE
   const depth = depthText(end.contactDepth);
   let height = rowBottom + 14;
   if (!depth) return { height, body };
-  if (family === "fakra-ra" || family === "sma-ra") {
+  if (family === "fakra-ra" || family === "sma-ra" || family === "angled") {
     // Угловой: лицо стыковки внизу — выносной элемент по оси кабеля был бы неверен; только величина.
     return { height: height + 20, body: body + label(8, height + 10, `Заглубление контакта ${depth} — от торца корпуса, по чертежу изготовителя`, 12, 600, INK, "start") };
   }
-  const detail = depthCallout(depth, gx(4), cy, height + 22, isFemale(end));
+  const detail = depthCallout(depth, gx(4), cy, height + 22, contactKind(end));
   return { height: detail.bottom + 8, body: body + detail.body };
 }
 
@@ -119,21 +119,21 @@ export function depthText(value: unknown): string {
 /** Выносной элемент «А» (ГОСТ 2.305 п. 8.2): на виде — сплошная тонкая замкнутая линия вокруг лица разъёма и обозначение «А»
  *  на полке линии-выноски; ниже — вид А в круге, заголовок «А» без масштаба (масштаб не соблюдается — так и написано рядом),
  *  торец корпуса и контакт в глубине; размер заглубления — числом на размерной линии между выносными. */
-function depthCallout(depth: string, faceX: number, cy: number, top: number, female: boolean): { body: string; bottom: number } {
+function depthCallout(depth: string, faceX: number, cy: number, top: number, gender: ReturnType<typeof contactKind>): { body: string; bottom: number } {
   const ring = 18, ox = faceX + 6;
   let art = `<circle data-role="detail-origin" cx="${f(ox)}" cy="${f(cy)}" r="${ring}" fill="none" stroke="${INK}" stroke-width=".8"/>`;
   const lx = ox - ring * .7, ly = cy - ring * .7, shelfY = cy - ring - 16;
   art += `<g data-role="leader" data-target="detail-origin"><line x1="${f(lx)}" y1="${f(ly)}" x2="${f(ox - 36)}" y2="${f(shelfY)}" stroke="${THIN}" stroke-width=".7"/></g>` +
     `<line data-role="shelf" x1="${f(ox - 36)}" y1="${f(shelfY)}" x2="${f(ox - 52)}" y2="${f(shelfY)}" stroke="${THIN}" stroke-width=".7"/>` +
     `<text data-detail-id="origin" x="${f(ox - 44)}" y="${f(shelfY - 3)}" text-anchor="middle" font-size="14" font-weight="700" fill="${INK}">А</text>`;
-  const r = 50, cxD = 104, cyD = top + 22 + r, faceZ = cxD - 28, tipZ = cxD + 26, axis = cyD - 11, id = "etkDepthZoom";
+  const r = 50, cxD = 104, cyD = top + 22 + r, faceZ = cxD - 28, tipZ = cxD + 26, axis = cyD - 11, id = `etkDepthZoom-${depth.replace(/[^0-9]/g, "")}-${Math.round(cy)}`;
   // На размерной линии — только число: «0,38…1,14», «≥ 2,50», «9,14»; полная запись — в подписи рядом.
   const value = depth.replace(/\s*мм/, "").replace(/^не менее\s+/, "≥ ").replace(/^не более\s+/, "≤ ").replace(/\s*\(номинал\)$/, "");
   art += `<text data-detail-id="view" x="${f(cxD)}" y="${f(cyD - r - 8)}" text-anchor="middle" font-size="14" font-weight="700" fill="${INK}">А</text>` +
     `<defs><clipPath id="${id}"><circle cx="${f(cxD)}" cy="${f(cyD)}" r="${r}"/></clipPath></defs>` +
     `<circle cx="${f(cxD)}" cy="${f(cyD)}" r="${r}" fill="#fff" stroke="${INK}" stroke-width=".8"/>` +
     `<g clip-path="url(#${id})">` + rect(faceZ, cxD + r, cyD - r, 22, METAL, EDGE) + rect(faceZ, cxD + r, cyD - 28, 30, DIEL, EDGE) +
-    (female
+    (gender === "unknown" ? rect(tipZ, cxD + r, axis - 5, 10, BRASS, EDGE, 1) : gender === "socket"
       ? rect(tipZ, cxD + r, axis - 8, 16, BRASS, EDGE) + `<rect data-part="socket-bore" x="${f(tipZ)}" y="${f(axis - 3)}" width="14" height="6" fill="${TUBE}"/>`
       : rect(tipZ + 6, cxD + r, axis - 4, 8, BRASS, EDGE) + `<polygon data-part="pin-tip" points="${f(tipZ)},${f(axis)} ${f(tipZ + 6)},${f(axis - 4)} ${f(tipZ + 6)},${f(axis + 4)}" fill="${BRASS}" stroke="${EDGE}" stroke-width=".8"/>`) +
     line(faceZ, cyD - r, faceZ, cyD + 2, INK, 1.2) + `</g>`;
@@ -167,7 +167,7 @@ export function coaxClampEtk(end: Row, title: string, hint: string): { height: n
     label(8, 58, `Схема: ${coaxFamilyTitle(end)}, прижимной экран, без масштаба`, 12, 400, MUTED, "start");
   body += `<g data-part="body">${rect(92, 290, cy - 36, 8, METAL, EDGE)}${rect(92, 290, cy + 28, 8, METAL, EDGE)}</g>` +
     `<g data-part="insulator">${rect(92, 290, cy - 28, 56, DIEL, EDGE)}</g>` +
-    `<g data-part="contact" data-state="${isFemale(end) ? "socket" : "pin"}">${rect(60, 250, cy - 5, 10, BRASS, EDGE, 2)}</g>` +
+    `<g data-part="contact" data-state="${contactKind(end)}">${rect(60, 250, cy - 5, 10, BRASS, EDGE, 2)}</g>` +
     `<g data-part="clamp-ring">${rect(260, 330, cy - 14, 28, METAL, EDGE, 2)}</g>`;
   body += `<g data-part="braid">${polygon([[250, cy - 12], [300, cy - 22], [330, cy - 14], [330, cy - 8], [250, cy - 8]], BRAID)}${polygon([[250, cy + 12], [300, cy + 22], [330, cy + 14], [330, cy + 8], [250, cy + 8]], BRAID)}</g>`;
   body += `<g data-part="nut">${clampNut(290, 360, cy, 38)}</g><g data-part="washer">${rect(360, 368, cy - 34, 68, "#aab2b7", EDGE, 1)}${rect(368, 392, cy - 28, 56, "#4b5257", EDGE, 3)}</g>` +

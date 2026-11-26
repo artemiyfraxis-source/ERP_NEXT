@@ -528,7 +528,8 @@ export function compactCutWires(operation: Row): string {
   shown.forEach((wire) => {
     const name = str(wire.art || wire.name), len = num(wire.length), w = len > 0 ? 150 + 120 * len / longest : 270;
     const x1 = 22, x2 = x1 + w - 28, cy = y + 22;
-    body += `<text x="8" y="${y + 12}" font-size="11" font-weight="600" fill="${INK}">${esc(cut(`${name} × ${str(wire.qty)}${len > 0 ? ` · ${formatMinutes(len)} мм` : ""}`, 48))}</text>` +
+    const qty = str(wire.qty).trim();
+    body += `<text x="8" y="${y + 12}" font-size="11" font-weight="600" fill="${INK}">${esc(cut(`${name || "провод"}${qty ? ` × ${qty}` : ""}${len > 0 ? ` · ${formatMinutes(len)} мм` : ""}`, 48))}</text>` +
       `<rect x="${x1}" y="${cy - 4}" width="${(x2 - x1).toFixed(1)}" height="8" rx="2" fill="${etkWireColor(name)}" stroke="${INK}" stroke-width=".7"/>` +
       tip(ends.a.kind, x1, cy, -1) + tip(ends.b.kind, x2, cy, 1);
     y += 34;

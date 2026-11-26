@@ -430,7 +430,7 @@ describe("coax operation sketches (796К.2 КБ1, owner 15.10: «эскизов 
     expect(tut).toContain("на партию: 40 шт");
     const pin = etkFigure({ type: "coaxPin", fields: { coaxEnd: end } });
     expect(pin).toContain("Сторона А · MMCX-Male RG316");
-    expect(pin).toContain("Центральный контакт (штырь): припаять на жилу");
+    expect(pin).toContain("Центральный контакт: припаять на жилу"); // пол в данных не задан — контакт нейтральный
     expect(pin).toContain("L1 = 1,8 мм · L2 = 4,5 мм · L3 = 10 мм");
     expect(etkFigure({ type: "coaxHousing", fields: { coaxEnd: { ...end, side: "В", connector: "N-111L" } } })).toContain("Сторона В · N-111L");
     const parts = { kind: "tube", name: "ТУТ 5/2,5мм, черная", count: 2, cable: "RG316", length: "20" };

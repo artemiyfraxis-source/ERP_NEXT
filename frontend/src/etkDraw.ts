@@ -3,7 +3,7 @@
 // документ без React, поэтому рисунок — готовая разметка. Геометрия и подписи — как в SUPPLYMAP; разъёмы — рисунками
 // серий из connectorArt.ts (владелец 30.09: одна общая иконка на все разъёмы непонятна).
 import { coaxClampEtk, coaxMountEtk, coaxPartsEtk } from "./etkCoaxOpArt";
-import { coaxOpState, wrapSvgText } from "./etkPfCoaxArt";
+import { coaxOpState, contactKind, contactName, wrapSvgText } from "./etkPfCoaxArt";
 import { coaxEndNames, coaxEndTitle, coaxKindTitle } from "./coaxNames";
 import { connectorFace, connectorFaceUnits, connectorSummary, wireColor, type HousingBody, type Mate, type Roof } from "./connectorArt";
 import { connectorTopView } from "./connectorTopView";
@@ -502,8 +502,10 @@ function coaxEndBase(c: Row, x0: number, span: number, cy: number, braidOver = f
 
 /** Центральный контакт на жиле: хвостовик (чашка с припоем или гильза обжима), буртик и рабочая часть влево — у вилки
  *  штырь с фаской, у розетки гнездо: втулка с открытым отверстием со стороны лица, без острия (S2 ревью 23.11). */
-function coaxPin(x0: number, xEnd: number, cy: number, solder: boolean, female: boolean): string {
-  const work = female
+function coaxPin(x0: number, xEnd: number, cy: number, solder: boolean, gender: "socket" | "pin" | "unknown"): string {
+  const work = gender === "unknown"
+    ? `<rect x="${x0 - 74}" y="${cy - 4}" width="48" height="8" rx="1" fill="${CX.metal}" stroke="${CX.metalEdge}"/>`
+    : gender === "socket"
     ? `<rect x="${x0 - 80}" y="${cy - 6}" width="54" height="12" fill="${CX.metal}" stroke="${CX.metalEdge}"/>` +
       `<rect data-part="socket-bore" x="${x0 - 80}" y="${cy - 2.5}" width="22" height="5" fill="${CX.tube}"/>` +
       `<line x1="${x0 - 58}" y1="${cy}" x2="${x0 - 44}" y2="${cy}" stroke="${CX.tube}" stroke-width=".8"/>`
@@ -513,7 +515,7 @@ function coaxPin(x0: number, xEnd: number, cy: number, solder: boolean, female: 
   const join = solder
     ? `<rect x="${x0 - 16}" y="${cy - 3.5}" width="${xEnd - x0 + 12}" height="7" fill="#c9ced3"/><rect x="${x0 - 16}" y="${cy - 1.5}" width="${xEnd - x0 + 12}" height="3" fill="${CX.cu}" opacity=".45"/>`
     : [0.2, 0.45, 0.7].map((k) => `<line x1="${x0 - 20 + (xEnd - x0 + 20) * k}" y1="${cy - 7}" x2="${x0 - 20 + (xEnd - x0 + 20) * k}" y2="${cy + 7}" stroke="${CX.metalEdge}" stroke-width=".8"/>`).join("");
-  return `<g data-part="contact" data-state="${female ? "socket" : "pin"}">${work}` +
+  return `<g data-part="contact" data-state="${gender}">${work}` +
     `<rect x="${x0 - 26}" y="${cy - 8}" width="6" height="16" fill="${CX.metal}" stroke="${CX.metalEdge}"/>${barrel}${join}</g>`;
 }
 
@@ -531,11 +533,10 @@ function coaxEndSketch(operation: Row): string {
     return svg(640, cy + 78, body);
   }
   if (type === "coaxPin" || type === "coaxPinCrimp") {
-    const female = coaxEndNames(end).word === "розетка";
-    body += coaxEndBase(end, x0, span, cy) + coaxPin(x0, xPin, cy, !crimp, female) +
+    body += coaxEndBase(end, x0, span, cy) + coaxPin(x0, xPin, cy, !crimp, contactKind(end)) +
       `<line x1="${xPin}" y1="${cy + 10}" x2="${xPin}" y2="${cy + 34}" stroke="#55666b" stroke-width=".7" data-role="extension"/>` +
       `<line x1="${g.x1}" y1="${cy + 12}" x2="${g.x1}" y2="${cy + 34}" stroke="#55666b" stroke-width=".7" data-role="extension"/>` +
-      caption(x0 - 80, cy - 22, `Центральный контакт (${female ? "гнездо" : "штырь"}): ${crimp ? "обжать" : "припаять"} на жилу`) +
+      caption(x0 - 80, cy - 22, `Центральный контакт${contactKind(end) === "unknown" ? "" : ` (${contactName(end)})`}: ${crimp ? "обжать" : "припаять"} на жилу`) +
       caption(g.x1 + 6, cy + 32, "зазор до диэлектрика — по КД");
     if (g.ok) body += caption(x0, cy + 56, `L1 = ${mm(end.l1)} · L2 = ${mm(end.l2)} · L3 = ${mm(end.l3)}`);
     return svg(640, cy + (g.ok ? 66 : 46), body);
