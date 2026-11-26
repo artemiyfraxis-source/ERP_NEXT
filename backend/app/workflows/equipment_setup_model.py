@@ -199,8 +199,20 @@ def open_tasks(session, unit_id: UUID, principal: Principal | None = None) -> tu
                        "planned_start": (row.snapshot or {}).get("planned_start"),
                        "planned_finish": (row.snapshot or {}).get("planned_finish"),
                        "mine": principal is not None and row.technician_id == principal.actor.id,
-                       "can_confirm": row.id in confirmable})
+                       "can_confirm": row.id in confirmable,
+                       "source": operation_source(row.snapshot or {})})
     return result, journal
+
+
+def operation_source(snapshot: dict) -> dict | None:
+    """The production task, its operation and the ETK position a setup task was made for — the press card reads the
+    required values (terminal, applicator, crimp height) from that ETK operation; None — the snapshot lacks them."""
+    operation = snapshot.get("operation") or {}
+    task_id, step_id = _uuid(operation.get("production_task_id")), _uuid(operation.get("production_operation_id"))
+    position = operation.get("etk_position")
+    if task_id is None or step_id is None or not isinstance(position, int) or isinstance(position, bool):
+        return None
+    return {"task_id": str(task_id), "operation_id": str(step_id), "etk_position": position}
 
 
 def operation_text(session, snapshot: dict) -> str:
