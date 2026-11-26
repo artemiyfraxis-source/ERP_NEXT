@@ -97,9 +97,9 @@ def _input(
         if not any(operation.id in free or operation.planned_start for operation in task.operations):
             continue
         card = cards.get(card_key(task.project, task.item))
-        task_keys, _ = operation_keys(task, card.document if card is not None else None, equipment)
+        task_keys, _ = operation_keys(task, card.document_for(task) if card is not None else None, equipment)
         keys.update(task_keys)
-        steps.update(task_steps(task, card.document if card is not None else None, equipment)[0])
+        steps.update(task_steps(task, card.document_for(task) if card is not None else None, equipment)[0])
     data = AutoplanInput(
         tasks=tasks, free=frozenset(free), keys=keys, team=team, skills=_skills(uow), busy=busy,
         capacity={machine: max(1, int(units.get(machine, 0)) or 1) for machine in machine_names(keys, steps)},

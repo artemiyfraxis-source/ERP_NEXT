@@ -203,7 +203,8 @@ def test_code_that_left_the_techcard_is_not_counted_and_warns():
     steps, warnings = task_steps(task, etk(CRIMP))
     missing, why = task_steps(task, None)
 
-    assert steps == {} and warnings == ("ПЗ-0007 · этап 1: код OLD не совпадает с техкартой — станки этапа не учтены",)
+    assert steps == {} and len(warnings) == 1 and warnings[0].startswith("ПЗ-0007 · этап 1:")
+    assert "(код OLD)" in warnings[0] and "Перезапустите этап из актуальной ЭТК" in warnings[0] and "станки этапа" in warnings[0]
     assert missing == {} and "выданная техкарта 708К КБ7 не найдена" in why[0]
 
 

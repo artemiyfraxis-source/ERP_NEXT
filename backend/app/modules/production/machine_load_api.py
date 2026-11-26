@@ -82,7 +82,7 @@ def _snapshot(
     warnings: list[str] = []
     for task in sorted(tasks, key=lambda item: item.number):
         card = cards.get(card_key(task.project, task.item))
-        own, task_warnings = task_steps(task, card.document if card is not None else None, units)
+        own, task_warnings = task_steps(task, card.document_for(task) if card is not None else None, units)
         steps.update(own)
         occupancies.extend(task_occupancies(task, own, holidays, shift))
         if any(operation.shares for operation in task.operations):

@@ -60,7 +60,7 @@ from .domain import (
 )
 from .launchable import route_from_document, stage_name
 from .equipment_catalog import EMPTY, EquipmentCatalog
-from .machine_load import MachineStep, _machine, lay_out, operation_occupancies, planned_windows
+from .machine_load import MachineStep, _machine, code_mismatch_text, lay_out, operation_occupancies, planned_windows
 from .machine_load import inventory_prefix  # noqa: F401 — номер модели «ОБ.027» для читателей автоплана
 from .scheduling import (
     ScheduledOperation,
@@ -234,13 +234,10 @@ def operation_keys(
             index = part.position - 1
             step = route[index] if 0 <= index < len(route) else None
             if step is None or step.code != part.code:
-                warnings.append(
-                    f"{task.number} · этап {operation.position}: код {part.code or '—'} не совпадает с техкартой "
-                    f"({step.code or '—' if step else 'нет этапа'}) — наладка по коду операции"
-                    if not operation.etk_ops else
-                    f"{task.number} · ПФ {operation.position}, операция ЭТК {part.position}: код {part.code or '—'} "
-                    f"не совпадает с техкартой ({step.code or '—' if step else 'нет операции'}) — наладка по коду ПФ"
-                )
+                warnings.append(code_mismatch_text(
+                    task, operation, part, step, "наладка считается по коду операции."
+                    if not operation.etk_ops else "наладка считается по коду ПФ.",
+                ))
                 break
             found.append(setup_key(
                 code=part.code, stage=part.stage,

@@ -284,9 +284,8 @@ def test_autoplan_key_of_a_semifinished_falls_back_when_an_etk_operation_changed
     keys, warnings = operation_keys(task, document)
 
     assert keys[task.operations[0].id].family == ("CUT",)
-    assert warnings == (
-        "ПЗ-0001 · ПФ 1, операция ЭТК 2: код PRS не совпадает с техкартой (PRS-2) — наладка по коду ПФ",
-    )
+    assert len(warnings) == 1 and warnings[0].startswith("ПЗ-0001 · ПФ 1, операция ЭТК 2:")
+    assert "(код PRS)" in warnings[0] and "(код PRS-2)" in warnings[0] and "наладка считается по коду ПФ" in warnings[0]
 
 
 def _skills() -> dict[str, dict[UUID, OperatorSkill]]:
