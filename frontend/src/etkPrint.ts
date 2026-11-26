@@ -11,10 +11,11 @@ import {
   ETK_CONNECTION_COLUMNS, ETK_TUBE_COLUMNS, etkDocumentConnectionRows, etkPhysicalConfig, etkTubePlacementRows, etkContactSpecs, etkDrawHarness, etkFigure, etkParams, type EtkParam,
   type EtkTopologyData,
 } from "./etkDraw";
-import { ETK_TOOLING_SECTIONS, etkLabelResult, etkTimeRows, etkOperationName, etkToleranceLines, parseDefects, solderMode, shrinkRequirementLines, toolingSections } from "./etkOperation";
+import { ETK_TOOLING_SECTIONS, etkLabelResult, etkMarkPhase, etkTimeRows, etkToleranceLines, parseDefects, solderMode, shrinkRequirementLines, toolingSections } from "./etkOperation";
 import { figuresForDefect, stdFiguresPrintHtml, type StdFigureIndex } from "./stdFigures";
 import { formatDateTime, formatNumber, unitLabel } from "./format";
 import { etkCardSourceNote } from "./etkCardSource";
+import { etkTitle } from "./etkDocOps";
 import { etkPartSource, etkPfGroups, etkPfOutName, etkRouteDiagram, etkRouteOf, etkSemiSource, formatTimeTotal, opNumber, type EtkPfRow } from "./etkRoute";
 import { hasMarkSerial, markLabelList, markSerialTemplate, type MarkSerialRange } from "./markSerial";
 import type { PrintBlock, PrintPage } from "./print";
@@ -41,7 +42,7 @@ function object(value: unknown): Row {
 
 /** SUPPLYMAP etkUnwrap_ keeps the text; the safety heading stays in print (only the screen folds it). */
 export function etkOperationTitle(operation: Row): string {
-  return etkOperationName(text(object(operation.card).name), operation.type) || text(operation.title) || text(operation.type) || text(operation.code);
+  return etkTitle(operation);
 }
 
 function head(kit: Row, revision: number, code: string): PrintBlock[] {
@@ -200,7 +201,7 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
           return [
             text(operation.position || index + 1), text(operation.code),
             etkOperationTitle(operation) + (operation.edited ? " (правлена)" : ""), text(operation.connector),
-            text(times.operation_seconds), text(times.setup_seconds),
+            text(times.operation_seconds) || ("operation_seconds" in times ? "не задано" : ""), text(times.setup_seconds),
           ];
         }),
       } },
@@ -235,6 +236,8 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
     const markRows = rows(object(operation.fields).marks);
     const withLength = markRows.some((mark) => text(mark.length));
     const labels = serial ? markLabelsTable(markRows, serial) : null;
+    const markColumns = ["№", "Что маркируем", "Надпись", "Материал", "Где", ...(withLength ? ["Длина, мм"] : []), "На изделие", "На партию"];
+    const installMarks = etkMarkPhase(operation) === "install";
     const marks = labels?.rows ?? numbered(markRows, (mark) => [
       text(mark.target), hasMarkSerial(text(mark.text))
         ? `${markSerialTemplate(text(mark.text))} — номер по заданию${text(mark.batch) ? `, ${formatNumber(text(mark.batch))} шт.` : ""}` : text(mark.text),
@@ -262,6 +265,8 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
         ...table(["№", "Что взять: полуфабрикат", "Сколько", "Факт", "Ед.", "Откуда"], semis),
         ...table(["№", "Что взять: комплектующие, артикул", "Наименование", "ГРН", "Сколько", "Факт", "Ед.", "Откуда"], components),
         ...(components.length || semis.length ? [] : [{ text: "Комплектующих и полуфабрикатов на входе нет." }]),
+        ...(installMarks && marks.length ? [{ text: "Места установки меток" },
+          ...table(labels?.columns ?? markColumns, marks)] : []),
         section("Оснастка: инструмент, оборудование, расходники"),
         ...table(["Раздел", "№", "Наименование", "Инв. №", "№ прог. / параметры", "Норма", "Ед."],
           [...solderRows(operation), ...shrinkRequirementLines(operation).map((item) =>
@@ -273,10 +278,14 @@ export function etkPrintPages(card: ProjectTechcard, revisions: TechcardRevision
         ] : []),
         ...(defects ? [section("Типовые дефекты"), { text: defects }, ...defectFigures(defects, figures)] : []),
         ...(figure ? [section("Эскиз"), { figure }] : []),
-        ...(result.length || time.length || marks.length ? [
+        ...(result.length || time.length || (marks.length && !installMarks) ? [
           section("Результат"),
           ...table(["№", text(operation.result_label) || "Результат", "Норма", "Факт / брак", "Ед."], result),
-          ...table(labels?.columns ?? ["№", "Что маркируем", "Надпись", "Материал", "Где", ...(withLength ? ["Длина, мм"] : []), "На изделие", "На партию"], marks),
+          ...(installMarks ? [] : [
+            ...(labelResult ? [{ text: "Что напечатано" }] : []),
+            ...table(labels?.columns ?? markColumns, marks),
+            ...(labelResult ? [{ text: `Итого: ${labelResult.summary}` }] : []),
+          ]),
           ...table(["№", "Расчётное время", "Норма, мин", "Факт"], time),
         ] : []),
       ],

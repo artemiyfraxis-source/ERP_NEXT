@@ -199,14 +199,15 @@ it("shows 17 label kinds and 45 pieces for a 15-piece 708К task, correcting an 
   render(<EtkSheet card={card} principal={principal} onChange={() => undefined} task serial={serial} />);
   const table = await screen.findByRole("table", { name: "Метки по КД" });
   fireEvent.click(within(screen.getByRole("region", { name: "Результат" })).getByRole("heading", { level: 4 }));
-  expect(within(table).getAllByRole("row")).toHaveLength(18);
+  expect(within(table).getAllByRole("row")).toHaveLength(19);
   expect(within(table).getByText("FRX.708К.120907/AA.000001")).toBeVisible();
   expect(within(table).getByText("FRX.708К.120907/AA.000015")).toBeVisible();
   expect(within(table).getAllByText("× 15")).toHaveLength(2);
-  expect(within(screen.getByRole("region", { name: "Результат" })).getByText("Этикетки: 17 видов, 45 шт.")).toBeInTheDocument();
+  expect(within(screen.getByRole("region", { name: "Результат" })).getByText("Напечатанные этикетки")).toBeInTheDocument();
+  expect(within(table).getByText("Итого: 17 видов, 45 шт.")).toBeInTheDocument();
   const pages = etkPrintPages(card, [], {}, serial);
   const printed = buildPrintDocumentHtml("ЭТК", pages);
-  expect(printed.replaceAll("\u00a0", " ")).toContain("Этикетки: 17 видов, 45 шт.");
+  expect(printed.replaceAll("\u00a0", " ")).toContain("Итого: 17 видов, 45 шт.");
   expect(printed).not.toContain("Напечатанные этикетки: 3 шт.");
   const labelBlock = pages.at(-1)!.blocks[0];
   if (!("table" in labelBlock)) throw new Error("Expected the label list table");
@@ -241,4 +242,50 @@ it("shows the tolerances of the steps in a column of their own, a line per value
   const html = buildPrintDocumentHtml("ТК", etkPrintPages(card, []));
   expect(html).toContain("Сторона В: 2–3 мм\nЗазор: 0,5–1,5 мм");
   expect(html).toContain("± 10 °C\nВремя: ≤ 2,0 сек");
+});
+
+it("a label installation (even with a stale printer code) keeps its table as a placement spec in Input, not in Result, on screen and in print", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  const card = techcard({ marks });
+  const operation = (card.document as { operations: Array<Record<string, unknown>> }).operations[0];
+  operation.code = "PRINT_MARK_LABEL";
+  operation.title = "Наклейка этикеток маркировки";
+  (operation.card as { name: string }).name = "Наклейка этикеток маркировки";
+  operation.result = [{ name: "Кабель с метками", norm: "10", unit: "Шт." }];
+  render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
+  const table = await screen.findByRole("table", { name: "Метки по КД" });
+  expect(screen.getByRole("region", { name: "Вход" })).toContainElement(table);
+  expect(screen.getByRole("region", { name: "Результат" })).not.toContainElement(table);
+  expect(within(table).queryByText(/Итого/)).toBeNull();
+  const html = buildPrintDocumentHtml("ТК", etkPrintPages(card, []));
+  expect(html).toMatch(/1\. Вход[\s\S]*Места установки меток[\s\S]*Что маркируем[\s\S]*2\. Оснастка/);
+  expect(html).not.toMatch(/Результат[\s\S]*Что маркируем/);
+  expect(html).not.toContain("Напечатанные этикетки");
+});
+
+it("a label print shows the noun «Напечатанные этикетки», its rows and a total in the footer, on screen and in print", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+    new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+  const card = techcard({ marks });
+  const operation = (card.document as { operations: Array<Record<string, unknown>> }).operations[0];
+  operation.code = "PRINT_MARK_LABEL";
+  operation.title = "Печать этикеток";
+  (operation.card as { name: string }).name = "Печать этикеток";
+  operation.result = [{ name: "Напечатанные этикетки: 3 шт.", norm: "30", unit: "Шт." }];
+  render(<EtkSheet card={card} principal={principal} onChange={() => undefined} />);
+  const table = await screen.findByRole("table", { name: "Метки по КД" });
+  const result = screen.getByRole("region", { name: "Результат" });
+  expect(result).toContainElement(table);
+  expect(within(result).getByText("Напечатанные этикетки")).toBeInTheDocument();
+  expect(within(table).getByText("Итого: 2 вида, 30 шт.")).toBeInTheDocument();
+  const html = buildPrintDocumentHtml("ТК", etkPrintPages(card, [])).replaceAll(" ", " ");
+  expect(html).toMatch(/Результат[\s\S]*Напечатанные этикетки[\s\S]*Что напечатано[\s\S]*Что маркируем[\s\S]*Итого: 2 вида, 30 шт\./);
+});
+
+it("an unknown operation norm prints «не задано» in the route, never an empty or zero cell", () => {
+  const card = techcard({});
+  const operation = (card.document as { operations: Array<Record<string, unknown>> }).operations[0];
+  operation.times = { operation_seconds: "", setup_seconds: "" };
+  expect(buildPrintDocumentHtml("ТК", etkPrintPages(card, []))).toMatch(/<td>не задано<\/td>/);
 });

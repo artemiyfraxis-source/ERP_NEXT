@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { etkLabelResult, etkOperationName, etkToleranceLines, etkToleranceParts, parseDefects, solderMode, toolingSections } from "./etkOperation";
+import { etkLabelResult, etkMarkPhase, etkOperationName, etkToleranceLines, etkToleranceParts, parseDefects, solderMode, toolingSections } from "./etkOperation";
 
 it("counts printed label kinds and pieces for a task subrange, while installation keeps its own output", () => {
   const operation = {
@@ -10,8 +10,14 @@ it("counts printed label kinds and pieces for a task subrange, while installatio
     ] },
     result: [{ name: "Напечатанные этикетки: 4 шт.", norm: "60", unit: "Шт." }],
   };
-  expect(etkLabelResult(operation, { first: 11, last: 15 })).toEqual({ name: "Этикетки: 7\u00a0видов, 20 шт.", norm: "20", unit: "Шт." });
-  expect(etkLabelResult(operation)).toEqual({ name: "Этикетки: 3\u00a0вида, 60 шт.", norm: "60", unit: "Шт." });
+  expect(etkLabelResult(operation, { first: 11, last: 15 })).toEqual({ name: "Напечатанные этикетки", norm: "20", unit: "Шт.", summary: "7\u00a0видов, 20 шт." });
+  expect(etkLabelResult(operation)).toEqual({ name: "Напечатанные этикетки", norm: "60", unit: "Шт.", summary: "3\u00a0вида, 60 шт." });
+  // A printer code on an installation operation is not a print job: no label output, the table is a placement spec.
+  const stale = { ...operation, card: { name: "Наклейка этикеток маркировки" }, result: [{ name: "Кабель маркирован" }] };
+  expect(etkMarkPhase(stale)).toBe("install");
+  expect(etkLabelResult(stale)).toBeNull();
+  expect(etkMarkPhase(operation)).toBe("print");
+  expect(etkMarkPhase({ code: "INS_MARK_HARNESS", fields: operation.fields })).toBeNull();
   expect(etkLabelResult({ ...operation, code: "INS_MARK_LABEL", result: [{ name: "Кабель маркирован" }] }, { first: 1, last: 15 })).toBeNull();
   expect(etkLabelResult({ code: "PRINT_MARK_LABEL" }, { first: 1, last: 15 })).toBeNull();
 });

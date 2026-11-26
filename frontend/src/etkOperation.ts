@@ -29,15 +29,32 @@ export function etkTimeRows(operation: Row): Array<{ name: string; norm: string 
   }));
 }
 
-/** Correct the label-print output when reading an issued ETK, without rewriting its snapshot. */
-export function etkLabelResult(operation: Row, serial?: MarkSerialRange | null): { name: string; norm: string; unit: string } | null {
+/** Фаза таблицы меток операции по смыслу, а не по префиксу кода: на производстве есть монтаж с «печатным» кодом
+ *  (Orange Pi, операция 22). `print` — таблица выхода («Результат»), `install` — места установки (спецификация на входе),
+ *  `null` — меток нет или фаза не определена (остаётся в «Результате», как в выданных ЭТК). */
+export function etkMarkPhase(operation: Row): "print" | "install" | null {
+  if (!list(obj(operation.fields).marks).length) return null;
+  const explicit = str(obj(operation.fields).markPhase);
+  if (explicit === "print" || explicit === "install") return explicit;
+  const name = `${str(obj(operation.card).name)} ${str(operation.title)}`;
+  const code = str(operation.code);
+  if (/печат/i.test(name)) return "print";
+  if (/монтаж|наклей|установ|навес|надет/i.test(name)) return "install";
+  if (/^PRINT_/i.test(code) || list(operation.result).some((row) => /^Напечатанные /.test(str(row.name)))) return "print";
+  return null;
+}
+
+/** Correct the label-print output when reading an issued ETK, without rewriting its snapshot. The product is the noun
+ *  «Напечатанные этикетки»; variant count and total go to the footer of the table (`summary`). */
+export function etkLabelResult(operation: Row, serial?: MarkSerialRange | null): { name: string; norm: string; unit: string; summary: string } | null {
   const marks = list(obj(operation.fields).marks);
-  if (!marks.length || !(str(operation.code) === "PRINT_MARK_LABEL" || list(operation.result).some((row) => /^Напечатанные этикетки:/.test(str(row.name))))) return null;
+  if (!marks.length || etkMarkPhase(operation) !== "print") return null;
+  if (!(str(operation.code) === "PRINT_MARK_LABEL" || list(operation.result).some((row) => /^Напечатанные этикетки:/.test(str(row.name))))) return null;
   const labels = serial ? markLabelList(marks, serial) : [];
   const count = labels.length || marks.length;
   const total = labels.length ? labels.reduce((sum, label) => sum + label.quantity, 0)
     : marks.reduce((sum, mark) => sum + (Number(str(mark.batch).replace(",", ".")) || 0), 0);
-  return { name: `Этикетки: ${countLabel(count, ["вид", "вида", "видов"])}, ${formatNumber(total)} шт.`, norm: String(total), unit: "Шт." };
+  return { name: "Напечатанные этикетки", norm: String(total), unit: "Шт.", summary: `${countLabel(count, ["вид", "вида", "видов"])}, ${formatNumber(total)} шт.` };
 }
 
 export type ShrinkRequirementLine = { material: string; text: string; missing: boolean; sourceUrl: string; quote: string };
