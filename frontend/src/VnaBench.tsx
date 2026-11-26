@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type R
 import { ApiError, failureText, productionApi, vnaCaptureApi, type ProductionInstrument, type VnaAgent } from "./api";
 import { formatMoment, formatNumber, glueUnits, toNumber } from "./format";
 import { VswrChart } from "./VswrChart";
+import { VnaTargetList } from "./VnaTargetList";
 import { ScreenSwitcher, VnaScreensEditor, lossTitle } from "./VnaScreensEditor";
 import {
   CALIBRATION_REFUSALS,
@@ -511,6 +512,7 @@ function ObjectPanel({ session, calibrationValid, canEdit, busy, blockedStart, a
       </label>
       <button type="submit" className="secondary" disabled={looking || !query.trim()}>{looking ? "Ищу…" : "Найти"}</button>
     </form>
+    <VnaTargetList sessionId={sessionId} query={query} visible={!target && !looking} onPick={(next) => void pick(next)} />
     {error && <div className="error-banner" role="alert">{error}</div>}
     {candidates && candidates.length === 0 && <p className="muted-text">Ничего не найдено — проверьте номер СИ или задание и позицию.</p>}
     {candidates && candidates.length > 1 && <ul className="vna-bench-candidates" aria-label="Найденные объекты">
@@ -521,6 +523,11 @@ function ObjectPanel({ session, calibrationValid, canEdit, busy, blockedStart, a
     </ul>}
     {target && <div className="vna-bench-target">
       <h3>{targetTitle(target)}</h3>
+      <button type="button" className="secondary small" disabled={busy || looking || inProgress || Boolean(session?.command)}
+        onClick={() => {
+          planRequest.current += 1;
+          setTarget(null); setPlan(null); setCandidates(null); setQuery(""); setError("");
+        }}>Выбрать другой объект</button>
       {!session && <>
         <p className="vna-bench-hint">{target.kind === "assembly"
           ? `Для КБ калибровка идёт на полосе ЭТК задания ${target.task_number} — откроется отдельный сеанс.`
@@ -560,7 +567,6 @@ function ObjectPanel({ session, calibrationValid, canEdit, busy, blockedStart, a
       {session && item && <ItemResult item={item} session={session} canEdit={canEdit} busy={busy || Boolean(blocked)} act={act}
         remeasure={plan && !plan.refusal ? () => void act("measure", () => vnaBenchApi.measure(session.id, session.version, target)) : null} />}
     </div>}
-    {!target && !candidates && <p className="muted-text">Отсканируйте этикетку СИ или изделия, или введите номер — экран покажет план замера.</p>}
   </div>;
 }
 
