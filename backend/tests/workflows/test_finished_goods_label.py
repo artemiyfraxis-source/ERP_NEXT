@@ -15,8 +15,8 @@ from sqlalchemy.pool import StaticPool
 
 from app.main import app
 from app.modules.shipping.application import AcceptGoodCommand, accept_good
-from app.modules.shipping.domain import FinishedGood
-from app.modules.shipping.infrastructure import SqlAlchemyShippingUnitOfWork
+from app.modules.shipping.domain import FinishedGood, MoveContext, acceptance_act
+from app.modules.shipping.infrastructure import SqlAlchemyShippingUnitOfWork, FinishedGoodsActRow
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseUnitOfWork
 from app.modules.warehouse.label_jobs import LabelJobRow
 from app.modules.warehouse.labels.layout import GrnLabelData
@@ -49,13 +49,18 @@ def labels():
     with shipping() as uow:
         uow.goods.add(good)
         uow.commit()
-    for quantity, place in ((100, "А-1"), (350, "")):
+    # Reprints of historical ГП acts continue using the unchanged legacy intake template.
+    for serial, (quantity, place) in enumerate(((100, "А-1"), (350, "")), 1):
         with shipping() as uow:
             current = uow.goods.get(good.id)
-        accept_good(AcceptGoodCommand(
-            good_id=good.id, expected_version=current.version, quantity=Decimal(quantity), received_at=NOW.date(),
-            actor=STOREKEEPER, now=NOW, location=place,
-        ), shipping())
+            number = f"ГП.26.{serial:07d}"
+            updated = current.accept(Decimal(quantity), NOW.date(), number, place)
+            moves = uow.goods.add(updated, MoveContext(actor=STOREKEEPER.name, actor_id=STOREKEEPER.id, occurred_at=NOW))
+            act = acceptance_act(updated, moves, number)
+            uow.session.add(FinishedGoodsActRow(id=act.id, finished_good_id=good.id, move_id=act.move_id,
+                grn=number, quantity=act.quantity, received_at=act.received_at, location=act.location,
+                actor=act.actor, created_at=act.created_at))
+            uow.commit()
     with shipping() as uow:
         acts = uow.goods.acts([good.id])[good.id]
     yield TestClient(app), sessions, acts

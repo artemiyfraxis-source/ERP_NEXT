@@ -90,7 +90,7 @@ SEMIS_DIFFERENCES: dict[str, dict[int, str]] = {
     "708К.2-КБ1": _708, "708К.2-КБ1 без длины": _708, "708К.5-КБ1": _708, "708К.5-КБ1 нормы терминалов": _708,
     "591К.5-КБ2": {4: "ТУТ", 5: "провода", 6: "провода", 7: "провода"},
     "729К.2-КБ1": {3: "ТУТ", 4: "провода"},
-    "345К.2-КБ1": {3: "ТУТ", 4: "провода"},
+    "345К.2-КБ1": {3: "ТУТ", 4: "провода", 6: "ТУТ"},  # 6: the ТТК cut hands on its own per-length row
     "резка с обжимом": {2: "провода"}, "резка с обжимом, мерительный инструмент": {2: "провода"},
     "резка, обжим, лужение": {2: "провода"},
     "сростки и разделка": {2: "количество", 3: "цепочка", 4: "провода"},
@@ -149,7 +149,12 @@ def test_converted_assembly_builds_the_same_operations_through_the_manual_path(c
             assert built[key] == expected[key], (case, expected["position"], key)
     assert manual["topology"] == typed["topology"]
     assert manual.get("connections") == typed.get("connections")
-    assert manual["warnings"] == typed["warnings"]
+    # The same warnings. Within each kind the order is the operation order on both paths; only the interleaving of
+    # kinds differs («Ручная сборка» lists missing time norms after all card checks, the generator per operation).
+    missing = lambda warnings: [text for text in warnings if text.endswith(": не задана норма времени")]  # noqa: E731
+    rest = lambda warnings: [text for text in warnings if not text.endswith(": не задана норма времени")]  # noqa: E731
+    assert missing(manual["warnings"]) == missing(typed["warnings"])
+    assert rest(manual["warnings"]) == rest(typed["warnings"])
 
 
 @pytest.mark.parametrize("case", sorted(CASES))
@@ -286,6 +291,7 @@ def test_a_generator_operation_without_its_card_is_a_warning_not_an_error():
     assert document["operations"][0]["card"] is None
     assert document["warnings"] == [
         "Операция 1 (cutWireCrimp): нет карточки CUT_WIRE+1crimp", "Операция 2 (insTerm): нет карточки INS_terminal",
+        "Операция 2 (INS_terminal): не задана норма времени",
     ]
 
 

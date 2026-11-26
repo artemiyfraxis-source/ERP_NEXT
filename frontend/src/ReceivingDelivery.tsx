@@ -1,3 +1,5 @@
+import { GrnFields, QualityChip } from "./GrnFields";
+import { grnError, type GrnInput } from "./grn";
 import { useRef, useState, type FormEvent } from "react";
 import {
   ApiError, failureText, receivingApi,
@@ -146,7 +148,7 @@ export function proposalGroup(proposal: UpdProposal): ExpectedGroup {
   };
 }
 
-interface DeliveryRow {
+interface DeliveryRow extends GrnInput {
   line: ReceivingLine;
   ticked: boolean;
   document: string;
@@ -228,12 +230,15 @@ export function DeliveryPanel({ group, upd, onClose, onDone, onWarehouse }: {
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (busy || done || !chosen.length) return;
+    const invalid = chosen.find(row => grnError(row));
+    if (invalid) { setError(`${itemTitle(invalid.line)}: ${grnError(invalid)}`); return; }
     setBusy(true);
     setError("");
     try {
       const lines: DeliveryLinePayload[] = chosen.map((row) => {
         const place = row.place.trim() || commonPlace.trim();
         return {
+          grn_category: row.grn_category, grn_context: row.grn_context ?? {}, expiry_required: row.expiry_required ?? false,
           id: row.line.id,
           version: row.line.version,
           ...(row.document.trim() ? { document_quantity: row.document.trim() } : {}),
@@ -329,7 +334,7 @@ export function DeliveryPanel({ group, upd, onClose, onDone, onWarehouse }: {
                     {row.deviation === "brak" && <label className="defect-qty">Кол-во брака<input type="number" min="0.000001" max={deliveryFact(row)} step="any" required className="qty" title={`Не больше факта: ${deliveryFact(row)} ${row.line.unit}`} aria-label={`Кол-во брака, ${row.line.unit}: ${itemTitle(row.line)}`} value={row.deviationQuantity} disabled={locked} onChange={(event) => edit(row.line.id, { deviationQuantity: event.target.value })} /><span>{row.line.unit}</span></label>}
                     {row.deviation === "expired" && <input type="date" aria-label={`Срок годности: ${itemTitle(row.line)}`} value={row.expiry} disabled={locked} onChange={(event) => edit(row.line.id, { expiry: event.target.value })} />}
                   </td>
-                  {done && <td className="num">{row.ticked ? (result?.grn ? <strong>{result.grn}</strong> : <StatusChip status={result?.status} />) : ""}{result && Number(result.backorder_quantity) > 0 && <span className="delivery-short">недовоз {result.backorder_quantity} {result.unit} → дозавоз</span>}</td>}
+                  {done && <td className="num">{row.ticked ? (result?.grn ? <><strong>{result.grn}</strong> <QualityChip passport={result}/></> : <StatusChip status={result?.status} />) : ""}{result && Number(result.backorder_quantity) > 0 && <span className="delivery-short">недовоз {result.backorder_quantity} {result.unit} → дозавоз</span>}</td>}
                 </tr>
               );
             })}
@@ -338,6 +343,10 @@ export function DeliveryPanel({ group, upd, onClose, onDone, onWarehouse }: {
       </div>
       {upd && updRows.length > 0 && <UpdRowsTable rows={updRows} lines={rows} disabled={busy || done}
         onAssign={(row, target) => setRows((current) => reassignRow(current, row, target))} />}
+      {!done && rows.filter(row => row.ticked).map(row => <section className="grn-line" key={row.line.id} aria-label={`Категория: ${itemTitle(row.line)}`}>
+        <h3 className="grn-line-title">{itemTitle(row.line)}</h3><GrnFields value={row} disabled={busy} onChange={next => edit(row.line.id,next)}/>
+      </section>)}
+
       {done && <ReceiptLabels lots={receiptLots(chosen.map((row) => results.get(row.line.id)))} />}
       <div className="header-actions">
         {!done && <button type="submit" className="primary small" disabled={busy || !chosen.length}>{busy ? "Проводим…" : `Провести поставку (${chosen.length} поз.)`}</button>}

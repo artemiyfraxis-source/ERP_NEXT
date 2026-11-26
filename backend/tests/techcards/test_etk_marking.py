@@ -4,11 +4,12 @@
 import csv
 import json
 from copy import deepcopy
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
-from app.modules.techcards.etk_builder import build_etk
+from app.modules.techcards.etk_builder import build_etk, operation_time_summary
 from app.modules.techcards.etk_marking import TYPES, mark_kind
 from app.modules.techcards.operation_cards import parse_operation_library
 from app.workflows.techcard_build import enrich_marking
@@ -163,8 +164,11 @@ def test_a_missing_norm_is_a_build_warning_not_an_invented_time():
     next(item for item in config["ops"] if item["type"] == "insMark")["marks"] = [_mark("Термотрубка", "X1")]
     document = build_etk(enrich_marking(config, _mirror_equipment(), operations), CARDS, operation_library_commit="x")
     op = next(item for item in document["operations"] if item["type"] == "insMark")
-    assert [row["name"] for row in op["time"][1:]] == ["Печать на трубках", "Усадка трубок"]
-    assert any("«Нарезка трубок» (CUT_TUT_short)" in warning for warning in document["warnings"])
+    # The missing norm stays a row with an empty norm: the operation total is incomplete, not smaller (audit 23.11, D1).
+    assert [(row["name"], bool(row["norm"])) for row in op["time"][1:]] == [
+        ("Печать на трубках", True), ("Нарезка трубок", False), ("Усадка трубок", True)]
+    assert operation_time_summary(op, Decimal(1))[1] is True
+    assert any("«Нарезка трубок» (CUT_TUT_short)" in warning and "неполное" in warning for warning in document["warnings"])
 
 
 def test_legacy_marking_without_a_kd_list_keeps_the_card_as_it_was():

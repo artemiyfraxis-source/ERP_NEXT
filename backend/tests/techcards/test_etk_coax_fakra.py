@@ -38,13 +38,16 @@ def test_new_fakra_route_independent_preparations_and_label_inputs(fixture):
     assert [position for block in doc["route"]["blocks"] for position in block["ops"]] == list(range(1, len(ops) + 1))
     assert all(not op["semis"] for op in ops[:3])
     assert len({op["result"][0]["name"] for op in ops[:3]}) == 3
-    assert [op["result"][0]["norm"] for op in ops[:3]] == ["15", "45", "45"]
+    assert [op["result"][0]["norm"] for op in ops[:2]] == ["15", "45"]
+    # Protective tube: one result row per length — every row, with its batch quantity (30 ends + 15 centres = 45).
+    assert [(row["name"], row["norm"]) for row in ops[2]["result"]] == [
+        ("ТУТ 4/2мм, прозрачная — 35 мм (концевые)", "30"), ("ТУТ 4/2мм, прозрачная — 55 мм (центральные)", "15")]
     assert _inputs(ops[0]) == {"RTK 031": ("72,825", "М.")}
     # Frozen payload keeps its parts, but label stock is a printer consumable.
     assert _inputs(ops[1]) == {}
     assert _inputs(ops[2]) == {"ТУТ 4/2мм, прозрачная": ("1,875", "М.")}
-    assert ops[3]["semis"][1]["name"] == ops[2]["result"][0]["name"]
-    assert ops[3]["semis"][1]["norm"] == "45"
+    # Putting the tubes on takes exactly the cut's rows (35 mm and 55 mm pieces), 45 in all.
+    assert ops[3]["semis"][1:] == [{key: row[key] for key in ("name", "norm", "unit")} for row in ops[2]["result"]]
     label = next(op for raw, op in zip(doc["build_config"]["ops"], ops) if raw.get("opKey") == "coaxInsLabel")
     assert label["semis"][1]["name"] == ops[1]["result"][0]["name"]
     assert label["semis"][1]["norm"] == "45"
@@ -130,7 +133,7 @@ def test_label_print_time_distinguishes_missing_norm_from_explicit_zero(seconds,
     output = next(op for op in doc["operations"] if op["code"] == "PRINT_MARK_LABEL")
     assert output["time"][0]["norm"] == expected
     assert output["times"]["operation_seconds"] == ("" if seconds is None else str(seconds))
-    assert any("PRINT_MARK_LABEL" in text and "норма времени не задана" in text for text in doc["warnings"]) == (expected == "")
+    assert any("PRINT_MARK_LABEL" in text and "не задана норма времени" in text for text in doc["warnings"]) == (expected == "")
 
 
 def test_three_label_shrinks_hand_over_the_cable_batch_not_three_actions():
@@ -178,8 +181,9 @@ def test_saved_protective_lengths_recount_by_place(cables, old_length, assembly_
     ends, middle = 2 * cables * 15, (1 if assembly_mark else cables) * 15
     cut, install, heat = [op for raw, op in zip(doc["build_config"]["ops"], doc["operations"]) if raw.get("protective")]
     assert cut["components"][0]["norm"] == str((ends * 35 + middle * 55) / 1000).replace(".", ",")
-    assert cut["result"][0]["norm"] == str(ends + middle)
-    assert install["semis"][1]["norm"] == str(ends + middle)
+    assert [(row["name"], row["norm"]) for row in cut["result"]] == [
+        ("ТУТ 4/2мм, прозрачная — 35 мм (концевые)", str(ends)), ("ТУТ 4/2мм, прозрачная — 55 мм (центральные)", str(middle))]
+    assert [(row["name"], row["norm"]) for row in install["semis"][1:]] == [(row["name"], row["norm"]) for row in cut["result"]]
     for operation in (cut, install, heat):
         assert operation["time"][0]["norm"] == str(ends + middle)
         text = "\n".join(step["text"] for step in operation["card"]["steps"])

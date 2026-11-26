@@ -22,11 +22,14 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.clock import moscow_now
 from app.shared.http_auth import Principal, warehouse_edit_principal, warehouse_view_principal
 from app.shared.stored_files import file_response
 from app.workflows.receipt_upd_registry import push_after_accept
+from app.workflows.warehouse_grn_context import validate_warehouse_grn_context
+from .grn import GrnConflict, GrnCapacityExceeded
 from app.workflows.stock_receipt import expected_in_receiving
 
 from .api import StockItemInput, _result, receipt_brief, warehouse_uow_factory
@@ -110,7 +113,7 @@ class AcceptPayload(StockItemInput):
     labels: int = Field(default=1)
     confirm_expected: bool = False
     upd_name: str = Field(default="", max_length=UPD_NAME_LIMIT)  # the item row as the УПД prints it
-    acceptance_id: UUID | None = None
+    acceptance_id: UUID
     learning: LearningPayload | None = None
 
     def manual_item(self, warehouse: str = "") -> ManualStockItem:
@@ -138,13 +141,13 @@ def _lot(lot, receipt: WarehouseReceipt | None) -> dict:
 def _checked(operation):
     try:
         return operation()
-    except WarehouseValidationError as error:
+    except (WarehouseValidationError, GrnCapacityExceeded) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    except (ReceiptConflict, ExpectedInReceiving) as error:
+    except (ReceiptConflict, ExpectedInReceiving, GrnConflict) as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     except KeyError as error:
         raise HTTPException(status_code=404, detail=error.args[0]) from error
-    except IntegrityError as error:
+    except (IntegrityError, StaleDataError) as error:
         raise HTTPException(status_code=409, detail="Конкурентное изменение: повторите") from error
 
 
@@ -247,6 +250,7 @@ def accept_line(
         ),
         uow_factory(),
         expected,
+        context_validator=validate_warehouse_grn_context,
     ))
     background.add_task(push_after_accept, uow_factory, _factory(request, "purchasing_uow_factory"), receipt_id,
                         principal.actor, now)

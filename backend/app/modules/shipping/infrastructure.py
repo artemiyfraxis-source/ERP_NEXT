@@ -11,7 +11,7 @@ from hashlib import sha256
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
-    Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, Uuid,
+    JSON, Boolean, CheckConstraint, Date, DateTime, ForeignKey, ForeignKeyConstraint, Index, Integer, LargeBinary, Numeric, String, Text, UniqueConstraint, Uuid,
     and_, delete, func, or_, select, text,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker, validates
@@ -40,6 +40,12 @@ FINISHED_GOODS_CHECKS = {
 class FinishedGoodRow(Base):
     __tablename__ = "finished_goods"
     __table_args__ = (
+        ForeignKeyConstraint(["grn_id", "grn_category", "grn"],
+                             ["warehouse_grn_registry.id", "warehouse_grn_registry.category", "warehouse_grn_registry.number"],
+                             name="fk_finished_goods_grn_identity", ondelete="RESTRICT"),
+        ForeignKeyConstraint(["grn_id", "material_owner_id"],
+                             ["warehouse_grn_registry.id", "warehouse_grn_registry.owner_id"],
+                             name="fk_finished_goods_grn_owner", ondelete="RESTRICT"),
         Index("ux_finished_goods_project_item", "project", "item_index", unique=True),
         *(CheckConstraint(sql, name=name) for name, sql in FINISHED_GOODS_CHECKS.items()),
     )
@@ -57,6 +63,20 @@ class FinishedGoodRow(Base):
     shipped: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     received_at: Mapped[date | None] = mapped_column(Date(), nullable=True)
     grn: Mapped[str | None] = mapped_column(String(32), nullable=True, unique=True)
+    grn_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("warehouse_grn_registry.id", name="fk_finished_goods_grn", ondelete="RESTRICT"), index=True)
+    grn_category: Mapped[str | None] = mapped_column(String(3))
+    grn_context: Mapped[dict | None] = mapped_column(JSON)
+    grn_contract_version: Mapped[int | None] = mapped_column(Integer)
+    material_owner_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("warehouse_material_owners.id", name="fk_finished_goods_material_owner", ondelete="RESTRICT"))
+    quality_state: Mapped[str | None] = mapped_column(String(16))
+    quality_basis: Mapped[str | None] = mapped_column(Text)
+    quality_decided_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    quality_decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    quality_version: Mapped[int | None] = mapped_column(Integer)
+    expiry_required: Mapped[bool | None] = mapped_column(Boolean)
+
     note: Mapped[str] = mapped_column(Text(), nullable=False)
     sent: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, default=Decimal("0"))
     before_erp: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, default=Decimal("0"))
@@ -238,7 +258,15 @@ class FinishedGoodsActRow(Base):
     (`SqlAlchemyFinishedGoodsRepository.record_act`); Σ штук актов КБ = Σ ходов «принято» − отгружено до ERP."""
 
     __tablename__ = "finished_goods_acts"
-    __table_args__ = (CheckConstraint("quantity > 0", name="ck_finished_goods_acts_quantity"),)
+    __table_args__ = (
+        CheckConstraint("quantity > 0", name="ck_finished_goods_acts_quantity"),
+        ForeignKeyConstraint(["grn_id", "grn_category", "grn"],
+                             ["warehouse_grn_registry.id", "warehouse_grn_registry.category", "warehouse_grn_registry.number"],
+                             name="fk_finished_goods_acts_grn_identity", ondelete="RESTRICT"),
+        ForeignKeyConstraint(["grn_id", "material_owner_id"],
+                             ["warehouse_grn_registry.id", "warehouse_grn_registry.owner_id"],
+                             name="fk_finished_goods_acts_grn_owner", ondelete="RESTRICT"),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     finished_good_id: Mapped[UUID] = mapped_column(
@@ -248,6 +276,20 @@ class FinishedGoodsActRow(Base):
         Uuid(as_uuid=True), ForeignKey("finished_goods_moves.id", ondelete="RESTRICT"), nullable=False, unique=True,
     )
     grn: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
+    grn_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("warehouse_grn_registry.id", name="fk_finished_goods_acts_grn", ondelete="RESTRICT"), index=True)
+    grn_category: Mapped[str | None] = mapped_column(String(3))
+    grn_context: Mapped[dict | None] = mapped_column(JSON)
+    grn_contract_version: Mapped[int | None] = mapped_column(Integer)
+    material_owner_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("warehouse_material_owners.id", name="fk_finished_goods_acts_material_owner", ondelete="RESTRICT"))
+    quality_state: Mapped[str | None] = mapped_column(String(16))
+    quality_basis: Mapped[str | None] = mapped_column(Text)
+    quality_decided_by: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True))
+    quality_decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    quality_version: Mapped[int | None] = mapped_column(Integer)
+    expiry_required: Mapped[bool | None] = mapped_column(Boolean)
+
     quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     received_at: Mapped[date] = mapped_column(Date(), nullable=False)
     location: Mapped[str] = mapped_column(String(255), nullable=False, default="", server_default="")
@@ -328,6 +370,17 @@ def _good(row: FinishedGoodRow) -> FinishedGood:
         unit=row.unit, accepted=row.accepted, shipped=row.shipped,
         received_at=row.received_at, grn=row.grn, note=row.note, sent=row.sent, before_erp=row.before_erp,
         location=row.location or "",
+        grn_id=row.grn_id,
+        grn_category=row.grn_category,
+        grn_context=row.grn_context,
+        grn_contract_version=row.grn_contract_version,
+        material_owner_id=row.material_owner_id,
+        quality_state=row.quality_state,
+        quality_basis=row.quality_basis,
+        quality_decided_by=row.quality_decided_by,
+        quality_decided_at=row.quality_decided_at,
+        quality_version=row.quality_version,
+        expiry_required=row.expiry_required,
     )
 
 
@@ -342,13 +395,6 @@ class SqlAlchemyFinishedGoodsRepository:
     def list(self, limit: int = 500) -> list[FinishedGood]:
         rows = self.session.scalars(select(FinishedGoodRow).order_by(FinishedGoodRow.project, FinishedGoodRow.item_index).limit(limit))
         return [_good(row) for row in rows]
-    def reserve_grn(self, year: int) -> str:
-        key = f"grn-{year % 100:02d}"
-        row = self.session.scalar(select(ShippingSequenceRow).where(ShippingSequenceRow.name == key).with_for_update())
-        if row is None:
-            row = ShippingSequenceRow(name=key, value=0); self.session.add(row); self.session.flush()
-        row.value += 1
-        return f"ГП.{year % 100:02d}.{row.value:07d}"
     def for_project(self, project: str) -> list[FinishedGood]:
         """ГП одного проекта точно по `normalize_project_number` (по индексу ключа), а не первые N всей таблицы."""
         key = normalize_project_number(project)
@@ -375,7 +421,7 @@ class SqlAlchemyFinishedGoodsRepository:
         moves = balance_moves(before, good, move, normalize_project_number(good.project) or good.project.strip())
         if row is None:
             row = FinishedGoodRow(id=good.id); self.session.add(row)
-        for key in ("version", "project", "item_index", "customer", "article", "name", "ordered", "unit", "accepted", "shipped", "received_at", "grn", "note", "sent", "before_erp", "location"):
+        for key in ("version", "project", "item_index", "customer", "article", "name", "ordered", "unit", "accepted", "shipped", "received_at", "grn", "note", "sent", "before_erp", "location", 'grn_id', 'grn_category', 'grn_context', 'grn_contract_version', 'material_owner_id', 'quality_state', 'quality_basis', 'quality_decided_by', 'quality_decided_at', 'quality_version', 'expiry_required'):
             setattr(row, key, getattr(good, key))
         for item in moves:
             self.session.add(FinishedGoodMoveRow(
@@ -385,20 +431,22 @@ class SqlAlchemyFinishedGoodsRepository:
                 actor=item.actor, actor_id=item.actor_id, occurred_at=item.occurred_at, reason=item.reason,
             ))
         return moves
-    def record_act(self, good: FinishedGood, moves: tuple[GoodMove, ...]) -> AcceptanceAct | None:
-        """Акт приёмки к ходу «принято» из `moves` (то, что вернул `add` для принятой КБ `good`), в той же транзакции.
-        Первый акт КБ берёт ГРН самой КБ, следующий — новый номер «ГП.YY.» года хода. Нет хода «принято» — нет акта."""
-        move = next((item for item in moves if item.kind is MoveKind.ACCEPT), None)
-        if move is None:
+    def prepare_act(self, good, moves):
+        from app.workflows.finished_goods import allocate_production_act
+        return allocate_production_act(self.session, good, moves)
+
+    def record_act(self, good: FinishedGood, moves: tuple[GoodMove, ...], act=None) -> AcceptanceAct | None:
+        from app.workflows.receiving_stock import GRN_FIELDS
+        act = act or self.prepare_act(good, moves)
+        if act is None:
             return None
-        first = good.grn and self.session.scalar(
-            select(func.count()).select_from(FinishedGoodsActRow).where(FinishedGoodsActRow.finished_good_id == good.id)
-        ) == 0
-        act = acceptance_act(good, (move,), good.grn if first else self.reserve_grn(move.occurred_at.year))
-        self.session.add(FinishedGoodsActRow(
-            id=act.id, finished_good_id=act.finished_good_id, move_id=act.move_id, grn=act.grn, quantity=act.quantity,
-            received_at=act.received_at, location=act.location, actor=act.actor, created_at=act.created_at,
-        ))
+        existing = self.session.get(FinishedGoodsActRow, act.id)
+        if existing is None:
+            self.session.add(FinishedGoodsActRow(
+                id=act.id, finished_good_id=act.finished_good_id, move_id=act.move_id, grn=act.grn, quantity=act.quantity,
+                received_at=act.received_at, location=act.location, actor=act.actor, created_at=act.created_at,
+                **{name: getattr(act, name) for name in GRN_FIELDS},
+            ))
         return act
     def acts(self, good_ids) -> dict[UUID, tuple[AcceptanceAct, ...]]:
         """Акты приёмки по КБ, старые первыми, с откатами «принято → в производство» (`roll_back_acts`): `net` —
@@ -414,6 +462,18 @@ class SqlAlchemyFinishedGoodsRepository:
                 id=row.id, finished_good_id=row.finished_good_id, move_id=row.move_id, grn=row.grn,
                 quantity=Decimal(row.quantity), received_at=row.received_at, location=row.location or "",
                 actor=row.actor, created_at=row.created_at,
+                grn_id=row.grn_id,
+                grn_category=row.grn_category,
+                grn_context=row.grn_context,
+                grn_contract_version=row.grn_contract_version,
+                material_owner_id=row.material_owner_id,
+                quality_state=row.quality_state,
+                quality_basis=row.quality_basis,
+                quality_decided_by=row.quality_decided_by,
+                quality_decided_at=row.quality_decided_at,
+                quality_version=row.quality_version,
+                expiry_required=row.expiry_required,
+
             ))
         rollbacks: dict[UUID, list[tuple[datetime, Decimal]]] = {}
         for good_id, when, quantity in self.session.execute(select(

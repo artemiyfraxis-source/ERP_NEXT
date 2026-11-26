@@ -122,7 +122,7 @@ def test_last_confirmed_box_is_handed_to_matching_finished_good_grn_once():
 
     assert handed_box.status is BoxStatus.CONSUMED
     assert accepted.accepted == Decimal("5")
-    assert accepted.grn == "ГП.26.0000001"
+    assert accepted.grn == "FRX.26.000001"
     assert receipt.grn == accepted.grn
     assert receipt.source_box_id == box.id
     engine.dispose()
@@ -159,11 +159,11 @@ def test_each_box_handed_over_is_its_own_acceptance_act_with_its_own_grn():
     _box1, first_good, first = _handed(factory, task, operator, master, now, good, 1, 4)
     _box2, second_good, second = _handed(factory, task, operator, master, now, good, 2, 3)
 
-    assert first.grn == "ГП.26.0000001" == first_good.grn == second_good.grn
-    assert second.grn == "ГП.26.0000002"
+    assert first.grn == "FRX.26.000001" == first_good.grn == second_good.grn
+    assert second.grn == "FRX.26.000002"
     with factory() as uow:
         acts = uow.goods.acts([good.id])[good.id]
     assert [(act.grn, act.quantity, act.move_id is not None) for act in acts] == [
-        ("ГП.26.0000001", Decimal("4"), True), ("ГП.26.0000002", Decimal("3"), True),
+        ("FRX.26.000001", Decimal("4"), True), ("FRX.26.000002", Decimal("3"), True),
     ]
     engine.dispose()

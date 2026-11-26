@@ -39,9 +39,9 @@ def test_a_delivery_line_keeps_the_maker_and_the_supplier_article_beside_ours(st
 
 def test_quick_entry_takes_both_articles_and_leaves_them_empty_when_not_typed(stand):  # noqa: F811
     client, _ = stand
-    response = client.post("/api/stock/batches", json={"items": [
-        {**NSHV, "quantity": "100", "storage_location": "2A1"},
-        {"article": "CON-009", "quantity": "1", "storage_location": "2A1", "name": "Разъём"},
+    response = client.post("/api/stock/batches", json={"operation_id": "7d0a5a11-0000-4000-8000-000000000001", "items": [
+        {**NSHV, "grn_category": "PPM", "quantity": "100", "storage_location": "2A1"},
+        {"article": "CON-009", "grn_category": "PPM", "quantity": "1", "storage_location": "2A1", "name": "Разъём"},
     ]})
     assert response.status_code == 200, response.text
     lots = {lot["article"]: lot for lot in client.get("/api/stock?limit=10").json()["lots"]}

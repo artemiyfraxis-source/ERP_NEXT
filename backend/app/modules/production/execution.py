@@ -6,13 +6,13 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Protocol, Sequence
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 from zoneinfo import ZoneInfo
 
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 from app.modules.fulfillment.domain import FulfillmentStatus
-from app.modules.shipping.domain import AcceptanceAct, FinishedGood, MoveContext
+from app.modules.shipping.domain import AcceptanceAct, FinishedGood, MoveContext, ShippingValidationError
 
 from .application import CalendarRepository, ConcurrentProductionUpdate, OperatorRepository, ProductionRepository, SkillRepository, lock_reflow_projects, record_fact, release_fact
 from .domain import ProductionOperation, ProductionStatus, ProductionTask, ProductionValidationError, operation_duration_seconds
@@ -107,8 +107,9 @@ class MaterialRepository(Protocol):
 class FinishedGoodsRepository(Protocol):
     def get(self, good_id: UUID) -> FinishedGood | None: ...
     def add(self, good: FinishedGood, move: MoveContext | None = None) -> object: ...
-    def reserve_grn(self, year: int) -> str: ...
-    def record_act(self, good: FinishedGood, moves: object) -> AcceptanceAct | None: ...
+    def prepare_act(self, good: FinishedGood, moves: object) -> AcceptanceAct | None: ...
+    def record_act(self, good: FinishedGood, moves: object, act: AcceptanceAct | None = None) -> AcceptanceAct | None: ...
+    def acts(self, good_ids: Sequence[UUID]) -> dict[UUID, tuple[AcceptanceAct, ...]]: ...
 
 
 class FinishedGoodsReceiptRepository(Protocol):
@@ -970,14 +971,18 @@ def handoff_box(command: HandoffBoxCommand, uow: ExecutionUnitOfWork) -> tuple[P
         ):
             raise ProductionValidationError("Коробка не соответствует позиции готовой продукции")
         quantity = box.available
-        updated_good = good.accept(quantity, command.now.date(), good.grn or uow.goods.reserve_grn(command.now.year))
+        from app.workflows.finished_goods import accept_into_stock, ConcurrentShippingUpdate
+        try:
+            updated_good = accept_into_stock(uow, good, quantity, received_at=command.now.date(),
+                actor=command.actor, now=command.now, id_seed=box.id,
+                reason=f"Коробка {box.number or box.id}; ОТК {inspection.id}")
+        except ShippingValidationError as error:
+            raise ProductionValidationError(str(error)) from error
+        except ConcurrentShippingUpdate as error:
+            raise ConcurrentProductionUpdate(str(error)) from error
         updated_box = box.handoff()
-        # Ход журнала ГП «в производстве → принято складом» и акт приёмки со своим ГРН (владелец 19.10.2026) —
-        # вместе с коробкой, в той же транзакции; сдача коробки — отдельная приёмка КБ.
-        act = uow.goods.record_act(updated_good, uow.goods.add(updated_good, MoveContext(
-            actor=command.actor.name, actor_id=command.actor.id, occurred_at=command.now,
-            reason=f"коробка {box.number or box.id}",
-        )))
+        act = next(item for item in uow.goods.acts([good.id])[good.id]
+                   if item.move_id == uuid5(box.id, f"{good.id}:accept:production"))
         grn = act.grn
         receipt = FinishedGoodsReceipt(
             id=uuid4(), source_box_id=box.id, finished_good_id=good.id,
