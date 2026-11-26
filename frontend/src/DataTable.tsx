@@ -90,6 +90,10 @@ export interface DataBulkAction<T> {
   disabled?: (rows: T[]) => boolean;
   /** Действие не относится к выбранным строкам — кнопки нет вовсе (а не серой). */
   hidden?: (rows: T[]) => boolean;
+  /** Необязательно: надпись кнопки по выбранным строкам («Отгрузить выбранные (2 · 30 шт)»); без неё — `label`. */
+  text?: (rows: T[]) => string;
+  /** Необязательно: подсказка кнопки по выбранным строкам — например, почему она выключена. */
+  hint?: (rows: T[]) => string | undefined;
 }
 
 export interface DataTableProps<T> {
@@ -130,7 +134,9 @@ export interface DataTableProps<T> {
   groupCells?: (name: string, rows: T[], filteredRows: T[], visibleColumns: DataColumn<T>[]) => Partial<Record<string, ReactNode>> | null;
   /** Блок группы одной ячейкой на всю ширину вместо `groupCells`: `head` — шапка, `foot` — подвал после строк группы.
       `null`/`undefined` — группа без шапки. `fold` сворачивает группу (нужен `collapsibleGroups`). */
-  groupBlock?: (name: string, rows: T[], filteredRows: T[], fold: { folded: boolean; toggle: () => void }) => { head: ReactNode; foot?: ReactNode } | null | undefined;
+  groupBlock?: (name: string, rows: T[], filteredRows: T[], fold: { folded: boolean; toggle: () => void; selected: T[] }) => { head: ReactNode; foot?: ReactNode } | null | undefined;
+  /** Необязательно: подпись флажка группы для чтения с экрана (по умолчанию «Выбрать группу»). */
+  groupSelectLabel?: (name: string, rows: T[]) => string;
   /** Opt in to project/group headers above cards; existing card consumers keep their flat layout. */
   groupCards?: boolean;
   /** Заголовок группы сворачивает её строки (по умолчанию группы всегда раскрыты). */
@@ -464,6 +470,7 @@ export function DataTable<T>({
   onToggleCollapsedGroup,
   foldedByDefault = false,
   bulkActions = [],
+  groupSelectLabel,
   filteredActions = [],
   renderDetail,
   rowClassName,
@@ -1712,8 +1719,8 @@ export function DataTable<T>({
         <div className="bulk-bar" role="toolbar" aria-label="Действия с выбранными">
           <span>Выбрано: {selectedRows.length}</span>
           {bulkActions.filter((action) => !action.hidden?.(selectedRows)).map((action) => (
-            <button type="button" key={action.label} className="primary small" disabled={Boolean(running) || action.disabled?.(selectedRows)} onClick={() => void runBulk(action)}>
-              {running === action.label ? "Выполняем…" : action.label}
+            <button type="button" key={action.label} className="primary small" disabled={Boolean(running) || action.disabled?.(selectedRows)} title={action.hint?.(selectedRows)} onClick={() => void runBulk(action)}>
+              {running === action.label ? "Выполняем…" : action.text?.(selectedRows) ?? action.label}
             </button>
           ))}
           <button type="button" className="secondary small" onClick={() => setSelected(new Set())}>Снять выбор</button>
@@ -1813,11 +1820,13 @@ export function DataTable<T>({
             {groups.map(([name, groupRows], index) => {
               const parent = groupParent?.(groupRows[0]);
               const startsParent = parent !== undefined && (index === 0 || groupParent?.(groups[index - 1][1][0]) !== parent);
-              const block = grouping && groupBlock ? groupBlock(name, groupRows, filtered, { folded: isFolded(name), toggle: () => toggleCollapsed(name) }) : undefined;
+              const block = grouping && groupBlock ? groupBlock(name, groupRows, filtered, { folded: isFolded(name), toggle: () => toggleCollapsed(name),
+                selected: selectable ? groupRows.filter((row) => selected.has(rowKey(row))) : [] }) : undefined;
               const cells = grouping && groupCells && !groupBlock ? groupCells(name, groupRows, filtered, visible) : undefined;
               const checkbox = selectable ? (() => {
                 const picked = groupRows.filter((row) => selected.has(rowKey(row))).length;
-                return <input type="checkbox" aria-label="Выбрать группу" title="Выбрать группу"
+                const groupLabelText = groupSelectLabel?.(name, groupRows) ?? "Выбрать группу";
+                return <input type="checkbox" aria-label={groupLabelText} title={groupLabelText}
                   checked={picked === groupRows.length}
                   ref={(input) => { if (input) input.indeterminate = picked > 0 && picked < groupRows.length; }}
                   onChange={(event) => toggleGroup(groupRows, event.currentTarget.checked)} />;
