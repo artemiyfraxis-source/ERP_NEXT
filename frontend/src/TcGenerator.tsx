@@ -1297,19 +1297,6 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
   const opsCount = manualTab ? manual.ops.length : ops.length;
   const summary = `${opsCount} ${plural(opsCount, "операция", "операции", "операций")} · партия ${partQty} шт`;
 
-  const sheet = <section className={manualTab || reworkTab ? "gsec full" : "gsec gen-sheet"} aria-label="Данные из листа">
-    <div className="gsec-head"><h3>Данные из листа</h3>
-      <span className="gsec-meta">{Object.entries(assemblyInfo).filter(([, value]) => value !== "").map(([key, value]) => <span className="kv" key={key}>{key} <b>{value}</b></span>)}</span>
-      {kitEdit && !kitAdding && <button type="button" className="btn-link" onClick={() => { setKitAdding(true); setKitNote({ text: "", error: false }); }}>+ Комплектующее</button>}</div>
-    <div className="gtable-wrap is-full"><table className="gtable"><thead><tr><th>Тип</th><th>Название</th><th>Артикул</th><th className="num">Кол-во</th></tr></thead><tbody>
-      {components.map((c) => <tr key={c.id}><td><span className={`gbadge ${badgeCls(c.type)}`}>{c.type}</span></td><td title={kitTitles.get(c.id)?.hint || undefined}>{kitTitles.get(c.id)?.title || c.name}{manualIds.has(c.id) && <small>добавил технолог</small>}</td><td className="muted">{c.art}{c.kd && <small>по КД: {c.kd}</small>}</td>
-        <td className="num nowrap">{String(c.qty)}{kitEdit && manualIds.has(c.id) && <button type="button" className="btn-remove" title="Убрать из комплектации" aria-label={`Убрать ${c.art} из комплектации`} onClick={() => void removeKitComponent(c.art)}>×</button>}</td></tr>)}
-      {!components.length && <tr><td colSpan={4} className="gtable-empty">СПЯ не найдена</td></tr>}
-    </tbody></table></div>
-    {kitAdding && <KitComponentAdd types={components.map((c) => c.type)} onAdd={addKitComponent} onClose={() => setKitAdding(false)} />}
-    {kitNote.text && <div className={kitNote.error ? "error-banner" : "warning-inline"} role={kitNote.error ? "alert" : "status"}>{kitNote.text}</div>}
-  </section>;
-
   const sideSection = (side: Side) => {
     const list = side === "A" ? epsA : epsB;
     const addButton = complex && <button type="button" className="btn-link" aria-label={`Добавить разъём на сторону ${sideRu_(side)}`} onClick={() => update((current) => addEndpoint(current, side))}>+ Разъём</button>;
@@ -1783,9 +1770,22 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     update((current) => ({ ...current, coax: { ...current.coax, ...patch },
       ...("len" in patch || "finishedLength" in patch ? { coaxLenFrom: undefined } : {}) }));
   };
+  const sheet = <section className={manualTab || reworkTab ? "gsec full" : "gsec gen-sheet"} aria-label="Данные из листа">
+    <div className="gsec-head"><h3>Данные из листа</h3>
+      <span className="gsec-meta">{Object.entries(assemblyInfo).filter(([, value]) => value !== "").map(([key, value]) => <span className="kv" key={key}>{key} <b>{value}</b></span>)}</span>
+      {kitEdit && !kitAdding && <button type="button" className="btn-link" onClick={() => { setKitAdding(true); setKitNote({ text: "", error: false }); }}>+ Комплектующее</button>}</div>
+    <div className="gtable-wrap is-full"><table className="gtable"><thead><tr><th>Тип</th><th>Название</th><th>Артикул</th><th className="num">Кол-во</th></tr></thead><tbody>
+      {components.map((c) => <tr key={c.id}><td><span className={`gbadge ${badgeCls(c.type)}`}>{c.type}</span></td><td title={kitTitles.get(c.id)?.hint || undefined}>{kitTitles.get(c.id)?.title || c.name}{manualIds.has(c.id) && <small>добавил технолог</small>}</td><td className="muted">{c.art}{c.kd && <small>по КД: {c.kd}</small>}</td>
+        <td className="num nowrap">{String(c.qty)}{kitEdit && manualIds.has(c.id) && <button type="button" className="btn-remove" title="Убрать из комплектации" aria-label={`Убрать ${c.art} из комплектации`} onClick={() => void removeKitComponent(c.art)}>×</button>}</td></tr>)}
+      {!components.length && <tr><td colSpan={4} className="gtable-empty">СПЯ не найдена</td></tr>}
+    </tbody></table></div>
+    {kitAdding && <KitComponentAdd types={components.map((c) => c.type)} onAdd={addKitComponent} onClose={() => setKitAdding(false)} />}
+    {kitNote.text && <div className={kitNote.error ? "error-banner" : "warning-inline"} role={kitNote.error ? "alert" : "status"}>{kitNote.text}</div>}
+    {S.tab === "coax" && <CoaxReseed key={card.id} coax={S.coax} onChange={setCoax} propose={() => coaxReseedPatch(D, S)} />}
+  </section>;
+
   const coaxSections = <>
-    <CoaxReseed key={card.id} coax={S.coax} onChange={setCoax} propose={() => coaxReseedPatch(D, S)} />
-    <section className="gsec" aria-label="Коакс-кабель">
+    <section className="gsec full" aria-label="Коакс-кабель">
       <div className="gsec-head"><h3>Коакс-кабель</h3>
         <DrawingButton busy={drawBusy} exists={drawingExists} problem={configDrawingProblem(config)} onBuild={() => void buildDrawing(config)} /></div>
       <DrawingNoteView note={drawNote} index={card.item_index} onOpen={onOpenDrawing} />
@@ -1814,7 +1814,24 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         {(fakraEnds ? S.coax.fakraCutStrip : !gen.coaxFakra_() && S.coax.stripMode !== "separate") && <div className="gfield span-all"><span className="gfield-label">Станок</span>
           <Seg label="Станок" value={gen.coaxMachine_()} options={(["small", "big"] as const).map((key) => [key, COAX_MACHINES[key].label, COAX_MACHINES[key].hint] as const)}
             onChange={(machine) => update((current) => ({ ...current, coax: { ...current.coax, machine } }))} /></div>}
-        {S.coax.sideB && <div className="gfield span-all"><span className="gfield-label">Контроль КСВН
+      </div>
+      {S.coax.markMaterial === "tape" ? (S.coax.markProtect && <div className="opt-note">
+        Защитная ТУТ: концевые метки — {COAX_PROTECTIVE_TUT_LENGTHS.A} мм, центральная — {COAX_PROTECTIVE_TUT_LENGTHS.middle} мм.
+      </div>) : <Toggle checked={S.coax.tutEnabled} title="ТУТ на концах" onChange={(on) => update((current) => ({ ...current, coax: { ...current.coax, tutEnabled: on } }))}>
+        <Field label="Длина ТУТ" className="short"><UnitInput unit="мм" type="number" min={1} value={S.coax.tutLen} placeholder="—" onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, tutLen: event.target.value } }))} /></Field>
+      </Toggle>}
+    </section>
+    <div className="coax-sides full">
+    <section className="gsec ep-side" aria-label="Сторона А"><div className="gsec-head"><h3>Сторона А</h3></div>{coaxSideBlock("A")}</section>
+    <section className="gsec ep-side" aria-label="Сторона В"><div className="gsec-head"><h3>Сторона В</h3>{!S.coax.sideB && <span className="gsec-meta">разъёма нет — голый конец</span>}</div>
+      {S.coax.sideB ? coaxSideBlock("B")
+        : <Toggle checked={S.coax.stripB} title="Зачистка стороны В" hint="голый конец кабеля" onChange={(on) => update((current) => ({ ...current, coax: { ...current.coax, stripB: on } }))} />}
+    </section>
+    </div>
+    <CoaxMarking coax={S.coax} onChange={setCoax} components={components} labels={!!gen.coaxFakra_()} />
+    {S.coax.sideB && <section className="gsec full" aria-label="Контроль КСВН"><div className="gsec-head"><h3>Контроль КСВН</h3></div>
+      <div className="opt-grid">
+        {S.coax.sideB && <div className="gfield span-all"><span className="gfield-label">Режим
           {S.coax.vswrMode === "sample" && <small>первое изделие партии и далее каждое {coaxVswrControl_(S.coax)?.every}-е</small>}</span>
           <div className="gvswr">
             <Seg<CoaxVswrMode> label="Контроль КСВН" value={S.coax.vswrMode || "all"} options={COAX_VSWR_OPTIONS}
@@ -1845,18 +1862,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           {!custProblem && custStricter && <div className="warning-inline">Норма заказчика строже возможностей разъёмов (по паспорту до {formatNumber(componentsMax, { digits: 2 })}) — ожидайте брак</div>}
         </div>}
       </div>
-      {S.coax.markMaterial === "tape" ? (S.coax.markProtect && <div className="opt-note">
-        Защитная ТУТ: концевые метки — {COAX_PROTECTIVE_TUT_LENGTHS.A} мм, центральная — {COAX_PROTECTIVE_TUT_LENGTHS.middle} мм.
-      </div>) : <Toggle checked={S.coax.tutEnabled} title="ТУТ на концах" onChange={(on) => update((current) => ({ ...current, coax: { ...current.coax, tutEnabled: on } }))}>
-        <Field label="Длина ТУТ" className="short"><UnitInput unit="мм" type="number" min={1} value={S.coax.tutLen} placeholder="—" onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, tutLen: event.target.value } }))} /></Field>
-      </Toggle>}
-    </section>
-    <section className="gsec ep-side" aria-label="Сторона А"><div className="gsec-head"><h3>Сторона А</h3></div>{coaxSideBlock("A")}</section>
-    <section className="gsec ep-side" aria-label="Сторона В"><div className="gsec-head"><h3>Сторона В</h3>{!S.coax.sideB && <span className="gsec-meta">разъёма нет — голый конец</span>}</div>
-      {S.coax.sideB ? coaxSideBlock("B")
-        : <Toggle checked={S.coax.stripB} title="Зачистка стороны В" hint="голый конец кабеля" onChange={(on) => update((current) => ({ ...current, coax: { ...current.coax, stripB: on } }))} />}
-    </section>
-    <CoaxMarking coax={S.coax} onChange={setCoax} components={components} labels={!!gen.coaxFakra_()} />
+    </section>}
   </>;
 
   const reworkSection = <section className="gsec full" aria-label="Доработка давальческого изделия">
@@ -1902,7 +1908,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
       onCheck={(id) => { setPinAsk(false); setPinOpen((current) => ({ ...current, [id]: true })); setPinFocus(id); }} />}
 
     <div className="gen-layout">
-      <div className="gen-main"><div className="gen-grid">
+      <div className="gen-main"><div className={S.tab === "coax" ? "gen-grid gen-coax" : "gen-grid"}>
         {sheet}
         {typical && typicalSections}
         {S.tab === "coax" && coaxSections}
