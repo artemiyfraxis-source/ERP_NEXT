@@ -102,14 +102,27 @@ const MANUAL = "manual", INSTRUCTION = "instruction";
 
 type Reference = UnitSetup["references"][number];
 
-/** Эталоны клеммы, подходящие по проводу (сечение из ЭТК, провод ЭТК или пресса) и аппликатору, когда они известны. */
+/** Размер провода целыми токенами: «AWG22» / «22 AWG» → `awg22`; сечение — числом («0,35» и «0.350» → `mm0.35`),
+ *  у «2х0,5» — сечение жилы `mm0.5`. «1» не совпадает с «1,5», «0,5» — с «10,5». */
+export function wireTokens(text: string): Set<string> {
+  const tokens = new Set<string>();
+  let rest = text.replace(/(?:\bAWG\s*(\d+)|(\d+)\s*AWG)\b/gi, (_, a, b) => { tokens.add(`awg${Number(a ?? b)}`); return " "; });
+  rest = rest.replace(/\d+\s*[хx×*]\s*(\d+(?:[.,]\d+)?)/gi, (_, size) => { tokens.add(`mm${Number(size.replace(",", "."))}`); return " "; });
+  for (const number of rest.match(/\d+(?:[.,]\d+)?/g) ?? []) tokens.add(`mm${Number(number.replace(",", "."))}`);
+  return tokens;
+}
+
+/** Эталоны клеммы, подходящие по проводу (сечение из ЭТК, провод ЭТК или пресса) и аппликатору, когда они известны.
+ *  Провод без размера (метка пресса «A») сравнивается целиком. */
 export function referenceCandidates(references: Reference[], contact: string, wires: string[], applicator: string): Reference[] {
   const key = plainKey(contact);
   if (!key) return [];
+  const sizes = new Set(wires.flatMap((wire) => [...wireTokens(wire)]));
   const wireKeys = wires.map(plainKey).filter(Boolean);
+  const wireFits = (wire: string) => sizes.size ? [...wireTokens(wire)].some((token) => sizes.has(token)) : wireKeys.includes(plainKey(wire));
   const applicatorKey = plainKey(applicator);
   return references.filter((item) => plainKey(item.contact) === key)
-    .filter((item) => !wireKeys.length || wireKeys.some((wire) => plainKey(item.wire) === wire || plainKey(item.wire).includes(wire)))
+    .filter((item) => !wireKeys.length || wireFits(item.wire))
     .filter((item) => !applicatorKey || !item.values.applicator || plainKey(item.values.applicator) === applicatorKey)
     .sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
@@ -230,8 +243,15 @@ export function Ob099Setup({ inventory, live, fresh, canWrite = false, incoming,
     if (row.id === "crimp_height_mm") return heightFits(need, decimal(value), live?.crimp.tolerance_mm ?? null);
     return row.id === "contact" || row.id === "applicator" ? sameName(need, value) : null;
   };
-  const mismatched = [...IDENTITY_ROWS, ...rows].filter((row) => pressValue(row.id)?.fits === false || draftFits(row) === false)
-    .map((row) => row.label);
+  const mismatchedRows = [...IDENTITY_ROWS, ...rows].filter((row) => pressValue(row.id)?.fits === false || draftFits(row) === false);
+  const mismatched = mismatchedRows.map((row) => row.label);
+  /** «Как есть»: строка, где пресс расходится с требуемым, а «Настроено» пусто, — записывается значение пресса. */
+  const asIs = (row: PressRow) => {
+    const press = fresh ? pressValue(row.id) : null;
+    return press?.fits === false && !draftOf(row).value.trim() ? press.raw.trim() : "";
+  };
+  // The dialog lists the differences; with none left it closes by itself.
+  useEffect(() => { if (!mismatched.length) setConfirming(false); }, [mismatched.length]);
   const byTask = Boolean(task);
   const draft = Object.fromEntries(rows.map((row) => [row.key, draftOf(row).value.trim()]).filter(([, text]) => text));
   const contact = draftOf(IDENTITY_ROWS[0]).value.trim(), wire = draftOf(IDENTITY_ROWS[1]).value.trim();
@@ -249,17 +269,21 @@ export function Ob099Setup({ inventory, live, fresh, canWrite = false, incoming,
   function press() {
     if (!setup || busy || sending.current || why) return;
     if (mismatched.length && !confirming) { setConfirming(true); return; }
-    void save();
+    void save(false);
   }
 
-  async function save() {
+  async function save(confirmedAsIs: boolean) {
     if (!setup || sending.current || why) return;
     sending.current = true;
     setBusy(true); setResult(null); setConfirming(false);
     try {
       const answer = await machinesApi.configure(inventory, {
         expected_version: setup.configuration?.version ?? 0, task_id: task ? task.id : null,
-        ...(task ? { task_version: task.version } : {}), values: draft, wire, contact, reason: reason.trim() });
+        ...(task ? { task_version: task.version } : {}), reason: reason.trim(),
+        ...(confirmedAsIs ? {
+          values: { ...draft, ...Object.fromEntries(rows.map((row) => [row.key, asIs(row)]).filter(([, text]) => text)) },
+          wire: wire || asIs(IDENTITY_ROWS[1]), contact: contact || asIs(IDENTITY_ROWS[0]),
+        } : { values: draft, wire, contact }) });
       const at = new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
       setResult({ tone: "ok", text: `Записано в ERP ${at}${answer.task_status === "Ready" ? " · задание наладки готово" : ""}` });
       setValues({}); setReason(""); setChoice(null); setPicked("");
@@ -309,8 +333,11 @@ export function Ob099Setup({ inventory, live, fresh, canWrite = false, incoming,
       <span className="machine-muted machine-setup-note">{PRESS_READ_ONLY}</span>
     </div>
     {confirming && !why && <div className="warning-inline machine-setup-actions" role="alertdialog" aria-label="Не как требуется">
-      <span>Подтвердить, как есть: {mismatched.length} {plural(mismatched.length)} не как требуется — {mismatched.join(", ").toLocaleLowerCase("ru")}</span>
-      <button type="button" className="primary" disabled={busy} onClick={() => void save()}>Подтвердить, как есть</button>
+      <span>Подтвердить, как есть: {mismatched.length} {plural(mismatched.length)} не как требуется — {mismatchedRows.map((row) => {
+        const kept = asIs(row);
+        return `${row.label.toLocaleLowerCase("ru")}${kept ? ` (запишется как на прессе: ${kept})` : ""}`;
+      }).join(", ")}</span>
+      <button type="button" className="primary" disabled={busy} onClick={() => void save(true)}>Подтвердить, как есть</button>
       <button type="button" className="secondary" disabled={busy} onClick={() => setConfirming(false)}>Отмена</button>
     </div>}
 

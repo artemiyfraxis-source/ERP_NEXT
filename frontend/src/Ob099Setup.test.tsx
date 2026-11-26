@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Ob099Live, UnitSetup } from "./machinesApi";
-import { etkPressRequired, heightFits, Ob099Setup, PRESS_READ_ONLY } from "./Ob099Setup";
+import { etkPressRequired, heightFits, Ob099Setup, PRESS_READ_ONLY, referenceCandidates, wireTokens } from "./Ob099Setup";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -219,4 +219,49 @@ it("a single-number norm without any tolerance is neutral: no highlight, no «в
   await waitFor(() => expect(within(row("Высота обжима жилы")).getByText("1,15")).toBeTruthy());
   expect(row("Высота обжима жилы").className).toBe("");
   await waitFor(() => expect(hint).toHaveBeenLastCalledWith("Сверьте пресс с ЭТК и нажмите «Подтвердить наладку»"));
+});
+
+it("matches a wire size by whole tokens: a number by value, AWG by its own token", () => {
+  expect([...wireTokens("МГТФ 0,35")]).toEqual(["mm0.35"]);
+  expect([...wireTokens("ПуГВ 2х0,50")]).toEqual(["mm0.5"]);
+  expect([...wireTokens("AWG22")]).toEqual(["awg22"]);
+  expect([...wireTokens("22 AWG")]).toEqual(["awg22"]);
+  const refs = ["1,5", "10,5", "0.5", "AWG 22", "A"].map((wire, index) => ({ ...REF, id: `w${index}`, wire, values: {} }));
+  const ids = (wires: string[]) => referenceCandidates(refs, "61117-4", wires, "").map((item) => item.wire).sort();
+  expect(ids(["1"])).toEqual([]);
+  expect(ids(["0,5"])).toEqual(["0.5"]);
+  expect(ids(["1,50"])).toEqual(["1,5"]);
+  expect(ids(["AWG22"])).toEqual(["AWG 22"]);
+  expect(ids(["A"])).toEqual(["A"]);  // a press label without a size is compared whole
+});
+
+it("a name the press holds differently stays empty, and «как есть» records what is on the press", async () => {
+  const calls = serve();
+  mount({ live: { ...LIVE, job: { ...LIVE.job, terminal: "99999-1", applicator: "A-77" }, crimp: { ...LIVE.crimp, height_mm: 1.15 } } });
+  await waitFor(() => expect(within(row("Аппликатор")).getByText("A-12")).toBeTruthy());
+  expect(row("Клемма").className).toBe("is-diff");
+  expect((within(row("Клемма")).getByRole("textbox") as HTMLInputElement).value).toBe("");
+  expect((within(row("Аппликатор")).getByRole("textbox") as HTMLInputElement).value).toBe("");
+  fireEvent.click(screen.getByRole("button", { name: "Подтвердить наладку" }));
+  const confirm = screen.getByRole("alertdialog", { name: "Не как требуется" });
+  expect(confirm.textContent).toContain("клемма (запишется как на прессе: 99999-1)");
+  expect(confirm.textContent).toContain("аппликатор (запишется как на прессе: A-77)");
+  fireEvent.click(within(confirm).getByRole("button", { name: "Подтвердить, как есть" }));
+  await screen.findByText(/^Записано в ERP/);
+  expect(calls.find((call) => call.method === "POST")?.body).toMatchObject({ contact: "99999-1", values: { applicator: "A-77", crimp_height_mm: "1,150" } });
+});
+
+it("the confirmation closes by itself once nothing differs any more (the press was set meanwhile)", async () => {
+  serve();
+  const props = { inventory: "ОБ.099.1", fresh: true, canWrite: true, setup: SETUP, error: "", reload: async () => undefined };
+  const { rerender } = render(<Ob099Setup {...props} live={LIVE} />);
+  await waitFor(() => expect(within(row("Высота обжима жилы")).getByText("1,10–1,20")).toBeTruthy());
+  fireEvent.change(within(row("Высота обжима жилы")).getByRole("textbox"), { target: { value: "1,15" } });
+  fireEvent.click(screen.getByRole("button", { name: "Подтвердить наладку" }));
+  expect(screen.getByRole("alertdialog", { name: "Не как требуется" })).toBeTruthy();
+  rerender(<Ob099Setup {...props} live={{ ...LIVE, crimp: { ...LIVE.crimp, height_mm: 1.15 } }} />);
+  await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  // A new difference later does not bring the old «yes» back.
+  rerender(<Ob099Setup {...props} live={LIVE} />);
+  expect(screen.queryByRole("alertdialog")).toBeNull();
 });
