@@ -805,6 +805,8 @@ def progress(principal: ReadUser, factory: Factory, group_id: UUID | None = None
             return {"rows": rows, "printed": sum(row["printed"] for row in rows),
                     "remaining": sum(row["remaining"] for row in rows),
                     "remaining_labels": sum(row["remaining_labels"] for row in rows),
+                    "total_labels": sum(row["total_labels"] for row in rows),
+                    "printed_labels": sum(row["printed_labels"] for row in rows),
                     "label_size": None if differ else size, "sizes_differ": differ,
                     "wire_mm": sorted({value for row in rows for value in row["wire_mm"]})}
     return checked(run)
