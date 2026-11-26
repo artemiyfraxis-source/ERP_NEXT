@@ -252,6 +252,12 @@ export function VnaBench({ canEdit, connection }: { canEdit: boolean; connection
       {canAct && <button type="button" className="secondary small" disabled={Boolean(busy)}
         onClick={() => { if (window.confirm(`Прервать «${session.command?.label}»? Измерение остановится, результат не сохранится.`)) void act("abort", () => vnaBenchApi.abort(session.id, session.version)); }}>Прервать</button>}
     </div>}
+    {session?.state === "recovery_required" && !session.command && <div className="vna-bench-command" role="alert">
+      <span>Ответ ВАЦ потерян — восстановите сеанс: прибор остановится и вернёт настройки оператора, результат текущего шага не сохранится.</span>
+      {canAct && <button type="button" className="primary small" disabled={Boolean(busy)}
+        onClick={() => void act("recover", () => vnaBenchApi.abort(session.id, session.version))}>
+        {busy === "recover" ? "Восстанавливаем…" : "Восстановить"}</button>}
+    </div>}
     <div className="seg-tabs sub" role="tablist" aria-label="Разделы рабочего места ВАЦ" onKeyDown={tabKeys}>
       {TABS.map((item) => <button key={item.id} type="button" role="tab" id={`vna-bench-tab-${item.id}`} aria-controls="vna-bench-panel"
         aria-selected={tab === item.id} tabIndex={tab === item.id ? 0 : -1} className={tab === item.id ? "on" : ""}

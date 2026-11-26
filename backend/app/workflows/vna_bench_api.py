@@ -627,8 +627,13 @@ def _version(row, version):
         raise Refusal("stale", "Состояние уже изменилось — экран обновлён, повторите действие")
 
 
-def _act(factory, session_id, principal, now, action):
-    """Run one session change under the session lock and answer the full state."""
+RECOVERY_TEXT = ("Ответ ВАЦ потерян — нажмите «Восстановить» на карточке сеанса: прибор остановится и вернёт "
+                 "настройки оператора")
+
+
+def _act(factory, session_id, principal, now, action, *, recovery=False):
+    """Run one session change under the session lock and answer the full state.
+    A session whose device answer was lost accepts only recovery (the abort endpoint) until it is restored."""
     with _refusals():
         with factory() as uow:
             _owned(uow, session_id, principal)
@@ -637,6 +642,8 @@ def _act(factory, session_id, principal, now, action):
             row = _owned(uow, session_id, principal)
             repository = VnaSessionRepository(uow.session)
             repository.lock(row)
+            if row.state == "recovery_required" and not recovery:
+                raise Refusal("recovery_required", RECOVERY_TEXT)
             action(uow, repository, row)
             state = _state(uow, principal, now, row=row)
             uow.commit()
@@ -748,6 +755,9 @@ def open_session(principal: Person, now: Now, factory: Factory, techcards_factor
             vna_jobs.refuse_open_capture(uow.session, vna_id, instrument["serial"])
             repository = VnaSessionRepository(uow.session)
             if repository.active(vna_id, instrument["serial"]):
+                active = _session_row(uow, vna_id)
+                if active is not None and active.state == "recovery_required":
+                    raise Refusal("recovery_required", RECOVERY_TEXT)
                 raise Refusal("device_busy", "Прибор занят активной сессией ВАЦ — закройте её или прервите")
             try:
                 with uow.session.begin_nested():
@@ -810,7 +820,7 @@ def abort(session_id: UUID, payload: Version, principal: Person, now: Now, facto
             repository.act(row, "recover", row.version, row.step, now)
         else:
             repository.act(row, "abort", row.version, row.step, now)
-    return _act(factory, session_id, principal, now, action)
+    return _act(factory, session_id, principal, now, action, recovery=True)
 
 
 @router.post(PREFIX + "/sessions/{session_id}/close")

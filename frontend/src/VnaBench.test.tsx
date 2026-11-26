@@ -455,6 +455,20 @@ it("turns a server refusal code into a Russian reason, never the code", async ()
   expect(refusalText({ code: "control_failed", message: "" })).toMatch(/замеры СИ и КБ остановлены/);
 });
 
+it("offers to recover a session whose device answer was lost", async () => {
+  vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state({ session: session({ state: "recovery_required", command: null }) }));
+  const abort = vi.spyOn(vnaBenchApi, "abort").mockResolvedValue(state({ session: null }));
+  render(<VnaBench canEdit />);
+  expect(await screen.findByText(/Ответ ВАЦ потерян — восстановите сеанс/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Прервать" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Восстановить" }));
+  await waitFor(() => expect(abort).toHaveBeenCalledWith("s1", expect.any(Number)));
+});
+
+it("names the recovery button when the server refuses a stuck session", () => {
+  expect(refusalText({ code: "recovery_required", message: "x" })).toContain("«Восстановить»");
+});
+
 it("polls the state while the agent runs a command and offers to abort it", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   const read = vi.spyOn(vnaBenchApi, "state").mockResolvedValue(state({ session: session({

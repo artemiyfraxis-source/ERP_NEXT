@@ -735,6 +735,26 @@ def test_abort_returns_the_device_and_frees_the_lease(env):
     assert post(env, "/sessions")["session"]["status"] == "open"
 
 
+def test_a_lost_device_answer_is_recovered_from_the_card(env):
+    """24.11: a session stuck in recovery_required had no command, so the card offered no way out."""
+    view = calibrate(env)
+    with env["sessions"]() as session:
+        row = session.get(VnaSessionRow, UUID(view["session"]["id"]))
+        row.state, row.error = "recovery_required", "Ответ ВАЦ потерян; требуется остановка и восстановление"
+        session.commit()
+    view = state(env)
+    assert view["session"]["state"] == "recovery_required" and view["session"]["command"] is None
+    # Any other action — and a new session — names the way out instead of a generic «занят».
+    refused = post(env, session_path(view, "/steps/calibration"), {"version": view["session"]["version"]}, expect=409)
+    assert refused["detail"]["code"] == "recovery_required" and "Восстановить" in refused["detail"]["message"]
+    refused = post(env, "/sessions", expect=409)
+    assert refused["detail"]["code"] == "recovery_required"
+    post(env, session_path(view, "/abort"), {"version": view["session"]["version"]})
+    env["stub"].drive()
+    assert state(env)["session"] is None
+    assert post(env, "/sessions")["session"]["status"] == "open"
+
+
 def test_assembly_session_records_each_connection_through_the_vswr_rule(env, monkeypatch):
     from copy import deepcopy
 
