@@ -12,12 +12,18 @@ export interface SectionMode {
 export const SectionContext = createContext<SectionMode | null>(null);
 export const useSection = () => useContext(SectionContext);
 
+/** Блоки с несохранённой правкой (по области: id отправки) — экран спрашивает перед сворачиванием и сменой вкладки. */
+const unsaved = new Map<symbol, string>();
+export const hasUnsaved = (scope?: string) => [...unsaved.values()].some((value) => scope === undefined || value === scope);
+/** true — можно уходить: несохранённого нет или человек согласился его потерять. */
+export const leaveUnsaved = (scope?: string) => !hasUnsaved(scope) || window.confirm("Есть несохранённые правки — закрыть без сохранения?");
+
 /** Изменённые поля черновика относительно сохранённых значений (пробелы по краям не считаются правкой). */
 export function changedValues(draft: Record<string, string>, values: Record<string, string>): Record<string, string> {
   return Object.fromEntries(Object.entries(draft).filter(([name, value]) => value.trim() !== (values[name] ?? "").trim()));
 }
 
-export function EditSection({ title, editable, values, onSave, children, extra, className = "intake-panel" }: {
+export function EditSection({ title, editable, values, onSave, children, extra, className = "intake-panel", scope = "" }: {
   title: string;
   /** Есть хоть одно поле, которое можно править: без него кнопки «Редактировать» нет. */
   editable: boolean;
@@ -29,6 +35,8 @@ export function EditSection({ title, editable, values, onSave, children, extra, 
   /** Действия блока рядом с заголовком (скачать, «Доставка КБ»…). */
   extra?: ReactNode;
   className?: string;
+  /** Область для вопроса «закрыть без сохранения?» (id отправки). */
+  scope?: string;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Record<string, string>>({});
@@ -39,10 +47,12 @@ export function EditSection({ title, editable, values, onSave, children, extra, 
 
   useEffect(() => {
     if (!dirty) return;
+    const key = Symbol(title);
+    unsaved.set(key, scope);
     const guard = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
     window.addEventListener("beforeunload", guard);
-    return () => window.removeEventListener("beforeunload", guard);
-  }, [dirty]);
+    return () => { unsaved.delete(key); window.removeEventListener("beforeunload", guard); };
+  }, [dirty, scope, title]);
 
   const start = () => { setDraft({}); setError(""); setEditing(true); };
   const cancel = () => { setDraft({}); setError(""); setEditing(false); };

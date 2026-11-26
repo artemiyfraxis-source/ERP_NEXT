@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from "react";
-import { failureText, shippingApi } from "./api";
+import { ApiError, failureText, shippingApi } from "./api";
 import { CARRIERS, isPickup, needsTrack, termsText } from "./carriers";
 import { readFile } from "./DispatchCard";
 import { EditSection } from "./EditSection";
@@ -30,7 +30,11 @@ export interface ShipmentInfoRights {
   canHistory: boolean;
 }
 
-export function IntakeShipmentInfo({ shipment, rights, gaps, pl, dn, deliveryButton, onShipment, onHistory }: {
+/** Отказ 409: отправку уже изменили — экран перечитывает данные, а человек повторяет правку на свежей версии. */
+export const CONFLICT_TEXT = "Отгрузка изменилась — данные обновлены, повторите";
+const conflicted = (reason: unknown) => reason instanceof ApiError && reason.status === 409;
+
+export function IntakeShipmentInfo({ shipment, rights, gaps, pl, dn, deliveryButton, onShipment, onHistory, onConflict }: {
   shipment: DispatchShipment;
   rights: ShipmentInfoRights;
   /** «Ждём»: чего не хватает, словами сервера. */
@@ -42,6 +46,8 @@ export function IntakeShipmentInfo({ shipment, rights, gaps, pl, dn, deliveryBut
   /** Отправка из ответа сервера после правки — экран заменяет её у себя. */
   onShipment: (next: DispatchShipment) => void;
   onHistory: () => void;
+  /** 409 «Отгрузка изменилась»: перечитать отправку (данные экрана). */
+  onConflict: () => Promise<void> | void;
 }) {
   const editable = editableKeys(shipment, rights.canEdit);
   const can = (key: DraftKey) => editable.has(key);
@@ -56,6 +62,8 @@ export function IntakeShipmentInfo({ shipment, rights, gaps, pl, dn, deliveryBut
   const save = async (draft: ShipmentDraft) => {
     try { onShipment(await saveShipment(shipment, draft)); }
     catch (reason) {
+      const cause = reason instanceof PartialSaveError ? reason.cause : reason;
+      if (conflicted(cause)) { await onConflict(); throw new Error(CONFLICT_TEXT); }
       if (reason instanceof PartialSaveError) {
         if (reason.saved) onShipment(reason.shipment);
         throw new Error(failureText(reason.cause, "Не удалось сохранить отправку") + (reason.saved ? " Часть полей сохранена." : ""));
@@ -72,7 +80,10 @@ export function IntakeShipmentInfo({ shipment, rights, gaps, pl, dn, deliveryBut
     if (!file) return;
     setFileBusy(true); setFileError("");
     try { onShipment((await shippingApi.uploadUpd(shipment.id, shipment.version, await readFile(file))).shipment as DispatchShipment); }
-    catch (reason) { setFileError(failureText(reason, "Файл УПД не загружен")); }
+    catch (reason) {
+      if (conflicted(reason)) { await onConflict(); setFileError(CONFLICT_TEXT); }
+      else setFileError(failureText(reason, "Файл УПД не загружен"));
+    }
     finally { setFileBusy(false); }
   };
   const removeFile = async () => {
@@ -115,7 +126,7 @@ export function IntakeShipmentInfo({ shipment, rights, gaps, pl, dn, deliveryBut
 
   return <div className="intake-info">
     <div className="intake-panels">
-      <EditSection title="Документы" editable={any(docKeys)} values={values(docKeys)} onSave={save}>
+      <EditSection scope={shipment.id} title="Документы" editable={any(docKeys)} values={values(docKeys)} onSave={save}>
         <div className="intake-fields">
           {field("upd_type", "УПД", { kind: "select", options: updTypeOptions, dataLabel: "УПД",
             display: shipment.upd_type ? <>{updLabel(shipment.upd_type)}{shipment.inherited.includes("upd_type") && <small className="muted"> · из карточки</small>}</> : undefined })}
@@ -126,7 +137,7 @@ export function IntakeShipmentInfo({ shipment, rights, gaps, pl, dn, deliveryBut
           <div className="intake-field"><span className="intake-field-label">DN</span><span className="intake-field-value" data-label="DN">{dn}</span></div>
         </div>
       </EditSection>
-      <EditSection title="Доставка" editable={any(deliveryKeys)} values={values(deliveryKeys)} onSave={save} extra={deliveryButton}>
+      <EditSection scope={shipment.id} title="Доставка" editable={any(deliveryKeys)} values={values(deliveryKeys)} onSave={save} extra={deliveryButton}>
         <div className="intake-fields">
           {field("terms", "Способ доставки", { kind: "select", options: TERMS_OPTIONS, display: (pickup ? "Самовывоз" : termsText(shipment.terms)) || undefined })}
           {field("carrier", "ТК", { kind: "select", options: CARRIER_OPTIONS, display: pickup ? dash : undefined })}
@@ -134,7 +145,7 @@ export function IntakeShipmentInfo({ shipment, rights, gaps, pl, dn, deliveryBut
             after: track ? <CopyButton text={track} label="трек-номер" /> : null })}
         </div>
       </EditSection>
-      <EditSection title="Получатель" editable={any(recipientKeys)} values={values(recipientKeys)} onSave={save} extra={historyButton}>
+      <EditSection scope={shipment.id} title="Получатель" editable={any(recipientKeys)} values={values(recipientKeys)} onSave={save} extra={historyButton}>
         <div className="intake-fields">
           {field("contact", "Получатель", { maxLength: 255 })}
           {field("phone", "Телефон", { kind: "tel", maxLength: 255, after: shipment.phone.trim() ? <CopyButton text={shipment.phone.trim()} label="телефон" /> : null })}
@@ -142,7 +153,7 @@ export function IntakeShipmentInfo({ shipment, rights, gaps, pl, dn, deliveryBut
             after: !pickup && shipment.shipping_point.trim() ? <CopyButton text={shipment.shipping_point.trim()} label="адрес" /> : null })}
         </div>
       </EditSection>
-    <EditSection title="Срок и комментарии" className="intake-panel intake-strip-section" editable={any(stripKeys)} values={values(stripKeys)} onSave={save}>
+    <EditSection scope={shipment.id} title="Срок и комментарии" className="intake-panel intake-strip-section" editable={any(stripKeys)} values={values(stripKeys)} onSave={save}>
       <div className="intake-strip">
         <div className="intake-field"><span className="intake-field-label">Ждём</span><span className="intake-field-value" data-label="Ждём">
           {gaps.length ? <span className="tone-warn">{gaps.join(", ")}</span> : dash}</span></div>

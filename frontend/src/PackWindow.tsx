@@ -8,6 +8,7 @@ import { deliveryGroups, intakeApi, type DispatchShipment, type IntakeRow } from
 import { termsText } from "./carriers";
 import { Banners, ShipmentCard, useMutate, type CardRights, type Mutate } from "./ShipmentCard";
 import { ShipmentDataWindow } from "./ShipmentData";
+import { formatNumber } from "./format";
 
 /* Окно «Упаковано» (владелец 29.10.2026, по аналогии с приёмкой — число в колонке открывает окно): принятое проекта —
    КБ и сколько упаковать; упаковывать можно только после решения менеджера «упаковывать». Ниже — отправки проекта на
@@ -117,7 +118,7 @@ function PackForm({ project, candidates, rights, busy, mutate, reload }: { proje
             const value = num(typed);
             const limit = permittedPack(row);
             const invalid = typed.trim() !== "" && (!Number.isFinite(Number(typed.replace(",", "."))) || value <= 0 || value > limit);
-            const reason = typed.trim() === "" ? "" : value <= 0 || !Number.isFinite(Number(typed.replace(",", "."))) ? "Введите число больше нуля" : value > limit ? `Можно не больше ${limit}` : "";
+            const reason = typed.trim() === "" ? "" : value <= 0 || !Number.isFinite(Number(typed.replace(",", "."))) ? "Введите число больше нуля" : value > limit ? `Можно не больше ${formatNumber(limit)}` : "";
             // Недобор — чего не хватает до заказанного после уже упакованного и вводимого сейчас.
             const shortage = Math.max(round2(num(row.needed) - num(row.packed) - (invalid ? 0 : value)), 0);
             const grn = (row.acts ?? []).map((act) => act.grn).filter(Boolean).join(", ") || row.grn || "";
@@ -131,10 +132,10 @@ function PackForm({ project, candidates, rights, busy, mutate, reload }: { proje
                   <input className={invalid ? "ship-qty invalid" : "ship-qty"} aria-label={`Сколько упаковать ${row.item_index}`} aria-invalid={invalid} aria-describedby={`pack-hint-${key}`} type="text" inputMode="decimal" data-max={limit} value={typed}
                     placeholder={`до ${limit}`}
                     onChange={(event) => { setQty({ ...qty, [key]: event.target.value }); setMarked({ ...marked, [key]: num(event.target.value) > 0 }); }} />
-                  <small className={invalid ? "tone-danger" : "muted"} id={`pack-hint-${key}`}>{invalid ? reason : `уже упаковано ${row.packed}, можно ещё ${limit}`}</small>
+                  <small className={invalid ? "tone-danger" : "muted"} id={`pack-hint-${key}`}>{invalid ? reason : `уже упаковано ${formatNumber(num(row.packed))}, можно ещё ${formatNumber(limit)}`}</small>
                 </span>
                 : <span className="muted" title="Упаковать можно после решения менеджера «упаковывать»">{packAllowed(row) ? row.packed : "ждёт решения менеджера"}</span>}</td>
-              <td className={shortage > 0 ? "num tone-warn" : "num"} aria-label={`Недобор ${row.item_index}`}>{shortage}</td>
+              <td className={shortage > 0 ? "num tone-warn" : "num"} aria-label={`Недобор ${row.item_index}`}>{formatNumber(shortage)}</td>
               <td>{grn || <span className="muted">—</span>}</td>
             </tr>;
           })}</tbody>

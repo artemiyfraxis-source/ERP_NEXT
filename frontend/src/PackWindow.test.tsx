@@ -106,7 +106,7 @@ it("validates the packed quantity inline and recomputes the shortage automatical
   const qty = screen.getByLabelText("Сколько упаковать КБ1");
   expect(screen.getByLabelText("Недобор КБ1")).toHaveTextContent("16");
   fireEvent.change(qty, { target: { value: "1,5" } });
-  expect(screen.getByLabelText("Недобор КБ1")).toHaveTextContent("14.5");
+  expect(screen.getByLabelText("Недобор КБ1")).toHaveTextContent("14,5");
   expect(qty).toHaveAttribute("aria-invalid", "false");
   fireEvent.change(qty, { target: { value: "7" } });
   expect(qty).toHaveAttribute("aria-invalid", "true");

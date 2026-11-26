@@ -1308,6 +1308,46 @@ describe("Приёмка v2 (владелец 26.11): отправка — св�
     expect(calls.slice(loads)).toEqual([expect.objectContaining({ url: `/api/shipping/shipments/${packedShipment.id}/head`, method: "PUT", body: { version: 3, contact: "Петров" } })]);
   });
 
+  it("общая отправка двух проектов: карточка проекта отмечена целиком — «Отгрузить» включена, вопрос называет КБ другого проекта", async () => {
+    const ask = vi.spyOn(window, "confirm").mockReturnValue(true);
+    intakeRows = [];
+    const mixed = { ...readyShipment("m", "КБ1"), lines: [shipmentLine({ id: "l-m1", item_index: "КБ1", picked: "4" }),
+      shipmentLine({ id: "l-m2", good_id: "g9", project: "600К.1", item_index: "КБ7", name: "Шлейф", picked: "2" })] };
+    shipments = [mixed];
+    window.history.replaceState({}, "", "/?tab=to_ship");
+    render(<ProductionIntakePage principal={principal} />);
+    await screen.findAllByText("ОТГ-m");
+    fireEvent.click(screen.getAllByRole("checkbox", { name: "Выбрать отправку ОТГ-m" })[0]);
+    const card = screen.getAllByRole("button", { name: "Отгрузить ОТГ-m" })[0];
+    expect(card).toBeEnabled();
+    expect(card).toHaveTextContent("Отгрузить выбранные · 2 поз. · 6 шт");
+    expect(screen.getByRole("button", { name: /^Отгрузить выбранные \(1\)/ })).toBeEnabled();
+    fireEvent.click(card);
+    expect(String(ask.mock.calls[0][0])).toContain("ОТГ-m уедет вместе с КБ проектов 591К.3, 600К.1");
+    await waitFor(() => expect(writes().map((call) => call.url)).toEqual(["/api/shipping/shipments/m/ship"]));
+  });
+
+  it("отказ в вопросе «Отгрузить выбранные» оставляет выбор; несохранённая правка спрашивает перед сменой вкладки", async () => {
+    const ask = vi.spyOn(window, "confirm").mockReturnValue(false);
+    intakeRows = [];
+    shipments = [readyShipment("a", "КБ1"), packedShipment];
+    window.history.replaceState({}, "", "/?tab=to_ship");
+    render(<ProductionIntakePage principal={principal} />);
+    await screen.findByText("ОТГ-a");
+    fireEvent.click(groupBox("ОТГ-a"));
+    fireEvent.click(screen.getByRole("button", { name: /^Отгрузить выбранные/ }));
+    await waitFor(() => expect(ask).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("Выбрано: 1")).toBeInTheDocument();
+    expect(writes()).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Редактировать: Получатель" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Телефон" }), { target: { value: "+7 1" } });
+    fireEvent.click(tab(/^Упаковано/));
+    expect(ask).toHaveBeenLastCalledWith("Есть несохранённые правки — закрыть без сохранения?");
+    expect(tab(/^На отгрузку/)).toHaveAttribute("aria-selected", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Свернуть данные отправки ОТГ-a" }));
+    expect(screen.getByRole("textbox", { name: "Телефон" })).toHaveValue("+7 1");
+  });
+
   it("зрителю — без карандашей, «Редактировать» и «Отгрузить»", async () => {
     intakeRows = [];
     shipments = [readyShipment("a", "КБ1")];

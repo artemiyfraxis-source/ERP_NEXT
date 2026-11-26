@@ -231,7 +231,7 @@ export function ShipmentCard({ shipment, rights, busy, mutate, openData }: {
       {shipment.places > 0 && <span className="muted">мест {shipment.places}{shipment.weight ? ` · ${shipment.weight} кг` : ""}</span>}
       {shipment.shipped_at ? <span className="muted">отгружена {formatDate(shipment.shipped_at)}</span> : shipment.packed_at && <span className="muted">упакована {formatDate(shipment.packed_at)}</span>}
       {withoutUpd(shipment) ? <span className="muted">Без УПД</span>
-        : shipment.upd_url ? <a href={shipment.upd_url} target="_blank" rel="noreferrer">УПД{shipment.upd_number ? ` № ${shipment.upd_number}` : ""}</a> : <span className={needsUpdFile(shipment) || shipment.status === "Отгружена" ? "tone-danger" : "muted"} title={needsUpdFile(shipment) ? "Без файла не отгрузить" : "Файл понадобится, чтобы закрыть отправку"}>файла УПД нет</span>}
+        : shipment.upd_url ? <a href={shipment.upd_url} target="_blank" rel="noreferrer">УПД{shipment.upd_number ? ` № ${shipment.upd_number}` : ""}</a> : <span className="muted" title={needsUpdFile(shipment) ? "Без файла не отгрузить" : "Файл понадобится, чтобы закрыть отправку"}>файл УПД не приложен</span>}
       {shipment.track_number && <span>трек <strong>{shipment.track_number}</strong></span>}
       {shipment.no_upd_approved_by && <span className="tone-warn" title="Отгрузку без УПД разрешил уполномоченный по ПИН">без УПД разрешил {shipment.no_upd_approved_by}{shipment.no_upd_approved_at ? `, ${formatDate(shipment.no_upd_approved_at)}` : ""}</span>}
       {shipment.note && <span className="ship-note" title="Комментарий отправки">{shipment.note}</span>}
@@ -464,7 +464,7 @@ export function BoxesEditor({ shipment, busy, mutate, onDone }: { shipment: Ship
   };
   const change = (index: number, patch: Partial<BoxDraft>) => setBoxes((current) => current.map((box, position) => position === index ? { ...box, ...patch } : box));
   const submit = () => {
-    if (shipment.pl_number && !window.confirm(`Перевыпустить ${shipment.pl_number} и ${shipment.dn_number}? Прежние документы и этикетки станут недействительны — их придётся перепечатать.`)) return;
+    if (shipment.pl_number && !window.confirm(`Перевыпустить ${[shipment.pl_number, shipment.dn_number].filter(Boolean).join(" и ")}? Прежние документы и этикетки станут недействительны — их придётся перепечатать.`)) return;
     send();
   };
   const send = () => void mutate(`boxes:${shipment.id}`, () => shippingApi.boxes(shipment.id, {

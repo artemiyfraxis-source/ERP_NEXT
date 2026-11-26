@@ -1,6 +1,7 @@
 import { QualityChip } from "./GrnFields";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { InlineField } from "./InlineField";
+import { leaveUnsaved } from "./EditSection";
 import { CopyButton, IntakeShipmentInfo } from "./IntakeShipmentInfo";
 import { failureText, shippingApi, type DeliveryValues, type ItemAddressee, type Principal, type ProjectAddressee } from "./api";
 import { cellContent, DataTable, type DataColumn } from "./DataTable";
@@ -140,9 +141,14 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   const [shipmentData, setShipmentData] = useState<string | null>(null);
   /** Отправки, у которых данные свёрнуты или раскрыты не так, как по умолчанию (активные — раскрыты, уехавшие — свёрнуты). */
   const [flippedFeet, setFlippedFeet] = useState<ReadonlySet<string>>(new Set());
+  /** Строки после поиска и фильтров (их отдаёт таблица карточкам): «отмечено целиком» — по видимым строкам. */
+  const shownRows = useRef<IntakeLine[]>([]);
   const [shipProgress, setShipProgress] = useState<{ done: number; total: number } | null>(null);
   const footOpen = (shipment: DispatchShipment) => ACTIVE_SHIPMENT.includes(shipment.status) !== flippedFeet.has(shipment.id);
-  const toggleFoot = (id: string) => setFlippedFeet((current) => { const next = new Set(current); if (!next.delete(id)) next.add(id); return next; });
+  const toggleFoot = (shipment: DispatchShipment) => {
+    if (footOpen(shipment) && !leaveUnsaved(shipment.id)) return;
+    setFlippedFeet((current) => { const next = new Set(current); if (!next.delete(shipment.id)) next.add(shipment.id); return next; });
+  };
   /** Правка на месте вернула отправку: она заменяет прежнюю без перезагрузки всего списка. */
   const replaceShipment = (next: DispatchShipment) => setShipments((current) => current.map((item) => item.id === next.id ? { ...item, ...next } : item));
   const { error: docError, link: docLink } = useDocLink();
@@ -327,8 +333,9 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   };
   /** «Отгрузить» / «Отгрузить выбранные» / «Отгрузить всё»: отправки уезжают целиком, по одной тем же `/ship` со своей
    *  версией; ход — «Отгружаем 1 из 3…», отказ одной не держит остальные и называет её номер. */
-  async function shipShipments(ready: DispatchShipment[], skipped: DispatchShipment[] = [], scope = "") {
-    if (busy || !ready.length) return;
+  /** true — хоть одна отправка уехала (выбор можно снять); отказ в вопросе или все отказы — выбор остаётся. */
+  async function shipShipments(ready: DispatchShipment[], skipped: DispatchShipment[] = [], scope = ""): Promise<boolean> {
+    if (busy || !ready.length) return false;
     const count = `${ready.length} ${plural(ready.length, ["отправку", "отправки", "отправок"])}`;
     const others = ready.flatMap((shipment) => {
       const projects = [...new Set(shipment.lines.map((line) => line.project))];
@@ -337,7 +344,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     const question = `Отгрузить ${count}${scope}: ${ready.map((shipment) => `${shipment.number} (${shipmentSize(shipment)})`).join("; ")}?`
       + (others.length ? ` Отправка уезжает целиком: ${others.join("; ")}.` : "")
       + (skipped.length ? ` Не готовы и пропущены: ${skipped.map((shipment) => `${shipment.number} — ${shipment.missing_ship.join(", ") || "не хватает данных"}`).join("; ")}.` : "");
-    if (!window.confirm(question)) return;
+    if (!window.confirm(question)) return false;
     setBusy("bulk-ship"); setError(""); setNotice("");
     let shippedCount = 0; const failed: string[] = [];
     for (const [index, shipment] of ready.entries()) {
@@ -350,6 +357,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     await reload();
     if (failed.length) setError(`Не отгружено ${failed.length} — ${failed.join("; ")}`);
     setBusy("");
+    return shippedCount > 0;
   }
   const shipAll = (project: string, ready: DispatchShipment[], skipped: DispatchShipment[]) => shipShipments(ready, skipped, ` проекта ${project}`);
   /** Выбор строк → отправки, отмеченные целиком; отмеченные частично — отдельно (отправка не делится). */
@@ -357,10 +365,15 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     const picked = new Set(selected.map((line) => line.id));
     const ids = [...new Set(selected.filter((line) => line.shipment).map((line) => line.shipment!.id))];
     const whole: DispatchShipment[] = []; const partial: DispatchShipment[] = [];
+    // Карточка — проект + отправка: отмечена целиком, если отмечены все её видимые строки (общая отправка уедет вся,
+    // подтверждение называет КБ других проектов).
+    const cards = new Set(selected.filter((line) => line.shipment).map(shipmentGroupKey));
+    const shown = shownRows.current.length ? shownRows.current : lines;
     for (const id of ids) {
       const shipment = shipments.find((item) => item.id === id);
       if (!shipment) continue;
-      (lines.filter((line) => line.shipment?.id === id).every((line) => picked.has(line.id)) ? whole : partial).push(shipment);
+      const rowsOfCards = shown.filter((line) => line.shipment?.id === id && cards.has(shipmentGroupKey(line)));
+      (rowsOfCards.every((line) => picked.has(line.id)) ? whole : partial).push(shipment);
     }
     return { whole, partial, ready: whole.filter((shipment) => SHIPPABLE.includes(shipment.status) && readyToShip(shipment)),
       blocked: whole.filter((shipment) => SHIPPABLE.includes(shipment.status) && !readyToShip(shipment)) };
@@ -561,7 +574,8 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   };
   /** Отправка — своя карточка (владелец 26.11, v2): шапка с номером, статусом, штуками и одной кнопкой «Отгрузить»,
    *  строки КБ всегда видны со своим статусом, данные отправки раскрываются внутри неё. */
-  const shipmentBlock = (_key: string, groupRows: IntakeLine[], _filtered: IntakeLine[], fold: { selected: IntakeLine[] }) => {
+  const shipmentBlock = (_key: string, groupRows: IntakeLine[], filtered: IntakeLine[], fold: { selected: IntakeLine[] }) => {
+    shownRows.current = filtered;
     const first = groupRows[0];
     const shipment = first.shipment;
     if (!shipment) return null;
@@ -572,9 +586,9 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     const word = SHIPMENT_WORD[shipment.status];
     const open = footOpen(shipment);
     const gaps = trackGaps(first);
-    const ownRows = lines.filter((line) => line.shipment?.id === shipment.id);
+    // Целиком — по строкам этой карточки, как они видны (КБ других проектов той же отправки и скрытые поиском не считаются).
     const picked = new Set(fold.selected.map((line) => line.id));
-    const partial = picked.size > 0 && ownRows.some((line) => !picked.has(line.id));
+    const partial = picked.size > 0 && groupRows.some((line) => !picked.has(line.id));
     const shippable = SHIPPABLE.includes(shipment.status) && rights.canWarehouse;
     const ready = readyToShip(shipment);
     const shipButton = shippable && <button type="button" className={ready && !partial ? "primary small intake-ship-go" : "secondary small intake-ship-go"}
@@ -606,11 +620,11 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     const items = [...new Map(groupRows.flatMap((line) => itemOf(line) ? [[line.item_index, itemOf(line)!] as const] : [])).values()];
     const foot = <div className="intake-ship-foot" data-status={shipment.status} data-open={open ? "true" : "false"}>
       <button type="button" className="intake-fold" aria-expanded={open} aria-label={`${open ? "Свернуть" : "Показать"} данные отправки ${shipment.number}`}
-        onClick={() => toggleFoot(shipment.id)}><span aria-hidden="true">{open ? "▾" : "▸"}</span> Документы · Доставка · Получатель
+        onClick={() => toggleFoot(shipment)}><span aria-hidden="true">{open ? "▾" : "▸"}</span> Документы · Доставка · Получатель
         {!open && <span className="intake-fold-summary">{summary && <span className="muted">{summary}</span>}
           {gaps.length > 0 && <span className="tone-warn">ждём: {gaps.join(", ")}</span>}</span>}</button>
       {open && <IntakeShipmentInfo shipment={shipment} gaps={gaps} rights={{ canEdit: canDispatch, canHistory: rights.canUnship }}
-        pl={docCell(shipment, "pl")} dn={docCell(shipment, "dn")} onShipment={replaceShipment} onHistory={() => setShipmentData(shipment.id)}
+        pl={docCell(shipment, "pl")} dn={docCell(shipment, "dn")} onShipment={replaceShipment} onHistory={() => setShipmentData(shipment.id)} onConflict={reload}
         deliveryButton={canDispatch && items.length ? <button type="button" className="link-button" aria-label={`Доставка КБ ${shipment.number}`}
           onClick={() => setDeliveryEdit({ project: first.project, items })}>Доставка КБ…</button> : null} />}
     </div>;
@@ -619,7 +633,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
 
   const projectRows = (project: string) => rows.filter((row) => row.project === project);
   const projectShips = (project: string) => shipments.filter((shipment) => ofProject(shipment, project));
-  const changeTab = (key: Tab) => { tabChosen.current = true; setTab(key); setNotice(""); };
+  const changeTab = (key: Tab) => { if (key === tab || !leaveUnsaved()) return; tabChosen.current = true; setTab(key); setNotice(""); };
 
   return <section className="page intake-page shipping-page ship-positions-page">
     <header className="page-head"><h1>Приёмка с производства</h1>
@@ -658,7 +672,8 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
             const all = ready.flatMap((shipment) => shipment.lines.filter((line) => num(line.picked) > 0));
             return `Отгрузить выбранные (${ready.length}) · ${all.length}${NBSP}поз. · ${sumByUnit(all.map((line) => ({ unit: line.unit, quantity: num(line.picked) }))) || `0${NBSP}шт`}`;
           },
-          run: (selected: IntakeLine[]) => { const chosen = chosenShipments(selected); return shipShipments(chosen.ready, chosen.blocked); } }] : [])] : []}
+          // Ничего не уехало (отказ в вопросе или все отказы) — ошибка оставляет выбор как был.
+          run: async (selected: IntakeLine[]) => { const chosen = chosenShipments(selected); if (!(await shipShipments(chosen.ready, chosen.blocked))) throw new Error("не отгружено"); } }] : [])] : []}
         groupSelectLabel={(_name, groupRows) => groupRows[0]?.shipment ? `Выбрать отправку ${groupRows[0].shipment.number}` : "Выбрать группу"}
         groupParent={(line) => line.project} groupParentLabel={projectLabel} groupBy={shipmentGroupKey} groupBlock={shipmentBlock} groupSort exportName="Приёмка с производства"
         searchText={(line) => line.shipment ? shipmentSearch({ ...line.shipment, lines: line.shipment.lines.filter((position) => line.id === `${line.shipment!.id}:${position.id}`) }) : []} initialQuery={urlParam("q")} searchPlaceholder="Проект, КБ, наименование, ГРН или задание"

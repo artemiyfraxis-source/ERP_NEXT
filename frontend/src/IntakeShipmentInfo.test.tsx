@@ -26,8 +26,8 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-const show = (shipment: DispatchShipment, onShipment = vi.fn(), canHistory = false) => render(<IntakeShipmentInfo shipment={shipment} gaps={shipment.missing_ship}
-  rights={{ canEdit: true, canHistory }} pl="PL1" dn="DN1" onShipment={onShipment} onHistory={vi.fn()} />);
+const show = (shipment: DispatchShipment, onShipment = vi.fn(), canHistory = false, onConflict = vi.fn()) => render(<IntakeShipmentInfo shipment={shipment} gaps={shipment.missing_ship}
+  rights={{ canEdit: true, canHistory }} pl="PL1" dn="DN1" onShipment={onShipment} onHistory={vi.fn()} onConflict={onConflict} />);
 
 describe("IntakeShipmentInfo", () => {
   it("documents: upload the УПД file with the version; the screen gets the shipment from the answer", async () => {
@@ -89,6 +89,19 @@ describe("IntakeShipmentInfo", () => {
     expect(screen.getByRole("button", { name: "Исправить историю ОТГ-1" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Изменить: Ждём" })).not.toBeInTheDocument();
     expect(screen.getByText("22.11.2026")).toBeInTheDocument();
+  });
+
+  it("409: the screen reloads the shipment and the field says «Отгрузка изменилась — данные обновлены, повторите»", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => json({ detail: "Отгрузка изменилась после загрузки формы" }, 409)));
+    const onConflict = vi.fn().mockResolvedValue(undefined);
+    const onShipment = vi.fn();
+    show(base, onShipment, false, onConflict);
+    fireEvent.click(screen.getByRole("button", { name: "Изменить: Получатель" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Получатель" }), { target: { value: "Петров" } });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Получатель" }), { key: "Enter" });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Отгрузка изменилась — данные обновлены, повторите");
+    expect(onConflict).toHaveBeenCalledTimes(1);
+    expect(onShipment).not.toHaveBeenCalled();
   });
 
   it("empty values are a calm «—», pickup hides the carrier and the address", () => {
