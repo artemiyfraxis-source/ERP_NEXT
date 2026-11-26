@@ -26,7 +26,7 @@ from app.shared.events import AuditEvent
 from app.shared.persistence import AuditEventRow
 from .application import AssignProductionCommand, ConcurrentProductionUpdate, assign_task, lock_reflow_projects
 from .cutting import CABLE_CUTS, CUT, cutting_project_label, digest, recipe_kind
-from .cutting_application import check_access
+from .cutting_application import check_access, check_group_sites
 from .cutting_infrastructure import CuttingGroupRow, CuttingMemberRow, CuttingWorkRow
 from .domain import ProductionStatus, ProductionValidationError
 from .equipment_catalog import EMPTY, EquipmentCatalog
@@ -368,18 +368,29 @@ def collect(uow, actor) -> list[dict]:
     ).where(CuttingMemberRow.state == "active", CuttingMemberRow.group_id.in_([group.id for group in groups]))
         .order_by(CuttingMemberRow.position)).all() if groups else []
     kept: dict[UUID, list] = {}
-    for member_id, group_id, task_id, operation_id in members:
-        task = running.get(task_id)
-        operation = task.operation(operation_id) if task else None
+    active: dict[UUID, list] = {}
+    for member in members:
+        active.setdefault(member.group_id, []).append(member)
+        task = running.get(member.task_id)
+        operation = task.operation(member.operation_id) if task else None
         left = open_work(task, operation) if operation else None
         if left:
-            kept.setdefault(group_id, []).append((member_id, task, operation, left))
+            kept.setdefault(member.group_id, []).append((member.id, task, operation, left))
+    # `check_access` for every group with open work at once: the members above are its active members, their tasks are
+    # the running ones already read plus one batched read of the rest (handed over, done); a viewer without a site
+    # sees every group and reads nothing more.
+    viewer = people.get(actor.id)
+    site = viewer.site if viewer else ""
+    tasks = dict(running)
+    if site:
+        others = {member.task_id for group_id in kept for member in active[group_id]} - set(tasks)
+        tasks.update(uow.production.get_many(others) if others else {})
     visible = []
     for group in groups:
         if group.id not in kept:
             continue
         try:
-            check_access(group, uow, actor)
+            check_group_sites(group, site, active[group.id] if site else (), tasks.get, people.get)
         except PermissionError:
             continue
         visible.append(group)
@@ -483,14 +494,25 @@ def queue_rows(candidates: list[dict], documents: Mapping[DocumentKey, Mapping |
     for row in rows:
         setup = row.pop("_setup")
         row.pop("_order")
+        # Opaque setup identity: the screen filters the «Все станки» snapshot per machine and marks setup changes again.
+        row["setup_key"] = digest(setup)[:16]
         row["setup_change"] = setup != previous
         previous = setup
     return rows
 
 
 def queue_version(rows: list[dict]) -> str:
-    return digest([[row["key"], row["left"], row["task_version"], row["group_state"], row["machine_id"], row["machines"],
-                    row["length_mm"], row["setup_text"], row["warnings"], row["blocked"]] for row in rows])
+    """Revision of everything the rows show (names, permissions, warnings, setup values included): the screen keeps its
+    rows while it is unchanged."""
+    return digest(rows)
+
+
+def snapshot(rows: list[dict], catalog: EquipmentCatalog = EMPTY) -> dict:
+    """«Все станки» rows (every row once, `queue_rows` without a machine) with the machine choices and the version, from
+    one read: the screen derives each machine's list from it (a row is on every machine its `machines` names; none —
+    the «Станок не указан» bucket), the same rows the per-machine route returns."""
+    return {"machine_id": ALL_MACHINES, "equipment_id": None, "version": queue_version(rows), "rows": rows,
+            "machines": machines(rows, catalog)}
 
 
 def machines(rows: list[dict], catalog: EquipmentCatalog = EMPTY) -> list[dict]:

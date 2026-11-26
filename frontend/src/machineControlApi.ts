@@ -67,7 +67,11 @@ export interface MachineCommand {
   /** PLC-held length correction read around the measured-length pulse, in mm. */
   length_correction_before?: string | null;
   length_correction_after?: string | null;
+  /** «Обнулить счётчики»: подтверждённые «сделано» (D649) и «пучок» (D645) и прочитанные агентом после — когда выполнено. */
+  reset_counters?: { before: CounterPair; after: CounterPair | null } | null;
 }
+
+export interface CounterPair { total: number | null; batch: number | null }
 
 export interface MachineOffset {
   key: string;
@@ -299,8 +303,12 @@ export const machineControlApi = {
     api<MachineCommand>(`${card(inventory)}/run`, post({ ...body, confirm_state: confirmState })),
   closeRun: (inventory: string, body: RunClose) =>
     api<{ run: MachineRun; manual: ManualJob | null }>(`${card(inventory)}/run/close`, post(body)),
-  resetRun: (inventory: string, expectedActiveRunId: string | null, confirmState: number | null) =>
-    api<MachineCommand>(`${card(inventory)}/run/reset`, post({ expected_active_run_id: expectedActiveRunId, confirm_state: confirmState })),
+  resetRun: (inventory: string, expectedActiveRunId: string | null, confirmState: number | null, counters?: { total: number; batch: number }) =>
+    api<MachineCommand>(`${card(inventory)}/run/reset`, post({ expected_active_run_id: expectedActiveRunId, confirm_state: confirmState,
+      ...(counters ? { reset_counters: true, seen_total: counters.total, seen_batch: counters.batch } : {}) })),
+  /** «Обнулить» у «Сделано … из …»: D649 и D645 → 0 (агент 1.5.2), только пока станок стоит. */
+  resetCounters: (inventory: string, confirmState: number | null, counters: { total: number; batch: number }) =>
+    api<MachineCommand>(`${card(inventory)}/counters/reset`, post({ confirm_state: confirmState, seen_total: counters.total, seen_batch: counters.batch })),
   cuttingRuns: (groupId: string, signal?: AbortSignal) =>
     api<{ runs: CuttingMachineRun[] }>(`/api/production/machines/runs/cutting/${encodeURIComponent(groupId)}`, { signal }),
   correct: (inventory: string, body: CorrectionBody) => api<CorrectionResult>(`${card(inventory)}/correction`, post(body)),
@@ -308,6 +316,13 @@ export const machineControlApi = {
 
 /** Состояния, в которых служба станка пишет настройки и ролики (сервер: machine_writes.IDLE_STATES). */
 export const IDLE_STATES = [102, 107];
+/** Станок стоит — счётчики можно обнулить (сервер: machine_writes.RESET_STATES). */
+export const RESET_STATES = [100, 102, 106, 107];
+
+/** «Сделано N → 0, пучок M → 0» — одна строка подтверждения обнуления. */
+export function resetCountersText(total: number, batch: number): string {
+  return `Сделано ${total} → 0, пучок ${batch} → 0`;
+}
 
 /** Пульт производителя на ПК держит порт станка — словами наладчика, без имени программы (владелец 19.11.2026); тот же
  *  текст, что у сервера (production/machines.py HMI_OPEN). */

@@ -80,9 +80,90 @@ export const cuttingState: Record<CuttingMember["state"], string> = {
 };
 
 /** Printed / remaining labels per КБ: `GET /api/production/marking/progress?group_id=…`. `printed`/`remaining` count
- *  items (serials); `remaining_labels` — label pieces still to print, numbered and fixed («Печатать оставшиеся»). */
-export interface MarkingProgressRow { task_id: string; task_number: string; item: string; quantity: number; printed: number; remaining: number; remaining_labels: number }
-export interface MarkingProgress { rows: MarkingProgressRow[]; printed: number; remaining: number; remaining_labels: number }
+ *  items (serials); `remaining_labels` — label pieces still to print, numbered and fixed («Печатать оставшиеся»);
+ *  `total_labels` / `printed_labels` — label pieces in all and printed (owner 23.11; missing from older servers). */
+export interface MarkingProgressRow { task_id: string; task_number: string; item: string; quantity: number; printed: number; remaining: number; remaining_labels: number;
+  total_labels?: number; printed_labels?: number }
+export interface MarkingProgress { rows: MarkingProgressRow[]; printed: number; remaining: number; remaining_labels: number; total_labels?: number; printed_labels?: number }
+
+/** Distinct projects of the shown КБ, in member order: a split hint appears only when there are several. */
+export function cuttingProjects(rows: readonly CuttingMember[]): string[] {
+  return [...new Set(rows.map((row) => row.project))];
+}
+
+export interface ProjectShare { project: string; quantity: number }
+
+function shares(entries: readonly ProjectShare[]): ProjectShare[] {
+  const sum = new Map<string, number>();
+  for (const entry of entries) sum.set(entry.project, (sum.get(entry.project) ?? 0) + entry.quantity);
+  return [...sum].map(([project, quantity]) => ({ project, quantity }));
+}
+
+/** «708К.: 50 шт; 709К.: 30 шт». */
+export function sharesText(items: readonly ProjectShare[]): string {
+  return items.map((item) => `${item.project}: ${formatNumber(item.quantity)} шт`).join("; ");
+}
+
+/** One physical tube cut of the group: material × length, planned pieces over the shown КБ (owner 23.11). */
+export interface TubeTotal { key: string; material: string; length: number | null; quantity: number; projects: ProjectShare[] }
+
+/** Tube pieces of the shown КБ summed by exact material and normalized length («15», «15,0», 15 → one row), sorted by
+ *  material, then length. `row.tubes` are full-run requirements: the sum is «План», never «Осталось». `missing` — КБ
+ *  without tube data or with a quantity that is not a number: they are named, not counted as zero. */
+export function tubeTotals(rows: readonly CuttingMember[]): { rows: TubeTotal[]; missing: string[] } {
+  const totals = new Map<string, { material: string; length: string; parts: ProjectShare[] }>();
+  const missing: string[] = [];
+  for (const row of rows) {
+    const tubes = row.tubes ?? [];
+    const bad = !tubes.length || tubes.some((tube) => !Number.isFinite(Number(tube.quantity)) || Number(tube.quantity) < 0 || String(tube.quantity).trim() === "");
+    if (bad) { missing.push(row.item); continue; }
+    for (const tube of tubes) {
+      const material = String(tube.material ?? "").trim();
+      const length = lengthKey(tube.length_mm);
+      const key = `${material}\u0000${length}`;
+      const total = totals.get(key) ?? { material, length, parts: [] };
+      total.parts.push({ project: row.project, quantity: Number(tube.quantity) });
+      totals.set(key, total);
+    }
+  }
+  const result = [...totals].map(([key, total]) => ({
+    key, material: total.material, length: total.length === "" ? null : Number(total.length),
+    quantity: total.parts.reduce((sum, part) => sum + part.quantity, 0), projects: shares(total.parts),
+  }));
+  result.sort((a, b) => a.material.localeCompare(b.material, "ru") || (a.length ?? Infinity) - (b.length ?? Infinity));
+  return { rows: result, missing };
+}
+
+/** How many tube pieces go to each project; one line per cut when the group has several sizes. Empty — one project. */
+export function tubeProjectHint(rows: readonly CuttingMember[], totals: readonly TubeTotal[]): string[] {
+  if (cuttingProjects(rows).length < 2 || !totals.length) return [];
+  if (totals.length === 1) return [sharesText(totals[0].projects)];
+  return totals.map((total) => `${total.material || "—"} · ${total.length == null ? "—" : `${formatNumber(total.length)} мм`} — ${sharesText(total.projects)}`);
+}
+
+/** Label pieces of the shown КБ (owner 23.11): total / printed / remaining, plus what is left per project. Null —
+ *  progress not loaded, or a shown КБ has no progress row or no label counts (older server): unknown, never zero. */
+export interface LabelTotals { total: number; printed: number; remaining: number; projects: ProjectShare[] }
+
+export function labelTotals(rows: readonly CuttingMember[], progress: MarkingProgress | null): LabelTotals | null {
+  if (!progress) return null;
+  const byTask = new Map(progress.rows.map((item) => [item.task_id, item]));
+  const seen = new Set<string>();
+  const parts: { project: string; total: number; printed: number; remaining: number }[] = [];
+  for (const row of rows) {
+    if (seen.has(row.task_id)) continue;
+    seen.add(row.task_id);
+    const item = byTask.get(row.task_id);
+    if (!item || typeof item.total_labels !== "number" || typeof item.printed_labels !== "number") return null;
+    parts.push({ project: row.project, total: item.total_labels, printed: item.printed_labels, remaining: item.remaining_labels });
+  }
+  return {
+    total: parts.reduce((sum, part) => sum + part.total, 0),
+    printed: parts.reduce((sum, part) => sum + part.printed, 0),
+    remaining: parts.reduce((sum, part) => sum + part.remaining, 0),
+    projects: shares(parts.map((part) => ({ project: part.project, quantity: part.remaining }))),
+  };
+}
 
 export const cuttingKindTitle: Record<CuttingKind, string> = { cut: "Резка кабеля", labels: "Печать этикеток", tubes: "Резка трубок" };
 
