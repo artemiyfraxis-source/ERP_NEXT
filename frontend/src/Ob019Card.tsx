@@ -140,7 +140,7 @@ export function Ob019CardView({ card, controls = false, header, incoming }: {
 
 /** `openJournal` — старый вход в журнал работ; обе живые карточки открывают свой «Журнал» сами. `canWrite` — право
  *  записывать наладку (карточка пресса). */
-export function Ob019Card({ equipmentId, title, close, actions, incoming, canWrite }: { equipmentId: string; title: string; close: () => void; actions?: ReactNode; incoming?: import("./machinesApi").MachineTaskContext; openJournal?: () => void; canWrite?: boolean }) {
+export function Ob019Card({ equipmentId, title, close, actions, incoming, canWrite = false }: { equipmentId: string; title: string; close: () => void; actions?: ReactNode; incoming?: import("./machinesApi").MachineTaskContext; openJournal?: () => void; canWrite?: boolean }) {
   const load = useCallback((signal: AbortSignal) => machinesApi.card(equipmentId, signal), [equipmentId]);
   const { data, error } = usePolled(load, undefined, "Не удалось загрузить станок");
   return <PageWindow label={title} close={close} width={1100} dismissable>

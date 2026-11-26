@@ -62,7 +62,7 @@ const row = (name: string) => screen.getByRole("rowheader", { name: new RegExp(`
 afterEach(() => { vi.restoreAllMocks(); });
 
 it("reads what the ETK operation requires: terminal, wire, applicator and crimp height, per section when they differ", () => {
-  expect(etkPressRequired(ETK.card.document, 3)).toEqual({ terminal: "61117-4", wire: "МГТФ 0,35", applicator: "A-12", crimpHeight: "1,10–1,20" });
+  expect(etkPressRequired(ETK.card.document, 3)).toEqual({ terminal: "61117-4", wire: "МГТФ 0,35", sections: ["0,35"], applicator: "A-12", crimpHeight: "1,10–1,20" });
   expect(etkPressRequired(ETK.card.document, 4)).toBeNull();
   expect(etkPressRequired({ operations: [{ position: 1, fields: { crimpEnds: [
     { ends: ["A"], art: "T1", wire: "W", section: "0,35", applicator: "A-1", crimpHeight: "0,80" },
@@ -71,7 +71,10 @@ it("reads what the ETK operation requires: terminal, wire, applicator and crimp 
   expect(heightFits("1,10–1,20", 1.15)).toBe(true);
   expect(heightFits("1,10–1,20", 1.25)).toBe(false);
   expect(heightFits("1,15 ± 0,05", 1.2)).toBe(true);
-  expect(heightFits("1,15", 1.15)).toBe(true);
+  // One number is compared only with a tolerance (the press's own); without one — not at all.
+  expect(heightFits("1,15", 1.15)).toBeNull();
+  expect(heightFits("1,15", 1.17, 0.03)).toBe(true);
+  expect(heightFits("1,15", 1.2, 0.03)).toBe(false);
   expect(heightFits("0,35: 0,80; 0,5: 0,90", 0.8)).toBeNull();
 });
 
@@ -89,12 +92,18 @@ it("compares the ETK with the live press, highlights only the difference and con
   expect(row("Клемма").className).toBe("");
   // Not in the ETK: the newest эталон of the same terminal says it, with its date.
   expect(within(row("Высота обжима изоляции")).getAllByRole("cell")[0].textContent).toBe("1,9 · эталон 18.11");
-  expect((within(row("Высота обжима жилы")).getByRole("textbox") as HTMLInputElement).value).toBe("1,250");
+  // The press differs from the ETK: its value is not copied into «Настроено».
+  expect((within(row("Высота обжима жилы")).getByRole("textbox") as HTMLInputElement).value).toBe("");
   await waitFor(() => expect(hint).toHaveBeenLastCalledWith(
     "Пресс не как требуется: высота обжима жилы — выставьте на пульте пресса и нажмите «Подтвердить наладку»"));
 
   fireEvent.change(within(row("Высота обжима жилы")).getByRole("textbox"), { target: { value: "1,15" } });
   fireEvent.click(screen.getByRole("button", { name: "Подтвердить наладку" }));
+  // The press still differs: an explicit second confirmation that names what differs.
+  const confirm = screen.getByRole("alertdialog", { name: "Не как требуется" });
+  expect(confirm.textContent).toContain("Подтвердить, как есть: 1 параметр не как требуется — высота обжима жилы");
+  expect(calls.some((call) => call.method === "POST")).toBe(false);
+  fireEvent.click(within(confirm).getByRole("button", { name: "Подтвердить, как есть" }));
   expect(await screen.findByText(/^Записано в ERP \d\d:\d\d · задание наладки готово$/)).toBeTruthy();
   const posted = calls.filter((call) => call.method !== "GET");
   expect(posted).toEqual([{ url: "/api/production/setup-model/ОБ.099.1/configuration", method: "POST", body: {
@@ -106,7 +115,7 @@ it("compares the ETK with the live press, highlights only the difference and con
 
 it("records a setup without a task only with a reason and fills from the press, not from stale words", async () => {
   const calls = serve();
-  mount({}, { ...SETUP, open_tasks: [] });
+  mount({ live: { ...LIVE, crimp: { ...LIVE.crimp, height_mm: 1.15 } } }, { ...SETUP, open_tasks: [] });
   const button = screen.getByRole("button", { name: "Записать наладку" });
   expect(button).toBeDisabled();
   expect(screen.getByText("Укажите причину наладки без задания")).toBeTruthy();
@@ -115,7 +124,7 @@ it("records a setup without a task only with a reason and fills from the press, 
   fireEvent.click(button);
   await screen.findByText(/^Записано в ERP \d\d:\d\d$/);
   expect(calls.find((call) => call.method === "POST")?.body).toMatchObject({ task_id: null, reason: "смена аппликатора",
-    contact: "61117-4", values: { applicator: "A-12", crimp_height_mm: "1,250" } });
+    contact: "61117-4", values: { applicator: "A-12", crimp_height_mm: "1,150" } });
   expect(calls.some((call) => call.url.endsWith("/etk"))).toBe(false);
 });
 
@@ -144,7 +153,7 @@ it("a task assigned to another technician cannot be confirmed here", () => {
 
 it("an unreadable ETK is said once and the эталон still gives what it knows", async () => {
   serve({ etk: () => json({ detail: "Операция не назначена сотруднику" }, 403) });
-  mount();
+  mount({ live: { ...LIVE, job: { ...LIVE.job, wire: "МГТФ 0,35" } } });
   expect(await screen.findByText(/ЭТК задания не прочитана: Операция не назначена сотруднику/)).toBeTruthy();
   expect(within(row("Высота обжима изоляции")).getByText("1,9")).toBeTruthy();
 });
@@ -159,4 +168,55 @@ it("without a setup model shows the press rows and saves them by their names", a
   fireEvent.click(screen.getByRole("button", { name: "Записать наладку" }));
   await screen.findByText(/^Записано в ERP/);
   expect(calls.find((call) => call.method === "POST")?.body).toMatchObject({ values: { "Аппликатор": "A-12", "Высота обжима жилы, мм": "1,250", "Программа пресса": "61117-4" } });
+});
+
+const REF = SETUP.references[0];
+
+it("several эталоны of one terminal, wire and applicator are never picked silently", async () => {
+  serve();
+  mount({}, { ...SETUP, references: [REF, { ...REF, id: "r2", values: { ins_crimp_height_mm: "1.8" }, created_at: "2026-11-20T10:00:00+03:00" },
+    { ...REF, id: "r4", values: { applicator: "A-99", ins_crimp_height_mm: "2.2" }, created_at: "2026-11-21T10:00:00+03:00" }] });
+  const pick = await screen.findByRole("combobox", { name: "Несколько эталонов — выберите" });
+  await waitFor(() => expect(within(row("Высота обжима жилы")).getByText("1,10–1,20")).toBeTruthy());
+  expect(within(row("Высота обжима изоляции")).getAllByRole("cell")[0].textContent).toBe("—");
+  expect((within(row("Высота обжима изоляции")).getByRole("textbox") as HTMLInputElement).value).toBe("");
+  fireEvent.change(pick, { target: { value: "r2" } });
+  expect(within(row("Высота обжима изоляции")).getAllByRole("cell")[0].textContent).toBe("1,8 · эталон 20.11");
+  // An эталон of another applicator is not a candidate at all.
+  expect(within(pick).getAllByRole("option").map((option) => option.textContent)).toEqual(["не брать эталон", "20.11 · МГТФ 0,35", "18.11 · МГТФ 0,35"]);
+});
+
+it("an эталон for another wire size (AWG while the ETK gives mm²) is not used", async () => {
+  serve();
+  mount({}, { ...SETUP, references: [{ ...REF, wire: "AWG22" }, { ...REF, id: "r3", values: { applicator: "A-99", ins_crimp_height_mm: "2.2" } }] });
+  await waitFor(() => expect(within(row("Высота обжима жилы")).getByText("1,10–1,20")).toBeTruthy());
+  expect(within(row("Высота обжима изоляции")).getAllByRole("cell")[0].textContent).toBe("—");
+  expect(screen.queryByRole("combobox", { name: /эталон/i })).toBeNull();
+});
+
+it("a double click on the command sends one request", async () => {
+  const calls: string[] = [];
+  let answer: (value: Response) => void = () => undefined;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    if ((init?.method ?? "GET") === "POST") { calls.push(String(input)); return new Promise<Response>((resolve) => { answer = resolve; }); }
+    return json(ETK);
+  });
+  mount({ live: { ...LIVE, crimp: { ...LIVE.crimp, height_mm: 1.15 } } });
+  await waitFor(() => expect(within(row("Высота обжима жилы")).getByText("1,10–1,20")).toBeTruthy());
+  const button = screen.getByRole("button", { name: "Подтвердить наладку" });
+  fireEvent.click(button);
+  fireEvent.click(button);
+  await waitFor(() => expect(calls).toHaveLength(1));
+  answer(json({ ok: true, version: 5, values: {}, task_status: "Ready" }));
+  expect(await screen.findByText(/^Записано в ERP/)).toBeTruthy();
+  expect(calls).toHaveLength(1);
+});
+
+it("a single-number norm without any tolerance is neutral: no highlight, no «выставьте» hint", async () => {
+  serve({ etk: () => json({ ...ETK, card: { document: { operations: [{ position: 3, fields: { crimpEnds: [
+    { ends: ["A"], art: "61117-4", wire: "МГТФ 0,35", section: "0,35", applicator: "A-12", crimpHeight: "1,15" }] } }] } } }) });
+  const { hint } = mount({ live: { ...LIVE, crimp: { ...LIVE.crimp, tolerance_mm: null } } });
+  await waitFor(() => expect(within(row("Высота обжима жилы")).getByText("1,15")).toBeTruthy());
+  expect(row("Высота обжима жилы").className).toBe("");
+  await waitFor(() => expect(hint).toHaveBeenLastCalledWith("Сверьте пресс с ЭТК и нажмите «Подтвердить наладку»"));
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { failureText, productionApi } from "./api";
 import { etkDocOperations } from "./etkDocOps";
 import { crimpText, etkCrimpEnds } from "./etkDraw";
@@ -8,14 +8,14 @@ import { machinesApi, type MachineTaskContext, type Ob099Live, type UnitSetup } 
 /** Наладка пресса ОБ.099 (владелец 23.11.2026: «тут не готов всё ещё экран настройки»; навык erp-machine-hmi):
  *  одна главная команда — «Подтвердить наладку» с результатом рядом, «Что обжимаем» (задание наладки, операция из
  *  инструкции или клемма и провод вручную) и таблица «Требуется | На прессе | Настроено». Требуемое — из операции ЭТК
- *  задания, иначе из последнего эталона той же клеммы; «На прессе» — то, что агент прочитал из ПЛК. Агент пресса только
+ *  задания, иначе из эталона той же клеммы, провода и аппликатора (несколько подходящих — наладчик выбирает); «На прессе» — то, что агент прочитал из ПЛК. Агент пресса только
  *  читает (FINS 01 01): ERP не пишет в пресс, значения выставляются на пульте пресса, а «Подтвердить наладку» —
  *  запись наладчика в ERP (журнал наладки, задание наладки → «Готова»). */
 
 export const PRESS_READ_ONLY = "Запись в пресс из ERP не поддерживается — значения выставляются на пульте пресса";
 
 /** Что требует операция ЭТК пресса: клеммы, провод, аппликатор и высота обжима по записям обжима (`fields.crimpEnds`). */
-export interface PressRequired { terminal: string; wire: string; applicator: string; crimpHeight: string }
+export interface PressRequired { terminal: string; wire: string; sections: string[]; applicator: string; crimpHeight: string }
 
 const distinct = (values: (string | undefined)[]) => [...new Set(values.map((value) => (value ?? "").trim()).filter(Boolean))];
 
@@ -33,6 +33,7 @@ export function etkPressRequired(document: Record<string, unknown> | null | unde
     terminal: distinct(entries.map((entry) => entry.art)).join(", "),
     wire: distinct(entries.map((entry) => entry.section && !(entry.wire ?? "").includes(entry.section)
       ? [entry.wire, `(${entry.section})`].filter(Boolean).join(" ") : entry.wire)).join(", "),
+    sections: distinct(entries.map((entry) => entry.section)),
     applicator: bySection((entry) => entry.applicator),
     crimpHeight: bySection((entry) => (entry.crimpHeight ? crimpText(entry.crimpHeight) : "")),
   };
@@ -48,8 +49,9 @@ function sameName(required: string, live: string | null): boolean | null {
 
 const decimal = (text: string) => Number(text.replace(",", "."));
 
-/** Высота пресса в норме ЭТК: «1,10–1,20», «1,15 ± 0,05», «1,15»; другой вид (по сечениям) — не сравнивается. */
-export function heightFits(required: string, live: number | null): boolean | null {
+/** Высота в норме: «1,10–1,20», «1,15 ± 0,05»; одно число «1,15» — только с допуском (`tolerance`, допуск пресса), без
+ *  допуска не сравнивается; другой вид (по сечениям) — тоже. */
+export function heightFits(required: string, live: number | null, tolerance: number | null = null): boolean | null {
   if (!required || live === null) return null;
   const text = required.replace(/\s*мм\s*$/, "").trim();
   const number = "(\\d+(?:[.,]\\d+)?)";
@@ -59,8 +61,11 @@ export function heightFits(required: string, live: number | null): boolean | nul
   match = new RegExp(`^${number}\\s*±\\s*${number}$`).exec(text);
   if (match) return Math.abs(live - decimal(match[1])) <= decimal(match[2]) + eps;
   match = new RegExp(`^${number}$`).exec(text);
-  return match ? Math.abs(live - decimal(match[1])) <= eps : null;
+  return match && tolerance !== null ? Math.abs(live - decimal(match[1])) <= tolerance + eps : null;
 }
+
+const plural = (count: number) => count % 10 === 1 && count % 100 !== 11 ? "параметр"
+  : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? "параметра" : "параметров";
 
 const mm3 = (value: number) => formatNumber(value, { digits: 3, minDigits: 3 });
 
@@ -95,6 +100,22 @@ export function usePressSetup(inventory: string) {
 type Choice = string; // `task:<id>` · «instruction» · «manual»
 const MANUAL = "manual", INSTRUCTION = "instruction";
 
+type Reference = UnitSetup["references"][number];
+
+/** Эталоны клеммы, подходящие по проводу (сечение из ЭТК, провод ЭТК или пресса) и аппликатору, когда они известны. */
+export function referenceCandidates(references: Reference[], contact: string, wires: string[], applicator: string): Reference[] {
+  const key = plainKey(contact);
+  if (!key) return [];
+  const wireKeys = wires.map(plainKey).filter(Boolean);
+  const applicatorKey = plainKey(applicator);
+  return references.filter((item) => plainKey(item.contact) === key)
+    .filter((item) => !wireKeys.length || wireKeys.some((wire) => plainKey(item.wire) === wire || plainKey(item.wire).includes(wire)))
+    .filter((item) => !applicatorKey || !item.values.applicator || plainKey(item.values.applicator) === applicatorKey)
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+}
+
+const referenceLabel = (item: Reference) => [formatMoment(item.created_at).slice(0, 5), item.wire, item.values.applicator].filter(Boolean).join(" · ");
+
 interface EtkSource { taskId: string; operationId: string; position: number }
 type EtkState = { key: string; done: boolean; required: PressRequired | null; error: string } | null;
 
@@ -108,7 +129,7 @@ function firstChoice(setup: UnitSetup, incoming?: MachineTaskContext): Choice {
   return task ? `task:${task.id}` : MANUAL;
 }
 
-export function Ob099Setup({ inventory, live, fresh, canWrite = true, incoming, setup, error: loadError, reload, onHint }: {
+export function Ob099Setup({ inventory, live, fresh, canWrite = false, incoming, setup, error: loadError, reload, onHint }: {
   inventory: string; live: Ob099Live | null; fresh: boolean; canWrite?: boolean; incoming?: MachineTaskContext;
   setup: UnitSetup | null; error: string; reload: () => Promise<void>; onHint?: (hint: string) => void;
 }) {
@@ -118,6 +139,10 @@ export function Ob099Setup({ inventory, live, fresh, canWrite = true, incoming, 
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ tone: "ok" | "danger"; text: string } | null>(null);
   const [etk, setEtk] = useState<EtkState>(null);
+  const [picked, setPicked] = useState("");
+  const [confirming, setConfirming] = useState(false);
+  // A second click while the first request is pending: `busy` is not rendered yet, the ref stops it at once.
+  const sending = useRef(false);
 
   const chosen = setup && (choice ?? firstChoice(setup, incoming));
   const task = chosen?.startsWith("task:") ? setup?.open_tasks.find((item) => `task:${item.id}` === chosen) ?? null : null;
@@ -157,19 +182,23 @@ export function Ob099Setup({ inventory, live, fresh, canWrite = true, incoming, 
         const height = live.crimp.height_mm;
         if (height === null) return { shown: EMPTY, raw: "", fits: null };
         const tolerance = live.crimp.tolerance_mm === null ? "" : ` ± ${mm3(live.crimp.tolerance_mm)}`;
-        return { shown: `${mm3(height)} мм${tolerance}`, raw: mm3(height), fits: heightFits(requiredOf(key).value, height) };
+        return { shown: `${mm3(height)} мм${tolerance}`, raw: mm3(height), fits: heightFits(requiredOf(key).value, height, live.crimp.tolerance_mm) };
       }
       default: return null;
     }
   };
 
-  // Эталон той же клеммы (последний): требуемое, когда в ЭТК его нет или наладка без задания.
+  // Эталон той же клеммы, провода и аппликатора: требуемое, когда в ЭТК его нет или наладка без задания. Несколько
+  // подходящих — не выбираем молча: «Несколько эталонов — выберите».
   const contactNow = values.contact ?? (required?.terminal || (fresh ? live?.job.terminal : "") || configuration?.contact || "");
-  const reference = useMemo(() => {
-    const key = plainKey(contactNow);
-    return [...(setup?.references ?? [])].filter((item) => key && plainKey(item.contact) === key)
-      .sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null;
-  }, [setup, contactNow]);
+  const liveWire = fresh ? live?.job.wire ?? "" : "", liveApplicator = fresh ? live?.job.applicator ?? "" : "";
+  const wiresNow = useMemo(() => values.wire ? [values.wire] : required ? [...required.sections, required.wire].filter(Boolean)
+    : liveWire ? [liveWire] : [], [values.wire, required, liveWire]);
+  const applicatorNow = values.applicator ?? (required?.applicator && !/[;:]/.test(required.applicator) ? required.applicator : liveApplicator);
+  const candidates = useMemo(() => referenceCandidates(setup?.references ?? [], contactNow, wiresNow, applicatorNow),
+    [setup, contactNow, wiresNow, applicatorNow]);
+  const reference = candidates.length === 1 ? candidates[0] : candidates.find((item) => item.id === picked) ?? null;
+  const choose = candidates.length > 1 && !reference;
   function requiredOf(key: string): { value: string; from: string } {
     const fromEtk = key === "contact" ? required?.terminal : key === "wire" ? required?.wire
       : key === "applicator" ? required?.applicator : key === "crimp_height_mm" ? required?.crimpHeight : "";
@@ -180,10 +209,12 @@ export function Ob099Setup({ inventory, live, fresh, canWrite = true, incoming, 
       : { value: "", from: "" };
   }
 
-  /** «Настроено»: введённое, иначе с пресса (свежее), иначе одно число/имя из требуемого, иначе как было записано. */
+  /** «Настроено»: введённое, иначе с пресса (свежее и не расходится с требуемым), иначе одно число/имя из требуемого,
+   *  иначе как было записано. Пресс расходится с требуемым — пусто: наладчик вводит, что выставил. */
   const draftOf = (row: PressRow): { value: string; from: string } => {
     if (values[row.key] !== undefined) return { value: values[row.key], from: "" };
     const press = fresh ? pressValue(row.id) : null;
+    if (press?.fits === false) return { value: "", from: "" };
     if (press?.raw) return { value: press.raw, from: "с пресса" };
     const need = requiredOf(row.id).value;
     if (need && (row.numeric ? /^\d+(?:,\d+)?$/.test(need) : !/[,;:]/.test(need))) return { value: need, from: requiredOf(row.id).from };
@@ -192,6 +223,15 @@ export function Ob099Setup({ inventory, live, fresh, canWrite = true, incoming, 
   };
 
   const differs = [...IDENTITY_ROWS, ...rows].filter((row) => pressValue(row.id)?.fits === false).map((row) => row.label);
+  /** «Настроено» не как требуется (там, где это можно сравнить). */
+  const draftFits = (row: PressRow): boolean | null => {
+    const value = draftOf(row).value.trim(), need = requiredOf(row.id).value;
+    if (!value || !need) return null;
+    if (row.id === "crimp_height_mm") return heightFits(need, decimal(value), live?.crimp.tolerance_mm ?? null);
+    return row.id === "contact" || row.id === "applicator" ? sameName(need, value) : null;
+  };
+  const mismatched = [...IDENTITY_ROWS, ...rows].filter((row) => pressValue(row.id)?.fits === false || draftFits(row) === false)
+    .map((row) => row.label);
   const byTask = Boolean(task);
   const draft = Object.fromEntries(rows.map((row) => [row.key, draftOf(row).value.trim()]).filter(([, text]) => text));
   const contact = draftOf(IDENTITY_ROWS[0]).value.trim(), wire = draftOf(IDENTITY_ROWS[1]).value.trim();
@@ -205,19 +245,27 @@ export function Ob099Setup({ inventory, live, fresh, canWrite = true, incoming, 
     : byTask && task?.can_confirm ? "Сверьте пресс с ЭТК и нажмите «Подтвердить наладку»" : "";
   useEffect(() => { onHint?.(hint); }, [hint, onHint]);
 
+  /** First press with differences — a confirmation listing them; «Подтвердить, как есть» records. */
+  function press() {
+    if (!setup || busy || sending.current || why) return;
+    if (mismatched.length && !confirming) { setConfirming(true); return; }
+    void save();
+  }
+
   async function save() {
-    if (!setup || busy || why) return;
-    setBusy(true); setResult(null);
+    if (!setup || sending.current || why) return;
+    sending.current = true;
+    setBusy(true); setResult(null); setConfirming(false);
     try {
       const answer = await machinesApi.configure(inventory, {
         expected_version: setup.configuration?.version ?? 0, task_id: task ? task.id : null,
         ...(task ? { task_version: task.version } : {}), values: draft, wire, contact, reason: reason.trim() });
       const at = new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
       setResult({ tone: "ok", text: `Записано в ERP ${at}${answer.task_status === "Ready" ? " · задание наладки готово" : ""}` });
-      setValues({}); setReason(""); setChoice(null);
+      setValues({}); setReason(""); setChoice(null); setPicked("");
       await reload();
     } catch (reason) { setResult({ tone: "danger", text: `Отказ: ${failureText(reason, "не удалось записать наладку")}` }); }
-    finally { setBusy(false); }
+    finally { sending.current = false; setBusy(false); }
   }
 
   if (!setup) return <section className="machine-block" aria-label="Наладка пресса">
@@ -235,7 +283,7 @@ export function Ob099Setup({ inventory, live, fresh, canWrite = true, incoming, 
     return <td><span className={`machine-param-input${row.numeric ? "" : " is-text"}`}>
       <input name={`press_${row.key}`} autoComplete="off" spellCheck={false} aria-label={`${row.label}, настроено`}
         value={draftValue.value} disabled={!canWrite || busy} inputMode={row.numeric ? "decimal" : "text"}
-        onChange={(event) => setValues({ ...values, [row.key]: event.target.value })} />
+        onChange={(event) => { setValues({ ...values, [row.key]: event.target.value }); setConfirming(false); }} />
       {draftValue.from && <span className="machine-muted machine-hint">{draftValue.from}</span>}
     </span></td>;
   };
@@ -255,11 +303,16 @@ export function Ob099Setup({ inventory, live, fresh, canWrite = true, incoming, 
   return <>
     <div className="machine-controls-bar" aria-label="Команда наладки">
       <div className="machine-cmd">
-        <button type="button" className="primary" disabled={busy || Boolean(why)} onClick={() => void save()}>{busy ? "Записываю…" : action}</button>
+        <button type="button" className="primary" disabled={busy || Boolean(why)} onClick={press}>{busy ? "Записываю…" : action}</button>
         <span className={`machine-cmd-note${result ? ` tone-${result.tone}` : " machine-muted"}`} role="status">{result?.text ?? why}</span>
       </div>
       <span className="machine-muted machine-setup-note">{PRESS_READ_ONLY}</span>
     </div>
+    {confirming && !why && <div className="warning-inline machine-setup-actions" role="alertdialog" aria-label="Не как требуется">
+      <span>Подтвердить, как есть: {mismatched.length} {plural(mismatched.length)} не как требуется — {mismatched.join(", ").toLocaleLowerCase("ru")}</span>
+      <button type="button" className="primary" disabled={busy} onClick={() => void save()}>Подтвердить, как есть</button>
+      <button type="button" className="secondary" disabled={busy} onClick={() => setConfirming(false)}>Отмена</button>
+    </div>}
 
     <section className="machine-block machine-what" aria-label="Что обжимаем">
       <h3>Что обжимаем</h3>
@@ -288,6 +341,11 @@ export function Ob099Setup({ inventory, live, fresh, canWrite = true, incoming, 
         <input name="press_reason" autoComplete="off" value={reason} maxLength={500} disabled={!canWrite || busy}
           placeholder={chosen === INSTRUCTION ? "например, обжим по инструкции" : "например, смена аппликатора"}
           onChange={(event) => setReason(event.target.value)} /></label>}
+      {candidates.length > 1 && <label className="machine-pick"><span>{choose ? "Несколько эталонов — выберите" : "Эталон"}</span>
+        <select name="press_reference" value={reference?.id ?? ""} disabled={busy} onChange={(event) => { setPicked(event.target.value); setConfirming(false); }}>
+          <option value="">не брать эталон</option>
+          {candidates.map((item) => <option key={item.id} value={item.id}>{referenceLabel(item)}</option>)}
+        </select></label>}
       {source && etk?.key === sourceKey && etk.error && <p className="warning-inline">ЭТК задания не прочитана: {etk.error}</p>}
       {source && etk?.key === sourceKey && !etk.error && !etk.required && !etkLoading
         && <p className="warning-inline">В операции ЭТК {source.position} нет клеммы и высоты обжима</p>}

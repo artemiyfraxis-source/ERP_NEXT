@@ -111,7 +111,7 @@ function dayFacts(today: Ob099Today): Fact[][] {
   ];
 }
 
-export function Ob099CardView({ card, incoming, header, canWrite }: {
+export function Ob099CardView({ card, incoming, header, canWrite = false }: {
   card: Ob099MachineCard; incoming?: MachineTaskContext; header?: { title: string; close: () => void }; canWrite?: boolean;
 }) {
   const fresh = card.link.code === "ok";
