@@ -4,6 +4,8 @@
 .cq-head b { color: var(--foreground); font-variant-numeric: tabular-nums; }
 .cq-head select { min-height: 32px; }
 .cq-refresh { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font-size: 12px; }
+/* Обновление не удалось: строки прежние, время — их возраст. */
+.cq-refresh.cq-stale { color: var(--tone-warn); }
 .cq-table { font-size: 13px; }
 .cq-table th, .cq-table td { padding: 4px 6px; vertical-align: top; }
 .cq-table thead th { white-space: nowrap; font-size: 12px; font-weight: 500; color: var(--muted-foreground); }
