@@ -119,6 +119,18 @@ class FinishedGood:
     # Место хранения принятого на складе ГП (стеллаж, полка): одно на КБ, последняя приёмка с местом его заменяет.
     location: str = ""
 
+    grn_id: UUID | None = None
+    grn_category: str | None = None
+    grn_context: dict | None = None
+    grn_contract_version: int | None = None
+    material_owner_id: UUID | None = None
+    quality_state: str | None = None
+    quality_basis: str | None = None
+    quality_decided_by: UUID | None = None
+    quality_decided_at: datetime | None = None
+    quality_version: int | None = None
+    expiry_required: bool | None = None
+
     @classmethod
     def create(
         cls, *, project: str, item_index: str, customer: str, article: str,
@@ -401,7 +413,7 @@ def balance_moves(
 
 @dataclass(frozen=True)
 class AcceptanceAct:
-    """Акт приёмки ГП (владелец 19.10.2026): каждая приёмка КБ складом — свой ГРН «ГП.YY.NNNNNNN», даже когда КБ
+    """Акт приёмки ГП: каждая новая приёмка КБ — свой FRX/R&D ГРН; исторические «ГП.YY.NNNNNNN» сохраняются. Когда КБ
     принимают частями. Первый акт КБ носит ГРН самой КБ (`FinishedGood.grn` — его видят этикетки, PL/DN, строки
     отправок), следующие — новые номера. Акт ровно один на ход «принято» журнала (`move_id`); отгруженное до ERP
     акта не получает. `rolled_back` — сколько штук акта вернул в производство откат руководителя (`roll_back_acts`)."""
@@ -416,11 +428,34 @@ class AcceptanceAct:
     actor: str
     created_at: datetime
     rolled_back: Decimal = Decimal("0")
+    grn_id: UUID | None = None
+    grn_category: str | None = None
+    grn_context: dict | None = None
+    grn_contract_version: int | None = None
+    material_owner_id: UUID | None = None
+    quality_state: str | None = None
+    quality_basis: str | None = None
+    quality_decided_by: UUID | None = None
+    quality_decided_at: datetime | None = None
+    quality_version: int | None = None
+    expiry_required: bool | None = None
+
 
     @property
     def net(self) -> Decimal:
         """Штук акта на складе с учётом откатов «принято → в производство»."""
         return self.quantity - self.rolled_back
+
+    @property
+    def released(self) -> bool:
+        if self.grn_contract_version is None:
+            return True
+        return bool(self.quality_state == "RELEASED" and self.quality_basis and self.quality_decided_by
+                    and self.quality_decided_at and self.grn_id)
+
+    def assert_released(self) -> None:
+        if not self.released:
+            raise ShippingValidationError(f"Акт {self.grn}: нет решения о приёмке, отгрузка заблокирована")
 
 
 def acceptance_act(good: FinishedGood, moves: tuple[GoodMove, ...], grn: str) -> AcceptanceAct | None:
@@ -746,9 +781,12 @@ class GoodLots:
 
     acts: tuple[ActStock, ...]
     fallback: ActStock
+    available: Decimal | None = None
 
     def take(self, quantity: Decimal) -> tuple[tuple[LineLot, ...], GoodLots]:
         left = Decimal(quantity)
+        if self.available is not None and left > self.available:
+            raise ShippingValidationError("Нельзя набрать больше освобождённого остатка актов")
         lots: list[LineLot] = []
         acts = []
         for act in self.acts:
@@ -760,7 +798,8 @@ class GoodLots:
             acts.append(act)
         if left > 0:
             lots.append(LineLot(self.fallback.grn, left, self.fallback.act_id))
-        return merge_lots((), tuple(lots)), replace(self, acts=tuple(acts))
+        return merge_lots((), tuple(lots)), replace(self, acts=tuple(acts),
+            available=self.available - quantity if self.available is not None else None)
 
 
 def merge_lots(current: tuple[LineLot, ...], added: tuple[LineLot, ...]) -> tuple[LineLot, ...]:

@@ -61,7 +61,7 @@ def test_release_from_waiting_issues_use_permit(erp):
     receiving, _, _ = erp
     line = consume_receiving_expected(expected_message(), receiving())
     # A defect holds the line (a missing УПД or a shortfall no longer does, owner 05.10.2026).
-    waiting = run(receiving, line, replace(inspection(), manual_nonconformities=("Механическое повреждение / брак",), defect_quantity=Decimal("1")))
+    waiting = run(receiving, line, replace(inspection(), manual_nonconformities=("Механическое повреждение / брак",), defect_quantity=Decimal("1"), quality_state=None, quality_basis=""))
     assert waiting.status.value == "Ожидание"
 
     # Брак не подтвердился: повторный контроль без несоответствий — выход из «Ожидания» в «Принято» с РИ.
@@ -166,7 +166,7 @@ def test_api_takes_quality_details_from_the_inspection_form(api):
         f"/api/receiving/{line.id}/inspect",
         json={
             "version": line.version,
-            "fact_quantity": "10",
+            "grn_category": "PPM", "quality_state": "RELEASED", "quality_basis": "ОТК: годен", "fact_quantity": "10",
             "document_quantity": "10",
             "shipping_document_url": "https://files.test/upd.pdf",
             "expiry_date": "2027-01-01",

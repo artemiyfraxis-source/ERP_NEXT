@@ -20,6 +20,7 @@ from app.modules.shipping.application import (
 )
 from app.modules.shipping.domain import AcceptanceAct, FinishedGood, MoveContext, roll_back_acts
 from app.modules.shipping.infrastructure import FinishedGoodsActRow, ShippingSequenceRow, SqlAlchemyShippingUnitOfWork
+from app.modules.warehouse.grn_registry import GrnCounterRow
 from app.shared.persistence import create_schema
 from tests.factories import Actor
 
@@ -62,7 +63,7 @@ def _acts(factory, good_id) -> tuple[AcceptanceAct, ...]:
 
 def _sequence(sessions) -> int:
     with sessions() as session:
-        return session.scalar(select(ShippingSequenceRow.value).where(ShippingSequenceRow.name == "grn-26"))
+        return session.scalar(select(GrnCounterRow.last_serial).where(GrnCounterRow.category == "FRX", GrnCounterRow.full_year == 2026))
 
 
 def test_each_partial_acceptance_gets_its_own_grn_and_the_first_is_the_kbs(shop):
@@ -75,9 +76,9 @@ def test_each_partial_acceptance_gets_its_own_grn_and_the_first_is_the_kbs(shop)
 
     acts = _acts(factory, good.id)
     assert [(act.grn, act.quantity, act.received_at, act.location) for act in acts] == [
-        ("ГП.26.0000001", Decimal(100), date(2026, 10, 15), "Стеллаж 1"),
-        ("ГП.26.0000002", Decimal(350), date(2026, 10, 16), "Стеллаж 1"),
-        ("ГП.26.0000003", Decimal(350), date(2026, 10, 17), "Стеллаж 2"),
+        ("FRX.26.000001", Decimal(100), date(2026, 10, 15), "Стеллаж 1"),
+        ("FRX.26.000002", Decimal(350), date(2026, 10, 16), "Стеллаж 1"),
+        ("FRX.26.000003", Decimal(350), date(2026, 10, 17), "Стеллаж 2"),
     ]
     assert first.grn == last.grn == acts[0].grn  # этикетки, PL/DN и отправки видят ГРН КБ — первый акт
     assert len({act.move_id for act in acts}) == 3 and all(act.actor == "Кладовщик" for act in acts)
@@ -90,8 +91,8 @@ def test_two_kbs_each_take_their_own_number(shop):
     one, two = _register(factory, "КБ1"), _register(factory, "КБ2")
     _accept(factory, one.id, 5)
     _accept(factory, two.id, 7)
-    assert [act.grn for act in _acts(factory, one.id)] == ["ГП.26.0000001"]
-    assert [act.grn for act in _acts(factory, two.id)] == ["ГП.26.0000002"]
+    assert [act.grn for act in _acts(factory, one.id)] == ["FRX.26.000001"]
+    assert [act.grn for act in _acts(factory, two.id)] == ["FRX.26.000002"]
 
 
 def test_shipped_before_erp_gets_no_act_and_the_next_acceptance_is_the_first(shop):
@@ -106,7 +107,7 @@ def test_shipped_before_erp_gets_no_act_and_the_next_acceptance_is_the_first(sho
 
     accepted = _accept(factory, good.id, 10)
     assert [(act.grn, act.quantity) for act in _acts(factory, good.id)] == [(accepted.grn, Decimal(10))]
-    assert accepted.grn == "ГП.26.0000001" and _sequence(sessions) == 1
+    assert accepted.grn == "FRX.26.000001" and _sequence(sessions) == 1
     assert take_snapshot(engine)["counts"]["finished_goods_acts_mismatch"] == 0
 
 
@@ -149,13 +150,13 @@ def test_the_database_holds_one_act_per_move_and_unique_numbers(shop):
     act = _acts(factory, good.id)[0]
     with sessions() as session, pytest.raises(IntegrityError):
         session.add(FinishedGoodsActRow(
-            id=uuid4(), finished_good_id=good.id, move_id=act.move_id, grn="ГП.26.0000099", quantity=1,
+            id=uuid4(), finished_good_id=good.id, move_id=act.move_id, grn="FRX.26.000099", quantity=1,
             received_at=NOW.date(), location="", actor="x", created_at=NOW,
         ))
         session.flush()
     with sessions() as session, pytest.raises(IntegrityError):
         session.add(FinishedGoodsActRow(
-            id=uuid4(), finished_good_id=good.id, move_id=uuid4(), grn="ГП.26.0000098", quantity=0,
+            id=uuid4(), finished_good_id=good.id, move_id=uuid4(), grn="FRX.26.000098", quantity=0,
             received_at=NOW.date(), location="", actor="x", created_at=NOW,
         ))
         session.flush()

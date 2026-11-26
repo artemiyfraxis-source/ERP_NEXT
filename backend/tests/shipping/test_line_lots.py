@@ -31,7 +31,7 @@ from tests.shipping.test_domain import good as domain_good, shipment as domain_s
 NOW = datetime(2026, 10, 15, 9, 0)
 PROJECT = "533К.12"
 STOREKEEPER = Actor(name="Кладовщик", department="Склад")
-G1, G2, G3 = "ГП.26.0000001", "ГП.26.0000002", "ГП.26.0000003"
+G1, G2, G3 = "FRX.26.000001", "FRX.26.000002", "FRX.26.000003"
 
 
 @pytest.fixture()
@@ -75,6 +75,31 @@ def _stored(factory, shipment_id):
         return uow.shipments.get(shipment_id)
 
 
+def test_quarantined_place_cannot_be_picked_but_released_place_can(shop):
+    from app.modules.shipping.infrastructure import FinishedGoodsActRow
+    engine, factory, good_id = shop
+    with Session(engine) as session, session.begin():
+        session.scalar(select(FinishedGoodsActRow).where(FinishedGoodsActRow.grn == G2)).quality_state = "QTN"
+    picked = _pack(factory, good_id, 300)
+    assert _lots(picked) == [(G1, Decimal(100))]
+    with pytest.raises(ShippingValidationError):
+        _pack(factory, good_id, 1, G2)
+
+
+def test_shipment_rechecks_quality_of_previously_picked_place(shop):
+    from app.modules.shipping.application import ShipCommand, mark_shipped
+    from app.modules.shipping.infrastructure import FinishedGoodsActRow
+    engine, factory, good_id = shop
+    picked = _pack(factory, good_id, 100)
+    with Session(engine) as session, session.begin():
+        session.scalar(select(FinishedGoodsActRow).where(FinishedGoodsActRow.grn == G1)).quality_state = "QTN"
+    with pytest.raises(ShippingValidationError, match="заблокирована"):
+        mark_shipped(ShipCommand(picked.id, picked.version, STOREKEEPER, NOW + timedelta(days=3),
+            missing_reason="Данные ещё не внесены", allowed_missing=True), factory())
+    with factory() as uow:
+        assert uow.goods.get(good_id).sent == 0
+
+
 def test_fifo_pick_spans_two_acts_and_the_line_shows_both_grns(shop):
     engine, factory, good_id = shop
 
@@ -95,8 +120,8 @@ def test_fifo_pick_spans_two_acts_and_the_line_shows_both_grns(shop):
 def test_explicit_grn_takes_only_that_act_and_unknown_grn_is_refused(shop):
     _engine, factory, good_id = shop
 
-    with pytest.raises(ShippingValidationError, match="ГП.26.0000099 — не акт приёмки этой КБ"):
-        _pack(factory, good_id, 1, grn="ГП.26.0000099")
+    with pytest.raises(ShippingValidationError, match="FRX.26.000099 — не акт приёмки этой КБ"):
+        _pack(factory, good_id, 1, grn="FRX.26.000099")
 
     chosen = _pack(factory, good_id, 400, grn=G2)
     assert _lots(chosen) == [(G2, Decimal(350))] and chosen.lines[0].shortage == Decimal(50)
