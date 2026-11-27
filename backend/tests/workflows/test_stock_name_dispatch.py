@@ -162,3 +162,24 @@ def test_article_info_prefers_the_complete_name_over_a_family_name(monkeypatch):
     monkeypatch.setattr(api, "build_stock_name", lambda hints, records: None)
     assert api._with_full_name(info, "XT60H-M", [], identity) == info
     assert api._with_full_name(None, "XT60H-M", [], identity) is None
+
+
+def test_the_mount_tells_apart_what_the_maker_cannot():
+    # Two RUICHI coax of the same name, one crimped and one soldered; a third with no mount and the same maker stays alone.
+    named = {
+        "SMA-C58P": _named("SMA-male RG-58", maker="RUICHI", mount="обжим"),
+        "SMA-58P": _named("SMA-male RG-58", maker="RUICHI", mount="пайка"),
+        "S-111F": _named("SMA-male RG-58", maker="LenoRF", mount="обжим"),
+    }
+    result = resolve_collisions(named)
+    assert result["SMA-C58P"].name == "SMA-male RG-58, RUICHI, обжим"
+    assert result["SMA-58P"].name == "SMA-male RG-58, RUICHI, пайка"
+    assert result["S-111F"].name == "SMA-male RG-58, LenoRF"
+    assert all(item.complete for item in result.values())
+
+
+def test_one_maker_and_one_mount_still_go_to_review():
+    named = {"SMA-C58P": _named("SMA-male RG-58", maker="RUICHI", mount="обжим"),
+             "SMA-CG58P": _named("SMA-male RG-58", maker="RUICHI", mount="обжим")}
+    result = resolve_collisions(named)
+    assert not result["SMA-C58P"].complete and not result["SMA-CG58P"].complete

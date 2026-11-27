@@ -115,6 +115,7 @@ def _separate(by_article: Mapping[str, list[str]], result: dict[str, StockName])
         rest = [codes for codes in makers.values() if len(codes) >= 2]
     else:
         rest = [list(by_article)]
+    rest = [group for codes in rest for group in _split_by_mount(codes, first, by_article, result)]
     for codes in rest:
         if all(_variant_family(result[first[code]]) for code in codes):
             tails = _tails([first[code] for code in codes])
@@ -126,6 +127,24 @@ def _separate(by_article: Mapping[str, list[str]], result: dict[str, StockName])
         for code in codes:
             for key in by_article[code]:
                 result[key] = _review(result[key])
+
+
+def _split_by_mount(
+    codes: list[str], first: Mapping[str, str], by_article: Mapping[str, list[str]], result: dict[str, StockName],
+) -> list[list[str]]:
+    """Coax of one maker still sharing a name: «обжим» / «пайка» / «прижим» (БД.КОАКС «Монтаж», attrs `mount`) tells
+    them apart when it differs (main 27.11). Returns the groups that still share a name."""
+    mounts: dict[str, list[str]] = {}
+    for code in codes:
+        mounts.setdefault(str(result[first[code]].attrs.get("mount") or "").strip().casefold(), []).append(code)
+    if len(mounts) < 2:
+        return [codes]
+    for code in codes:
+        mount = str(result[first[code]].attrs.get("mount") or "").strip()
+        if mount:
+            for key in by_article[code]:
+                result[key] = replace(result[key], name=f"{result[key].name}, {mount}")
+    return [group for group in mounts.values() if len(group) >= 2]
 
 
 def _collisions(named: Mapping[str, StockName]) -> dict[str, dict[str, list[str]]]:
