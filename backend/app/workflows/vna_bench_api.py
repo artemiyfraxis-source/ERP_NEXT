@@ -52,7 +52,7 @@ from app.modules.production.rf_kit_characterization import CHARACTERIZED_DEFINIT
 from app.modules.production.rf_kit_characterization_infrastructure import (RfKitRepository, RfKitStandardRow,
                                                                            RfStandardCharacterizationRow)
 from app.modules.production.rf_interfaces import RfDetails, parse_interfaces
-from app.modules.production.traceability import InstrumentFile, InstrumentFileKind
+from app.modules.production.traceability import InstrumentFile, InstrumentFileKind, factory_number_key
 from app.modules.production.vna_bench_protocol import ArinstOptions, ArinstProfile, Screen, screen_hash
 from app.modules.production.vna_check_infrastructure import VALUE_FIELDS, VnaCheckRepository, VnaCheckRow
 from app.modules.production.vna_characterization import is_characterization_file
@@ -514,7 +514,9 @@ def _item_view(uow, repository, row, run, all_runs, items, commands):
         total = bench.REPEATS if border else 1
     else:
         target = dict(kind="assembly", task_id=run["task_id"], task_number=run["task_number"],
-                      position=run["product_position"], serial=None, name=run.get("task_name", ""), item=run.get("task_item", ""))
+                      position=run["product_position"],
+                      serial=_factory_numbers(uow, UUID(run["task_id"])).get(run["product_position"]) if run.get("task_id") else None,
+                      name=run.get("task_name", ""), item=run.get("task_item", ""))
         # A «на границе» attempt asks for the next connection; record_vswr decides when the repeat series is done.
         total = max(1, len(rows) + (1 if rows and rows[-1].verdict == "border" else 0))
     connections = [dict(no=n, status="failed" if it.verdict == "fail" else "passed",
@@ -1275,7 +1277,9 @@ def targets(_principal: Person, factory: Factory):
 
 @router.post(PREFIX + "/resolve")
 def resolve(payload: ResolveInput, principal: Person, factory: Factory):
-    """A scan or a number: «СИ.035» (or 35), a task «ПЗ-0001/3», a product serial number."""
+    """A scan or a number: «СИ.035» (or 35), a task «ПЗ-0001/3», a product serial number «ПЗ-0001-0003» or its
+    factory number «FRX.831К.КБ1.3», «FRX.831К.34.226.3», «FRX.708К.120907/AA.12» (0222; case, spaces, «K/К», «KB/КБ»
+    and zeros in k as scanned). An assembly candidate carries the factory number in `serial` once the label is printed."""
     query = payload.query.strip()
     with _refusals(), factory() as uow:
         candidates = []
@@ -1289,21 +1293,40 @@ def resolve(payload: ResolveInput, principal: Person, factory: Factory):
         task_number, position = query, None
         if match := re.fullmatch(r"(.+?)\s*/\s*(\d+)", query):
             task_number, position = match[1], int(match[2])
-        serial = uow.session.scalar(select(ProductionSerialRow).where(ProductionSerialRow.serial_number == query))
-        if serial is not None:
-            task_number, position = None, serial.position
-            task_rows = [uow.session.get(ProductionTaskRow, serial.task_id)]
+        serials = list(uow.session.scalars(select(ProductionSerialRow).where(ProductionSerialRow.serial_number == query)))
+        if not serials and (key := factory_number_key(query)) is not None:
+            # Factory numbers ending in this k, compared by the scan key: dots and «/» of the designation are kept.
+            # A Latin keyboard has no «Б»: typed «KB1» also tries «КБ1» — only for Latin input, so a stored «КВ1»
+            # still differs from «КБ1».
+            keys = {key} | ({factory_number_key(re.sub(r"KB(?=\d)", "КБ", query, flags=re.IGNORECASE))}
+                            if re.search(r"KB(?=\d)", query, re.IGNORECASE) else set())
+            serials = [row for row in uow.session.scalars(select(ProductionSerialRow).where(
+                ProductionSerialRow.item_serial == key[1], ProductionSerialRow.factory_number.is_not(None)))
+                if factory_number_key(row.factory_number) in keys]
+        if serials:
+            task_number = None
+            found = {row.task_id: row.position for row in serials}
+            task_rows = [uow.session.get(ProductionTaskRow, task_id) for task_id in found]
         else:
             task_rows = list(uow.session.scalars(select(ProductionTaskRow).where(ProductionTaskRow.number == task_number)))
         for task_row in task_rows:
             task = uow.production.get(task_row.id)
+            if serials:
+                position = found[task.id]
             positions = [position] if position else list(range(1, min(task.quantity, 50) + 1))
+            numbers = _factory_numbers(uow, task.id)
             for p in positions:
                 if 1 <= p <= task.quantity:
                     candidates.append(dict(kind="assembly", task_id=str(task.id), task_number=task.number, position=p,
-                                           serial=None, name=task.name, item=task.item,
+                                           serial=numbers.get(p), name=task.name, item=task.item,
                                            operation_id=str(op) if (op := _vswr_operation(task)) else None))
         return {"candidates": candidates}
+
+
+def _factory_numbers(uow, task_id) -> dict[int, str]:
+    """Заводские номера изделий задания по позиции (0222): выданы при печати этикетки; до печати — нет."""
+    return dict(uow.session.execute(select(ProductionSerialRow.position, ProductionSerialRow.factory_number).where(
+        ProductionSerialRow.task_id == task_id, ProductionSerialRow.factory_number.is_not(None))).all())
 
 
 def _grid(profile: Profile, top_hz: float) -> tuple[float, ...]:

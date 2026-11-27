@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
@@ -1115,6 +1115,7 @@ def _first_free(blocks: Iterable[tuple[int, int]], quantity: int) -> tuple[int, 
 
 def mark_serial_range(
     task: ProductionTask, project_tasks: Iterable[ProductionTask], events: Iterable[MarkEvent] = (),
+    stored: Mapping[UUID, tuple[int, int, str]] | None = None, designation: str | None = None,
 ) -> tuple[int, int] | None:
     """Номера изделий задания для «№ изделия» в надписях меток по КД (ЭТК, «Печать надписей»): первый и последний;
     None — задание отменено без работы и свои номера освободило.
@@ -1124,9 +1125,20 @@ def mark_serial_range(
     освобождение (``events``: отменено без работы, владелец 22.10 «освобождать») его отдаёт; «Вернуть в работу»
     освобождённого — снова первый свободный. Занятый диапазон ничто позже него не сдвигает: два живых задания позиции
     не получат одного номера, напечатанная надпись не меняется, а перезапуск освобождённых 10 шт снова получает 1–10.
-    Отменённое после работы задание (события освобождения нет) свои номера держит: надписи могли напечатать."""
+    Отменённое после работы задание (события освобождения нет) свои номера держит: надписи могли напечатать.
+
+    ``stored`` — заводские номера, выданные при печати (0222, владелец 27.11: «не переиспользуется»): задание → (первый,
+    последний k, изделие). Задание с ними держит их всегда, никакое событие их не освобождает, и первый свободный
+    диапазон других их обходит. Счёт заводских номеров — по (проект, изделие): ``designation`` — изделие задания
+    («КБ<n>» или своё обозначение); выданные номера других позиций проекта с тем же изделием тоже заняты."""
     tasks = _same_item(task, project_tasks)
     tasks[task.id] = task
+    stored = stored or {}
+    pinned = {task_id: (first, last) for task_id, (first, last, _product) in stored.items() if task_id in tasks}
+    product = (designation or "").casefold()
+    pinned_blocks = [*pinned.values(), *(
+        (first, last) for task_id, (first, last, other) in stored.items()
+        if task_id not in tasks and product and (other or "").casefold() == product)]
     numbers = {item.number: item for item in tasks.values()}
     # Шаг: (место в череде запусков, 0 — запуск / 1 — событие, время события, освобождение раньше возврата).
     steps = [((_launch_order(item), 0, _instant(item.created_at), 0), item.id, None) for item in tasks.values()]
@@ -1138,8 +1150,10 @@ def mark_serial_range(
         steps.append(((place, 1, _instant(event.at), 0 if event.released else 1), event.task_id, event.released))
     held: dict[UUID, tuple[int, int]] = {}
     for _key, task_id, released in sorted(steps, key=lambda step: step[0]):
-        if released:
+        if task_id in pinned:
+            held[task_id] = pinned[task_id]
+        elif released:
             held.pop(task_id, None)
         elif task_id not in held:
-            held[task_id] = _first_free(held.values(), max(tasks[task_id].quantity, 1))
+            held[task_id] = _first_free([*held.values(), *pinned_blocks], max(tasks[task_id].quantity, 1))
     return held.get(task.id)
