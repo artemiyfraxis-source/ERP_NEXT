@@ -131,6 +131,9 @@ def database(tmp_path, monkeypatch):
             connection.execute(text(f"ALTER TABLE production_tasks ADD COLUMN {column}"))
         Base.metadata.tables["production_task_team"].create(connection)
         Base.metadata.tables["production_task_deliveries"].create(connection)
+        # 0222: the factory number of an item (empty until a label print); the launch writes serial rows via the ORM.
+        for column in ("item_serial INTEGER", "product_designation VARCHAR(64)", "factory_number VARCHAR(128)"):
+            connection.execute(text(f"ALTER TABLE production_serials ADD COLUMN {column}"))
         # 0186/0187: current task guards query cutting membership even for ungrouped tasks.
         # These tables stay empty: groups did not exist at the historical wipe revision.
         for name in ("production_cutting_groups", "production_cutting_members", "production_cutting_work",

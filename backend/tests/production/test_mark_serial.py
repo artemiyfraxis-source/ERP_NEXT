@@ -58,8 +58,8 @@ def test_operation_etk_returns_the_task_serial_range_and_the_card_is_untouched(p
     two = client.get(_etk_url(second))
 
     assert one.status_code == 200, one.text
-    assert one.json()["serial"] == {"first": 1, "last": 5, "task": first.number}
-    assert two.json()["serial"] == {"first": 6, "last": 10, "task": second.number}
+    assert one.json()["serial"] == {"first": 1, "last": 5, "task": first.number, "provisional": True}
+    assert two.json()["serial"] == {"first": 6, "last": 10, "task": second.number, "provisional": True}
     assert one.json()["card"] == two.json()["card"]
 
 

@@ -233,7 +233,7 @@ def _source(uow, task, operation, part, built, member, group, kind, link, unit, 
             source = {"task_id": str(task.id), "operation_id": str(operation.id), "version": task.version}
             doc, _revision = issued_document(task, uow, lock=False)
             documents = [(task, doc)]
-        expanded = [row for t, doc in documents for row in labels(doc, t, serial_range_of(t, uow), selected)]
+        expanded = [row for t, doc in documents for row in labels(doc, t, serial_range_of(t, uow, doc), selected)]
         if not expanded or sum(row["quantity"] for row in expanded) > MAX_LABELS:
             raise ValueError("Для выбранной операции требуется от 1 до 500 этикеток")
         check_materials(expanded)

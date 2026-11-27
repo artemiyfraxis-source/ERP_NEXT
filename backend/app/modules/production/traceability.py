@@ -88,6 +88,58 @@ def box_code_kb(project: str, item: str) -> str:
     return clean[:BOX_CODE_KB_LIMIT] or "КБ"
 
 
+FACTORY_NUMBER_LIMIT = 128
+DESIGNATION_LIMIT = 64
+# «Изделие» в заводском номере (владелец 27.11): «КБ<n>» или своё обозначение — «34.226» (НПК РТС), «120907/AA» (PN
+# заказчика 708К.): буквы, цифры, «.», «/», «-», без пробелов и без точки по краям.
+_DESIGNATION = re.compile(r"[0-9A-Za-zА-Яа-яЁё](?:[0-9A-Za-zА-Яа-яЁё./\-]*[0-9A-Za-zА-Яа-яЁё/\-])?")
+
+
+def factory_project(project: str) -> str:
+    """Проект в заводском номере: без пробелов и точки в конце («831К.» → «831К»), латинские двойники — кириллицей."""
+    return re.sub(r"\s+", "", str(project or "")).upper().translate(_LOOKALIKE).rstrip(".")
+
+
+def clean_designation(value: object) -> str | None:
+    """Своё обозначение изделия технолога в хранимом виде: без пробелов и точек по краям, верхний регистр, латинские
+    двойники — кириллицей («120907/aa» ≡ «120907/АА»: один счёт и одна уникальность); не обозначение — None."""
+    text = re.sub(r"\s+", "", str(value or "")).strip(".")
+    if len(text) > DESIGNATION_LIMIT or not _DESIGNATION.fullmatch(text):
+        return None
+    return text.upper().translate(_LOOKALIKE)
+
+
+def default_designation(item: str) -> str | None:
+    """«КБ<n>» позиции («КБ1», «КБ-1», «591K.3.КБ1» → «КБ1»); позиция не КБ — None."""
+    match = _KB.search(re.sub(r"\s+", "", str(item or "")).replace(BOX_CODE_SEPARATOR, "."))
+    return f"КБ{int(match.group(1))}" if match else None
+
+
+def factory_number(project: str, designation: str, item_serial: int) -> str | None:
+    """Заводской номер изделия «FRX.<проект>.<изделие>.<k>» (владелец 27.11): изделие — «КБ<n>» или своё обозначение,
+    k без нулей, с 1, счёт по (проект, изделие). None — нет проекта или обозначения: заводской номер не выдаётся."""
+    clean, product = factory_project(project), clean_designation(designation)
+    if not clean or product is None or item_serial < 1:
+        return None
+    number = f"FRX.{clean}.{product}.{item_serial}"
+    return number if len(number) <= FACTORY_NUMBER_LIMIT else None
+
+
+_SCANNED_NUMBER = re.compile(r"FRX\..+\.0*([1-9]\d*)$", re.IGNORECASE)
+
+
+def factory_number_key(text: str) -> tuple[str, int] | None:
+    """Ключ сравнения скана с хранимым номером и k: регистр, пробелы, латинские двойники по одной букве («K/К», «A/А»)
+    и нули в k не важны; точки и «/» в проекте и обозначении сохраняются; текст до «FRX.» («№ FRX.…») — не номер.
+    «КВ1» и «КБ1» — разные ключи. Не заводской номер — None."""
+    clean = re.sub(r"\s+", "", str(text or ""))
+    match = _SCANNED_NUMBER.search(clean)
+    if match is None:
+        return None
+    body = clean[match.start():match.start(1)].rstrip("0").upper().translate(_LOOKALIKE)
+    return f"{body}{int(match.group(1))}", int(match.group(1))
+
+
 def box_code_prefix(project: str, item: str, day: date, operator_code: str) -> str:
     """Код без порядкового номера: проект·КБ·дд.мм·код сотрудника."""
     clean_project = re.sub(r"\s+", "", str(project or "")).replace(BOX_CODE_SEPARATOR, ".")
@@ -858,3 +910,9 @@ class SerialUnit:
     status: SerialStatus
     current_box_id: UUID | None = None
     finished_goods_grn: str | None = None
+    # Заводской номер изделия (владелец 27.11): k — «№ изделия» {№} напечатанной этикетки, изделие — «КБ<n>» или своё
+    # обозначение, номер — FRX.<проект>.<изделие>.<k>. Выдаётся при печати этикетки, хранится и не переиспользуется;
+    # у старых изделий и до печати — None.
+    item_serial: int | None = None
+    product_designation: str | None = None
+    factory_number: str | None = None

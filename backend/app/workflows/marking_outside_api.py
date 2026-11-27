@@ -13,11 +13,12 @@ from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, select
 
-from app.modules.production.application import ConcurrentProductionUpdate, issue_mark_serials_in
+from app.modules.production.application import (ConcurrentProductionUpdate, allocate_factory_numbers_in,
+                                                issue_mark_serials_in)
 from app.modules.production.cutting_application import locked_group
 from app.modules.production.marking_outside import MarkingOutsidePrintRow, numbered_mark_keys, outside_labels
 from app.workflows.marking_labels import Factory, Now, PrintUser, ReadUser, audit, checked, task_access
-from app.workflows.marking_progress import queue_counts
+from app.workflows.marking_progress import factory_scope, queue_counts
 
 router = APIRouter(prefix="/api/production/marking/outside", tags=["production"])
 Serial = Annotated[int, Field(ge=1, le=100_000, strict=True)]
@@ -88,11 +89,15 @@ def mark(payload: OutsideInput, principal: PrintUser, factory: Factory, now: Now
             # «Все КБ группы»: a task that does not number this item is skipped; a chosen КБ refuses it.
             strict = bool(payload.task_ids)
             queue = queue_counts(uow.session, [task.id for task, _document in entries])
-            rows, new = [], []
+            rows, new, pending = [], [], {}
             for task, document in entries:
                 if not numbered_mark_keys(document, task):
                     continue
-                serial_range = issue_mark_serials_in(task, False, principal.actor, now, uow)
+                designation, template, legacy = factory_scope(task, document, uow)
+                count_by = None if legacy else designation
+                serial_range = issue_mark_serials_in(task, False, principal.actor, now, uow, count_by, pending)
+                if serial_range and count_by:
+                    pending[task.id] = (*serial_range, count_by)
                 planned = outside_labels(document, task, serial_range, payload.serials, payload.quantity, strict=strict)
                 existing = set(uow.session.execute(
                     select(MarkingOutsidePrintRow.serial, MarkingOutsidePrintRow.text)
@@ -105,7 +110,9 @@ def mark(payload: OutsideInput, principal: PrintUser, factory: Factory, now: Now
                         fresh.append({**label, "quantity": quantity})
                 new.extend((task, label) for label in fresh)
                 if fresh and not payload.dry_run:
-                    issue_mark_serials_in(task, True, principal.actor, now, uow)  # the serials are spent outside
+                    issue_mark_serials_in(task, True, principal.actor, now, uow, count_by, pending)  # spent outside
+                    allocate_factory_numbers_in(task, serial_range, designation, principal.actor, now, uow,
+                                                template=template)  # 0222: printed outside — stored too
             if not rows:
                 raise ValueError("В ЭТК выбранных КБ нет номерных этикеток — отмечать нечего")
             if not payload.dry_run and new:

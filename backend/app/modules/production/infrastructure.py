@@ -587,9 +587,28 @@ class ProductionDefectDecisionRow(Base):
     act_reference: Mapped[str] = mapped_column(Text(), nullable=False)
 
 
+# 0222: FRX.<проект>.<изделие>.<k> — изделие хранится отдельно, номер кончается на «.<изделие>.<k>» (k без нулей).
+_K = "CAST(item_serial AS VARCHAR(12))"
+FACTORY_NUMBER_CHECK = (
+    "(item_serial IS NULL AND product_designation IS NULL AND factory_number IS NULL) OR "
+    "(item_serial IS NOT NULL AND product_designation IS NOT NULL AND factory_number IS NOT NULL AND item_serial >= 1 "
+    "AND product_designation <> '' AND product_designation NOT LIKE '% %' AND product_designation NOT LIKE '.%' "
+    "AND product_designation NOT LIKE '%.' AND factory_number LIKE 'FRX._%' "
+    f"AND length(factory_number) > length(product_designation) + length({_K}) + 6 "
+    f"AND substr(factory_number, length(factory_number) - length(product_designation) - length({_K}) - 1) "
+    f"= '.' || product_designation || '.' || {_K})"
+)
+
+
 class ProductionSerialRow(Base):
     __tablename__ = "production_serials"
-    __table_args__ = (Index("ux_production_serial_task_position", "task_id", "position", unique=True),)
+    __table_args__ = (
+        Index("ux_production_serial_task_position", "task_id", "position", unique=True),
+        # 0222: заводской номер выдаётся при печати этикетки, один на изделие навсегда (владелец 27.11).
+        Index("ux_production_serial_factory_number", "factory_number", unique=True),
+        Index("ux_production_serial_task_item_serial", "task_id", "item_serial", unique=True),
+        CheckConstraint(FACTORY_NUMBER_CHECK, name="ck_production_serial_factory_number"),
+    )
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     serial_number: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     task_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_tasks.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -597,6 +616,9 @@ class ProductionSerialRow(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     current_box_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("production_boxes.id", ondelete="RESTRICT"), nullable=True, index=True)
     finished_goods_grn: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    item_serial: Mapped[int | None] = mapped_column(Integer(), nullable=True)
+    product_designation: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    factory_number: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
 class ProductionInstrumentRow(Base):
@@ -1201,6 +1223,11 @@ class SqlAlchemyProductionRepository:
         self._lock_projects((task_id,))
         if SqlAlchemyCuttingRepository(self.session).preserve_task(task_id):
             raise ProductionValidationError("Задание входит в историю резки — используйте отмену")
+        numbered = self.session.scalar(select(ProductionSerialRow.factory_number).where(
+            ProductionSerialRow.task_id == task_id, ProductionSerialRow.factory_number.is_not(None)).limit(1))
+        if numbered is not None:
+            # 0222: напечатанный заводской номер не освобождается — задание с ним только отменяют.
+            raise ProductionValidationError(f"У задания напечатан заводской номер {numbered} — используйте отмену")
         if self.resources is not None:
             self.resources.remove_task(task_id)
         operations = select(ProductionOperationRow.id).where(ProductionOperationRow.task_id == task_id)
@@ -2148,7 +2175,66 @@ class SqlAlchemySerialRepository:
             id=row.id, serial_number=row.serial_number, task_id=row.task_id,
             position=row.position, status=SerialStatus(row.status),
             current_box_id=row.current_box_id, finished_goods_grn=row.finished_goods_grn,
+            item_serial=row.item_serial, product_designation=row.product_designation, factory_number=row.factory_number,
         )
+
+    def stored_ranges(self, task_ids) -> dict[UUID, tuple[int, int, str]]:
+        """Выданные заводские номера заданий: (первый k, последний k, изделие) — mark_serial_range держит их навсегда."""
+        ids = list(task_ids)
+        if not ids:
+            return {}
+        rows = self.session.execute(
+            select(ProductionSerialRow.task_id, func.min(ProductionSerialRow.item_serial),
+                   func.max(ProductionSerialRow.item_serial), func.min(ProductionSerialRow.product_designation))
+            .where(ProductionSerialRow.task_id.in_(ids), ProductionSerialRow.item_serial.is_not(None))
+            .group_by(ProductionSerialRow.task_id)
+        )
+        return {task_id: (int(first), int(last), product) for task_id, first, last, product in rows}
+
+    def assign_factory_numbers(self, task_id: UUID, designation: str,
+                               numbers: dict[int, tuple[int, str]]) -> list[SerialUnit]:
+        """Заводские номера изделиям задания: позиция → (k, номер) при изделии ``designation``; возвращает изделия,
+        получившие номер сейчас.
+        Выданный номер не меняется (перепечатка — тот же, ничего не возвращается).
+        Замки всегда в одном порядке (как у печати, `lock`): advisory-замок проекта → строка задания → строки изделий
+        по позиции; у печати первые два уже взяты (повторный захват в той же транзакции не ждёт). Вторая печать того
+        же проекта ждёт первую целиком и видит её номера: чужой номер — отказ; UNIQUE (factory_number) — последняя
+        защита."""
+        project = self.session.scalar(select(ProductionTaskRow.project).where(ProductionTaskRow.id == task_id))
+        if project is None:
+            raise ProductionValidationError("Задание не найдено")
+        lock_project_run(self.session, project)
+        self.session.scalar(select(ProductionTaskRow.id).where(ProductionTaskRow.id == task_id).with_for_update())
+
+        def locked():
+            return list(self.session.scalars(
+                select(ProductionSerialRow).where(ProductionSerialRow.task_id == task_id)
+                .order_by(ProductionSerialRow.position).with_for_update().execution_options(populate_existing=True)))
+        rows = locked()
+        fresh = [(row, *numbers[row.position]) for row in rows if row.item_serial is None and row.position in numbers]
+        if not fresh:
+            return []
+        wanted = [number for _row, _k, number in fresh]
+        taken = self.session.execute(
+            select(ProductionSerialRow.factory_number, ProductionSerialRow.serial_number, ProductionTaskRow.number)
+            .join(ProductionTaskRow, ProductionTaskRow.id == ProductionSerialRow.task_id)
+            .where(ProductionSerialRow.factory_number.in_(wanted), ProductionSerialRow.task_id != task_id)
+        ).first()
+        if taken is not None:
+            raise ProductionValidationError(
+                f"Заводской номер {taken[0]} уже выдан изделию {taken[1]} задания {taken[2]} — печать остановлена: "
+                "номер не переиспользуется, два изделия с одним номером недопустимы")
+        # No savepoint: pysqlite releases a savepoint opened before any write as a commit, and a refused print must
+        # leave nothing. A number taken between the check and this write (the project lock prevents it) fails the
+        # whole transaction on UNIQUE — the print is refused, never stored twice. One UPDATE per item in k order (the
+        # ORM flush would order them by the random row id): two writers then meet the UNIQUE index in the same order.
+        for row, item_serial, number in sorted(fresh, key=lambda entry: entry[1]):
+            self.session.execute(update(ProductionSerialRow).where(
+                ProductionSerialRow.id == row.id, ProductionSerialRow.item_serial.is_(None),
+            ).values(item_serial=item_serial, product_designation=designation, factory_number=number))
+        rows = {row.id: row for row in locked()}
+        fresh = [(rows[row.id], item_serial, number) for row, item_serial, number in fresh]
+        return [self._domain(row) for row, _item_serial, _number in fresh]
 
     def ensure_task(self, task_id: UUID, task_number: str, quantity: int) -> bool:
         existing = set(self.session.scalars(select(ProductionSerialRow.position).where(

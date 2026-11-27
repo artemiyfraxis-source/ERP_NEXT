@@ -130,7 +130,7 @@ def _label_check(uow, tasks, documents):
     counts = printed_counts(uow.session, [task.id for task in tasks])
     return [{key: row[key] for key in ("task_number", "item", "quantity", "serial_first", "serial_last", "printed",
                                        "remaining", "printed_serials", "remaining_labels")}
-            for row in (task_progress(task, documents.get(task.id), serial_range_of(task, uow), counts) for task in tasks)]
+            for row in (task_progress(task, documents.get(task.id), serial_range_of(task, uow, documents.get(task.id)), counts) for task in tasks)]
 
 
 def restructure(project, *, factory, techcards_factory, actor, now, dry_run=True, task_ids=None,
