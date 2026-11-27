@@ -1,0 +1,2838 @@
+{
+ "source": "prod lots with stock 27.11.2026 and БД.ТЕР export 23.11.2026; only article, type, maker, the current name and the БД.ТЕР fields the builder reads",
+ "lots": [
+  {
+   "article": "XT60H-M",
+   "item_type": "Соединитель",
+   "manufacturer": "AMASS",
+   "name": "Amass XT 2pin (однорядный)",
+   "expected": "Amass XT60H вилка (папа) 2pin",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "XT60H-F",
+   "item_type": "Соединитель",
+   "manufacturer": "AMASS",
+   "name": "Amass XT 2pin (однорядный)",
+   "expected": "Amass XT60H розетка (мама) 2pin",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "XT90S-F",
+   "item_type": "Соединитель",
+   "manufacturer": "AMASS",
+   "name": "Amass XT 2pin (однорядный)",
+   "expected": "Amass XT90S розетка (мама) 2pin",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "XT30U-F",
+   "item_type": "Соединитель",
+   "manufacturer": "AMASS",
+   "name": "Amass XT 2pin (однорядный)",
+   "expected": "Amass XT30U розетка (мама) 2pin",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "XT30U-F.G.Y",
+   "item_type": "Соединитель",
+   "manufacturer": "AMASS",
+   "name": "Amass XT 2pin (однорядный)",
+   "expected": "Amass XT30U розетка (мама) 2pin, G.Y",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "XT60EW-M.G.B",
+   "item_type": "Соединитель",
+   "manufacturer": "",
+   "name": "Amass XT 2pin (однорядный)",
+   "expected": "Amass XT60EW вилка (папа) 2pin, G.B",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "XT60E-M",
+   "item_type": "Соединитель",
+   "manufacturer": "",
+   "name": "Amass XT 2pin (однорядный)",
+   "expected": "Amass XT60E вилка (папа) 2pin",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "XT30U-M+F",
+   "item_type": "Соединитель",
+   "manufacturer": "AMASS",
+   "name": "Amass XT 2pin (однорядный)",
+   "expected": "",
+   "complete": false,
+   "missing": [
+    "пол: в артикуле пара вилка + розетка"
+   ]
+  },
+  {
+   "article": "XT60 ШТАНЫ",
+   "item_type": "Соединитель",
+   "manufacturer": "",
+   "name": "Amass XT 2pin (однорядный)",
+   "expected": "",
+   "complete": false,
+   "missing": [
+    "состав: переходник (штаны)"
+   ]
+  },
+  {
+   "article": "MR30F",
+   "item_type": "Соединитель",
+   "manufacturer": "AMASS",
+   "name": "Соединитель MR30-F (AMASS)",
+   "expected": "",
+   "complete": false,
+   "missing": [
+    "серия",
+    "пол",
+    "число контактов"
+   ]
+  },
+  {
+   "article": "QS8-S-M",
+   "item_type": "Соединитель",
+   "manufacturer": "",
+   "name": "QS8-S вилка (безыскровый)",
+   "expected": "Amass QS8-S вилка (папа) 2pin, безыскровый",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "XHP-4",
+   "item_type": "Соединитель",
+   "manufacturer": "JST",
+   "name": "XH 4pin (однорядный)",
+   "expected": "XH розетка (мама) 4pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "XHP-2",
+   "item_type": "Соединитель",
+   "manufacturer": "JST",
+   "name": "XH 2pin (однорядный)",
+   "expected": "XH розетка (мама) 2pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "S7B-XH-A(LF)(SN)",
+   "item_type": "Соединитель",
+   "manufacturer": "JST",
+   "name": "XH вилка 7pin (однорядный), угловая на плату",
+   "expected": "XH вилка (папа) 7pin (однорядный), угловая на плату",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "DS1069-7-MRW6SA",
+   "item_type": "Соединитель",
+   "manufacturer": "CONNFLY",
+   "name": "XH вилка 7pin (однорядный), угловая на плату",
+   "expected": "XH вилка (папа) 7pin (однорядный), угловая на плату",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "DS1069-9-FCW",
+   "item_type": "Соединитель",
+   "manufacturer": "CONNFLY",
+   "name": "XH розетка 9pin (однорядный)",
+   "expected": "XH розетка (мама) 9pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "I-DS1069-SCW004",
+   "item_type": "Соединитель",
+   "manufacturer": "CONNFLY",
+   "name": "XH розетка 4pin (однорядный)",
+   "expected": "XH розетка (мама) 4pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "SMR-04V-B",
+   "item_type": "Соединитель",
+   "manufacturer": "JST",
+   "name": "SM вилка 4pin (однорядный)",
+   "expected": "SM вилка (папа) 4pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "SMP-02V-BC",
+   "item_type": "Соединитель",
+   "manufacturer": "JST",
+   "name": "SM розетка 2pin (однорядный)",
+   "expected": "SM розетка (мама) 2pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "0510210300",
+   "item_type": "Соединитель",
+   "manufacturer": "MOLEX",
+   "name": "PicoBlade 3pin (однорядный)",
+   "expected": "PicoBlade розетка (мама) 3pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "510470300",
+   "item_type": "Соединитель",
+   "manufacturer": "MOLEX",
+   "name": "PicoBlade 3pin (однорядный)",
+   "expected": "PicoBlade вилка (папа) 3pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "0510471000",
+   "item_type": "Соединитель",
+   "manufacturer": "MOLEX",
+   "name": "PicoBlade 10pin (однорядный)",
+   "expected": "PicoBlade вилка (папа) 10pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "PHR-4",
+   "item_type": "Соединитель",
+   "manufacturer": "JST",
+   "name": "PH 4pin (однорядный)",
+   "expected": "PH розетка (мама) 4pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "PHDR-10VS",
+   "item_type": "Соединитель",
+   "manufacturer": "JST",
+   "name": "PHD 10pin (двухрядный)",
+   "expected": "PHD розетка (мама) 10pin (двухрядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "PAP-04V-S",
+   "item_type": "Соединитель",
+   "manufacturer": "JST",
+   "name": "PA 4pin (однорядный)",
+   "expected": "PA розетка (мама) 4pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "GHR-04V-S",
+   "item_type": "Соединитель",
+   "manufacturer": "JST",
+   "name": "GH 4pin (однорядный)",
+   "expected": "GH розетка (мама) 4pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "ZHR-5",
+   "item_type": "Соединитель",
+   "manufacturer": "JST",
+   "name": "ZH 5pin (однорядный)",
+   "expected": "ZH розетка (мама) 5pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "zhr-3",
+   "item_type": "Соединитель",
+   "manufacturer": "JST",
+   "name": "Mini-Latch 3pin (однорядный)",
+   "expected": "ZH розетка (мама) 3pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "EHR-4",
+   "item_type": "Соединитель",
+   "manufacturer": "JST",
+   "name": "EH 4pin (однорядный)",
+   "expected": "EH розетка (мама) 4pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "SHR-02V-S-B",
+   "item_type": "Соединитель",
+   "manufacturer": "JST",
+   "name": "SH 2pin (однорядный)",
+   "expected": "SH розетка (мама) 2pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "VHR-3N",
+   "item_type": "Соединитель",
+   "manufacturer": "JST",
+   "name": "VH 3pin (однорядный)",
+   "expected": "VH розетка (мама) 3pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "ELP-03V",
+   "item_type": "Соединитель",
+   "manufacturer": "JST",
+   "name": "ELP 3pin (однорядный)",
+   "expected": "EL розетка (мама) 3pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "0430250400",
+   "item_type": "Соединитель",
+   "manufacturer": "MOLEX",
+   "name": "Micro-Fit 3.0 4pin (двухрядный)",
+   "expected": "Micro-Fit 3.0 розетка (мама) 4pin (двухрядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "0430200201",
+   "item_type": "Соединитель",
+   "manufacturer": "MOLEX",
+   "name": "Micro-Fit 3.0 2pin",
+   "expected": "Micro-Fit 3.0 вилка (папа) 2pin (двухрядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "0436450200",
+   "item_type": "Соединитель",
+   "manufacturer": "MOLEX",
+   "name": "Micro-Fit 3.0 2pin (однорядный)",
+   "expected": "Micro-Fit 3.0 розетка (мама) 2pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "0039012025",
+   "item_type": "Соединитель",
+   "manufacturer": "MOLEX",
+   "name": "Mini-Fit Jr. 2pin (двухрядный)",
+   "expected": "Mini-Fit Jr. розетка (мама) 2pin (двухрядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "0050375043",
+   "item_type": "Соединитель",
+   "manufacturer": "MOLEX",
+   "name": "Mini-SPOX 4pin (однорядный)",
+   "expected": "Mini-SPOX розетка (мама) 4pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "0022013107",
+   "item_type": "Соединитель",
+   "manufacturer": "MOLEX",
+   "name": "",
+   "expected": "KK 254 розетка (мама) 10pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "0022552401",
+   "item_type": "Соединитель",
+   "manufacturer": "MOLEX",
+   "name": "",
+   "expected": "SL розетка (мама) 40pin (двухрядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "1053071206",
+   "item_type": "Соединитель",
+   "manufacturer": "MOLEX",
+   "name": "Nano-Fit 6pin (однорядный)",
+   "expected": "Nano-Fit розетка (мама) 6pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "0511102052",
+   "item_type": "Соединитель",
+   "manufacturer": "MOLEX",
+   "name": "Milli-Grid 20pin (двухрядный)",
+   "expected": "Milli-Grid розетка (мама) 20pin (двухрядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "0901430010",
+   "item_type": "Соединитель",
+   "manufacturer": "MOLEX",
+   "name": "C-Grid III 10pin (двухрядный)",
+   "expected": "C-Grid III розетка (мама) 10pin (двухрядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "5011892010",
+   "item_type": "Соединитель",
+   "manufacturer": "MOLEX",
+   "name": "Pico-Clasp 2pin (однорядный)",
+   "expected": "Pico-Clasp розетка (мама) 20pin (двухрядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "5025780600",
+   "item_type": "Соединитель",
+   "manufacturer": "MOLEX",
+   "name": "",
+   "expected": "CLIK-Mate розетка (мама) 6pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "1727080006",
+   "item_type": "Соединитель",
+   "manufacturer": "MOLEX",
+   "name": "",
+   "expected": "Mini-Fit TPA2 розетка (мама) 6pin (двухрядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "0511910300",
+   "item_type": "Соединитель",
+   "manufacturer": "MOLEX",
+   "name": "Mini-Latch 3pin (однорядный)",
+   "expected": "Mini-Latch 3pin (однорядный)",
+   "complete": false,
+   "missing": [
+    "пол"
+   ]
+  },
+  {
+   "article": "DF1B-10DEP-2.5RC",
+   "item_type": "Соединитель",
+   "manufacturer": "HIROSE",
+   "name": "Соединитель электрический",
+   "expected": "DF1B вилка (папа) 10pin (двухрядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "DF1B-18DS-2.5RC",
+   "item_type": "Соединитель",
+   "manufacturer": "HIROSE",
+   "name": "Корпус разъёма",
+   "expected": "DF1B розетка (мама) 18pin (двухрядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "FI-S20S",
+   "item_type": "Соединитель",
+   "manufacturer": "JAE",
+   "name": "",
+   "expected": "FI-S розетка (мама) 20pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "I-DS1071-SCB01x3",
+   "item_type": "Соединитель",
+   "manufacturer": "CONNFLY",
+   "name": "BLS, BLD 3pin (однорядный)",
+   "expected": "BLS, BLD розетка (мама) 3pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "I-DS1071-01-SCB01х3",
+   "item_type": "Соединитель",
+   "manufacturer": "CONNFLY",
+   "name": "Соединитель I-DS1071-01-SCB01x3 (CONNFLY, BLS2)",
+   "expected": "BLD2, BLS2 розетка (мама) 3pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "I-DS1066-SCW02",
+   "item_type": "Соединитель",
+   "manufacturer": "CONNFLY",
+   "name": "",
+   "expected": "DS1066 розетка (мама) 2pin (однорядный)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "SA810/P4",
+   "item_type": "Соединитель",
+   "manufacturer": "WEI",
+   "name": "Weipu SA8 4pin",
+   "expected": "Weipu SA810 вилка (папа) 4pin",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "SA810/P4IIB",
+   "item_type": "Соединитель",
+   "manufacturer": "WEIPU",
+   "name": "Weipu SA8 4pin",
+   "expected": "Weipu SA810 вилка (папа) 4pin, IIB",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "SA812/S4B",
+   "item_type": "Соединитель",
+   "manufacturer": "WEIPU",
+   "name": "Weipu SA8 4pin",
+   "expected": "Weipu SA812 розетка (мама) 4pin, B",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "LP-12-C02PE-02-001",
+   "item_type": "Соединитель",
+   "manufacturer": "CNLINKO",
+   "name": "CNLINKO LP-12 2pin",
+   "expected": "CNLINKO LP-12 вилка (папа) 2pin, PE-02-001",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "LP-12-J04SX-02-401",
+   "item_type": "Соединитель",
+   "manufacturer": "CNLINKO",
+   "name": "CNLINKO LP-12 4pin",
+   "expected": "CNLINKO LP-12 розетка (мама) 4pin, SX-02-401",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "GX12M-2A",
+   "item_type": "Соединитель",
+   "manufacturer": "",
+   "name": "GX12 2pin",
+   "expected": "Авиационный GX12M 2pin, A",
+   "complete": false,
+   "missing": [
+    "пол"
+   ]
+  },
+  {
+   "article": "DT06-3S",
+   "item_type": "Соединитель",
+   "manufacturer": "TY",
+   "name": "",
+   "expected": "Deutsch DT розетка (мама) 3pin",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "DS1107-WN0",
+   "item_type": "Соединитель",
+   "manufacturer": "CONNFLY",
+   "name": "USB-A вилка под пайку",
+   "expected": "USB-A вилка (папа) 4pin, под пайку",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "8P8C-CH-C6-T",
+   "item_type": "Соединитель",
+   "manufacturer": "",
+   "name": "RJ45 8P8C 8pin (однорядный)",
+   "expected": "RJ45 8P8C 8pin",
+   "complete": false,
+   "missing": [
+    "пол"
+   ]
+  },
+  {
+   "article": "SHDR-20",
+   "item_type": "Соединитель",
+   "manufacturer": "",
+   "name": "",
+   "expected": "",
+   "complete": false,
+   "missing": [
+    "серия",
+    "пол",
+    "число контактов"
+   ]
+  },
+  {
+   "article": "174047-2",
+   "item_type": "Соединитель",
+   "manufacturer": "TYCO",
+   "name": "Multilock 040 20pin (двухрядный)",
+   "expected": "Multilock 040 20pin (двухрядный)",
+   "complete": false,
+   "missing": [
+    "пол"
+   ]
+  },
+  {
+   "article": "SXH-001T-P0.6",
+   "item_type": "Терминал",
+   "manufacturer": "JST",
+   "name": "Контакт XH Female",
+   "expected": "Контакт XH гнездо (мама), 0,08–0,35 мм²",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "SPH-002T-P0.5L",
+   "item_type": "Терминал",
+   "manufacturer": "JST",
+   "name": "Контакт PH Female",
+   "expected": "Контакт PH гнездо (мама), 0,08–0,2 мм²",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "SSH-003T-P0.2-H",
+   "item_type": "Терминал",
+   "manufacturer": "JST",
+   "name": "Контакт SH Female",
+   "expected": "Контакт SH гнездо (мама), 0,03–0,08 мм²",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "0430300001",
+   "item_type": "Терминал",
+   "manufacturer": "MOLEX",
+   "name": "Контакт Micro-Fit 3.0 Female",
+   "expected": "Контакт Micro-Fit 3.0 гнездо (мама), 0,2–0,5 мм²",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "0430310001",
+   "item_type": "Терминал",
+   "manufacturer": "MOLEX",
+   "name": "Контакт Micro-Fit 3.0 Male",
+   "expected": "Контакт Micro-Fit 3.0 штырь (папа), 0,2–0,5 мм²",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "0039000079",
+   "item_type": "Терминал",
+   "manufacturer": "MOLEX",
+   "name": "Контакт Mini-Fit Jr. Female",
+   "expected": "Контакт Mini-Fit Jr. гнездо (мама), 1,5 мм²",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "0039000081",
+   "item_type": "Терминал",
+   "manufacturer": "MOLEX",
+   "name": "Контакт Mini-Fit Jr. Male",
+   "expected": "Контакт Mini-Fit Jr. штырь (папа), 1,5 мм²",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "DF1-PD2428SCFB",
+   "item_type": "Терминал",
+   "manufacturer": "HIROSE",
+   "name": "Контакт DF1B Male",
+   "expected": "Контакт DF1B штырь (папа), AWG 28–24",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "DF1B-2428SCFA",
+   "item_type": "Терминал",
+   "manufacturer": "HIROSE",
+   "name": "Контакт DF1B Female",
+   "expected": "Контакт DF1B гнездо (мама), AWG 28–24",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "SHF-001T-0.8BS",
+   "item_type": "Терминал",
+   "manufacturer": "JST",
+   "name": "Контакт SM Female",
+   "expected": "Контакт SM гнездо (мама), 0,08–0,35 мм²",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "SYM-001T-P0.6(N)",
+   "item_type": "Терминал",
+   "manufacturer": "JST",
+   "name": "Контакт SM Male",
+   "expected": "Контакт SM штырь (папа)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "T-DS1069-SC600",
+   "item_type": "Терминал",
+   "manufacturer": "CONNFLY",
+   "name": "Контакт XH Female",
+   "expected": "Контакт XH гнездо (мама), 0,05–0,3 мм²",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "0016020086",
+   "item_type": "Терминал",
+   "manufacturer": "MOLEX",
+   "name": "Контакт SL Female",
+   "expected": "Контакт SL гнездо (мама), 0,2–0,35 мм²",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "ГС 2,5",
+   "item_type": "Терминал",
+   "manufacturer": "КВТ",
+   "name": "Контакт ГС",
+   "expected": "Гильза соединительная ГС 2,5",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "0508028100",
+   "item_type": "Терминал",
+   "manufacturer": "MOLEX",
+   "name": "Контакт Mini-Latch Female",
+   "expected": "Контакт",
+   "complete": false,
+   "missing": [
+    "серия",
+    "пол"
+   ]
+  },
+  {
+   "article": "AMK11D-A1",
+   "item_type": "Терминал",
+   "manufacturer": "",
+   "name": "",
+   "expected": "Контакт",
+   "complete": false,
+   "missing": [
+    "серия",
+    "пол"
+   ]
+  },
+  {
+   "article": "НВИ 1.5-4",
+   "item_type": "Наконечник",
+   "manufacturer": "КВТ",
+   "name": "Наконечник НВИ",
+   "expected": "Наконечник НВИ 1,5-4",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "НВИ 2.5-4",
+   "item_type": "Наконечник",
+   "manufacturer": "КВТ",
+   "name": "Наконечник НВИ",
+   "expected": "Наконечник НВИ 2,5-4",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "НКИ-1.5-6",
+   "item_type": "Наконечник",
+   "manufacturer": "КВТ",
+   "name": "Контакт НКИ",
+   "expected": "Наконечник НКИ 1,5-6",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "НКИ 0,5 -1,5",
+   "item_type": "Наконечник",
+   "manufacturer": "",
+   "name": "",
+   "expected": "Наконечник НКИ 0,5-1,5",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "НШВ 0.5-8",
+   "item_type": "Наконечник",
+   "manufacturer": "КВТ",
+   "name": "наконечник штыревой втулочный",
+   "expected": "Наконечник НШВ 0,5-8",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "НШВ-1.0-8",
+   "item_type": "Наконечник",
+   "manufacturer": "",
+   "name": "Наконечник НШВ 1,0-8",
+   "expected": "Наконечник НШВ 1,0-8",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "НШВ 6,0–12 мм²",
+   "item_type": "Наконечник",
+   "manufacturer": "VELL",
+   "name": "Наконечник штыревой втулочный НШВ 6,0–12 мм²",
+   "expected": "Наконечник НШВ 6,0-12",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "НШВ EN6012 6,0-12 Г2509",
+   "item_type": "Наконечник",
+   "manufacturer": "",
+   "name": "Наконечник медный 6мм2 втулочный без изоляции",
+   "expected": "Наконечник НШВ 6,0-12",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "НШВИ 0,75-8",
+   "item_type": "Наконечник",
+   "manufacturer": "",
+   "name": "НШВИ 0,75-8, Наконечник штыревой втулочный изолированный",
+   "expected": "Наконечник НШВИ 0,75-8",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "НШВИ-0.34-8",
+   "item_type": "Наконечник",
+   "manufacturer": "",
+   "name": "Наконечник НШВИ 0,34-8",
+   "expected": "Наконечник НШВИ 0,34-8",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "ПМ 10-6",
+   "item_type": "Наконечник",
+   "manufacturer": "КВТ",
+   "name": "Контакт ПМ",
+   "expected": "Наконечник ПМ 10-6",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "ПМ 16-6 42414",
+   "item_type": "Наконечник",
+   "manufacturer": "КВТ",
+   "name": "Наконечник ПМ 16–6",
+   "expected": "Наконечник ПМ 16-6",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "РПИ-М 2.5-(4.8)",
+   "item_type": "Наконечник",
+   "manufacturer": "КВТ",
+   "name": "Наконечник РПИ-М",
+   "expected": "Наконечник РПИ-М 2,5-4,8, розетка (мама)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "РПИ-М1,5-4,8",
+   "item_type": "Наконечник",
+   "manufacturer": "КВТ",
+   "name": "Наконечник РПИ-М 1.5 (4.8)",
+   "expected": "Наконечник РПИ-М 1,5-4,8, розетка (мама)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "РПИ-П 1,5-(4,8)",
+   "item_type": "Наконечник",
+   "manufacturer": "КВТ",
+   "name": "Наконечник РПИ-П 1.5 (4.8)",
+   "expected": "Наконечник РПИ-П 1,5-4,8, вилка (папа)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "РППИ-М 1.5–(6.3)",
+   "item_type": "Наконечник",
+   "manufacturer": "",
+   "name": "РППИ-М 1.5–(6.3) Разъем кабельный плоский полностью изолированный «мама»",
+   "expected": "Наконечник РППИ-М 1,5-6,3, розетка (мама)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "ВРПИ-М 2.5-(6.3)",
+   "item_type": "Наконечник",
+   "manufacturer": "КВТ",
+   "name": "Плоский изолированный наконечник ВРПИ-М 2,5-6,3",
+   "expected": "Наконечник ВРПИ-М 2,5-6,3, розетка (мама)",
+   "complete": true,
+   "missing": []
+  },
+  {
+   "article": "HSM H2011-08PWA000R",
+   "item_type": "Соединитель",
+   "manufacturer": "HSUAN",
+   "name": "колодка пластиковая HC-08",
+   "expected": "Hsuan Mao HC 2,0 розетка (мама) 8pin (однорядный)",
+   "complete": true,
+   "missing": []
+  }
+ ],
+ "ter": [
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Connfly",
+    "terSeries": "I-DS1066",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "T-DS1066-SC600",
+    "mm2From": "0,05",
+    "mm2To": "0,2",
+    "awgFrom": "30",
+    "awgTo": "24"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Connfly",
+    "terSeries": "I-DS1069",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "T-DS1069-SC600",
+    "mm2From": "0,05",
+    "mm2To": "0,3",
+    "awgFrom": "28",
+    "awgTo": "22"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Connfly",
+    "terSeries": "I-DS1071-01-SCB01, I-DS1071-01-SCB02",
+    "terComponent": "BLD2, BLS2",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "T-DS1071-01-SC000",
+    "awgFrom": "28",
+    "awgTo": "24"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Connfly",
+    "terSeries": "I-DS1071-01-SCB01, I-DS1071-01-SCB02",
+    "terComponent": "BLD2, BLS2",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "T-DS1071-01-SC800",
+    "awgFrom": "28",
+    "awgTo": "24"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Connfly",
+    "terSeries": "I-DS1071-01-SCB01, I-DS1071-01-SCB02",
+    "terComponent": "BLD2, BLS2",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "T-DS1071-01-SC600",
+    "mm2From": "0,05",
+    "mm2To": "0,12",
+    "awgFrom": "30",
+    "awgTo": "26"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Connfly",
+    "terSeries": "I-DS1071-SCB01, I-DS1071-SCB02",
+    "terComponent": "BLS, BLD",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "T-DS1071-SC800",
+    "mm2From": "0,09",
+    "mm2To": "0,3",
+    "awgFrom": "28",
+    "awgTo": "22"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Connfly",
+    "terSeries": "I-DS1071-SCB01, I-DS1071-SCB02",
+    "terComponent": "BLS, BLD",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "T-DS1071-SC600",
+    "mm2From": "0,09",
+    "mm2To": "0,3",
+    "awgFrom": "28",
+    "awgTo": "22"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Hirose",
+    "terSeries": "DF1B",
+    "terComponent": "DF1B",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "DF1B-2428SCFA",
+    "terArticleBag": "DF1B-2428SCA",
+    "awgFrom": "28",
+    "awgTo": "24"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Hirose",
+    "terSeries": "DF1B",
+    "terComponent": "DF1B",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "DF1B-2022SCF",
+    "terArticleBag": "DF1B-2022SC",
+    "awgFrom": "22",
+    "awgTo": "20"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Hirose",
+    "terSeries": "DF1B",
+    "terComponent": "DF1B",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticle": "DF1B-2428PCF",
+    "terArticleBag": "DF1B-2428PC",
+    "awgFrom": "28",
+    "awgTo": "24"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Hirose",
+    "terSeries": "DF1B",
+    "terComponent": "DF1B",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticle": "DF1B-30PCF",
+    "terArticleBag": "DF1B-30PC",
+    "awgFrom": "30",
+    "awgTo": "30"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Hirose",
+    "terSeries": "DF1B",
+    "terComponent": "DF1B",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "DF1B-30SCF",
+    "terArticleBag": "DF1B-30SC",
+    "awgFrom": "30",
+    "awgTo": "30"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Hirose",
+    "terSeries": "DF1B",
+    "terComponent": "DF1B",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "DF1B-2428SCF",
+    "terArticleBag": "DF1B-2428SC",
+    "awgFrom": "28",
+    "awgTo": "24"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Hirose",
+    "terSeries": "DF1B",
+    "terComponent": "DF1B",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticle": "DF1B-2022PCFB",
+    "terArticleBag": "DF1B-2022PCB",
+    "awgFrom": "22",
+    "awgTo": "20"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Hirose",
+    "terSeries": "DF1B",
+    "terComponent": "DF1B",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticle": "DF1B-2022PCF",
+    "terArticleBag": "DF1B-2022PC",
+    "awgFrom": "22",
+    "awgTo": "20"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Hirose",
+    "terSeries": "DF1B",
+    "terComponent": "DF1B",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "DF1B-30SCFA",
+    "terArticleBag": "DF1B-30SCA",
+    "awgFrom": "30",
+    "awgTo": "30"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Hirose",
+    "terSeries": "DF1B",
+    "terComponent": "DF1B",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticle": "DF1-PD2428SCFB",
+    "terArticleBag": "DF1-PD2428SCB",
+    "awgFrom": "28",
+    "awgTo": "24"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Hirose",
+    "terSeries": "DF1B",
+    "terComponent": "DF1B",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "DF1B-2022SCFA",
+    "terArticleBag": "DF1B-2022SCA",
+    "awgFrom": "22",
+    "awgTo": "20"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Hirose",
+    "terSeries": "DF1B",
+    "terComponent": "DF1B",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticle": "DF1B-30PCFB",
+    "terArticleBag": "DF1B-30PCB",
+    "awgFrom": "30",
+    "awgTo": "30"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JAE",
+    "terSeries": "FI-S",
+    "terComponent": "FI-S",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "FI-C3-A1-15000",
+    "mm2From": "0,03",
+    "mm2To": "0,08",
+    "awgFrom": "32",
+    "awgTo": "28"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "EHR",
+    "terComponent": "EH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "SEH-002T-P0.6",
+    "mm2From": "0,05",
+    "mm2To": "0,08",
+    "awgFrom": "30",
+    "awgTo": "28"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "EHR",
+    "terComponent": "EH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "SEH-001T-P0.6",
+    "mm2From": "0,05",
+    "mm2To": "0,35",
+    "awgFrom": "30",
+    "awgTo": "22"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "ELP",
+    "terComponent": "EL",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "SLF-42T-P1.3E",
+    "mm2From": "0,3",
+    "mm2To": "0,5",
+    "awgFrom": "22",
+    "awgTo": "20"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "ELP",
+    "terComponent": "EL",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "SLF-41T-P1.3E",
+    "mm2From": "0,5",
+    "mm2To": "1,5",
+    "awgFrom": "20",
+    "awgTo": "16"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "ELP",
+    "terComponent": "EL",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "SLF-01T-P1.3E",
+    "mm2From": "0,12",
+    "mm2To": "0,5",
+    "awgFrom": "26",
+    "awgTo": "20"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "GHDR, GHR",
+    "terComponent": "GHD, GH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "SSHL-002T-P0.2",
+    "mm2From": "0,05",
+    "mm2To": "0,12",
+    "awgFrom": "30",
+    "awgTo": "26"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "GHDR, GHR, NSHR, SHLP",
+    "terComponent": "GHD, GH, NSH, SHL",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "SSHL-003T-P0.2",
+    "mm2From": "0,03",
+    "mm2To": "0,08",
+    "awgFrom": "32",
+    "awgTo": "28"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "NVR, NV, VB, VHR",
+    "terComponent": "NV, VB, VH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "SVH-21T-P1.1",
+    "mm2From": "0,35",
+    "mm2To": "0,75",
+    "awgFrom": "22",
+    "awgTo": "18"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "PADP, PHR",
+    "terComponent": "PAD, PH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "SPH-002T-P0.5S",
+    "mm2From": "0,05",
+    "mm2To": "0,2",
+    "awgFrom": "30",
+    "awgTo": "24"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "PAP",
+    "terComponent": "PA",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "SPA-001T-P0.5",
+    "mm2From": "0,12",
+    "mm2To": "0,35",
+    "awgFrom": "26",
+    "awgTo": "22"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "PAP, PHDR",
+    "terComponent": "PA, PHD",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "SPHD-001T-P0.5",
+    "mm2From": "0,12",
+    "mm2To": "0,35",
+    "awgFrom": "26",
+    "awgTo": "22"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "PAP, PHDR",
+    "terComponent": "PA, PHD",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "SPHD-002T-P0.5",
+    "mm2From": "0,08",
+    "mm2To": "0,2",
+    "awgFrom": "28",
+    "awgTo": "24"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "PHR",
+    "terComponent": "PH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "SPH-004T-P0.5S",
+    "mm2From": "0,03",
+    "mm2To": "0,08",
+    "awgFrom": "32",
+    "awgTo": "28"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "PHR",
+    "terComponent": "PH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "SPH-002T-P0.5L",
+    "mm2From": "0,08",
+    "mm2To": "0,2",
+    "awgFrom": "28",
+    "awgTo": "24"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "SHDP, SHR, APSH, LBT",
+    "terComponent": "SHD, SH, APSH, LBT",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "SSH-003T-P0.2",
+    "mm2From": "0,03",
+    "mm2To": "0,08",
+    "awgFrom": "32",
+    "awgTo": "28"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "SHR",
+    "terComponent": "SH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "SSH-003T-P0.2-H",
+    "mm2From": "0,03",
+    "mm2To": "0,08",
+    "awgFrom": "32",
+    "awgTo": "28"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "SHR, SHD",
+    "terComponent": "SH, SHD",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "SSH-003GA-P0.2",
+    "mm2From": "0,03",
+    "mm2To": "0,08",
+    "awgFrom": "32",
+    "awgTo": "28"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "SM",
+    "terArticle": "SHF-001T-0.8BS",
+    "mm2From": "0,08",
+    "mm2To": "0,35",
+    "awgFrom": "28",
+    "awgTo": "22"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "SMP",
+    "terComponent": "SM",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "SYF-001T-P0.6A",
+    "mm2From": "0,08",
+    "mm2To": "0,35",
+    "awgFrom": "28",
+    "awgTo": "22"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "SMP, SYR",
+    "terComponent": "SM, RCY",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "SYF-001T-P0.6",
+    "mm2From": "0,08",
+    "mm2To": "0,35",
+    "awgFrom": "28",
+    "awgTo": "22"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "SMR",
+    "terComponent": "SM",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticle": "SYM-001T-P0.6A",
+    "mm2From": "0,08",
+    "mm2To": "0,35",
+    "awgFrom": "28",
+    "awgTo": "22"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "SMR, SYP",
+    "terComponent": "SM, RCY",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticle": "SYM-001T-P0.6",
+    "mm2From": "0,08",
+    "mm2To": "0,35",
+    "awgFrom": "28",
+    "awgTo": "22"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "VHR, NV, NVR, VB",
+    "terComponent": "VH, NV, VB",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "SVH-41T-P1.1",
+    "mm2From": "0,5",
+    "mm2To": "1,5",
+    "awgFrom": "20",
+    "awgTo": "16"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "XHP",
+    "terComponent": "XH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "SXH-001T-P0.6",
+    "mm2From": "0,08",
+    "mm2To": "0,35",
+    "awgFrom": "28",
+    "awgTo": "22"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "XHP",
+    "terComponent": "XH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "SXH-002T-P0.6",
+    "mm2From": "0,05",
+    "mm2To": "0,12",
+    "awgFrom": "30",
+    "awgTo": "26"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "XHP",
+    "terComponent": "XH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "SXH-001T-P0.6N",
+    "mm2From": "0,08",
+    "mm2To": "0,35",
+    "awgFrom": "28",
+    "awgTo": "22"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "ZHR",
+    "terComponent": "ZH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "SZH-003T-P0.5",
+    "mm2From": "0,03",
+    "mm2To": "0,08",
+    "awgFrom": "32",
+    "awgTo": "28"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "JST",
+    "terSeries": "ZHR",
+    "terComponent": "ZH",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "SZH-002T-P0.5",
+    "mm2From": "0,08",
+    "mm2To": "0,12",
+    "awgFrom": "28",
+    "awgTo": "26"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "105307, 105308",
+    "terComponent": "Nano-Fit",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "1053001810",
+    "mm2From": "0,12",
+    "mm2To": "0,2",
+    "awgFrom": "26",
+    "awgTo": "24"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "105307, 105308",
+    "terComponent": "Nano-Fit",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "1053002400",
+    "mm2From": "0,35",
+    "mm2To": "0,5",
+    "awgFrom": "22",
+    "awgTo": "20"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "105307, 105308",
+    "terComponent": "Nano-Fit",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "1053002300",
+    "mm2From": "0,35",
+    "mm2To": "0,5",
+    "awgFrom": "22",
+    "awgTo": "20"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "105307, 105308",
+    "terComponent": "Nano-Fit",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "1053001400",
+    "mm2From": "0,12",
+    "mm2To": "0,2",
+    "awgFrom": "26",
+    "awgTo": "24"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "105307, 105308",
+    "terComponent": "Nano-Fit",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "1053002100",
+    "mm2From": "0,35",
+    "mm2To": "0,5",
+    "awgFrom": "22",
+    "awgTo": "20"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "105307, 105308",
+    "terComponent": "Nano-Fit",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "1053002200",
+    "mm2From": "0,35",
+    "mm2To": "0,5",
+    "awgFrom": "22",
+    "awgTo": "20"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "105307, 105308",
+    "terComponent": "Nano-Fit",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "1053001200",
+    "mm2From": "0,12",
+    "mm2To": "0,2",
+    "awgFrom": "26",
+    "awgTo": "24"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "105307, 105308",
+    "terComponent": "Nano-Fit",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "1053001100",
+    "mm2From": "0,12",
+    "mm2To": "0,2",
+    "awgFrom": "26",
+    "awgTo": "24"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "105307, 105308",
+    "terComponent": "Nano-Fit",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "1053001300",
+    "mm2From": "0,12",
+    "mm2To": "0,2",
+    "awgFrom": "26",
+    "awgTo": "24"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "105307, 105308",
+    "terComponent": "Nano-Fit",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "1053001900",
+    "mm2From": "0,35",
+    "mm2To": "0,5",
+    "awgFrom": "22",
+    "awgTo": "20"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "172708, 200453",
+    "terComponent": "Mini-Fit TPA2",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "1727183111",
+    "mm2From": "0,5",
+    "mm2To": "0,75",
+    "awgFrom": "20",
+    "awgTo": "18"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "43020, 43640",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticle": "430310006",
+    "terArticleBag": "430310012",
+    "mm2From": "0,05",
+    "mm2To": "0,12",
+    "awgFrom": "30",
+    "awgTo": "26"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "43020, 43640",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticle": "430310001",
+    "terArticleBag": "430310007",
+    "mm2From": "0,2",
+    "mm2To": "0,5",
+    "awgFrom": "24",
+    "awgTo": "20"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "43020, 43640",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticle": "430310022",
+    "mm2From": "0,75",
+    "mm2To": "0,75",
+    "awgFrom": "18",
+    "awgTo": "18"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "43020, 43640",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticle": "430310003",
+    "terArticleBag": "430310009",
+    "mm2From": "0,2",
+    "mm2To": "0,5",
+    "awgFrom": "24",
+    "awgTo": "20"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "43020, 43640",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticle": "430310004",
+    "terArticleBag": "430310010",
+    "mm2From": "0,05",
+    "mm2To": "0,12",
+    "awgFrom": "30",
+    "awgTo": "26"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "43020, 43640",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticle": "430310002",
+    "terArticleBag": "430310008",
+    "mm2From": "0,2",
+    "mm2To": "0,5",
+    "awgFrom": "24",
+    "awgTo": "20"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "43020, 43640",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticle": "430310023",
+    "mm2From": "0,75",
+    "mm2To": "0,75",
+    "awgFrom": "18",
+    "awgTo": "18"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "43020, 43640",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticle": "430310005",
+    "terArticleBag": "430310011",
+    "mm2From": "0,05",
+    "mm2To": "0,12",
+    "awgFrom": "30",
+    "awgTo": "26"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "43025, 43645",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "430300002",
+    "terArticleBag": "430300008",
+    "mm2From": "0,2",
+    "mm2To": "0,5",
+    "awgFrom": "24",
+    "awgTo": "20"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "43025, 43645",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "430300004",
+    "terArticleBag": "430300010",
+    "mm2From": "0,05",
+    "mm2To": "0,12",
+    "awgFrom": "30",
+    "awgTo": "26"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "43025, 43645",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "430300006",
+    "terArticleBag": "430300012",
+    "mm2From": "0,05",
+    "mm2To": "0,12",
+    "awgFrom": "30",
+    "awgTo": "26"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "43025, 43645",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "430300039",
+    "terArticleBag": "430300040",
+    "mm2From": "0,75",
+    "mm2To": "0,75",
+    "awgFrom": "18",
+    "awgTo": "18"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "43025, 43645",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "430300003",
+    "terArticleBag": "430300009",
+    "mm2From": "0,2",
+    "mm2To": "0,5",
+    "awgFrom": "24",
+    "awgTo": "20"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "43025, 43645",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "430300005",
+    "terArticleBag": "430300011",
+    "mm2From": "0,05",
+    "mm2To": "0,12",
+    "awgFrom": "30",
+    "awgTo": "26"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "43025, 43645",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "430300038",
+    "mm2From": "0,75",
+    "mm2To": "0,75",
+    "awgFrom": "18",
+    "awgTo": "18"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "43025, 43645",
+    "terComponent": "Micro-Fit 3.0",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "430300001",
+    "terArticleBag": "430300007",
+    "mm2From": "0,2",
+    "mm2To": "0,5",
+    "awgFrom": "24",
+    "awgTo": "20"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "501189, 501330, 501939",
+    "terComponent": "Pico-Clasp",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "5011938000",
+    "mm2From": "0,03",
+    "mm2To": "0,08",
+    "awgFrom": "32",
+    "awgTo": "28"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "501189, 501330, 501939",
+    "terComponent": "Pico-Clasp",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "5011937000",
+    "mm2From": "0,03",
+    "mm2To": "0,08",
+    "awgFrom": "32",
+    "awgTo": "28"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "501189, 501330, 501939",
+    "terComponent": "Pico-Clasp",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "5013340000",
+    "terArticleBag": "5013340100",
+    "mm2From": "0,03",
+    "mm2To": "0,08",
+    "awgFrom": "32",
+    "awgTo": "28"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "501189, 501330, 501939",
+    "terComponent": "Pico-Clasp",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "5011939000",
+    "mm2From": "0,03",
+    "mm2To": "0,08",
+    "awgFrom": "32",
+    "awgTo": "28"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "502578, 503149",
+    "terComponent": "CLIK-Mate",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "5025790000",
+    "terArticleBag": "5025790100",
+    "mm2From": "0,08",
+    "mm2To": "0,2",
+    "awgFrom": "28",
+    "awgTo": "24"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "502578, 503149",
+    "terComponent": "CLIK-Mate",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "5034290000",
+    "mm2From": "0,05",
+    "mm2To": "0,12",
+    "awgFrom": "30",
+    "awgTo": "26"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "51021",
+    "terComponent": "PicoBlade",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "500588000",
+    "mm2From": "0,03",
+    "mm2To": "0,08",
+    "awgFrom": "32",
+    "awgTo": "28"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "51021",
+    "terComponent": "PicoBlade",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "500588001",
+    "terArticleBag": "500588100",
+    "mm2From": "0,03",
+    "mm2To": "0,08",
+    "awgFrom": "32",
+    "awgTo": "28"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "51021",
+    "terComponent": "PicoBlade",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "500798020",
+    "mm2From": "0,08",
+    "mm2To": "0,12",
+    "awgFrom": "28",
+    "awgTo": "26"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "51021",
+    "terComponent": "PicoBlade",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "500798001",
+    "terArticleBag": "500798100",
+    "mm2From": "0,08",
+    "mm2To": "0,12",
+    "awgFrom": "28",
+    "awgTo": "26"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "51021",
+    "terComponent": "PicoBlade",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "500798000",
+    "mm2From": "0,08",
+    "mm2To": "0,12",
+    "awgFrom": "28",
+    "awgTo": "26"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "51021",
+    "terComponent": "PicoBlade",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "500588020",
+    "mm2From": "0,03",
+    "mm2To": "0,08",
+    "awgFrom": "32",
+    "awgTo": "28"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "51047",
+    "terComponent": "PicoBlade",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticle": "501258000",
+    "terArticleBag": "501258100",
+    "mm2From": "0,08",
+    "mm2To": "0,12",
+    "awgFrom": "28",
+    "awgTo": "26"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "51047",
+    "terComponent": "PicoBlade",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticle": "501338000",
+    "terArticleBag": "501338100",
+    "mm2From": "0,03",
+    "mm2To": "0,08",
+    "awgFrom": "32",
+    "awgTo": "28"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "51110, 151100, 151192",
+    "terComponent": "Milli-Grid",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "503948051",
+    "terArticleBag": "503948100",
+    "mm2From": "0,05",
+    "mm2To": "0,2",
+    "awgFrom": "30",
+    "awgTo": "24"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "51110, 151100, 151192",
+    "terComponent": "Milli-Grid",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "503948054",
+    "mm2From": "0,05",
+    "mm2To": "0,2",
+    "awgFrom": "30",
+    "awgTo": "24"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "51110, 151100, 151192",
+    "terComponent": "Milli-Grid",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "503948999",
+    "mm2From": "0,05",
+    "mm2To": "0,2",
+    "awgFrom": "30",
+    "awgTo": "24"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "51110, 151100, 151192",
+    "terComponent": "Milli-Grid",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "503948052",
+    "mm2From": "0,05",
+    "mm2To": "0,2",
+    "awgFrom": "30",
+    "awgTo": "24"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "51110, 151100, 151192",
+    "terComponent": "Milli-Grid",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "503948055",
+    "mm2From": "0,05",
+    "mm2To": "0,2",
+    "awgFrom": "30",
+    "awgTo": "24"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "51110, 151192",
+    "terComponent": "Milli-Grid",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "873968051",
+    "mm2From": "0,08",
+    "mm2To": "0,35",
+    "awgFrom": "28",
+    "awgTo": "22"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "5557",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "39000079",
+    "terArticleBag": "39000080",
+    "mm2From": "1,5",
+    "mm2To": "1,5",
+    "awgFrom": "16",
+    "awgTo": "16"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "5559",
+    "terComponent": "Mini-Fit Jr.",
+    "terType": "Male",
+    "terGender": "Male",
+    "terArticle": "39000081",
+    "terArticleBag": "39000082",
+    "mm2From": "1,5",
+    "mm2To": "1,5",
+    "awgFrom": "16",
+    "awgTo": "16"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "70066, 70450",
+    "terComponent": "SL",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "16020086",
+    "mm2From": "0,2",
+    "mm2To": "0,35",
+    "awgFrom": "24",
+    "awgTo": "22"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "90123, 90142, 90143, 90156, 90160",
+    "terComponent": "C-Grid III",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticleBag": "901192109",
+    "mm2From": "0,2",
+    "mm2To": "0,35",
+    "awgFrom": "24",
+    "awgTo": "22"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "90123, 90142, 90143, 90156, 90160",
+    "terComponent": "C-Grid III",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "901190125",
+    "mm2From": "0,08",
+    "mm2To": "0,12",
+    "awgFrom": "28",
+    "awgTo": "26"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "90123, 90142, 90143, 90156, 90160",
+    "terComponent": "C-Grid III",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "901190124",
+    "mm2From": "0,2",
+    "mm2To": "0,35",
+    "awgFrom": "24",
+    "awgTo": "22"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "90123, 90142, 90143, 90156, 90160",
+    "terComponent": "C-Grid III",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "901190111",
+    "mm2From": "0,2",
+    "mm2To": "0,35",
+    "awgFrom": "24",
+    "awgTo": "22"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "90123, 90142, 90143, 90156, 90160",
+    "terComponent": "C-Grid III",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "901190109",
+    "mm2From": "0,2",
+    "mm2To": "0,35",
+    "awgFrom": "24",
+    "awgTo": "22"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "90123, 90142, 90143, 90156, 90160",
+    "terComponent": "C-Grid III",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "901190120",
+    "mm2From": "0,08",
+    "mm2To": "0,12",
+    "awgFrom": "28",
+    "awgTo": "26"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "90123, 90142, 90143, 90156, 90160",
+    "terComponent": "C-Grid III",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "901190121",
+    "mm2From": "0,08",
+    "mm2To": "0,12",
+    "awgFrom": "28",
+    "awgTo": "26"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "90123, 90142, 90143, 90156, 90160",
+    "terComponent": "C-Grid III",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "901190110",
+    "mm2From": "0,2",
+    "mm2To": "0,35",
+    "awgFrom": "24",
+    "awgTo": "22"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "Molex",
+    "terSeries": "90123, 90142, 90143, 90156, 90160",
+    "terComponent": "C-Grid III",
+    "terType": "Female",
+    "terGender": "Female",
+    "terArticle": "901190122",
+    "mm2From": "0,08",
+    "mm2To": "0,12",
+    "awgFrom": "28",
+    "awgTo": "26"
+   }
+  },
+  {
+   "tab": "ter",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "ГС 2,5",
+    "terComponent": "ГС",
+    "terArticle": "ГС 2,5",
+    "mm2From": "0,5",
+    "mm2To": "2,5",
+    "awgFrom": "20",
+    "awgTo": "14"
+   }
+  },
+  {
+   "tab": "lug",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "НВИ 1.5-4",
+    "terComponent": "НВИ EasyFix",
+    "terArticle": "90901",
+    "terArticleBag": "108563",
+    "mm2From": "0,25",
+    "mm2To": "1,5"
+   }
+  },
+  {
+   "tab": "lug",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "НВИ 1.5-4",
+    "terComponent": "НВИ ПРОФИ",
+    "terArticle": "47484",
+    "terArticleBag": "108537",
+    "mm2From": "0,25",
+    "mm2To": "1,5"
+   }
+  },
+  {
+   "tab": "lug",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "НВИ 1.5",
+    "terComponent": "НВИ",
+    "terArticle": "НВИ 1.5-3",
+    "mm2From": "0,5",
+    "mm2To": "1,5",
+    "awgFrom": "20",
+    "awgTo": "16"
+   }
+  },
+  {
+   "tab": "lug",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "НВИ 1.5",
+    "terComponent": "НВИ",
+    "terArticle": "НВИ 1.5-5",
+    "mm2From": "0,5",
+    "mm2To": "1,5",
+    "awgFrom": "20",
+    "awgTo": "16"
+   }
+  },
+  {
+   "tab": "lug",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "НВИ 1.5",
+    "terComponent": "НВИ",
+    "terArticle": "НВИ 1.5-4",
+    "mm2From": "0,5",
+    "mm2To": "1,5",
+    "awgFrom": "20",
+    "awgTo": "16"
+   }
+  },
+  {
+   "tab": "lug",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "НВИ 2.5-4",
+    "terComponent": "НВИ EasyFix",
+    "terArticle": "90902",
+    "terArticleBag": "108564",
+    "mm2From": "1",
+    "mm2To": "2,5"
+   }
+  },
+  {
+   "tab": "lug",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "НВИ 2.5-4",
+    "terComponent": "НВИ ПРОФИ",
+    "terArticle": "47486",
+    "terArticleBag": "108539",
+    "mm2From": "1",
+    "mm2To": "2,5"
+   }
+  },
+  {
+   "tab": "lug",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "НВИ 2.5",
+    "terComponent": "НВИ",
+    "terArticle": "НВИ 2.5-5",
+    "mm2From": "1,5",
+    "mm2To": "2,5",
+    "awgFrom": "16",
+    "awgTo": "14"
+   }
+  },
+  {
+   "tab": "lug",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "НВИ 2.5",
+    "terComponent": "НВИ",
+    "terArticle": "НВИ 2.5-4",
+    "mm2From": "1,5",
+    "mm2To": "2,5",
+    "awgFrom": "16",
+    "awgTo": "14"
+   }
+  },
+  {
+   "tab": "lug",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "НВИ 2.5",
+    "terComponent": "НВИ",
+    "terArticle": "НВИ 2.5-6",
+    "mm2From": "1,5",
+    "mm2To": "2,5",
+    "awgFrom": "16",
+    "awgTo": "14"
+   }
+  },
+  {
+   "tab": "lug",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "НКИ 1.5-6",
+    "terComponent": "НКИ EasyFix",
+    "terArticle": "90890",
+    "terArticleBag": "108552",
+    "mm2From": "0,25",
+    "mm2To": "1,5"
+   }
+  },
+  {
+   "tab": "lug",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "НКИ 1.5-6",
+    "terComponent": "НКИ ПРОФИ",
+    "terArticle": "47475",
+    "terArticleBag": "108516",
+    "mm2From": "0,25",
+    "mm2To": "1,5"
+   }
+  },
+  {
+   "tab": "lug",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "НКИ 1.5",
+    "terComponent": "НКИ",
+    "terArticle": "НКИ 1.5-4",
+    "mm2From": "0,5",
+    "mm2To": "1,5",
+    "awgFrom": "20",
+    "awgTo": "16"
+   }
+  },
+  {
+   "tab": "lug",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "НКИ 1.5",
+    "terComponent": "НКИ",
+    "terArticle": "НКИ 1.5-5",
+    "mm2From": "0,5",
+    "mm2To": "1,5",
+    "awgFrom": "20",
+    "awgTo": "16"
+   }
+  },
+  {
+   "tab": "lug",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "НКИ 1.5",
+    "terComponent": "НКИ",
+    "terArticle": "НКИ 1.5-3",
+    "mm2From": "0,5",
+    "mm2To": "1,5",
+    "awgFrom": "20",
+    "awgTo": "16"
+   }
+  },
+  {
+   "tab": "lug",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "НКИ 1.5",
+    "terComponent": "НКИ",
+    "terArticle": "НКИ 1.5-6",
+    "mm2From": "0,5",
+    "mm2To": "1,5",
+    "awgFrom": "20",
+    "awgTo": "16"
+   }
+  },
+  {
+   "tab": "lug",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "НШВ 0.5",
+    "terComponent": "НШВ",
+    "terArticleBag": "НШВ 0.5-8",
+    "mm2From": "0,5",
+    "mm2To": "0,5",
+    "awgFrom": "20",
+    "awgTo": "20"
+   }
+  },
+  {
+   "tab": "lug",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "НШВ 1.0",
+    "terComponent": "НШВ",
+    "terArticleBag": "НШВ 1.0-8",
+    "mm2From": "1",
+    "mm2To": "1",
+    "awgFrom": "17",
+    "awgTo": "17"
+   }
+  },
+  {
+   "tab": "lug",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "НШВ 10",
+    "terComponent": "НШВ",
+    "terArticleBag": "НШВ 10-12",
+    "mm2From": "10",
+    "mm2To": "10",
+    "awgFrom": "8",
+    "awgTo": "8"
+   }
+  },
+  {
+   "tab": "lug",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "ПМ 10",
+    "terComponent": "ПМ",
+    "terArticle": "ПМ 10-6",
+    "mm2From": "10",
+    "mm2To": "10",
+    "awgFrom": "8",
+    "awgTo": "8"
+   }
+  },
+  {
+   "tab": "lug",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "ПМ 10",
+    "terComponent": "ПМ",
+    "terArticleBag": "ПМ 10-8",
+    "mm2From": "10",
+    "mm2To": "10",
+    "awgFrom": "8",
+    "awgTo": "8"
+   }
+  },
+  {
+   "tab": "lug",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "ПМ 16",
+    "terComponent": "ПМ",
+    "terArticleBag": "ПМ 16-8",
+    "mm2From": "16",
+    "mm2To": "16"
+   }
+  },
+  {
+   "tab": "lug",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "ПМ 16",
+    "terComponent": "ПМ",
+    "terArticleBag": "ПМ 16-6",
+    "mm2From": "16",
+    "mm2To": "16"
+   }
+  },
+  {
+   "tab": "lug",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "ПМ 16",
+    "terComponent": "ПМ",
+    "terArticleBag": "ПМ 16-10",
+    "mm2From": "16",
+    "mm2To": "16"
+   }
+  },
+  {
+   "tab": "lug",
+   "fields": {
+    "terManufacturer": "КВТ",
+    "terSeries": "РПИ-М (4.8)",
+    "terComponent": "РПИ-М",
+    "terArticle": "РПИ-М 2.5 (4.8)",
+    "mm2From": "1,5",
+    "mm2To": "2,5",
+    "awgFrom": "14",
+    "awgTo": "12"
+   }
+  }
+ ]
+}

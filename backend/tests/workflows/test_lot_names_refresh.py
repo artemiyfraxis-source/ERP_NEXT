@@ -4,6 +4,7 @@ empty) — from the catalog first, the model second; the reviewed CSV is applied
 
 from __future__ import annotations
 
+import csv
 from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
@@ -14,10 +15,13 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import app.database  # noqa: F401 — every module's tables in the metadata (the CLI reads purchasing and references)
+import app.main  # noqa: F401 — every table, so a schema made after the CLI import (label jobs) resolves its FKs
 from app.modules.warehouse.domain import StockLot
 from app.modules.warehouse.infrastructure import SqlAlchemyWarehouseUnitOfWork, StockLotRow
 from app.shared.persistence import AuditEventRow, create_schema
 from app.workflows import lot_names_refresh as flow
+from app.workflows.stock_name import has_builder
+from app.workflows.stock_name_types import LotHints, StockName
 from app.workflows.lot_names_refresh import (
     Catalog,
     apply_changes,
@@ -30,6 +34,13 @@ from tests.factories import Actor
 
 NOW = datetime(2026, 10, 26, 18, 0)
 ACTOR = Actor(name=flow.ACTOR_NAME, department="")
+
+
+@pytest.fixture(autouse=True)
+def no_full_names(monkeypatch):
+    """The rules of 26.10 below are checked without the full-name builders (their own tests cover them); a test of
+    the 27.11 wave sets its stub builder with `full_names`."""
+    monkeypatch.setattr(flow, "build_stock_name", lambda hints, records=(): None)
 
 
 def _lot(grn: str, article: str, name: str, **extra) -> StockLot:
@@ -214,28 +225,42 @@ def test_the_family_goes_before_the_nomenclature_and_a_nomenclature_name_with_th
     assert by[("G3", "name")][1:] == ("BLD 8pin (двухрядный)", "модель")
 
 
-def test_style_examples_are_the_stocks_own_human_names_by_type():
+def test_style_examples_are_the_stocks_own_complete_names_by_type():
     lots = [
-        _lot("G1", "XHP-4", "XH розетка 4pin (однорядный)", item_type="Соединитель"),
-        _lot("G2", "XHP-4", "XH розетка 4pin (однорядный)", item_type="Соединитель"),
+        _lot("G1", "XHP-4", "XH розетка (мама) 4pin (однорядный)", item_type="Соединитель"),
+        _lot("G2", "XHP-4", "XH розетка (мама) 4pin (однорядный)", item_type="Соединитель"),
         _lot("G3", "BNC-M174", "BNC-male RG-174", item_type="Коаксиальный соединитель"),
-        _lot("G4", "SXH-001T-P0.6", "Контакт XH Female", item_type="Терминал"),
+        _lot("G4", "SXH-001T-P0.6", "Контакт XH гнездо (мама)", item_type="Терминал"),
         _lot("G5", "PLS-4", "PLS-4", item_type="Соединитель"),  # the article: no example
         _lot("G6", "ZZ-1000", "Вилка ZZ-1000 на кабель", item_type="Соединитель"),  # the article inside
         _lot("G7", "QQ-2", "Колодка QQ 2 конт. ООО Ромашка", item_type="Соединитель",
              upd_name="Колодка QQ 2 конт. ООО Ромашка"),  # a printed УПД line
         _lot("G8", "QQ-3", "Электрический соединитель", item_type="Соединитель"),  # no series word
         _lot("G9", "QQ-4", "Нечто", item_type="Кнопка"),  # no stock type
+        # 27.11: not in the full standard — no example
+        _lot("H1", "SYM-001T-P0.6", "Контакт XH Female", item_type="Терминал"),  # no «(мама)»
+        _lot("H2", "PHR-2", "PH розетка 2pin (однорядный)", item_type="Соединитель"),
+        _lot("H3", "XT60H-M", "Amass XT 2pin (однорядный)", item_type="Соединитель"),
+        _lot("H4", "XT90S-F", "Amass XT 2pin (однорядный)", item_type="Соединитель"),
+        _lot("H5", "HSDCM-105-P", "HSD female 0 4 pin non waterproof all code", item_type="Коаксиальный соединитель"),
+        _lot("H6", "MICRO USB-5BM", "micro-USB B 5pin (однорядный)", item_type="Соединитель"),
+        _lot("H7", "НКИ 1,5-4", "Наконечник кольцевой", item_type="Наконечник"),
+        _lot("H8", "НВИ 1,5-4", "Наконечник НВИ 1,5-4", item_type="Наконечник"),
+        _lot("H9", "ПВАМ 0,35 красный", "Провод ПВАМ 0,35 мм² красный", item_type="Провод Монтажный"),
     ]
     examples = flow.style_examples(lots)
     assert examples == {
         "Коаксиальный соединитель": ["BNC-male RG-174"],
-        "Соединитель": ["XH розетка 4pin (однорядный)"],
-        "Терминал": ["Контакт XH Female"],
+        "Соединитель": ["XH розетка (мама) 4pin (однорядный)"],
+        "Терминал": ["Контакт XH гнездо (мама)"],
+        "Наконечник": ["Наконечник НВИ 1,5-4"],
+        "Провод Монтажный": ["Провод ПВАМ 0,35 мм² красный"],
     }
     prompt = flow.describe_prompt([{"article": "02SUR-32S"}], examples=examples)
-    assert "«XH розетка 4pin (однорядный)»" in prompt and "«Контакт XH Female»" in prompt
+    assert "«XH розетка (мама) 4pin (однорядный)»" in prompt and "«Контакт XH гнездо (мама)»" in prompt
     assert "<серия>-<male|female>[ R/A] <кабель>" in prompt and "Провод <марка> <сечение> мм² <цвет>" in prompt
+    assert "<вилка (папа)|розетка (мама)>" in prompt and "<штырь (папа)|гнездо (мама)>" in prompt
+    assert "«Наконечник НВИ 1,5-4»" in prompt
     assert "02SUR-32S — 2 контакта" in prompt
 
 
@@ -477,3 +502,210 @@ def test_the_lug_type_is_applied_over_terminal_though_the_dictionary_lacks_it(st
     assert [item.change.grn for item in result.skipped] == ["L2"]
     apply_changes(plan.changes, factory, ACTOR, NOW, types, revert=True)
     assert _lots(factory)["L1"].item_type == "Терминал"
+
+
+# ── full names 27.11 (owner: «непонятно где папа где мама, совершенно разные наименования») ─────────
+
+
+FULL = {
+    "XT60H-M": StockName("Amass XT60H вилка (папа) 2pin", True, source="T1",
+                         attrs={"family": "Amass XT", "gender": "pin", "maker": "AMASS"}),
+    "XT90S-F": StockName("Amass XT90S розетка (мама) 2pin", True, source="T1",
+                         attrs={"family": "Amass XT", "gender": "socket", "maker": "AMASS"}),
+    "XHP-4": StockName("XH розетка (мама) 4pin (однорядный)", True, source="T1",
+                       attrs={"family": "XH", "gender": "socket", "maker": "JST"}),
+    "XHP-6": StockName("XH розетка (мама) 6pin (однорядный)", True, source="T1",
+                       attrs={"family": "XH", "gender": "socket", "maker": "JST"}),
+    "НВИ 1,5-4": StockName("Наконечник НВИ 1,5-4", True, source="T1", attrs={"section": "1,5", "size": "4"}),
+    "SMA-KWE": StockName("SMA-female RG-58", True, source="T2", attrs={"gender": "socket"}),
+    "XT30U-M+F": StockName("Amass XT30U 2pin", False, ("пол",), source="T1", attrs={"family": "Amass XT"}),
+    "PHR-2": StockName("PH 2pin (однорядный)", False, ("пол",), source="T1"),
+    "QQ-77": StockName("QQ 2pin", False, ("пол",), source="T1"),
+    "SA810/P4": StockName("Weipu SA8 вилка (папа) 4pin", True, attrs={"family": "Weipu SA8", "maker": "WEIPU"}),
+    "SA810/P4IIB": StockName("Weipu SA8 вилка (папа) 4pin", True, attrs={"family": "Weipu SA8", "maker": "WEIPU"}),
+}
+
+
+@pytest.fixture()
+def full_names(monkeypatch):
+    """A stub of T1/T2: the names above for the types with a builder, None for the rest."""
+    asked: list[LotHints] = []
+
+    def build(hints, records=()):
+        if not has_builder(hints.item_type):
+            return None
+        asked.append(hints)
+        return FULL.get(hints.article)
+
+    monkeypatch.setattr(flow, "build_stock_name", build)
+    return asked
+
+
+SOCKET = FULL["XHP-4"]
+LUG = FULL["НВИ 1,5-4"]
+COAX = FULL["SMA-KWE"]
+
+
+@pytest.mark.parametrize(("name", "article", "kwargs", "reason"), [
+    ("XHP-4", "XHP-4", {}, flow.NEEDS_ARTICLE),
+    ("", "XHP-4", {}, flow.NEEDS_ARTICLE),
+    ("Amass XT 2pin (однорядный)", "XT60H-M", {"shared": {"amass xt 2pin (однорядный)"}}, flow.NEEDS_SHARED),
+    ("XH 4pin (однорядный)", "XHP-4", {"old_name": "XH 4pin (однорядный)"}, flow.NEEDS_OLD),
+    ("XH розетка 4pin (однорядный)", "XHP-4", {"built": SOCKET}, flow.NEEDS_GENDER),  # «розетка» alone is not enough
+    ("XH вилка (папа) 4pin (однорядный)", "XHP-4", {"built": SOCKET}, flow.NEEDS_GENDER),  # the wrong gender
+    ("SMA-male RG-58", "SMA-KWE", {"built": COAX}, flow.NEEDS_GENDER),  # coax: male/female, «female» ≠ «male»
+    ("Наконечник кольцевой 4 мм", "НВИ 1,5-4", {"built": LUG}, flow.NEEDS_SIZE),
+    ("Соединитель I-DS1071-01-SCB02x10 (CONNFLY, BLD2)", "I-DS1071-01-SCB02x10", {}, flow.NEEDS_SUPPLIER),
+    ("Колодка ZZ 6 конт., серия ZZ", "ZZ-500", {"upd_name": "Колодка ZZ 6 конт., серия ZZ"}, flow.NEEDS_SUPPLIER),
+    ("micro-USB B 5pin (однорядный)", "MICRO USB-5BM", {}, flow.NEEDS_LOWER),
+    ("наконечник штыревой втулочный", "НШВ 0.5-8", {}, flow.NEEDS_LOWER),
+    ("HSD female 0 4 pin non waterproof all code", "HSDCM-105-P", {"built": COAX}, flow.NEEDS_LATIN),
+    ("FAKRA HSD female connector", "SHM.400.0002.Z.X.AXX", {}, flow.NEEDS_LATIN),
+    # A unique human name with its gender and size stays.
+    ("Корпус XH розетка (мама) на 4 контакта", "XHP-4", {"built": SOCKET}, ""),
+    ("SMA-female RG-58, обжим", "SMA-KWE", {"built": COAX, "old_name": "SMA-female RG-58"}, ""),
+    ("НВИ 1.5-4 синий", "НВИ 1,5-4", {"built": LUG}, ""),
+    ("SMA-female bulkhead LMR-100", "SMA-KFB", {}, ""),
+    ("Датчик тестовый", "SOME-77", {}, ""),
+])
+def test_when_the_full_name_replaces_the_current_one(name, article, kwargs, reason):
+    assert flow.name_needs_full(name, article, **kwargs) == reason
+
+
+def test_shared_names_are_those_of_two_or_more_articles():
+    lots = [_lot("G1", "XT60H-M", "Amass XT 2pin (однорядный)"), _lot("G2", "XT90S-F", "amass xt 2pin (однорядный)"),
+            _lot("G3", "XHP-4", "Корпус XH"), _lot("G4", "xhp 4", "Корпус XH")]  # one article spelled twice
+    assert flow.shared_names(lots) == {"amass xt 2pin (однорядный)"}
+
+
+def test_full_names_replace_family_names_and_the_rest_goes_to_review(full_names):
+    lots = [
+        _lot("G1", "XT60H-M", "Amass XT 2pin (однорядный)", item_type="Соединитель", manufacturer="AMASS"),
+        _lot("G2", "XT90S-F", "Amass XT 2pin (однорядный)", item_type="Соединитель", manufacturer="AMASS"),
+        _lot("G3", "XHP-4", "XH розетка 4pin (однорядный)", item_type="Соединитель", manufacturer="JST"),
+        _lot("G4", "НВИ 1,5-4", "Наконечник кольцевой", item_type="Наконечник", manufacturer="КВТ"),
+        _lot("G5", "SMA-KWE", "SMA-female RG-58", item_type="Коаксиальный соединитель", manufacturer="X"),
+        _lot("G6", "XHP-6", "Корпус XH розетка (мама) на 6", item_type="Соединитель", manufacturer="JST"),
+        _lot("G7", "XT30U-M+F", "Amass XT 2pin (однорядный)", item_type="Соединитель"),
+        _lot("G8", "ПВАМ 0,35 красный", "Провод красный", item_type="Провод Монтажный", manufacturer="X"),
+        _lot("G9", "QQ-77", "QQ-77", item_type="Соединитель"),  # nothing in the reference: the model is asked
+    ]
+    model = FakeModel({"short_name": "Amass XT30U 2pin", "item_type": "Соединитель", "manufacturer": "AMASS"})
+    plan = plan_changes(lots, Catalog(), model=model)
+    by = _by(plan)
+    source = "база: полное наименование (T1)"
+    assert by[("G1", "name")] == ("Amass XT 2pin (однорядный)", "Amass XT60H вилка (папа) 2pin", source)
+    assert by[("G2", "name")] == ("Amass XT 2pin (однорядный)", "Amass XT90S розетка (мама) 2pin", source)
+    assert by[("G3", "name")] == ("XH розетка 4pin (однорядный)", "XH розетка (мама) 4pin (однорядный)", source)
+    assert by[("G4", "name")] == ("Наконечник кольцевой", "Наконечник НВИ 1,5-4", source)
+    assert ("G5", "name") not in by  # already the full name
+    assert ("G6", "name") not in by  # a unique human name with its gender stays
+    assert ("G8", "name") not in by  # no builder: the 26.10 rule (only an article name is replaced)
+    # G7, G9: no complete name — never the model's guess; the model still fills the maker.
+    assert ("G7", "name") not in by and ("G9", "name") not in by
+    assert [row["article"] for call in model.calls for row in call] == ["QQ-77"]
+    assert by[("G9", "manufacturer")][1:] == ("AMASS", "модель")
+    assert [(item.grn, item.reason, item.missing) for item in plan.review] == [
+        ("G7", flow.NEEDS_SHARED, ("пол",)), ("G9", flow.NEEDS_ARTICLE, ("пол",))]
+    assert "На проверку (полного наименования нет): партий 2; не хватает: пол 2" in flow.format_report(plan)
+    assert {hints.article: hints.manufacturer for hints in full_names}["XHP-4"] == "JST"
+
+
+def test_the_builder_gets_the_lug_type_and_the_glued_maker(full_names):
+    plan_changes([_lot("G1", "НВИ 1,5-4", "НВИ 1,5-4", item_type="Терминал"),
+                  _lot("G2", "XHP-4@JST", "XHP-4@JST", item_type="Соединитель")], Catalog())
+    asked = {hints.article: hints for hints in full_names}
+    assert asked["НВИ 1,5-4"].item_type == "Наконечник"  # the lug rule's type, not the old «Терминал»
+    assert (asked["XHP-4"].item_type, asked["XHP-4"].manufacturer) == ("Соединитель", "JST")
+
+
+def test_colliding_full_names_get_the_variant_tail(full_names):
+    lots = [_lot("G1", "SA810/P4", "Weipu SA8 4pin", item_type="Соединитель", manufacturer="WEIPU"),
+            _lot("G2", "SA810/P4IIB", "Weipu SA8 4pin", item_type="Соединитель", manufacturer="WEIPU")]
+    by = _by(plan_changes(lots, Catalog()))
+    assert by[("G1", "name")][1] == "Weipu SA8 вилка (папа) 4pin, вариант P4"
+    assert by[("G2", "name")][1] == "Weipu SA8 вилка (папа) 4pin, вариант P4IIB"
+
+
+def test_a_sibling_name_failing_the_rule_is_not_copied(full_names):
+    lots = [
+        _lot("G1", "PHR-2", "PHR-2", item_type="Соединитель", manufacturer="JST"),
+        _lot("G2", "PHR-2", "PH 2pin (однорядный)", item_type="Соединитель", manufacturer="JST"),  # the old name
+        _lot("G3", "XT30U-M+F", "XT30U-M+F", item_type="Соединитель", manufacturer="AMASS"),
+        _lot("G4", "XT30U-M+F", "Amass XT30U вилка (папа) + розетка (мама) 2pin", item_type="Соединитель",
+             manufacturer="AMASS"),  # a complete human name of the article
+        _lot("G5", "ZZ-1", "ZZ-1", item_type="Кабель", manufacturer="X"),
+        _lot("G6", "ZZ-1", "кабель неэкранированный., бухта 50м.", item_type="Кабель", manufacturer="X"),
+    ]
+    plan = plan_changes(lots, Catalog())
+    by = _by(plan)
+    assert ("G1", "name") not in by and ("G2", "name") not in by  # the old family name of G2 does not travel
+    assert {item.grn: item.reason for item in plan.review} == {"G1": flow.NEEDS_ARTICLE, "G2": flow.NEEDS_OLD}
+    assert by[("G3", "name")] == ("XT30U-M+F", "Amass XT30U вилка (папа) + розетка (мама) 2pin", "база: партия G4")
+    # Types without a builder keep the 26.10 rule (review 27.11): the sibling's human name still travels.
+    assert by[("G5", "name")] == ("ZZ-1", "кабель неэкранированный., бухта 50м.", "база: партия G6")
+
+
+def test_the_review_csv_lists_what_is_missing_and_where_to_find_it(full_names, tmp_path):
+    plan = plan_changes([flow.replace(_lot("G7", "XT30U-M+F", "XT30U-M+F", item_type="Соединитель"),
+                                         package="P1")], Catalog())
+    path = tmp_path / "review.csv"
+    flow.write_review_csv(path, plan.review)
+    with open(path, encoding="utf-8-sig", newline="") as stream:
+        rows = list(csv.reader(stream, delimiter=";"))
+    assert rows[0] == list(flow.REVIEW_COLUMNS)
+    assert rows[1][1:] == ["ЦАР", "G7", "P1", "XT30U-M+F", "Соединитель", "XT30U-M+F", flow.NEEDS_ARTICLE, "пол",
+                           "контакты: паспорт производителя / БД.ТЕР"]
+    assert UUID(rows[1][0]) == plan.review[0].lot_id
+    assert flow.needed_source(["одинаковые данные", "что-то ещё"]) == (
+        "чем артикулы отличаются: паспорт производителя; паспорт производителя")
+
+
+def test_full_names_apply_idempotently_and_revert(full_names, stock):
+    factory, sessions = stock
+    with factory() as uow:
+        uow.warehouse.add(_lot("F1", "XT60H-M", "Amass XT 2pin (однорядный)", item_type="Соединитель",
+                               manufacturer="AMASS", upd_name="XT60H-M"))
+        uow.warehouse.add(_lot("F2", "XT90S-F", "Amass XT 2pin (однорядный)", item_type="Соединитель",
+                               manufacturer="AMASS", upd_name="XT90S-F"))
+        uow.commit()
+    before = _lots(factory)
+    plan = plan_changes(list(before.values()), Catalog())
+    names = [change for change in plan.changes if change.field == "name" and change.grn.startswith("F")]
+    assert {change.grn: change.now for change in names} == {
+        "F1": "Amass XT60H вилка (папа) 2pin", "F2": "Amass XT90S розетка (мама) 2pin"}
+
+    first = apply_changes(plan.changes, factory, ACTOR, NOW)
+    assert not first.skipped
+    after = _lots(factory)
+    assert (after["F1"].name, after["F2"].name) == ("Amass XT60H вилка (папа) 2pin", "Amass XT90S розетка (мама) 2pin")
+    assert after["F1"].version == before["F1"].version + 1
+    event = next(event for event in _events(sessions) if UUID(str(event.aggregate_id)) == after["F1"].id)
+    assert event.actor_name == "полные наименования 27.11"
+    assert event.details["reason"].startswith("полные наименования 27.11")
+
+    second = apply_changes(plan.changes, factory, ACTOR, NOW)
+    assert second.lots == 0 and second.already == len(first.written)
+    assert not [change for change in plan_changes(list(_lots(factory).values()), Catalog()).changes
+                if change.field == "name"]  # a fresh dry run: the full names stay
+
+    apply_changes(plan.changes, factory, ACTOR, NOW, revert=True)
+    reverted = _lots(factory)
+    assert (reverted["F1"].name, reverted["F2"].name) == ("Amass XT 2pin (однорядный)", "Amass XT 2pin (однорядный)")
+
+
+def test_the_cli_writes_the_review_csv(tmp_path, monkeypatch, capsys, full_names):
+    database = tmp_path / "erp.db"
+    engine = create_engine(f"sqlite:///{database}")
+    create_schema(engine)
+    sessions = sessionmaker(bind=engine, expire_on_commit=False)
+    with SqlAlchemyWarehouseUnitOfWork(sessions) as uow:
+        uow.warehouse.add(_lot("G7", "XT30U-M+F", "XT30U-M+F", item_type="Соединитель", manufacturer="AMASS"))
+        uow.commit()
+    engine.dispose()
+    monkeypatch.setenv("ERP_DATABASE_URL", f"sqlite:///{database}")
+    path = tmp_path / "review.csv"
+    assert flow.main(["--no-model", "--review-csv", str(path)]) == 0
+    assert f"На проверку: {path} (строк 1)" in capsys.readouterr().out
+    with open(path, encoding="utf-8-sig", newline="") as stream:
+        assert [row["артикул"] for row in csv.DictReader(stream, delimiter=";")] == ["XT30U-M+F"]

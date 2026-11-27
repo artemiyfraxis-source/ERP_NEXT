@@ -61,7 +61,8 @@ def test_article_info_looks_up_the_bare_article(stand):
 
     found = client.get("/api/stock/article-info", params={"q": "XHP-4@JST", "warehouse": "ЦАР"}).json()
 
-    assert found["info"]["name"] == "Корпус XH 4"  # the lot «XHP-4» is the same article
+    # The lot «XHP-4» is the same article, but its «Корпус XH 4» has no вилка/розетка: the full name wins (owner 27.11).
+    assert found["info"]["name"] == "XH розетка (мама) 4pin (однорядный)"
     assert found["info"]["manufacturer"] == "JST"
     assert found["places"] == ["1F4"]
 
