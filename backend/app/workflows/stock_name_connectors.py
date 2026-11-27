@@ -86,6 +86,8 @@ MAKERS = {
     "JST": "JST", "JAE": "JAE", "TURCK": "Turck", "CAZN": "CAZN", "SCHURTER": "Schurter", "КВТ": "КВТ", "VELL": "Vell",
 }
 NOT_A_MAKER = {"", "КИТАЙ", "CHINA", "NONAME", "TY"}
+# Housing families whose pole count never varies (connector_housings «fixed»): the name leaves «Npin» out.
+FIXED_POLE_FAMILIES = ("amass-", "usb", "rj45")
 
 
 def connector_name(hints: LotHints, records: Sequence[TechOperationRecord]) -> StockName | None:
@@ -129,6 +131,9 @@ def _housing_name(hints: LotHints, records: tuple[TechOperationRecord, ...]) -> 
     variant, tail = _variant(family, bare)
     series = _series(identity, housing, records, key, rule, variant)
     pins = int(housing["n"]) if housing and int(housing.get("n") or 0) > 0 else _pins_from(identity)
+    # Owner 27.11 «зачем писать к XT кол-во пин»: families with a fixed pole count (Amass XT/QS8 — 2, USB, RJ45) never
+    # differ by it, so the name drops it; attrs keep it.
+    shown_pins = 0 if family.startswith(FIXED_POLE_FAMILIES) else pins
     execution = str(rule.get("tail", "")).lstrip(", ").strip() if rule else ""
     template = None if family in VARIANT_FAMILIES else _template(rule, rule_match, identity)
     if rule and rule.get("name") and family in VARIANT_FAMILIES:
@@ -138,15 +143,15 @@ def _housing_name(hints: LotHints, records: tuple[TechOperationRecord, ...]) -> 
     rows = _rows(housing, identity) if not template else ""
 
     if template is not None:
-        name = _from_template(template, gender, pins if housing else 0)
+        name = _from_template(template, gender, shown_pins if housing else 0, fixed=pins != shown_pins)
         if not series:
             series = template["series"]
     else:
         parts = [series] if series else []
         if gender:
             parts.append(HOUSING_GENDER[gender])
-        if pins:
-            parts.append(f"{pins}pin{f' ({rows})' if rows else ''}")
+        if shown_pins:
+            parts.append(f"{shown_pins}pin{f' ({rows})' if rows else ''}")
         name = " ".join(parts)
         for extra in (tail, execution):
             if extra:
@@ -322,8 +327,8 @@ def _template(rule: Mapping | None, match: re.Match | None, identity) -> dict | 
     return {"series": series, "pins": int(pins[1]) if pins else 0, "rest": re.sub(r"\s+", " ", body).strip()}
 
 
-def _from_template(template: Mapping, gender: str, housing_pins: int) -> str:
-    pins = template["pins"] or housing_pins
+def _from_template(template: Mapping, gender: str, housing_pins: int, fixed: bool = False) -> str:
+    pins = 0 if fixed else template["pins"] or housing_pins
     name = template["series"]
     if gender:
         name += f" {HOUSING_GENDER[gender]}"

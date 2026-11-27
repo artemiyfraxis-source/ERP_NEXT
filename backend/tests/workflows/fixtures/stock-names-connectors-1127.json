@@ -6,7 +6,7 @@
    "item_type": "Соединитель",
    "manufacturer": "AMASS",
    "name": "Amass XT 2pin (однорядный)",
-   "expected": "Amass XT60H вилка (папа) 2pin",
+   "expected": "Amass XT60H вилка (папа)",
    "complete": true,
    "missing": []
   },
@@ -15,7 +15,7 @@
    "item_type": "Соединитель",
    "manufacturer": "AMASS",
    "name": "Amass XT 2pin (однорядный)",
-   "expected": "Amass XT60H розетка (мама) 2pin",
+   "expected": "Amass XT60H розетка (мама)",
    "complete": true,
    "missing": []
   },
@@ -24,7 +24,7 @@
    "item_type": "Соединитель",
    "manufacturer": "AMASS",
    "name": "Amass XT 2pin (однорядный)",
-   "expected": "Amass XT90S розетка (мама) 2pin",
+   "expected": "Amass XT90S розетка (мама)",
    "complete": true,
    "missing": []
   },
@@ -33,7 +33,7 @@
    "item_type": "Соединитель",
    "manufacturer": "AMASS",
    "name": "Amass XT 2pin (однорядный)",
-   "expected": "Amass XT30U розетка (мама) 2pin",
+   "expected": "Amass XT30U розетка (мама)",
    "complete": true,
    "missing": []
   },
@@ -42,7 +42,7 @@
    "item_type": "Соединитель",
    "manufacturer": "AMASS",
    "name": "Amass XT 2pin (однорядный)",
-   "expected": "Amass XT30U розетка (мама) 2pin, G.Y",
+   "expected": "Amass XT30U розетка (мама), G.Y",
    "complete": true,
    "missing": []
   },
@@ -51,7 +51,7 @@
    "item_type": "Соединитель",
    "manufacturer": "",
    "name": "Amass XT 2pin (однорядный)",
-   "expected": "Amass XT60EW вилка (папа) 2pin, G.B",
+   "expected": "Amass XT60EW вилка (папа), G.B",
    "complete": true,
    "missing": []
   },
@@ -60,7 +60,7 @@
    "item_type": "Соединитель",
    "manufacturer": "",
    "name": "Amass XT 2pin (однорядный)",
-   "expected": "Amass XT60E вилка (папа) 2pin",
+   "expected": "Amass XT60E вилка (папа)",
    "complete": true,
    "missing": []
   },
@@ -104,7 +104,7 @@
    "item_type": "Соединитель",
    "manufacturer": "",
    "name": "QS8-S вилка (безыскровый)",
-   "expected": "Amass QS8-S вилка (папа) 2pin, безыскровый",
+   "expected": "Amass QS8-S вилка (папа), безыскровый",
    "complete": true,
    "missing": []
   },
@@ -549,7 +549,7 @@
    "item_type": "Соединитель",
    "manufacturer": "CONNFLY",
    "name": "USB-A вилка под пайку",
-   "expected": "USB-A вилка (папа) 4pin, под пайку",
+   "expected": "USB-A вилка (папа), под пайку",
    "complete": true,
    "missing": []
   },
@@ -558,7 +558,7 @@
    "item_type": "Соединитель",
    "manufacturer": "",
    "name": "RJ45 8P8C 8pin (однорядный)",
-   "expected": "RJ45 8P8C 8pin",
+   "expected": "RJ45 8P8C",
    "complete": false,
    "missing": [
     "пол"
