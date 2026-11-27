@@ -17,7 +17,7 @@ from app.modules.production import instrument_norms
 from app.modules.production.domain import ProductionValidationError
 from app.modules.production.rf_interfaces import RfDetails
 from app.modules.production.vna_bench_protocol import ApplyScreenArgs, screen_hash
-from app.modules.production.vna_checks import (KitStandard, KitTolerance, assert_confidence_points, confidence,
+from app.modules.production.vna_checks import (KitStandard, KitTolerance, confidence,
                                                confidence_from_receipt, control_standard, flex, journal_number,
                                                kit_response, kit_standard, load_vswr, table_tx_u, table_vswr_u)
 from app.modules.production.vna_dsp import (TRACES, TwoPort, VnaDataError, from_t, invert, multiply, read_touchstone,
@@ -353,9 +353,6 @@ def test_erp_uncertainty_table_load_and_confidence_receipt():
     del receipt["data"]["S12"]
     with pytest.raises(ProductionValidationError, match="S12"):
         confidence_from_receipt(receipt)
-    assert_confidence_points(4001)
-    with pytest.raises(ProductionValidationError, match="4001"):
-        assert_confidence_points(4002)
     assert journal_number(None) is None and journal_number(-4e-7) == 0 and str(journal_number(-4e-7)) == "0.0"
 
 

@@ -94,6 +94,7 @@ class Agent:
         self.connected = None   # None: the default DUT; ("kit", definition) or ("load",) or ("thru",)
         self.confidence_offset = 0.0
         self.errors = {}
+        self.lost_correction = ()   # traces whose device_status correction is not «Кор»
         self.corrupt = 0   # the next N sweeps come back unreadable: refused, nothing counted, the same connection again
 
     def sweep(self, profile):
@@ -139,7 +140,8 @@ class Agent:
         elif op == "device_status":
             result.update(name=NAME, ready=True, warmup_min=55.0, temperatures=self.temps,
                           acm=dict(model="ACM2520", serial=self.acm_serial, min_hz=1e5, max_hz=20e9),
-                          correction={t: "COR" for t in ("S11", "S21", "S12", "S22")}, screen_hash=None)
+                          correction={t: "OFF" if t in self.lost_correction else "COR" for t in ("S11", "S21", "S12", "S22")},
+                          screen_hash=None)
         elif op == "apply_screen":
             result.update(screen=args["screen"], screen_hash=args["screen_hash"])
         elif op == "capture":
@@ -509,6 +511,24 @@ def test_calibration_expires_after_four_hours_and_recalibrates_in_the_same_sessi
     post(env, session_path(view, "/steps/calibration"), {"version": view["session"]["version"]})
     env["stub"].drive()
     assert_calibrated(env, state(env))
+
+
+@pytest.mark.parametrize("change, code", [({"lost_correction": ("S21",)}, "correction_lost"),
+                                          ({"acm_serial": "OTHER"}, "acm_missing")])
+def test_the_acm_calibration_is_not_accepted_when_the_reading_after_it_refuses(env, change, code):
+    """The only evidence now is the device reading after save_calibration: «Кор» lost, or another ACM connected."""
+    post(env, "/sessions")
+    env["stub"].drive()
+    view = state(env)
+    for name, value in change.items():
+        setattr(env["stub"], name, value)
+    post(env, session_path(view, "/steps/calibration"), {"version": view["session"]["version"]})
+    env["stub"].drive()
+    view = state(env)
+    assert view["session"]["steps"][0]["status"] == "failed" and not view["calibration"]["valid"]
+    assert view["session"]["steps"][0]["refusal"]["code"] == code
+    with env["sessions"]() as session:
+        assert session.scalar(select(func.count()).select_from(VnaCheckRow)) == 0
 
 
 def test_refused_calibration_reading_and_acm_change_and_failed_control_stop_work(env):

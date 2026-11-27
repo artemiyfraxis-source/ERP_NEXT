@@ -22,7 +22,6 @@ from datetime import datetime, timedelta
 from app.shared.clock import as_utc
 from .domain import ProductionValidationError
 from .instrument_norms import loss_uncertainty_for, uncertainty_for
-from .vna_bench_protocol import CONFIDENCE_POINTS_MAX
 from .vna_dsp import TRACES, TwoPort, db, summary, vswr
 
 KINDS = ("session", "flex", "control_standard", "kit_standards")
@@ -188,14 +187,6 @@ def confidence(data: TwoPort, memory: TwoPort) -> Confidence:
     if tx > CONFIDENCE_TX_LIMIT_DB:
         passed = False
     return Confidence(passed, tx, rx)
-
-
-def assert_confidence_points(points: int) -> None:
-    """The confidence receipt carries Data and Memory of four traces: a larger calibration profile cannot be tested
-    and is refused before calibrating — never passed or skipped silently (bench protocol v2)."""
-    if points > CONFIDENCE_POINTS_MAX:
-        raise ProductionValidationError(f"Доверительный тест АКМ возможен до {CONFIDENCE_POINTS_MAX} точек, в профиле "
-                                        f"{points}: уменьшите число точек калибровки")
 
 
 def confidence_from_receipt(receipt: dict) -> Confidence:
