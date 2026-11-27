@@ -7,6 +7,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from alembic import command
+from alembic.script import ScriptDirectory
 from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
@@ -131,7 +132,7 @@ def test_full_sqlite_history_upgrades_to_single_0219_head(tmp_path, monkeypatch)
                   ("warehouse_scan_jobs", "production_instruments", "production_vna_sessions", "production_vna_artifacts")}
     command.upgrade(config, "head")
     with engine.connect() as connection:
-        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == revision.revision
+        assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == ScriptDirectory.from_config(config).get_current_head()
         for name, count in counts.items():
             assert connection.exec_driver_sql(f'SELECT COUNT(*) FROM "{name}"').scalar() == count
     engine.dispose()

@@ -294,3 +294,54 @@ def test_selected_analyser_is_checked_on_its_own(production_api, monkeypatch):
         plan = client.get("/api/production/vna-plan", params=params).json()
         assert plan["status"] == "blocked" and not plan["automatic_acceptance"]
         assert any("как ВАЦ" in problem for problem in plan["chains"]["problems"])
+
+
+def _activated_sma_mf06(client):
+    """An activated SMA-MF06 characterization (solt_kit) on a measuring instrument without valid verification."""
+    from app.modules.production.rf_infrastructure import RfDetailsRow, RfInterfaceRow
+    kit = create(client, "СИ.004", name="SMA-MF06")  # «Поверка не подтверждена», shared (no parent)
+    with app.state.production_uow_factory() as uow:
+        uow.session.add(RfDetailsRow(instrument_id=UUID(kit["id"]), version=1, role="solt_kit", confirmed=True,
+                                     source="Активация ревизий мер", f_min_ghz=0.0, max_points=None,
+                                     kit_definition="SMA-MF06-characterized", mating_resource=None, norm_id="",
+                                     characterization_generation=1, characterization_hash="0" * 64))
+        uow.session.flush()
+        for position, (body, center) in enumerate((("вилка", "штырь"), ("розетка", "гнездо")), 1):
+            uow.session.add(RfInterfaceRow(instrument_id=UUID(kit["id"]), position=position, series="SMA", body=body,
+                                           center=center, impedance_ohm=50, f_max_ghz=18, f_confirmed=True, f_source="тест"))
+        uow.session.commit()
+    return kit
+
+
+def test_unused_activated_sma_kit_without_verification_keeps_plan_ready(production_api, monkeypatch):
+    client, _ = production_api
+    params = _plan_setup(client, monkeypatch)
+    _activated_sma_mf06(client)
+    plan = client.get("/api/production/vna-plan", params=params).json()
+    assert plan["status"] == "ready" and plan["automatic_acceptance"], plan
+    assert not any("СИ.004" in problem for problem in plan["chains"]["problems"])
+
+
+def test_unverified_kit_used_by_the_chain_still_qualifies_the_plan(production_api, monkeypatch):
+    client, _ = production_api
+    params = _plan_setup(client, monkeypatch)
+    _activated_sma_mf06(client)
+    used = next(i for i in client.get("/api/production/instruments").json()["instruments"] if i["inventory_number"] == "СИ.003")
+    response = client.patch(f"/api/production/instruments/{used['id']}", json={
+        "version": used["version"], "kind": "Средство измерений", "status": "Поверка не подтверждена"})
+    assert response.status_code == 200, response.text
+    plan = client.get("/api/production/vna-plan", params=params).json()
+    assert plan["chains"]["calibration_connections"]["kit_id"] == used["id"]
+    assert plan["status"] == "qualified" and not plan["automatic_acceptance"]
+    problems = plan["chains"]["problems"]
+    assert any(problem.startswith("СИ.003 без действующей поверки") for problem in problems)
+    assert not any("СИ.004" in problem for problem in problems)
+
+
+def test_calibration_kits_are_read_from_both_plan_shapes():
+    from app.workflows.vna_plan_api import _calibration_kit_ids
+    a, b = uuid4(), uuid4()
+    assert _calibration_kit_ids(dict(calibration_connections=dict(kit_id=str(a), chains=[]))) == [a]
+    assert _calibration_kit_ids(dict(calibration_connections=[dict(kit_id=str(a)), dict(kit_id=str(b)), dict(kit_id=str(a))])) == [a, b]
+    assert _calibration_kit_ids(dict(calibration_connections=[])) == []
+    assert _calibration_kit_ids({}) == []

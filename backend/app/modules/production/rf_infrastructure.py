@@ -15,6 +15,8 @@ from .vna_characterization import is_characterization_file
 
 # Only an adapter or a test cable carries an assigned norm; the id itself is checked against rf-norms.json on save.
 NORM_CHECK = "norm_id = '' OR (role IN ('adapter','test_cable') AND norm_id = trim(norm_id))"
+KIT_CHECK = "kit_definition = '' OR (role = 'solt_kit' AND kit_definition IN ('6650F27-full','SMA-MF06-characterized')) OR (role = 'load_kit' AND kit_definition = 'SMA-MF06-loads')"
+GENERATION_CHECK = "(kit_definition = 'SMA-MF06-characterized' AND characterization_generation > 0 AND characterization_hash IS NOT NULL AND length(characterization_hash) = 64) OR (kit_definition <> 'SMA-MF06-characterized' AND characterization_generation = 0 AND characterization_hash IS NULL)"
 
 
 class RfDetailsRow(Base):
@@ -25,7 +27,8 @@ class RfDetailsRow(Base):
         CheckConstraint("role IN ('unknown','vna','adapter','test_cable','auto_calibration','solt_kit','load','load_kit')", name="ck_rf_details_role"),
         CheckConstraint("f_min_ghz IS NULL OR (f_min_ghz >= 0 AND f_min_ghz <= 1000)", name="ck_rf_details_min"),
         CheckConstraint("max_points IS NULL OR (role = 'vna' AND max_points BETWEEN 2 AND 10000001)", name="ck_rf_details_points"),
-        CheckConstraint("kit_definition = '' OR (role = 'solt_kit' AND kit_definition = '6650F27-full') OR (role = 'load_kit' AND kit_definition = 'SMA-MF06-loads')", name="ck_rf_details_kit"),
+        CheckConstraint(KIT_CHECK, name="ck_rf_details_kit"),
+        CheckConstraint(GENERATION_CHECK, name="ck_rf_details_characterization"),
         CheckConstraint("NOT confirmed OR (role <> 'unknown' AND length(trim(source)) > 0)", name="ck_rf_details_confirmed"),
         CheckConstraint(NORM_CHECK, name="ck_rf_details_norm"),
     )
@@ -39,6 +42,8 @@ class RfDetailsRow(Base):
     kit_definition: Mapped[str] = mapped_column(String(64), nullable=False)
     mating_resource: Mapped[int | None] = mapped_column(Integer(), nullable=True)
     norm_id: Mapped[str] = mapped_column(String(64), nullable=False, server_default="")
+    characterization_generation: Mapped[int] = mapped_column(Integer(), nullable=False, server_default="0")
+    characterization_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class RfInterfaceRow(Base):
@@ -130,6 +135,9 @@ class RfRepository:
         from .mating_infrastructure import recorded_sides
         from .matings import end_names
         from .domain import ProductionValidationError
+        if details.kit_definition == "SMA-MF06-characterized" or (current and current.kit_definition == "SMA-MF06-characterized"):
+            if current is None or (details.role, details.kit_definition) != (current.role, current.kit_definition):
+                raise ProductionValidationError("Состав охарактеризованного набора меняется только при активации ревизий мер")
         recorded = recorded_sides(self.session, instrument_id)
         if recorded - set(end_names(details)):
             raise ProductionValidationError("Нельзя удалить сторону с историей сочленений")

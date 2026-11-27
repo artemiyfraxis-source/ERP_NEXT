@@ -73,3 +73,25 @@ it("shows a fetch failure and retry instead of an empty confirmed state", async 
   expect(screen.getByText("Обновить ВЧ-интерфейсы")).toBeEnabled();
   expect(screen.queryByText("Подтверждены")).not.toBeInTheDocument();
 });
+
+it("shows an activated SMA-MF06 with its composition and keeps role and composition read-only", async () => {
+  const kit: InstrumentRfDetails = { ...rf, role: "solt_kit", kit_definition: "SMA-MF06-characterized", confirmed: true,
+    interfaces: [{ ...rf.interfaces[0], series: "SMA" }] };
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ rf: kit }));
+  render(<InstrumentRfInterfaces instrumentId="kit" locked={false} onDirty={vi.fn()} onBusy={vi.fn()} />);
+  expect(await screen.findByText(/Набор SOLT · SMA-MF06, меры охарактеризованы/)).toBeInTheDocument();
+  fireEvent.click(screen.getByText("Изменить интерфейсы"));
+  const composition = screen.getByLabelText("Состав набора");
+  expect(composition).toHaveValue("SMA-MF06-characterized");
+  expect(composition).toBeDisabled();
+  expect(screen.getByLabelText("Назначение")).toBeDisabled();
+  expect(screen.getByText(/меняются только активацией мер на стенде/)).toBeInTheDocument();
+});
+
+it("does not offer the characterized SMA-MF06 composition to an ordinary SOLT card", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async () => json({ rf: { ...rf, role: "solt_kit" } }));
+  render(<InstrumentRfInterfaces instrumentId="kit" locked={false} onDirty={vi.fn()} onBusy={vi.fn()} />);
+  fireEvent.click(await screen.findByText("Изменить интерфейсы"));
+  expect(screen.getByRole("option", { name: /SMA-MF06: меры, измеренные на Planar/ })).toBeDisabled();
+  expect(screen.getByLabelText("Состав набора")).not.toBeDisabled();
+});
