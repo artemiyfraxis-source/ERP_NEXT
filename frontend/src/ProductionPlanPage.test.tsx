@@ -92,7 +92,7 @@ it("shows the shop sheet «ЗАГРУЗ» columns in the sheet order", async () 
   expect(row.querySelector(".zg-col-deadline")?.getAttribute("title")).toBe("Дедлайн 30.09.2026 · рабочих дней до дедлайна: 6");
   expect(row.querySelector(".zg-col-test_sb")?.className).toContain("zg-manual");
   expect(screen.getByText("В работе · 1")).toBeInTheDocument();
-  // Боковой панели нет: проект открывается в «Ресурсном планировании».
+  // Боковой панели нет: без доступа к «Проектам» проект открывается в «Ресурсном планировании».
   expect(screen.queryByRole("dialog")).toBeNull();
 });
 
@@ -529,7 +529,7 @@ it("changes the stage, blocks and closes a project without a card from the statu
   await waitFor(() => expect(payloads[2]).toMatchObject({ project: "709К.1", kind: "stage", item_index: "", value: "В работе" }));
 });
 
-it("opens the project card from the number and resource planning from the customer", async () => {
+it("opens the project card from both the number and the customer, never resource planning", async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async () => json(plan));
   const places: string[] = [];
   const listener = () => places.push(window.location.search);
@@ -539,11 +539,11 @@ it("opens the project card from the number and resource planning from the custom
   render(<ProductionPlanPage principal={principal} openProjectCard={(project) => opened.push(project)} />);
   const number = await screen.findByText("708К.4");
   fireEvent.click(number);
-  expect(opened).toEqual(["708К.4"]);
-  expect(places).toEqual([]);
+  // Владелец 27.11.2026: «чтобы я переходил в проект, а не в ресурсное планирование».
   fireEvent.click(sheetRow("708К.4").querySelector(".zg-link")!);
   window.removeEventListener("popstate", listener);
-  expect(places).toEqual(["?section=production&project=708%D0%9A.4"]);
+  expect(opened).toEqual(["708К.4", "708К.4"]);
+  expect(places).toEqual([]);
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(document.querySelector(".plan-drawer")).toBeNull();
 });

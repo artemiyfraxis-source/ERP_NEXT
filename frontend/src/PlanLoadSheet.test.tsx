@@ -37,6 +37,22 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); forgetPersonalViews(); vi.restoreAllMocks(); vi.useRealTimers(); window.localStorage.clear(); });
 
+it("opens the project card from the customer as well as the number; the journal only without access to «Проекты»", async () => {
+  const onOpenProject = vi.fn();
+  const onOpenJournal = vi.fn();
+  const mounted = render(<PlanLoadSheet {...props} onOpenProject={onOpenProject} onOpenJournal={onOpenJournal} />);
+  await settle();
+  const customer = screen.getByRole("button", { name: "Заказчик" });
+  expect(customer).toHaveAttribute("title", "Заказчик — карточка проекта");
+  fireEvent.click(customer);
+  expect(onOpenProject).toHaveBeenCalledWith(row);
+  expect(onOpenJournal).not.toHaveBeenCalled();
+
+  mounted.rerender(<PlanLoadSheet {...props} onOpenProject={undefined} onOpenJournal={onOpenJournal} />);
+  fireEvent.click(screen.getByRole("button", { name: "Заказчик" }));
+  expect(onOpenJournal).toHaveBeenCalledWith(row);
+});
+
 it("uses the stock chooser; hides and reorders headers, cells, widths and frozen offsets, then restores from the server on another device", async () => {
   vi.useFakeTimers();
   const mounted = render(<PlanLoadSheet {...props} />);
