@@ -137,10 +137,11 @@ import { assignPinJoined, joinSplice, leaveJoin, renameSplice, setTail } from ".
 import { PinoutTable, TopologyMaterialSelect, TopologyTubes, type MaterialOption } from "./PinoutTable";
 import { WrapTable } from "./WrapTable";
 import { CoaxLength, CoaxMarking, CoaxReseed } from "./GenCoaxSettings";
-import { coaxReseedPatch } from "./tcGenLogic";
+import { coaxReseedPatch, coaxSerialPatch } from "./tcGenLogic";
+import { markingApi } from "./markingApi";
 import { applyEnd, firstFreePin, pinConns, pinRows, pinSummary, spliceLines } from "./tcGenPinTable";
 import { useTerminalPairs } from "./useTerminalPairs";
-import { COAX_PROTECTIVE_TUT_LENGTHS, MARK_KIND_DEFAULT, markIsTube, markSpecs, markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
+import { coaxCoverLengths, coaxSerialKb, coaxSerialText, type CoaxLabelProfile, MARK_KIND_DEFAULT, markIsTube, markSpecs, markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
 
 /** library — карточки библиотеки операций целиком (код, сторона, нормы) для «Ручной сборки». */
 type Refs = Pick<GenData, "templates" | "ops" | "terRecords" | "coaxRecords" | "wireDia" | "coaxCableDia" | "markMats" | "cableRecords" | "lugRecords"> & { library: LibraryCard[] };
@@ -278,6 +279,23 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
 
   useEffect(() => { void loadRefs().then(setRefs); }, []);
 
+  // Профили этикеток маркиратора ОБ.102 для «Заводского номера на изделии»: длина этикетки вдоль кабеля — ширина профиля.
+  const [labelProfiles, setLabelProfiles] = useState<{ list: CoaxLabelProfile[] | null; error: string }>({ list: null, error: "" });
+  const coaxTab = S.tab === "coax";
+  useEffect(() => {
+    if (!coaxTab) return;
+    const controller = new AbortController();
+    markingApi.machines(controller.signal).then((catalog) => {
+      const list = catalog.machines.filter((machine) => machine.inventory_number === "ОБ.102").flatMap((machine) => machine.profiles)
+        .map((profile) => ({ id: profile.id, name: profile.name, lengthMm: profile.geometry.width_mm }));
+      setLabelProfiles({ list, error: list.length ? "" : "Нет профилей этикеток ОБ.102 — заведите их в «Маркировка»." });
+    }).catch((reason) => {
+      if (!controller.signal.aborted) setLabelProfiles({ list: [], error: reason instanceof TypeError ? "Нет связи с ERP — профили этикеток не загрузились."
+        : "Профили этикеток не загрузились — откройте вкладку ещё раз или выберите профиль позже." });
+    });
+    return () => controller.abort();
+  }, [coaxTab]);
+
   // Карточки операций для выбора: русское название (с стороной), код — вторым планом; по категориям, «Прочее» — в конце.
   const cards = useMemo(() => {
     const byId = new Map<string, CardOption>();
@@ -303,8 +321,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     "Индекс": kit?.index || "", "Наименование": kit?.name || "", "Кол-во": kit?.run || "",
   }), [kit]);
   const D: GenData = useMemo(() => ({
-    ...(refs || EMPTY_REFS), components, assemblyInfo, projectNo: card.project, partQty: Number(kit?.part_qty) || 1, calcOps: kit?.calc_ops || [],
-  }), [refs, components, assemblyInfo, kit, card.project]);
+    ...(refs || EMPTY_REFS), components, assemblyInfo, projectNo: card.project, itemIndex: card.item_index, partQty: Number(kit?.part_qty) || 1, calcOps: kit?.calc_ops || [],
+  }), [refs, components, assemblyInfo, kit, card.project, card.item_index]);
   // Свои цвета жил карты (S.colorHex) нужны всем рисовальщикам по названию: схема, чертёж, ЭТК.
   setCustomColors(S.colorHex);
   const gen = useMemo(() => makeGen(D, S), [D, S]);
@@ -1815,8 +1833,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
           <Seg label="Станок" value={gen.coaxMachine_()} options={(["small", "big"] as const).map((key) => [key, COAX_MACHINES[key].label, COAX_MACHINES[key].hint] as const)}
             onChange={(machine) => update((current) => ({ ...current, coax: { ...current.coax, machine } }))} /></div>}
       </div>
-      {S.coax.markMaterial === "tape" ? (S.coax.markProtect && <div className="opt-note">
-        Защитная ТУТ: концевые метки — {COAX_PROTECTIVE_TUT_LENGTHS.A} мм, центральная — {COAX_PROTECTIVE_TUT_LENGTHS.middle} мм.
+      {S.coax.markMaterial === "tape" && !S.coax.serialMark ? (S.coax.markProtect && <div className="opt-note">
+        Защитная ТУТ: концевые метки — {coaxCoverLengths(S.coax.labelProfile?.lengthMm).A} мм, центральная — {coaxCoverLengths(S.coax.labelProfile?.lengthMm).middle} мм.
       </div>) : <Toggle checked={S.coax.tutEnabled} title="ТУТ на концах" onChange={(on) => update((current) => ({ ...current, coax: { ...current.coax, tutEnabled: on } }))}>
         <Field label="Длина ТУТ" className="short"><UnitInput unit="мм" type="number" min={1} value={S.coax.tutLen} placeholder="—" onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, tutLen: event.target.value } }))} /></Field>
       </Toggle>}
@@ -1828,19 +1846,26 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         : <Toggle checked={S.coax.stripB} title="Зачистка стороны В" hint="голый конец кабеля" onChange={(on) => update((current) => ({ ...current, coax: { ...current.coax, stripB: on } }))} />}
     </section>
     </div>
-    <CoaxMarking coax={S.coax} onChange={setCoax} components={components} labels={!!gen.coaxFakra_()} />
+    <CoaxMarking coax={S.coax} onChange={setCoax} components={components}
+      labels={!!gen.coaxFakra_() || !!S.coax.serialMark || S.coax.markMaterial === "tape"}
+      serial={{ kb: coaxSerialKb(card.project, card.item_index), fakra: !!gen.coaxFakra_(), template: coaxSerialText(card.project, card.item_index, S.coax.serialProduct), profiles: labelProfiles.list, profilesError: labelProfiles.error,
+        onSerial: (on, serialProduct) => setCoax(coaxSerialPatch(D, serialProduct === undefined ? S.coax : { ...S.coax, serialProduct }, on)) }} />
     {S.coax.sideB && <section className="gsec full" aria-label="Контроль КСВН"><div className="gsec-head"><h3>Контроль КСВН</h3></div>
       <div className="opt-grid">
         {S.coax.sideB && <div className="gfield span-all"><span className="gfield-label">Режим
           {S.coax.vswrMode === "sample" && <small>первое изделие партии и далее каждое {coaxVswrControl_(S.coax)?.every}-е</small>}</span>
           <div className="gvswr">
-            <Seg<CoaxVswrMode> label="Контроль КСВН" value={S.coax.vswrMode || "all"} options={COAX_VSWR_OPTIONS}
+            <Seg<CoaxVswrMode> label="Контроль КСВН" value={S.coax.vswrPassport ? "all" : S.coax.vswrMode || "all"}
+              options={S.coax.vswrPassport ? COAX_VSWR_OPTIONS.filter(([key]) => key === "all") : COAX_VSWR_OPTIONS}
               onChange={(vswrMode) => update((current) => ({ ...current, coax: { ...current.coax, vswrMode } }))} />
             {S.coax.vswrMode === "sample" && <label className="gvswr-every">1 из
               <UnitInput unit="шт" aria-label="Выборка: одно изделие из" type="number" min={2} step={1} inputMode="numeric"
                 value={S.coax.vswrEvery ?? String(COAX_VSWR_EVERY)}
                 onChange={(event) => update((current) => ({ ...current, coax: { ...current.coax, vswrEvery: event.target.value } }))} /></label>}
           </div></div>}
+        <div className="span-all"><Toggle checked={!!S.coax.vswrPassport} title="Паспорт по ВАЦ на каждое изделие"
+          hint="замер каждого изделия, паспорт по заводскому номеру"
+          onChange={(vswrPassport) => update((current) => ({ ...current, coax: { ...current.coax, vswrPassport, ...(vswrPassport ? { vswrMode: "all" as const } : {}) } }))} /></div>
         {S.coax.sideB && S.coax.vswrMode !== "none" && <div className="gfield span-all gvswr-cust-field" role="group" aria-label="Норма заказчика (КД)">
           <span className="gfield-label">Норма заказчика (КД)<small>пусто — норма по комплектующим</small></span>
           <div className="gvswr gvswr-cust">
