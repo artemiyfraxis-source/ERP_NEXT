@@ -151,6 +151,20 @@ Describe 'Управление ВАЦ: типовые команды и COM' {
         $command = New-ControlEnvelope; $status = New-ControlStatus $command; $status.commands[0].status = 'cancelled'
         { Assert-VnaLease $command $status } | Should Throw 'не владеет'
     }
+    It 'профиль применяется на S2VNA без наклона мощности по портам (СИ.002, 26.11)' {
+        # PORT(n).LEVel has only IMMediate there: the slope parent reads as null; writing STATe threw before 2.12.2.
+        $script:ioValues['SOURce(1).POWer.PORT(1).LEVel.SLOPe'] = $null; $script:ioValues['SOURce(1).POWer.PORT(2).LEVel.SLOPe'] = $null
+        [void](Invoke-ControlTest prepare); $script:ioLog.Clear()
+        { Invoke-ControlTest apply_profile @{ profile = $script:profile } } | Should Not Throw
+        @($script:ioLog | Where-Object { $_ -like 'set *SLOPe*' }).Count | Should Be 0
+        @($script:ioLog | Where-Object { $_ -like 'set SENSe(1).SWEep.POINts*' }).Count | Should Be 1
+    }
+    It 'наклон мощности выключается, если у прибора он есть' {
+        foreach ($port in 1,2) { $script:ioValues["SOURce(1).POWer.PORT($port).LEVel.SLOPe"] = [pscustomobject]@{ STATe = $false } }
+        [void](Invoke-ControlTest prepare); $script:ioLog.Clear()
+        { Invoke-ControlTest apply_profile @{ profile = $script:profile } } | Should Not Throw
+        @($script:ioLog | Where-Object { $_ -like 'set SOURce(1).POWer.PORT(*).LEVel.SLOPe.STATe*' }).Count | Should Be 2
+    }
     It 'резервирует CDST и набор до применения профиля' {
         $result = Invoke-ControlTest prepare
         $result.state_saved | Should Be $true
