@@ -358,9 +358,12 @@ def _contact_name(hints: LotHints, records: tuple[TechOperationRecord, ...]) -> 
                 gender = {"male": "pin", "female": "socket"}.get(str(rule["sex"]).lower(), "")
                 source = source or "правило серии (warehouse_article.SERIES_RULES)"
             break
+    section = _contact_section(row) if row else ""
     name = " ".join(part for part in ("Контакт", series, CONTACT_GENDER.get(gender, "")) if part)
+    if section:  # review 27.11: the wire range tells SXH-001T from SXH-002T and keeps «…, 0,05–0,2 мм²» names
+        name = f"{name}, {section}"
     missing = tuple(label for label, absent in (("серия", not series), ("пол", not gender)) if absent)
-    attrs = _attrs(family=series, gender=gender, maker=maker, section=_contact_section(row) if row else "")
+    attrs = _attrs(family=series, gender=gender, maker=maker, section=section)
     return StockName(name, not missing, missing, source or "артикул", attrs)
 
 
@@ -370,7 +373,7 @@ def _row_gender(fields: Mapping[str, str] | None) -> str:
 
 
 def _contact_section(fields: Mapping[str, str]) -> str:
-    low, high = _field(fields, "mm2From", "От мм2"), _field(fields, "mm2To", "До мм2")
+    low, high = (_field(fields, *names).replace(".", ",") for names in (("mm2From", "От мм2"), ("mm2To", "До мм2")))
     if low or high:
         return f"{low or high}–{high or low} мм²" if low != high else f"{low} мм²"
     low, high = _field(fields, "awgFrom", "От AWG"), _field(fields, "awgTo", "До AWG")
@@ -423,8 +426,10 @@ def _lug_from(text: str, sleeve_only: bool) -> tuple[str, str, str, str] | None:
     if sleeve_only and base not in SLEEVES:
         return None
     sex = match["sex"] or ""
-    mark = base + (f"-{sex}" if sex else "") + (match["nylon"] or "")
     rest = upper[match.end():]
+    # «(н)» — nylon — is kept wherever it stands: «НВИ(н) 1,5-4» and «НВИ 1,5-4 (н)» are one item (review 27.11).
+    nylon = match["nylon"] or ("(н)" if "(н)" in rest else "")
+    mark = base + (f"-{sex}" if sex else "") + nylon
     if base in SLEEVES:
         section = SLEEVE_SECTION.match(rest.lstrip("- "))
         return mark, sex, _comma(section[1]) if section else "", ""

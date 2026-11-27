@@ -593,7 +593,7 @@
    "item_type": "Терминал",
    "manufacturer": "JST",
    "name": "Контакт XH Female",
-   "expected": "Контакт XH гнездо (мама)",
+   "expected": "Контакт XH гнездо (мама), 0,08–0,35 мм²",
    "complete": true,
    "missing": []
   },
@@ -602,7 +602,7 @@
    "item_type": "Терминал",
    "manufacturer": "JST",
    "name": "Контакт PH Female",
-   "expected": "Контакт PH гнездо (мама)",
+   "expected": "Контакт PH гнездо (мама), 0,08–0,2 мм²",
    "complete": true,
    "missing": []
   },
@@ -611,7 +611,7 @@
    "item_type": "Терминал",
    "manufacturer": "JST",
    "name": "Контакт SH Female",
-   "expected": "Контакт SH гнездо (мама)",
+   "expected": "Контакт SH гнездо (мама), 0,03–0,08 мм²",
    "complete": true,
    "missing": []
   },
@@ -620,7 +620,7 @@
    "item_type": "Терминал",
    "manufacturer": "MOLEX",
    "name": "Контакт Micro-Fit 3.0 Female",
-   "expected": "Контакт Micro-Fit 3.0 гнездо (мама)",
+   "expected": "Контакт Micro-Fit 3.0 гнездо (мама), 0,2–0,5 мм²",
    "complete": true,
    "missing": []
   },
@@ -629,7 +629,7 @@
    "item_type": "Терминал",
    "manufacturer": "MOLEX",
    "name": "Контакт Micro-Fit 3.0 Male",
-   "expected": "Контакт Micro-Fit 3.0 штырь (папа)",
+   "expected": "Контакт Micro-Fit 3.0 штырь (папа), 0,2–0,5 мм²",
    "complete": true,
    "missing": []
   },
@@ -638,7 +638,7 @@
    "item_type": "Терминал",
    "manufacturer": "MOLEX",
    "name": "Контакт Mini-Fit Jr. Female",
-   "expected": "Контакт Mini-Fit Jr. гнездо (мама)",
+   "expected": "Контакт Mini-Fit Jr. гнездо (мама), 1,5 мм²",
    "complete": true,
    "missing": []
   },
@@ -647,7 +647,7 @@
    "item_type": "Терминал",
    "manufacturer": "MOLEX",
    "name": "Контакт Mini-Fit Jr. Male",
-   "expected": "Контакт Mini-Fit Jr. штырь (папа)",
+   "expected": "Контакт Mini-Fit Jr. штырь (папа), 1,5 мм²",
    "complete": true,
    "missing": []
   },
@@ -656,7 +656,7 @@
    "item_type": "Терминал",
    "manufacturer": "HIROSE",
    "name": "Контакт DF1B Male",
-   "expected": "Контакт DF1B штырь (папа)",
+   "expected": "Контакт DF1B штырь (папа), AWG 28–24",
    "complete": true,
    "missing": []
   },
@@ -665,7 +665,7 @@
    "item_type": "Терминал",
    "manufacturer": "HIROSE",
    "name": "Контакт DF1B Female",
-   "expected": "Контакт DF1B гнездо (мама)",
+   "expected": "Контакт DF1B гнездо (мама), AWG 28–24",
    "complete": true,
    "missing": []
   },
@@ -674,7 +674,7 @@
    "item_type": "Терминал",
    "manufacturer": "JST",
    "name": "Контакт SM Female",
-   "expected": "Контакт SM гнездо (мама)",
+   "expected": "Контакт SM гнездо (мама), 0,08–0,35 мм²",
    "complete": true,
    "missing": []
   },
@@ -692,7 +692,7 @@
    "item_type": "Терминал",
    "manufacturer": "CONNFLY",
    "name": "Контакт XH Female",
-   "expected": "Контакт XH гнездо (мама)",
+   "expected": "Контакт XH гнездо (мама), 0,05–0,3 мм²",
    "complete": true,
    "missing": []
   },
@@ -701,7 +701,7 @@
    "item_type": "Терминал",
    "manufacturer": "MOLEX",
    "name": "Контакт SL Female",
-   "expected": "Контакт SL гнездо (мама)",
+   "expected": "Контакт SL гнездо (мама), 0,2–0,35 мм²",
    "complete": true,
    "missing": []
   },

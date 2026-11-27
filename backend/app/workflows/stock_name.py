@@ -96,8 +96,10 @@ def _tails(articles: Sequence[str]) -> dict[str, str]:
 
 
 def _variant_family(item: StockName) -> bool:
-    family = _name_key(str(item.attrs.get("family") or ""))
-    return any(family.startswith(prefix) for prefix in VARIANT_FAMILIES)
+    # The connector builder writes housing ids («amass-xt», «cnlinko-lp12»), people write «Amass XT» (review 27.11):
+    # compare letters and digits only.
+    family = re.sub(r"[^0-9a-zа-яё]", "", str(item.attrs.get("family") or "").casefold())
+    return any(family.startswith(re.sub(r"[^0-9a-zа-яё]", "", prefix)) for prefix in VARIANT_FAMILIES)
 
 
 def _separate(by_article: Mapping[str, list[str]], result: dict[str, StockName]) -> None:

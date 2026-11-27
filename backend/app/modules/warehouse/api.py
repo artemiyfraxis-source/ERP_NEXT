@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.article_maker import split_article_maker
+from app.shared.article_match import compact
 from app.shared.clock import moscow_now
 from app.shared.http_auth import (
     Principal,
@@ -673,7 +674,19 @@ def _factory(request: Request, name: str):
 FULL_NAME_SOURCE = "полное наименование"
 
 
-def _with_full_name(info: dict | None, article: str, records: list, identity) -> dict | None:
+def _name_taken(uow_factory: Callable[[], UnitOfWork], name: str, article: str) -> bool:
+    """Another article's lot already carries `name` (review 27.11: receiving skipped the collision check, so two
+    different articles could get one name). A taken name is not offered; the refresh tells such articles apart."""
+    own = compact(article)
+    with uow_factory() as uow:
+        lots = uow.warehouse.list(limit=500, query=name, include_zero=True)
+    wanted = " ".join(name.split()).casefold()
+    return any(" ".join(str(lot.name or "").split()).casefold() == wanted and compact(lot.article) != own for lot in lots)
+
+
+def _with_full_name(
+    info: dict | None, article: str, records: list, identity, uow_factory: Callable[[], UnitOfWork] | None = None,
+) -> dict | None:
     """A new receipt stops copying a family-level name («Amass XT 2pin (однорядный)», owner 27.11.2026): the full-name
     builder's COMPLETE name wins over the last lot's or the reference's name that fails `name_needs_full` (the article,
     the old family name, no gender word / lug size, a supplier's line). A good human name of the last lot stays."""
@@ -689,6 +702,8 @@ def _with_full_name(info: dict | None, article: str, records: list, identity) ->
         return info
     if not name_needs_full(current, article, maker, built=built,
                            old_name=identity.name if identity is not None else ""):
+        return info
+    if uow_factory is not None and _name_taken(uow_factory, built.name, article):
         return info
     source = ", ".join(part for part in (str(info.get("source") or ""), FULL_NAME_SOURCE) if part)
     return {**info, "name": built.name, "source": source}
@@ -736,7 +751,7 @@ def article_info(
         supplier=supplier, invoice_number=invoice_number, article=article,
     )
     return {
-        "info": _with_full_name(facts.info, article, records, identity),
+        "info": _with_full_name(facts.info, article, records, identity, uow_factory),
         "places": facts.places,
         "expected": None if expected is None else {"order_number": expected.order_number, "supplier": expected.supplier},
     }

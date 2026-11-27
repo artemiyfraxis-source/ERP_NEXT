@@ -642,7 +642,8 @@ def test_a_sibling_name_failing_the_rule_is_not_copied(full_names):
     assert ("G1", "name") not in by and ("G2", "name") not in by  # the old family name of G2 does not travel
     assert {item.grn: item.reason for item in plan.review} == {"G1": flow.NEEDS_ARTICLE, "G2": flow.NEEDS_OLD}
     assert by[("G3", "name")] == ("XT30U-M+F", "Amass XT30U вилка (папа) + розетка (мама) 2pin", "база: партия G4")
-    assert ("G5", "name") not in by  # a lowercase supplier line is not copied (no builder, no catalog, no model)
+    # Types without a builder keep the 26.10 rule (review 27.11): the sibling's human name still travels.
+    assert by[("G5", "name")] == ("ZZ-1", "кабель неэкранированный., бухта 50м.", "база: партия G6")
 
 
 def test_the_review_csv_lists_what_is_missing_and_where_to_find_it(full_names, tmp_path):

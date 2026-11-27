@@ -227,7 +227,7 @@ _FULL_GENDER = re.compile(r"\((папа|мама)\)", re.IGNORECASE)
 _COAX_GENDER = re.compile(r"(?<![a-z])(female|male)(?![a-z])", re.IGNORECASE)
 # Latin words a name of ours may hold in lower case («SMA-female bulkhead», «4pin»); any other one («non waterproof
 # all code», «connector») is a supplier's line in English.
-_LATIN_OK = frozenset({"male", "female", "bulkhead", "panel", "pin", "awg", "mm", "smd", "dip", "pcb"})
+_LATIN_OK = frozenset({"male", "female", "bulkhead", "flange", "panel", "pin", "awg", "mm", "smd", "dip", "pcb"})
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
 
 NEEDS_ARTICLE = "наименование — артикул"
@@ -586,7 +586,8 @@ def plan_changes(
                 found = (Found(full.name[:LIMITS[name]], _full_source(full)) if full.complete
                          else _sibling(group, name, types, replaced))
             else:
-                found = _sibling(group, name, types, replaced if name == "name" else None)
+                # Types without a builder keep the 26.10 sibling rule (review 27.11): `replaced` only guards builder names.
+                found = _sibling(group, name, types, None)
                 if found is None and name == "manufacturer":
                     found = _written_maker(group)
                 found = found or reference.get(name)

@@ -62,7 +62,7 @@ def test_owner_examples() -> None:
     assert _name("0510210300").name == "PicoBlade розетка (мама) 3pin (однорядный)"
     assert _name("510470300").name == "PicoBlade вилка (папа) 3pin (однорядный)"
     assert _name("S7B-XH-A(LF)(SN)").name == "XH вилка (папа) 7pin (однорядный), угловая на плату"
-    assert _name("SXH-001T-P0.6", "Терминал").name == "Контакт XH гнездо (мама)"
+    assert _name("SXH-001T-P0.6", "Терминал").name == "Контакт XH гнездо (мама), 0,08–0,35 мм²"
     assert _name("НВИ 1.5-4", "Наконечник").name == "Наконечник НВИ 1,5-4"
     assert _name("ГС 2,5", "Терминал").name == "Гильза соединительная ГС 2,5"
 
@@ -202,3 +202,10 @@ def test_ra_housings_wait_for_a_sheet() -> None:
     built = _name("RA-3011")
     assert built is not None and not built.complete
     assert any("число контактов" in item for item in built.missing)
+
+
+def test_nylon_mark_after_the_size_is_kept():
+    after = _name("НВИ 1,5-4 (н)", "Наконечник")
+    before = _name("НВИ(н) 1,5-4", "Наконечник")
+    plain = _name("НВИ 1,5-4", "Наконечник")
+    assert after.name == before.name != plain.name

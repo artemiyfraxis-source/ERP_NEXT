@@ -183,3 +183,40 @@ def test_one_maker_and_one_mount_still_go_to_review():
              "SMA-CG58P": _named("SMA-male RG-58", maker="RUICHI", mount="обжим")}
     result = resolve_collisions(named)
     assert not result["SMA-C58P"].complete and not result["SMA-CG58P"].complete
+
+
+def test_the_variant_step_runs_on_the_real_builder_family_ids():
+    # The connector builder puts the housing id («amass-xt») into attrs, not «Amass XT» (review 27.11).
+    named = {"XT60H-M": _named("Amass XT60H вилка (папа) 2pin", family="amass-xt"),
+             "XT60H-M-Y": _named("Amass XT60H вилка (папа) 2pin", family="amass-xt")}
+    result = resolve_collisions(named)
+    assert all(item.complete for item in result.values())
+    assert result["XT60H-M"].name != result["XT60H-M-Y"].name
+
+
+def test_article_info_does_not_offer_a_name_another_article_already_has(monkeypatch):
+    # Review 27.11: SXH-001T-P0.6 and SXH-002T-P0.6 could both get one name in receiving; the refresh would review them.
+    from types import SimpleNamespace
+    from app.modules.warehouse import api
+    from app.workflows.warehouse_article import infer_article_identity
+
+    built = StockName("Amass XT60H вилка (папа) 2pin", True, attrs={"gender": "pin"})
+    monkeypatch.setattr(api, "build_stock_name", lambda hints, records: built)
+    identity = infer_article_identity("XT60H-M")
+    info = {"name": "Amass XT 2pin (однорядный)", "item_type": "Соединитель", "manufacturer": "", "description": "",
+            "source": ""}
+    stock: list[SimpleNamespace] = []
+
+    class _Uow:
+        warehouse = SimpleNamespace(list=lambda **kwargs: stock)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    stock[:] = [SimpleNamespace(article="XT60H-M", name="Amass XT60H вилка (папа) 2pin")]  # the same article: fine
+    assert api._with_full_name(info, "XT60H-M", [], identity, _Uow)["name"] == built.name
+    stock[:] = [SimpleNamespace(article="XT60H-M-Y", name="Amass XT60H  вилка (папа) 2pin")]  # another article has it
+    assert api._with_full_name(info, "XT60H-M", [], identity, _Uow) == info
