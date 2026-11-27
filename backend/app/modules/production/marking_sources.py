@@ -3,12 +3,47 @@
 from decimal import Decimal, InvalidOperation
 import re
 
+from .traceability import clean_designation, default_designation, factory_project
+
 MAX_LABELS = 500
 TOKEN = re.compile(r"\{№(?::([1-6]))?\}")
 
 
 def expand_serial(text: str, serial: int) -> str:
     return TOKEN.sub(lambda match: str(serial).zfill(int(match[1] or 0)), text)
+
+
+def serial_designation(document, task):
+    """«Изделие» заводского номера FRX.<проект>.<изделие>.<k> (владелец 27.11) из ЭТК задания: обозначение технолога
+    в операции маркировки (`fields.serial.product` / `.designation`), иначе из шаблона `FRX.<проект>.<изделие>.{№}`
+    (`fields.serial.template` или надпись с {№}), иначе «КБ<n>» позиции. Ничего — None: заводской номер не выдаётся."""
+    project = factory_project(task.project)
+    templates = []
+    for operation in (document or {}).get("operations") or []:
+        fields = operation.get("fields") or {}
+        serial = fields.get("serial") if isinstance(fields.get("serial"), dict) else {}
+        for key in ("product", "designation"):
+            if (own := clean_designation(serial.get(key))) is not None:
+                return own
+        templates.append(serial.get("template"))
+        templates.extend(mark.get("text") for mark in fields.get("marks") or () if isinstance(mark, dict))
+    for text in templates:
+        if (own := _template_designation(text, project)) is not None:
+            return own
+    return default_designation(task.item)
+
+
+def _template_designation(text, project):
+    """<изделие> of a label template FRX.<project>.<изделие>.{№}: the project may hold dots, so it is matched against
+    the task's project; the rest up to «.{№}» is the designation."""
+    clean = re.sub(r"\s+", "", str(text or ""))
+    if not project or not clean[:4].upper() == "FRX." or not clean.endswith(".{№}"):
+        return None
+    body = clean[4:-4]
+    for index, char in enumerate(body):
+        if char == "." and factory_project(body[:index]) == project:
+            return clean_designation(body[index + 1:])
+    return None
 
 
 def labels(document, task, serial_range, selected=(), interleave=False):

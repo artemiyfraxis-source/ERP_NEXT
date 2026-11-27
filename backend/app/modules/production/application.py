@@ -63,8 +63,12 @@ from .domain import (
 from .flow import FlowPlan, FlowStep, plan_flow
 from .plan import kit_stage_key
 from .scheduling import ScheduleVariant, schedule_task, schedule_variants, upstream_ids, waited_input
+from .traceability import clean_designation, factory_number
 
 logger = logging.getLogger(__name__)
+
+# 0222: заводские номера изделий выданы при печати этикетки (first/last — номера, count — сколько изделий).
+FACTORY_NUMBERS_ISSUED_EVENT = "production.factory_numbers_issued"
 
 # Владелец 22.10: «запущенное — когда его поставили на кого-то; если поставили и убрали, то оно уже не запущено».
 UNSTARTED_CANCEL_REASON = "Снят последний исполнитель — задание не начато"
@@ -159,6 +163,8 @@ class AppendOnlyRepository(Protocol):
 
 class SerialAllocator(Protocol):
     def ensure_task(self, task_id: UUID, task_number: str, quantity: int) -> bool: ...
+    def stored_ranges(self, task_ids: Sequence[UUID]) -> dict[UUID, tuple[int, int, str]]: ...
+    def assign_factory_numbers(self, task_id: UUID, designation: str, numbers: dict[int, tuple[int, str]]) -> list: ...
 
 
 class UnitOfWork(Protocol):
@@ -1099,7 +1105,7 @@ def _latest_of_item(task: ProductionTask, uow) -> str:
 
 
 def issue_mark_serials(
-    task: ProductionTask, numbered: bool, actor: Actor, now: datetime, uow: UnitOfWork,
+    task: ProductionTask, numbered: bool, actor: Actor, now: datetime, uow: UnitOfWork, designation: str | None = None,
 ) -> tuple[int, int] | None:
     """Номера изделий задания для экрана ЭТК (mark_serial_range; None — задание отменено без работы, номера
     освобождены). ``numbered`` — в ЭТК есть надписи «№ изделия»: тогда номера выданы — их могут напечатать
@@ -1110,18 +1116,54 @@ def issue_mark_serials(
         task = uow.production.get(task.id)
         if task is None:
             raise ProductionValidationError("Задание не найдено")
-        found = issue_mark_serials_in(task, numbered, actor, now, uow)
+        found = issue_mark_serials_in(task, numbered, actor, now, uow, designation)
         uow.commit()
         return found
 
 
-def issue_mark_serials_in(task, numbered, actor, now, uow):
-    """Caller holds the project/task locks; issuance shares its enqueue transaction."""
+def issue_mark_serials_in(task, numbered, actor, now, uow, designation=None, pending=None):
+    """Caller holds the project/task locks; issuance shares its enqueue transaction. ``designation`` — «изделие»
+    заводского номера по ЭТК задания (`serial_designation`): счёт по (проект, изделие) обходит номера других позиций;
+    ``pending`` — номера заданий той же печати (задание → (первый, последний, изделие)), ещё не записанные: две позиции
+    одного изделия в одной партии не получат одних номеров, а предпросмотр совпадёт с печатью."""
     tasks = uow.production.for_project(task.project)
-    found = mark_serial_range(task, tasks, uow.production.mark_events([item.id for item in tasks]))
+    ids = [item.id for item in tasks]
+    stored = uow.serials.stored_ranges(ids)
+    stored.update((task_id, block) for task_id, block in (pending or {}).items() if task_id not in stored)
+    found = mark_serial_range(task, tasks, uow.production.mark_events(ids), stored, designation)
     if found is not None and numbered and task.id not in uow.production.marks_issued([task.id]):
         _audit(task, MARKS_ISSUED_EVENT, actor, now, {"first": found[0], "last": found[1]}, uow)
     return found
+
+
+def allocate_factory_numbers_in(task: ProductionTask, serial_range: tuple[int, int] | None, designation: str | None,
+                                actor: Actor, now: datetime, uow, *, legacy: bool = False) -> list:
+    """Заводские номера изделий задания при печати этикетки с «№ изделия» (владелец 27.11, решение 4): изделию
+    позиции p — k = first + p − 1 и FRX.<проект>.<изделие>.<k>, тот же k, что напечатан вместо {№}; изделие —
+    ``designation`` из ЭТК («КБ<n>» или своё обозначение). Хранятся и не переиспользуются; перепечатка берёт выданные.
+    Нет изделия — номеров нет. ``legacy`` — этикетки задания напечатаны до 0222 (номера считались по позиции): если
+    другая позиция того же изделия уже держит эти номера, задание остаётся без заводских номеров, печать не меняется.
+    Caller holds the project/task locks (as for `issue_mark_serials_in`) and commits with the print."""
+    if serial_range is None or not designation:
+        return []
+    first, last = serial_range
+    numbers = {}
+    for position in range(1, last - first + 2):
+        number = factory_number(task.project, designation, first + position - 1)
+        if number is None:
+            return []
+        numbers[position] = (first + position - 1, number)
+    uow.serials.ensure_task(task.id, task.number, task.quantity)
+    try:
+        issued = uow.serials.assign_factory_numbers(task.id, clean_designation(designation), numbers)
+    except ProductionValidationError:
+        if not legacy:
+            raise
+        return []
+    if issued:
+        _audit(task, FACTORY_NUMBERS_ISSUED_EVENT, actor, now,
+               {"first": issued[0].factory_number, "last": issued[-1].factory_number, "count": len(issued)}, uow)
+    return issued
 
 
 def replace_production_calendar(command: ReplaceProductionCalendarCommand, uow: UnitOfWork) -> None:

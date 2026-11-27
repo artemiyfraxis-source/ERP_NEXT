@@ -14,13 +14,14 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.modules.production.api import production_uow_factory
-from app.modules.production.application import ConcurrentProductionUpdate, issue_mark_serials_in
+from app.modules.production.application import (ConcurrentProductionUpdate, allocate_factory_numbers_in,
+                                                issue_mark_serials_in)
 from app.modules.production.cutting_application import locked_group
 from app.modules.production.domain import ProductionStatus
 from app.modules.production.machine_load import normalized_site
 from app.modules.production.marking_sources import MAX_LABELS, check_materials, labels, manual_labels
-from app.workflows.marking_progress import (fixed_keys, label_size, numbered_keys, printed_counts, remaining_rows,
-                                            same_size, serial_range_of, size_summary, task_progress)
+from app.workflows.marking_progress import (factory_scope, fixed_keys, label_size, numbered_keys, printed_counts,
+                                            remaining_rows, same_size, serial_range_of, size_summary, task_progress)
 from app.modules.references.equipment import INV_KEY
 from app.modules.references.infrastructure import EquipmentMachineRow
 from app.modules.techcards.etk_read import issued_card_for_item, pinned_card
@@ -494,7 +495,7 @@ def source_rows(source, selected, principal, uow, now, interleave=False, remaini
         if (member.id if member else None) != initial_member_id:
             raise ConcurrentProductionUpdate("Состав группы изменился — обновите предпросмотр")
         entries, group_snapshot = [(task, source.operation_id, member)], None
-    rows, snapshots, tasks = [], [], {}
+    rows, snapshots, tasks, designations, pending = [], [], {}, {}, {}
     # One print-queue read for every task of the source (keys carry the task id), not one per task under the locks.
     printed = printed_counts(uow.session, [task.id for task, _operation, _member in entries if task]) if remaining else None
     for task, operation_id, member in entries:
@@ -512,7 +513,10 @@ def source_rows(source, selected, principal, uow, now, interleave=False, remaini
             document, revision = issued_document(task, uow)
         # Calculate (numbered=False only reads); the enqueue issues below through the established semantics in this
         # transaction. The range does not depend on issue events (mark_serial_range), so issuing after the loop is the same.
-        serial = issue_mark_serials_in(task, False, principal.actor, now, uow)
+        designation, legacy = designations[str(task.id)] = factory_scope(task, document, uow)
+        serial = issue_mark_serials_in(task, False, principal.actor, now, uow, None if legacy else designation, pending)
+        if serial and designation and not legacy:
+            pending[task.id] = (*serial, designation)
         expanded = labels(document, task, serial, selected, interleave)
         if remaining:
             expanded = remaining_rows(expanded, printed, fixed_keys(document, task), numbered_keys(document, task, serial))
@@ -535,7 +539,11 @@ def source_rows(source, selected, principal, uow, now, interleave=False, remaini
         raise ValueError("За один раз — не более 500 этикеток")
     if issue:
         for task_id in dict.fromkeys(row["task_id"] for row in rows if row["serial"] is not None):
-            issue_mark_serials_in(tasks[task_id], True, principal.actor, now, uow)
+            designation, legacy = designations[task_id]
+            serial = issue_mark_serials_in(tasks[task_id], True, principal.actor, now, uow, None if legacy else designation,
+                                           pending)
+            # 0222 (владелец 27.11, решение 4): печать выдаёт и хранит заводские номера изделий задания.
+            allocate_factory_numbers_in(tasks[task_id], serial, designation, principal.actor, now, uow, legacy=legacy)
     return rows, {"group": group_snapshot, "tasks": snapshots}
 
 
@@ -797,8 +805,8 @@ def progress(principal: ReadUser, factory: Factory, group_id: UUID | None = None
             rows = []
             for task, operation, document in entries:
                 task_access(task, operation, principal, uow, historical=True)
-                rows.append(task_progress(task, document or issued_document(task, uow, lock=False)[0],
-                                          serial_range_of(task, uow), counts))
+                document = document or issued_document(task, uow, lock=False)[0]
+                rows.append(task_progress(task, document, serial_range_of(task, uow, document), counts))
             # One label size for the whole source, or none: rows on different sizes (or a row mixing them) leave it empty.
             size, differ = size_summary(row["label_size"] for row in rows)
             differ = differ or any(row["sizes_differ"] for row in rows)

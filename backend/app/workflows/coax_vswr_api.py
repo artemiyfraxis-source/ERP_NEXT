@@ -447,6 +447,7 @@ def _sample_result(uow_factory, task, control: Mapping[str, Any]) -> dict[str, A
             item = latest.get(serial.id) if serial is not None else None
             units.append({
                 "position": position, "serial_number": serial.serial_number if serial else None,
+                "factory_number": serial.factory_number if serial else None,
                 "verdict": item.verdict.value if item else None,
                 "verdict_name": VERDICT_NAMES[item.verdict] if item else None,
                 "max_vswr": _num(item.max_vswr) if item else None,
@@ -621,6 +622,7 @@ def task_measurements(
         "required": {"total": len(required), "measured": len(measured.intersection(required))},
         "serials": [{
             "position": position, "serial_id": str(serial.id), "serial_number": serial.serial_number,
+            "factory_number": serial.factory_number,
             "status": serial.status.value, "attempts": attempts.get(serial.id, 0),
             "in_sample": vswr_in_sample(control, position),
             "latest": _measurement_result(latest[serial.id]) if serial.id in latest else None,
@@ -640,6 +642,7 @@ def serial_measurements(
     return {
         "task_id": str(task.id), "position": position,
         "serial_number": serial.serial_number if serial else None,
+        "factory_number": serial.factory_number if serial else None,
         "measurements": [_measurement_result(item) for item in rows],
     }
 
@@ -710,6 +713,7 @@ def serial_passport(
         "product": {
             "task_id": str(task.id), "task_number": task.number, "project": task.project, "item": task.item,
             "name": task.name or etk["product_name"], "serial_number": serial.serial_number if serial else None,
+            "factory_number": serial.factory_number if serial else None,
             "position": position, "status": serial.status.value if serial else None,
             "cable": {"name": cable.get("name"), "loss_db_m": cable.get("lossDbM"), "standard": standard or None},
             "length_m": etk_side.get("lengthM"), "ends": _ends_result(etk_side),

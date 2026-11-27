@@ -1714,7 +1714,8 @@ def inspect_execution_box(
     return {
         "box": _box_result(box), "inspection_id": str(inspection.id),
         "defect_number": inspection.defect_number,
-        "serials": [{"serial_number": item.serial_number, "status": item.status.value} for item in serials],
+        "serials": [{"serial_number": item.serial_number, "factory_number": item.factory_number,
+                     "status": item.status.value} for item in serials],
     }
 
 
@@ -1784,6 +1785,7 @@ def task_serials(
         rows = uow.serials.list_for_task(task.id)
     return {"serials": [{
         "id": str(item.id), "serial_number": item.serial_number,
+        "item_serial": item.item_serial, "factory_number": item.factory_number,
         "position": item.position, "status": item.status.value,
         "current_box_id": str(item.current_box_id) if item.current_box_id else None,
         "finished_goods_grn": item.finished_goods_grn,

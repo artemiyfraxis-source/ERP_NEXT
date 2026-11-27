@@ -279,6 +279,8 @@ _OVER_CHECK: dict[tuple[str, str], Any] = {
     ("tech_operation_records", "ter_kind"): "contact",
     # The last state seen and its time are set together (0211); the CHECK leaves the state empty, so the time too.
     ("production_machine_snapshots", "last_state_at"): None,
+    # 0222: a serial gets its factory number only at label print (all three set together or none).
+    **{("production_serials", name): None for name in ("item_serial", "product_designation", "factory_number")},
     ("warehouse_scan_jobs", "instrument_id"): None,
     # Before 0167 arbitrary statuses were allowed; ACTIVE now needs all evidence despite nullable-date CHECKs.
     ("production_instruments", "status"): "Действует",
