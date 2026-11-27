@@ -40,7 +40,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.13.3'
+$script:AgentVersion = '2.13.4'
 $script:VnaIdnNextProbe = [datetime]::MinValue
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
@@ -3042,10 +3042,17 @@ function Assert-S2Profile {
         $path = "CALCulate(1).PARameter($traceIndex).DEFine"
         if ($Apply) { Set-S2Checked $Scpi $path $parameter } else { Assert-VnaEqual (Invoke-S2Io $Scpi $path) $parameter $path }
         Invoke-S2Io $Scpi "CALCulate(1).PARameter($traceIndex).SELect" call
-        $format = if ($parameter -in @('S11','S22')) { 'SWR' } else { 'MLOG' }
+        $reflection = $parameter -in @('S11','S22')
+        $format = if ($reflection) { 'SWR' } else { 'MLOG' }
         $settings = [ordered]@{ FORMat = $format; 'SMOothing.STATe' = $false; 'MATH.FUNCtion' = 'OFF'
-            'CONVersion.STATe' = $false; 'FILTer.GATE.TIME.STATe' = $false
-            'LIMit.DATA' = @(1,1,$Profile.start_hz,$Profile.stop_hz,$Profile.vswr_limit,$Profile.vswr_limit); 'LIMit.DISPlay.STATe' = $true }
+            'CONVersion.STATe' = $false; 'FILTer.GATE.TIME.STATe' = $false }
+        # 2.13.4 (СИ.002, 27.11): the VSWR line belongs to reflection graphs only — on S21/S12 (dB) it is meaningless and
+        # S2VNA kept the operator's table there; a transmission graph only hides its limit. The table goes over COM as
+        # double[] like the ERP screens write it: an object[] write was not taken by S2VNA 26.2.2.
+        if ($reflection) {
+            $settings['LIMit.DATA'] = [double[]]@(1, 1, $Profile.start_hz, $Profile.stop_hz, $Profile.vswr_limit, $Profile.vswr_limit)
+            $settings['LIMit.DISPlay.STATe'] = $true
+        } else { $settings['LIMit.DISPlay.STATe'] = $false }
         foreach ($tail in $settings.Keys) {
             $path = 'CALCulate(1).SELected.' + $tail
             if ($Apply) { Set-S2Checked $Scpi $path $settings[$tail] } else { Assert-VnaEqual (Invoke-S2Io $Scpi $path) $settings[$tail] $path }
