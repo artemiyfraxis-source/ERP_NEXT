@@ -715,3 +715,15 @@ it("opens a card with Enter and closes only the top stock window with Escape", a
   fireEvent.keyDown(card, { key: "Escape" });
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
+
+it("opens the instrument editor in a modal and lists verification dates without time", async () => {
+  await setup([instrument]);
+  const table = screen.getByRole("heading", { name: "Средства измерений" }).closest(".panel") as HTMLElement;
+  expect(within(table).getByRole("columnheader", { name: /Поверка до/ })).toBeInTheDocument();
+  expect(within(table).getByText("01.01.2027")).toBeInTheDocument();
+  expect(within(table).queryByText(/09:30/)).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  open();
+  expect(screen.getByRole("dialog")).toBeInTheDocument();
+  expect(screen.getByLabelText("Инв. №")).toHaveValue(instrument.inventory_number);
+});
