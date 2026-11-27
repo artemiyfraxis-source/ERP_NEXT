@@ -35,7 +35,7 @@ describe("IntakeShipmentInfo", () => {
     show(base, onShipment);
     const file = screen.getByText("файл не приложен");
     expect(file).toHaveClass("muted");
-    const input = screen.getByLabelText("Файл УПД ОТГ-1") as HTMLInputElement;
+    const input = screen.getByLabelText("Файл УПД PL1") as HTMLInputElement;
     fireEvent.change(input, { target: { files: [new File(["%PDF"], "upd.pdf", { type: "application/pdf" })] } });
     await waitFor(() => expect(onShipment).toHaveBeenCalledWith(expect.objectContaining({ upd_url: "/api/shipping/files/f9", version: 4 })));
     expect(calls[0]).toMatchObject({ url: "/api/shipping/upd-files", method: "POST", body: { shipment_id: "s1", version: 3, file_name: "upd.pdf" } });
@@ -44,8 +44,8 @@ describe("IntakeShipmentInfo", () => {
   it("removing the file is confirmed and goes through the documents save with every value", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     show({ ...base, upd_url: "/api/shipping/files/f1" });
-    expect(screen.getByRole("link", { name: "Открыть файл УПД ОТГ-1" })).toHaveAttribute("href", "/api/shipping/files/f1");
-    fireEvent.click(screen.getByRole("button", { name: "Убрать файл УПД ОТГ-1" }));
+    expect(screen.getByRole("link", { name: "Открыть файл УПД PL1" })).toHaveAttribute("href", "/api/shipping/files/f1");
+    fireEvent.click(screen.getByRole("button", { name: "Убрать файл УПД PL1" }));
     await waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0]).toMatchObject({ url: "/api/shipping/shipments/s1/documents", method: "PUT",
       body: { version: 3, upd_type: "БУМАГА", upd_number: "У-1", upd_date: null, upd_url: "", track_number: "TRK-1" } });
@@ -86,7 +86,7 @@ describe("IntakeShipmentInfo", () => {
     expect(screen.queryByRole("button", { name: "Изменить: Трек-номер" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Изменить: Для перевозчика" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Изменить: № УПД" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Исправить историю ОТГ-1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Исправить историю PL1" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Изменить: Ждём" })).not.toBeInTheDocument();
     expect(screen.getByText("22.11.2026")).toBeInTheDocument();
   });

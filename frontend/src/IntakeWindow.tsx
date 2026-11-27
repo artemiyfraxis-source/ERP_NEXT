@@ -30,10 +30,10 @@ type ServerBeyond = { code?: string; rows?: Array<{ project: string; item_index:
 /** `quantities` — сколько предложить по умолчанию (штуки строки, с которой открыли окно); предел — всё, что можно принять
  *  по КБ. `blank` — поле пустое: «Принять досрочно» (сверх сданного) не подставляет остаток до тиража. */
 export function IntakeWindow({ rows, quantities, blank = false, close, onDone }: {
-  rows: IntakeRow[]; quantities?: Record<string, number>; blank?: boolean; close: () => void; onDone: (pieces: number) => Promise<void> | void;
+  rows: IntakeRow[]; quantities?: Record<string, number | null>; blank?: boolean; close: () => void; onDone: (pieces: number) => Promise<void> | void;
 }) {
   const [qty, setQty] = useState<Record<string, string>>(() => Object.fromEntries(rows.map((row) => [keyOf(row),
-    blank ? "" : quantities?.[keyOf(row)] !== undefined ? String(quantities[keyOf(row)]) : row.remaining])));
+    blank || quantities?.[keyOf(row)] === null ? "" : quantities?.[keyOf(row)] !== undefined ? String(quantities[keyOf(row)]) : row.remaining])));
   const [places, setPlaces] = useState<Record<string, string>>({});
   const [day, setDay] = useState(() => isoDay(new Date()));
   const [problems, setProblems] = useState<Record<string, string>>({});
