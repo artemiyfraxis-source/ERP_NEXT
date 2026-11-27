@@ -54,8 +54,8 @@ def test_real_articles_get_the_full_name(lot) -> None:
 
 
 def test_owner_examples() -> None:
-    assert _name("XT60H-M").name == "Amass XT60H вилка (папа) 2pin"
-    assert _name("XT90S-F").name == "Amass XT90S розетка (мама) 2pin"
+    assert _name("XT60H-M").name == "Amass XT60H вилка (папа)"
+    assert _name("XT90S-F").name == "Amass XT90S розетка (мама)"
     assert _name("XHP-4").name == "XH розетка (мама) 4pin (однорядный)"
     assert _name("SMR-04V-B").name == "SM вилка (папа) 4pin (однорядный)"
     assert _name("SMP-02V-BC").name == "SM розетка (мама) 2pin (однорядный)"
@@ -85,7 +85,7 @@ def test_gender_source_order(article: str, source: str) -> None:
 
 def test_colour_tail_does_not_hide_the_maker_gender_letter() -> None:
     built = _name("XT60EW-M.G.B")
-    assert built.name == "Amass XT60EW вилка (папа) 2pin, G.B"
+    assert built.name == "Amass XT60EW вилка (папа), G.B"
     assert built.source.startswith("MATING")
 
 
