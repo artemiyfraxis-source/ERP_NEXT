@@ -1037,8 +1037,6 @@ def open_session(principal: Person, now: Now, factory: Factory, techcards_factor
             raise ValueError("Профиль Arinst допустим только для Arinst")
         if payload.characterization is not None and payload.assembly is not None:
             raise ValueError("Характеристика мер — отдельный сеанс, без задания КБ")
-        if payload.characterization is not None:
-            _refuse_kit_early()
         with factory() as uow:
             vna = _station(uow, payload.instrument_id)
             stale = _session_row(uow, vna.id if vna else None)
@@ -2298,7 +2296,6 @@ def characterization_band(session_id: UUID, payload: BandInput, principal: Perso
     def action(uow, repository, row):
         _version(row, payload.version)
         characterization = _characterization(row)
-        _refuse_kit_early()
         if row.state != "ready":
             raise Refusal("device_busy", "Дождитесь окончания команды")
         profile = kc.band_profile(payload.band)
@@ -2311,26 +2308,6 @@ def characterization_band(session_id: UUID, payload: BandInput, principal: Perso
     return _act(factory, session_id, principal, now, action)
 
 
-KIT_CALIBRATION_PENDING = ("Характеристику мер SMA-MF06 на сокращённой калибровке (без доверительного теста и LOAD) не "
-                           "снимают: порядок калибровки для неё владелец решает отдельно")
-
-
-KIT_EARLY_REFUSAL = True   # no ERP calibration is "full" now: refuse the session before the operator calibrates (tests switch it off)
-
-
-def _refuse_kit_early():
-    if KIT_EARLY_REFUSAL:
-        raise Refusal("kit_calibration_pending", KIT_CALIBRATION_PENDING)
-
-
-def _full_calibration_for_kit(uow, row):
-    """Owner 27.11: dropping the ACM confidence test and LOAD (26.11) covers measurements, not the SMA-MF06 metrology
-    pass — that is decided separately. Until then a characterization sweep needs a calibration with both."""
-    check = uow.session.get(VnaCheckRow, row.calibration_check_id) if row.calibration_check_id else None
-    if check is None or check.confidence_passed is None:
-        raise Refusal("kit_calibration_pending", KIT_CALIBRATION_PENDING)
-
-
 @router.post(PREFIX + "/sessions/{session_id}/characterization/captures")
 def characterization_capture(session_id: UUID, payload: KitCaptureInput, principal: Person, now: Now, factory: Factory):
     """«Снять»: the piece (or an F–F fixture) is connected as the hint says — read the device, put the screen, sweep."""
@@ -2338,7 +2315,6 @@ def characterization_capture(session_id: UUID, payload: KitCaptureInput, princip
         _version(row, payload.version)
         characterization = _characterization(row)
         _gates(uow, row, now, "kit_characterization")
-        _full_calibration_for_kit(uow, row)
         band = characterization["band"]
         if kc.band_of(row.snapshot["profile"]) != band:
             raise Refusal("profile_changed", "Профиль сеанса не совпадает с сеткой характеристики — откалибруйте заново")
