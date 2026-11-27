@@ -178,9 +178,11 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
   // Tabs by their own keys (ID-3): templates — erptctpl, the rest — erpref, as the two sections were.
   const canTemplates = hasAccess(principal.permissions, "erptctpl");
   const canRefs = hasAccess(principal.permissions, "erpref");
+  // ОТК (`quality`) видит здесь одну вкладку — «Средства измерений» (ОТК-1): реестр СИ ушёл из раздела «ОТК».
+  const canMeasuring = canRefs || hasAccess(principal.permissions, "quality");
   const groups = useMemo(() => GROUPS
-    .map((group) => ({ ...group, tabs: group.tabs.filter((tab) => referenceTabKey(tab.id) === "erptctpl" ? canTemplates : canRefs) }))
-    .filter((group) => group.tabs.length > 0), [canTemplates, canRefs]);
+    .map((group) => ({ ...group, tabs: group.tabs.filter((tab) => referenceTabKey(tab.id) === "erptctpl" ? canTemplates : canRefs || (tab.id === "ob_measuring" && canMeasuring)) }))
+    .filter((group) => group.tabs.length > 0), [canTemplates, canRefs, canMeasuring]);
   const allowed = groups.flatMap((group) => group.tabs.map((tab) => tab.id));
   const [tab, setTab] = useState<DbTab>(() => {
     const raw = initialTab ?? (urlParam("section") === "references" ? urlParam("tab") : "");
@@ -579,7 +581,7 @@ function ReferencesPageBody({ principal, initialTab }: { principal: Principal; i
     <header className="page-head"><h1>База данных</h1>{!stockLog && current && count(current) !== null && <span className="page-count">{count(current)}</span>}
       <div className="page-actions">
         {!stockLog && <ReferenceRoundtrip tab={tab} principal={principal} onApplied={() => { if (techTab) void loadTech(techTab); if (tab === "ob_measuring") setInstrumentRevision((value) => value + 1); if (tab === "cov" || tab === "heat_shrink") { setCoveringRevision((value) => value + 1); setCoveringCounts({}); } if (cables !== null) void loadCables(); referencesApi.maps().then(applyMaps).catch(() => undefined); loadBases(); }} />}
-        <button type="button" className={stockLog ? "secondary small active" : "secondary small"} aria-pressed={stockLog} onClick={() => setStockLog((value) => !value)}>Журнал «Склад → база»</button>
+        {canRefs && <button type="button" className={stockLog ? "secondary small active" : "secondary small"} aria-pressed={stockLog} onClick={() => setStockLog((value) => !value)}>Журнал «Склад → база»</button>}
       </div>
     </header>
     <nav className="db-tabs" aria-label="Вкладки базы данных">

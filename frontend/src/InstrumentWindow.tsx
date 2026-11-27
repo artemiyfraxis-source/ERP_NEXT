@@ -42,7 +42,7 @@ function fileBase64(file: File): Promise<string> {
 }
 
 export function InstrumentWindow({ instrument, kind, parentId, instruments, close, onChanged, onAccessory,
-  source = "production", canEditIdentity = true, canEditCustom = false, customColumns = [], referenceLink,
+  source = "production", canEditIdentity = true, canEditCustom = false, customColumns = [], referenceFields = source === "references",
 }: {
   instrument: ProductionInstrument | null;
   kind: InstrumentKind;
@@ -55,7 +55,8 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
   canEditIdentity?: boolean;
   canEditCustom?: boolean;
   customColumns?: string[];
-  referenceLink?: string;
+  /** Артикул, категория, примечание и история — поля реестра в «Базе данных»; у ОТК-режима `production` они тоже есть. */
+  referenceFields?: boolean;
 }) {
   const [record, setRecord] = useState(instrument);
   const [draft, setDraft] = useState(() => initialDraft(instrument, kind, parentId));
@@ -177,8 +178,7 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
   return <PageWindow label={record ? `Средство измерений: ${record.name}` : `Добавить: ${kind.toLocaleLowerCase("ru")}`} width={1120} close={requestClose}>
     <div className="panel instrument-window" aria-busy={busy}>
       <header className="page-head"><h2>{record ? `${record.inventory_number} · ${record.name}` : `Новое: ${kind.toLocaleLowerCase("ru")}`}</h2>
-        <div className="header-actions">{referenceLink && <a className="secondary small" href={referenceLink}>Открыть в базе данных</a>}
-          {record && source === "references" && canEditIdentity && <a className="secondary small" href={`?section=quality&tab=instruments&si=${encodeURIComponent(record.inventory_number)}`}>Открыть в ОТК</a>}
+        <div className="header-actions">
           {record && source === "production" && <a className="primary small instrument-passport" href={productionApi.instrumentPassportUrl(record.id)}
           target="_blank" rel="noopener noreferrer">Паспорт (PDF)</a>}
           {record && source === "production" && <button type="button" className="secondary small" disabled={busy || rfBusy || dirty || conflict}
@@ -208,7 +208,7 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
               <option value="">Не указана</option><option>S2VNA</option><option>Arinst VL</option>
             </select></label>}
             {text("doc_designation", "Обозначение для документов")}
-            {source === "references" && <>{text("article", "Артикул")}{text("measurement_category", "Категория измерений")}</>}
+            {referenceFields && <>{text("article", "Артикул")}{text("measurement_category", "Категория измерений")}</>}
             <div className="instrument-serial"><label>Зав. №<input name="serial_number" autoComplete="off" value={draft.serial_number} onChange={(event) => field("serial_number", event.target.value)} /></label>
               {record && productionActions && !record.serial_number.trim() && !draft.serial_number.trim() && record.suggested_serial_number && <button type="button" className="secondary small"
                 disabled={busy || rfBusy || dirty || conflict} title={dirty ? "Сначала сохраните изменения" : undefined} onClick={() => void run(async () => {
@@ -234,7 +234,7 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
             </div> : <p className="muted-text">Поверка не подтверждена</p>}
           </section>}
           <section><h3>Хранение</h3><div className="form-grid">{text("storage_location", "Место хранения")}{text("warehouse_grn", "ГРН")}</div></section>
-          {source === "references" && <section><h3>Примечание</h3>{text("notes", "Примечание")}</section>}
+          {referenceFields && <section><h3>Примечание</h3>{text("notes", "Примечание")}</section>}
         </fieldset>
         {customColumns.length > 0 && <section><h3>Дополнительные сведения</h3>
           {!canEditCustom && !canEditIdentity && <p className="warning-inline">Собственные столбцы изменяет сотрудник с правом правки базы данных</p>}
@@ -270,7 +270,7 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
       {record && source === "production" && <InstrumentVnaChecks instrumentId={record.id} refreshKey={rfRevision} />}
       <section className="instrument-files"><h3>Файлы</h3>
         {record ? <>
-          {source === "references" && <p className="muted-text">Документы СИ изменяются в ОТК.</p>}
+          {source === "references" && <p className="muted-text">Документы СИ загружает контролёр ОТК.</p>}
           {productionActions && <div className="instrument-upload"><label>Вид файла<select disabled={busy} value={fileKind} onChange={(event) => setFileKind(event.target.value as InstrumentFileKind)}>{fileKinds.map((value) => <option key={value}>{value}</option>)}</select></label>
             <div><button type="button" className="secondary small" disabled={busy} onClick={() => fileInput.current?.click()}>Загрузить файл…</button>
               <input ref={fileInput} type="file" hidden aria-label="Загрузить файл" disabled={busy} onChange={(event) => {
@@ -297,7 +297,7 @@ export function InstrumentWindow({ instrument, kind, parentId, instruments, clos
           </div>)}
         </> : <p className="muted-text">Сохраните запись, чтобы прикрепить файлы.</p>}
       </section>
-      {record && source === "references" && <section><h3>История</h3>
+      {record && referenceFields && <section><h3>История</h3>
         <button type="button" className="secondary small" disabled={historyLoading} onClick={() => {
           setHistoryLoading(true); setHistoryError("");
           void referencesApi.instrumentHistory(record.id).then(setHistory)

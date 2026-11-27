@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { ACCESS_LEVEL_LABELS, accessLevelLabel, type AccessMode, type Principal } from "./api";
 import {
-  BLOCKS, MOVED_TABS, NAV, canAct, canSee, hasFullAccess, isSection, isViewOnly, manualJobsDestination, procurementMenuTab, runsTheSystem, sectionOfTab,
+  BLOCKS, MOVED_TABS, MOVED_TAB_NAMES, NAV, canAct, canSee, hasFullAccess, isSection, isViewOnly, manualJobsDestination, procurementMenuTab, runsTheSystem, sectionOfTab,
   openUpdCard, visibleBlocks, visibleNav,
 } from "./navigation";
 
@@ -131,7 +131,8 @@ it("gives the foreman the shop, the stock and the storekeeper's shipping, of the
     "Снабжение": ["Оформить заявку", ...READER_MENU],
     "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства"],
     "Менеджмент": ["Производственный план"],
-    "Справочники": ["Закупка"],
+    // ОТК (`quality`) входит в «Базу данных» ради одной вкладки — «Средства измерений» (ОТК-1).
+    "Справочники": ["База данных", "Закупка"],
   });
 });
 
@@ -234,7 +235,10 @@ it("sends an old link of a moved «Лист закупки» tab to its new sect
 
 it("sends the old «ОТК → ВАЦ — рабочее место» link to the analyser card in «Оборудовании», the other ОТК tabs stay", () => {
   expect(sectionOfTab("quality", "vna")).toBe("machines");
-  for (const tab of ["queue", "vswr", "rejects", "instruments", null]) expect(sectionOfTab("quality", tab)).toBe("quality");
+  for (const tab of ["queue", "vswr", "rejects", null]) expect(sectionOfTab("quality", tab)).toBe("quality");
+  // «ОТК → Средства измерения» ушла в «Базу данных · Средства измерений» (ОТК-1): тот же адрес, другая вкладка.
+  expect(sectionOfTab("quality", "instruments")).toBe("references");
+  expect(MOVED_TAB_NAMES.quality.instruments).toBe("ob_measuring");
   // Whoever opened the workplace in ОТК opens «Оборудование» too; it stays theirs to read only.
   // ОТК on edit reads it only: its mode never lifts «только просмотр» (review of #999).
   const machines = NAV.find(({ id }) => id === "machines")!;

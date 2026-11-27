@@ -16,16 +16,17 @@ from app.modules.references.api import references_uow_factory
 from app.modules.references.application import custom_columns
 from app.modules.references.domain import TechOperationTab
 from app.shared.clock import moscow_now
-from app.shared.http_auth import Principal, references_view_principal, require_section
+from app.shared.http_auth import Principal, require_section
 from app.shared.stored_files import file_response
 from app.shared.persistence import AuditEventRow
 
 router = APIRouter(prefix="/api/references/instruments", tags=["references"])
-# A person reaches the card with «Справочник» view and is then sorted by ОТК / «Справочник» edit below; a token edits
-# only with `refs:write` — a read-only `refs:read` token is refused at the gate, not inside the endpoint.
-instrument_edit_principal = require_section(
-    "erpref", "view", detail="Раздел «Справочник» вам не открыт.", scopes=("refs:write",),
-)
+# The registry is a «База данных» tab (ОТК-1): «Справочник» view or ОТК view opens it. A person is then sorted by
+# ОТК edit (passport) / «Справочник» edit (own columns) below; a token edits only with `refs:write` — a read-only
+# `refs:read` token is refused at the gate, not inside the endpoint.
+_DENIED = "Раздел «Справочник» или «ОТК» вам не открыт."
+instrument_view_principal = require_section(("erpref", "quality"), "view", detail=_DENIED, scopes=("refs:read", "refs:write"))
+instrument_edit_principal = require_section(("erpref", "quality"), "view", detail=_DENIED, scopes=("refs:write",))
 
 
 def _result(catalog, item):
@@ -37,7 +38,7 @@ def _result(catalog, item):
 
 @router.get("")
 def instruments(
-    principal: Annotated[Principal, Depends(references_view_principal)],
+    principal: Annotated[Principal, Depends(instrument_view_principal)],
     factory: Annotated[Callable, Depends(references_uow_factory)],
 ):
     with factory() as uow:
@@ -53,7 +54,7 @@ def instruments(
 @router.get("/{record_id}")
 def instrument(
     record_id: UUID,
-    _principal: Annotated[Principal, Depends(references_view_principal)],
+    _principal: Annotated[Principal, Depends(instrument_view_principal)],
     factory: Annotated[Callable, Depends(references_uow_factory)],
 ):
     with factory() as uow:
@@ -100,7 +101,7 @@ def edit_instrument(
 @router.get("/{record_id}/history")
 def history(
     record_id: UUID,
-    _principal: Annotated[Principal, Depends(references_view_principal)],
+    _principal: Annotated[Principal, Depends(instrument_view_principal)],
     factory: Annotated[Callable, Depends(references_uow_factory)],
 ):
     with factory() as uow:
@@ -125,7 +126,7 @@ def history(
 def instrument_file(
     record_id: UUID,
     file_id: UUID,
-    _principal: Annotated[Principal, Depends(references_view_principal)],
+    _principal: Annotated[Principal, Depends(instrument_view_principal)],
     factory: Annotated[Callable, Depends(references_uow_factory)],
 ):
     with factory() as uow:
