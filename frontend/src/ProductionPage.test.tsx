@@ -1142,7 +1142,7 @@ function viewAsFetch(requested: string[]) {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
     requested.push(path);
-    if (path.startsWith("/api/production/my/execution")) return json({ session: null, boxes: path.includes("operator_id") ? [returned] : [] });
+    if (path.startsWith("/api/production/my/execution")) return json({ session: null, boxes: path.includes("operator_id") ? [returned, { ...returned, id: "74000000-0000-0000-0000-000000000010", number: "000010-6", status: "Израсходована" }] : [] });
     if (path.startsWith("/api/production/my")) return json({ tasks: path.includes("operator_id") ? [task] : [] });
     if (path === "/api/production/operators") return json({ viewer_site: "ЦАР", operators: [
       { id: fitterId, name: "Оператор", site: "ЦАР" }, { id: "x2", name: "Жуковский", site: "ЖУК" },
@@ -1167,16 +1167,37 @@ it("lets a planner view a fitter's queue read-only", async () => {
   expect(screen.queryByText("Ещё не сдавали")).not.toBeInTheDocument();
   expect(requested).toContain(`/api/production/my?operator_id=${fitterId}`);
   expect(screen.getByText("000009-6")).toBeInTheDocument();
+  // Только коробки, которым нужно действие оператора: израсходованные в панели не показываются.
+  expect(screen.queryByText("000010-6")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Начать" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Исправить" })).not.toBeInTheDocument();
   // Заголовки не говорят «Мои», пока смотрим чужое; кнопка возвращает к своим заданиям.
   expect(screen.getByRole("heading", { level: 1, name: "Задания" })).toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: "Коробки: Оператор" })).toBeInTheDocument();
-  expect(screen.queryByText("Мои коробки")).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Коробки на исправление: Оператор" })).toBeInTheDocument();
+  expect(screen.queryByText("Коробки на исправление")).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Вернуться к моим заданиям" }));
   await waitFor(() => expect(screen.queryByText("Вид сотрудника Оператор — только просмотр")).not.toBeInTheDocument());
   expect(select).toHaveValue("");
   expect(screen.getByRole("heading", { level: 1, name: "Мои задания" })).toBeInTheDocument();
+});
+
+it("renders no boxes panel when the operator has nothing to correct", async () => {
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === "/api/production/my") return json({ tasks: [task] });
+    if (path === "/api/production/my/execution") return json({ session: null, boxes: [{
+      id: "74000000-0000-0000-0000-000000000011", number: "000011-6", version: 1, task_id: task.id, operation_id: task.operations[0].id,
+      item: task.item, operation_position: 2, operator_id: "x", quantity: "10", consumed: "10", reserved: "0", rejected: "0",
+      available: "0", status: "Израсходована", created_at: "2026-09-22T09:00:00+03:00", closed_at: null, closed_by: null,
+      confirmed_at: null, confirmed_by: null, return_reason: null,
+    }] });
+    throw new Error(`Unexpected request: ${path}`);
+  });
+  const { container } = render(<ProductionPage principal={{ ...principal, roles: ["operator"], access_level: "operator", permissions: { myops: "edit" } }} mine />);
+  await screen.findByRole("heading", { level: 1, name: "Мои задания" });
+  await waitFor(() => expect(container.querySelector(".execution-current, .mo-s")).toBeInTheDocument());
+  expect(container.querySelector(".execution-boxes")).not.toBeInTheDocument();
+  expect(screen.queryByText("000011-6")).not.toBeInTheDocument();
 });
 
 it("tells a planner with the selector to pick an employee when their own view is empty", async () => {
