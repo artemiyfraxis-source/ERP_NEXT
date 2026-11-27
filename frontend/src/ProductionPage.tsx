@@ -996,7 +996,7 @@ function SubmitWorkForm({ session, operation, busy, mutate, onBehalfOf = "", onS
 }
 
 // Начатая работа, которой нет в очереди (задание отменили или оно за пределом списка): управление здесь, чтобы её
-// можно было сдать или отменить. Коробки сотрудника — всегда здесь.
+// можно было сдать или отменить. Коробки на исправление — тоже здесь.
 function OperatorExecution({ execution, tasks, busy, mutate, readOnly = false, ownerName = "", onBehalfOf = "", onSubmitted, onCorrected }: {
   execution: { session: ProductionWorkSession | null; boxes: ProductionBox[] };
   tasks: ProductionTask[];
@@ -1014,6 +1014,7 @@ function OperatorExecution({ execution, tasks, busy, mutate, readOnly = false, o
   const task = session ? tasks.find((item) => item.id === session.task_id) : null;
   const operation = task?.operations.find((item) => item.id === session?.operation_id);
   const work = { onBehalfOf };
+  const returnedBoxes = execution.boxes.filter((box) => box.status === "Возвращена");
   return <>
     {session && !session.cutting_group_id && !queued && <div className="panel execution-current">
       <div className="manual-stock-head"><div><h2>Идёт работа{operation?.stage ? `: ${operation.stage}` : ""}</h2><small>{task?.number ?? "Задание"}{operation ? ` · этап ${operation.position}` : ""}{task ? ` · ${taskItemLabel(task)}` : ""} · с {formatMoment(session.started_at)}{session.pause_seconds ? ` · пауз ${Math.round(session.pause_seconds / 60)} мин` : ""}</small></div><StatusChip status={session.status} /></div>
@@ -1023,9 +1024,9 @@ function OperatorExecution({ execution, tasks, busy, mutate, readOnly = false, o
         <SubmitWorkForm session={session} operation={operation} busy={busy} mutate={mutate} onBehalfOf={onBehalfOf} onSubmitted={onSubmitted} />
       </div>}
     </div>}
-    {execution.boxes.length > 0 && <div className="panel execution-boxes">
-      <h2>{ownerName ? `Коробки: ${ownerName}` : "Мои коробки"}</h2>
-      <div className="box-grid">{execution.boxes.map((box) => <div className="production-box" key={`${box.id}:${box.version}`}>
+    {returnedBoxes.length > 0 && <div className="panel execution-boxes">
+      <h2>{ownerName ? `Коробки на исправление: ${ownerName}` : "Коробки на исправление"}</h2>
+      <div className="box-grid">{returnedBoxes.map((box) => <div className="production-box" key={`${box.id}:${box.version}`}>
         <BoxName box={box} />
         <span>{box.item} · этап {box.operation_position}</span>
         <span>{box.quantity} шт · доступно {box.available}</span>
