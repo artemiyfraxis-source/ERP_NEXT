@@ -58,6 +58,12 @@ def test_builds_all_current_supplymap_kits_with_cards_results_and_times():
         assert all(item["result"] and item["time"] for item in document["operations"])
         missing = sum(item["card"] is None for item in document["operations"])
         assert len(document["warnings"]) == missing
+        # The splice of 708К.2 / 708К.5 hands on no countable quantity in its saved config: reported on the operation,
+        # not defaulted (the document warnings stay equal to «Ручная сборка», which hands the batch on).
+        unresolved = [item["code"] for item in document["operations"]
+                      if any("количество результата не определено" in text for text in item.get("warnings", []))]
+        assert unresolved == {"708К.2-КБ1": ["US_WELD"], "708К.5-КБ1": ["SDR_W_W"]}.get(name, [])
+        assert document["output_version"] == 1
 
 
 def test_720_etk_keeps_supplymap_codes_material_norms_times_and_final_product():
@@ -293,7 +299,9 @@ def test_a_former_side_template_id_resolves_by_the_operation_code_and_the_side_i
         ("ins-terminal-2-54-6-3-монтаж-терминалов", "INS_terminal_2,54-6,3 | Монтаж терминалов (А)"),
         ("ins-terminal-2-54-6-3-монтаж-терминалов", "INS_terminal_2,54-6,3 | Монтаж терминалов (В)"),
     ]
-    assert all(item["card"] for item in mounts) and not legacy["warnings"]
+    # Only the missing time norms of this hand-made config are reported (no tOp on the mountings).
+    assert all(item["card"] for item in mounts) and legacy["warnings"] == [
+        "Операция 2 (INS_terminal_2,54-6,3): не задана норма времени", "Операция 3 (INS_terminal_2,54-6,3): не задана норма времени"]
     assert legacy["operations"] == current["operations"]
     # an unknown id whose code has no template stays unresolved, as before
     config["ops"][1].update(templateId="gone-a", opNum="NO_SUCH_CODE")
@@ -1049,3 +1057,245 @@ def test_test_cut_step_gets_the_cut_tolerance_when_saved_template_stores_dash(st
     explicit = OperationCardTemplate(**{**card.__dict__, "steps": (OperationCardStep("1", "Контроль", "тестовый рез", "±1 мм"),)})
     assert _resolve_card(explicit, {}, {"cutTolerance": "±3 мм"})["steps"][0]["tolerance"] == "±1 мм"
     assert _resolve_card(card, {}, {})["steps"][0]["tolerance"] == ""
+
+
+# ── ETK audit 23.11, slice 1: separate physical outputs, achieved state and unknown timing ──
+
+FRESH = json.loads((ROOT.parent / "frontend/src/__fixtures__/fakra1116Configs.json").read_text(encoding="utf-8"))
+ALL_CARDS = {card.code: card for card in [*CARDS, *parse_operation_library(ERP_LIBRARY["templates"])]}
+
+
+def _fresh_cards(config: dict) -> list[OperationCardTemplate]:
+    return [replace(ALL_CARDS.get(op["templateId"], ALL_CARDS["CUT_TUT_short"]), source_id=op["templateId"], code=op["templateId"])
+            for op in config["ops"]]
+
+
+def _fakra(cables: int | None = None) -> dict:
+    config = deepcopy(FRESH[0]["config"])
+    if cables:
+        config["coax"]["cables"] = cables
+    return build_etk(config, _fresh_cards(config))
+
+
+def _op(document: dict, key: str) -> dict:
+    return next(op for op in document["operations"] if op.get("opKey") == key)
+
+
+def _attrs(row: dict) -> dict[str, str]:
+    return {item["label"]: item["value"] for item in row["attrs"]}
+
+
+def _hfm_config(**op_times) -> dict:
+    """An HFM side А of four cables (708К КБ7 shape, built by hand from the generator recipe): 60 individual cables
+    of 15 assemblies get their contacts in metal bodies, then go 4 → 1 into the QUAD housing."""
+    ops = [
+        {"type": "coaxCut", "opKey": "coaxFakraCutStrip", "templateId": "CUT_WIRE_auto", "units": 4, "stripSides": ["A"]},
+        {"type": "coaxSupportCrimp", "side": "A", "opKey": "coaxSupportCrimpA", "templateId": "PRS_HFM_SUPPORT", "units": 4},
+        {"type": "coaxPinCrimp", "side": "A", "opKey": "coaxPinCrimpA", "templateId": "PRS_HFM_PIN", "units": 4},
+        {"type": "coaxHousing", "side": "A", "opKey": "coaxInsertA", "templateId": "INS_HFM_CONTACT", "units": 4},
+        {"type": "coaxShield", "side": "A", "opKey": "coaxShieldA", "templateId": "PRS_HFM_SHIELD", "units": 4},
+        {"type": "coaxHousing", "side": "A", "opKey": "coaxBodyA", "templateId": "INS_HFM_HOUSING"},
+        {"type": "coaxHeat", "opKey": "coaxHeat", "templateId": "HEAT_TYT_short", "units": 3},
+    ]
+    for op in ops:
+        op["tOp"] = op_times.get(op["opKey"], "6")
+    return {"mode": "coax", "partQty": 15, "assemblyName": "Кабельная сборка 122666/AA", "coax": {
+        "cableArt": "RTK 031", "cableLength": 1250, "cables": 4,
+        "sideA": {"article": "HFM-Female Z", "connName": "HFM-Female (тип Z)", "kind": "hfm", "channels": 4},
+        "sideB": {"article": "HFM-Female Z", "connName": "HFM-Female (тип Z)", "kind": "hfm", "channels": 4},
+    }, "ops": ops}
+
+
+def test_hfm_quad_assembly_has_its_own_identity_and_keeps_sixty_to_fifteen():
+    config = _hfm_config()
+    document = build_etk(config, _fresh_cards(config))
+    insert, shield, body = (_op(document, key) for key in ("coaxInsertA", "coaxShieldA", "coaxBodyA"))
+    assert insert["result"][0]["norm"] == shield["result"][0]["norm"] == "60"
+    assert body["semis"][0]["norm"] == "60" and body["result"][0]["norm"] == "15"
+    # Individual cables with contacts in metal bodies are not the four-channel assembly.
+    assert "с контактом в металлическом корпусе" in insert["result"][0]["name"]
+    assert insert["output"]["title"] == "Коаксиальная заготовка с контактом в корпусе, сторона А"
+    assert body["result"][0]["name"].startswith("Четырёхканальная кабельная сборка HFM: корпус")
+    assert body["output"]["title"] == "Четырёхканальная кабельная сборка HFM"
+    assert _attrs(body["output"])["Каналов в сборке"] == "4"
+    assert _attrs(body["output"])["Сторона А: корпус"] == "контакты в корпусе QUAD"
+    assert body["semis"][0]["name"] == shield["result"][0]["name"]  # the input row keeps the legacy name
+
+
+def test_fakra_sides_and_cap_state_are_separate_attributes_not_a_name_chain():
+    document = _fakra()
+    side_a = _op(document, "coaxSealCapA")
+    row = side_a["output"]
+    assert ";" in side_a["result"][0]["name"]  # the legacy name stays for old readers
+    assert "title" not in side_a["result"][0]
+    assert row["title"] == "Кабельная сборка с разъёмом А"
+    attrs = _attrs(row)
+    assert attrs["Кабель"] and attrs["Длина заготовки, мм"] == _format_length(FRESH[0]["config"])
+    assert attrs["Сторона А: разъём"].startswith("FAKRA") and attrs["Сторона А: корпус"] == "установлен"
+    assert attrs["Сторона А: крышка"] == "завёрнута"
+    assert "Сторона В: разъём" not in attrs
+    side_b = _op(document, "coaxBodyB")["output"]
+    assert side_b["title"] == "Кабельная сборка с разъёмами А и В"
+    assert _attrs(side_b)["Сторона В: крышка"] == "обжата"
+    final = document["operations"][-1]
+    assert final["output"]["title"] == final["result"][0]["name"] == FRESH[0]["config"]["assemblyName"]
+    for operation in document["operations"]:
+        for item in [*operation["result"], operation.get("output") or {}]:
+            if "title" in item:
+                assert ";" not in item["title"] and all(";" not in attr["value"] for attr in item["attrs"])
+
+
+def _format_length(config: dict) -> str:
+    length = config["coax"]["cableLength"]
+    return str(int(length)) if float(length).is_integer() else str(length).replace(".", ",")
+
+
+@pytest.mark.parametrize("cables,ends,middle", [(None, "30", "15"), (4, "120", "60")])
+def test_protective_tube_cut_is_one_result_row_per_length(cables, ends, middle):
+    cut = _op(_fakra(cables), "coaxProtectCut")
+    assert [(row["norm"], _attrs(row)["Длина отрезка, мм"], _attrs(row)["Назначение"]) for row in cut["result"]] == [
+        (ends, "35", "концевые"), (middle, "55", "центральные")]
+    assert all(row["title"] == "Отрезок защитной трубки" for row in cut["result"])
+    per_item = [_attrs(row)["На изделие, шт."] for row in cut["result"]]
+    assert per_item == (["2", "1"] if cables is None else ["8", "4"])
+
+
+def test_wire_tube_cut_rows_carry_length_and_per_item_apart_from_batch():
+    built = build_etk({"partQty": 60, "assemblyName": "Жгут", "wires": [{"name": "Провод", "qty": 1, "length": 750}], "ops": [
+        {"type": "cutTut", "opKey": "cutTut", "tutArt": "ТУТ 6/3мм, черная", "tutCount": 3,
+         "tutSegs": [{"len": "40", "count": 1}, {"len": "25", "count": 2}], "tOp": "3"},
+    ]}, CARDS)
+    [cut] = built["operations"]
+    assert [(row["name"], row["norm"]) for row in cut["result"]] == [("ТУТ 6/3мм, черная — 40 мм", "60"), ("ТУТ 6/3мм, черная — 25 мм", "120")]
+    assert [_attrs(row)["На изделие, шт."] for row in cut["result"]] == ["1", "2"]
+    # The chain (and route) name of the cut stays as it was.
+    tube = {"type": "cutTut", "tutArt": "ТУТ 6/3мм, черная", "tutSegs": [{"len": "40", "count": 1}, {"len": "25", "count": 2}]}
+    assert _result_name(tube, {}, "", [tube]) ==         "Трубка ТУТ 6/3мм, черная нарезана: 1 шт по 40 мм; 2 шт по 25 мм"
+
+
+MARKS = [{"text": "XS1", "target": "X1", "name": "Хлястик", "qty": 2}, {"text": "XS2", "target": "X2", "name": "Хлястик", "qty": 2}]
+
+
+def _flag_config() -> dict:
+    return {"partQty": 14, "assemblyName": "Жгут подключения", "wires": [{"name": "ПВАМ 0,35 красный", "qty": 1, "length": 230}], "ops": [
+        {"type": "cutWire", "opKey": "cutWire", "tOp": "5"},
+        {"type": "insMark", "opKey": "printMarks", "markPhase": "print", "marks": MARKS, "tOp": "3"},
+        {"type": "insMark", "opKey": "insMark", "markPhase": "install", "marks": MARKS, "tOp": "3"},
+    ]}
+
+
+def test_flag_printing_hands_over_loose_printed_marks_not_marked_wires():
+    cut, printed, installed = build_etk(_flag_config(), CARDS)["operations"]
+    assert [(row["name"], row["norm"]) for row in printed["result"]] == [("«XS1»", "28"), ("«XS2»", "28")]
+    assert all(row["title"] == "Напечатанная метка" for row in printed["result"])
+    assert _attrs(printed["result"][0]) == {"Надпись": "XS1", "Материал": "Хлястик", "Назначение": "X1", "На изделие, шт.": "2"}
+    assert not any("маркировка нанесена" in row["name"] for row in printed["result"])
+    # Printing takes no wires; installation takes the cut wires and exactly the printed marks — same rows, same batch.
+    assert printed["semis"] == []
+    assert installed["semis"][0]["name"].startswith("Провода нарезаны")
+    assert [(row["name"], row["norm"], row["unit"]) for row in installed["semis"][1:]] == [
+        (row["name"], row["norm"], row["unit"]) for row in printed["result"]] == [("«XS1»", "28", "Шт."), ("«XS2»", "28", "Шт.")]
+    assert [row["norm"] for row in installed["time"]] == ["2,8"]  # 3 s × (2 + 2) marks × 14 / 60
+    assert installed["output"]["title"] == "Жгут подключения"
+    assert _attrs(installed["output"]) == {"Состояние": "маркировка нанесена"}
+
+
+def test_marking_installation_with_a_printer_card_is_a_visible_conflict():
+    config = _flag_config()
+    config["ops"][2]["templateId"] = "PRINT_MARK_TUBE"
+    cards = [*CARDS, replace(ALL_CARDS["PRINT_MARK_TUBE"], source_id="PRINT_MARK_TUBE")]
+    document = build_etk(config, cards)
+    installed = document["operations"][2]
+    assert installed["code"] == "PRINT_MARK_TUBE"
+    assert any("шаблон печати PRINT_MARK_TUBE выбран для монтажа меток" in text for text in installed["warnings"])
+    assert any(text.startswith("Операция 3 (PRINT_MARK_TUBE): шаблон печати") for text in document["warnings"])
+    # The printing phase with the printer card is consistent.
+    assert "warnings" not in document["operations"][1] or not any("шаблон печати" in text for text in document["operations"][1]["warnings"])
+
+
+def test_side_operation_without_wires_reports_unresolved_input_instead_of_zero_wires():
+    built = build_etk({"partQty": 10, "assemblyName": "Кабель", "wires": [{"name": "Провод", "qty": 1, "length": 100}], "ops": [
+        {"type": "prsTerm", "opKey": "prsA", "side": "A", "wires": [], "tOp": "4",
+         "ep": {"termArt": "SSHL-002T-P0.2", "connArt": "SHR-02V"}},
+        {"type": "insTerm", "opKey": "insA", "side": "A", "wires": [], "tOp": "4",
+         "ep": {"termArt": "SSHL-002T-P0.2", "connArt": "SHR-02V"}},
+    ]}, CARDS)
+    crimp, mount = built["operations"]
+    assert "0 проводов" not in mount["semis"][0]["name"]
+    assert mount["semis"][0]["name"] == "Сторона А: обжаты терминалы SSHL-002T-P0.2" and mount["semis"][0]["norm"] == ""
+    assert [row["norm"] for row in crimp["result"]] == [""]  # unknown stays unknown; the final product keeps its batch
+    assert any("не заданы провода" in text for text in crimp["warnings"])
+    assert any("не заданы провода" in text for text in mount["warnings"])
+    # No card here: the operation is named by its type, never «Операция 2 ()».
+    assert [text for text in built["warnings"] if "не заданы провода" in text] == [
+        "Операция 1 (prsTerm): не заданы провода — количество результата не определено; укажите провода стороны в генераторе",
+        "Операция 2 (insTerm): не заданы провода — количество результата не определено; укажите провода стороны в генераторе"]
+
+
+def test_operation_with_its_wires_has_no_input_warning():
+    built = build_etk({"partQty": 10, "assemblyName": "Кабель", "wires": [{"name": "Провод", "qty": 1, "length": 100}], "ops": [
+        {"type": "cutWire", "opKey": "cutWire", "tOp": "4"},
+        {"type": "prsTerm", "opKey": "prsA", "side": "A", "tOp": "4", "ep": {"termArt": "SSHL-002T-P0.2"}},
+    ]}, CARDS)
+    assert all("warnings" not in op for op in built["operations"])
+
+
+@pytest.mark.parametrize("seconds,norm", [(None, ""), ("", ""), ("abc", ""), ("0", "0"), ("6", "6")])
+def test_coax_and_wire_times_keep_a_missing_norm_unknown(seconds, norm):
+    config = _hfm_config(coaxInsertA=seconds)
+    document = build_etk(config, _fresh_cards(config))
+    insert = _op(document, "coaxInsertA")
+    assert insert["time"][0]["norm"] == norm  # 6 s × 4 cables × 15 / 60 = 6 min
+    assert any("Операция 4 (INS_HFM_CONTACT): не задана норма времени" in text for text in document["warnings"]) == (norm == "")
+    assert _op(document, "coaxShieldA")["time"][0]["norm"] == "6"
+
+
+@pytest.mark.parametrize("seconds,norm", [(None, ""), ("", ""), ("0", "0"), ("12", "2")])
+def test_wire_cut_without_a_norm_is_unknown_not_one_minute_per_wire(seconds, norm):
+    built = build_etk({"partQty": 10, "assemblyName": "Кабель", "wires": [{"name": "Провод", "qty": 1, "length": 100}], "ops": [
+        {"type": "cutWire", "opKey": "cutWire", "tOp": seconds}]}, CARDS)
+    assert built["operations"][0]["time"][0]["norm"] == norm
+
+
+def test_line_timing_still_counts_without_an_operation_norm():
+    built = build_etk({"partQty": 10, "assemblyName": "Кабель", "wires": [{"name": "Провод", "qty": 1, "length": 1000}], "ops": [
+        {"type": "cutWire", "opKey": "cutWire", "linearTiming": {"rollSpeed": "1", "takeSeconds": "0"}}]}, CARDS)
+    assert built["operations"][0]["time"][0]["norm"] == "0,17"  # 1 m at 1 m/s × 10 pieces = 10 s
+
+
+def test_a_two_length_harness_tube_cut_hands_its_own_rows_to_the_operation_that_puts_them_on():
+    built = build_etk({"partQty": 5, "assemblyName": "Кабель", "wires": [{"name": "Провод", "qty": 1, "length": 500}], "ops": [
+        {"type": "cutWire", "opKey": "cutWire", "tOp": "4"},
+        {"type": "cutTut", "opKey": "cutTut", "tutArt": "ТУТ 6/3мм, черная", "tutCount": 3,
+         "tutSegs": [{"len": "40", "count": 1}, {"len": "25", "count": 2}], "tOp": "3"},
+        {"type": "insTut", "opKey": "insTut", "tutCount": 3, "tOp": "3"},
+    ]}, CARDS)
+    cut, put_on = built["operations"][1:]
+    expected = [{"name": "ТУТ 6/3мм, черная — 40 мм", "norm": "5", "unit": "Шт."}, {"name": "ТУТ 6/3мм, черная — 25 мм", "norm": "10", "unit": "Шт."}]
+    assert [{key: row[key] for key in ("name", "norm", "unit")} for row in cut["result"]] == expected
+    assert put_on["semis"][1:] == expected  # input rows == the previous output rows, 15 pieces on both sides
+
+
+def test_flag_printing_aside_keeps_the_wire_set_quantity_of_the_following_marker_tube_ops():
+    """Prod dry-run 26.11 (Orange Pi harness, 708К.5 КБ1 shape): with the flag print out of the chain the marker-tube
+    print took the cut wires with no quantity and putting the marker tubes on took wires × batch (14 → 280). Both take
+    one wire set per harness, as before (14); the tubes come in as the cut's own rows (28 ТТК + 560 marker pieces)."""
+    wires = [{"idx": 0, "name": "ПВАМ 0,35 красный", "qty": 1, "length": 230}, {"idx": 1, "name": "ПВАМ 0,35 черный", "qty": 1, "length": 90}]
+    built = build_etk({"partQty": 14, "assemblyName": "Жгут подключения", "wires": wires, "ops": [
+        {"type": "cutWireStrip", "opKey": "cutWire", "tOp": "5"},
+        {"type": "cutTut", "opKey": "cutTubes", "tutArt": "ТТК 3/1мм, черная", "tutCount": 2, "tutSegs": [{"len": "20", "count": 2}], "tOp": "1"},
+        {"type": "insMark", "opKey": "printMarks", "markPhase": "print", "marks": MARKS, "tOp": "4"},
+        {"type": "cutTut", "opKey": "cutWireMark", "tutArt": "ТУТ 2/1 белая", "tutCount": 40, "tutSegs": [{"len": "15", "count": 40}],
+         "markTube": True, "wireMarks": True, "markTexts": ["X1 to X2", "X2 to X1"], "tOp": "4"},
+        {"type": "insTut", "opKey": "onWireMark", "tutCount": 40, "markTube": True, "wireMarks": True, "tOp": "3"},
+        {"type": "heatTut", "opKey": "heatWireMark", "tutCount": 40, "markTube": True, "wireMarks": True, "tOp": "9"},
+    ]}, CARDS)
+    cut, tubes, printed, mark_print, mark_on, mark_heat = built["operations"]
+    plain = lambda rows: [(row["name"], row["norm"]) for row in rows]  # noqa: E731
+    wire_set = "Провода нарезаны: ПВАМ 0,35 красный — 1 шт по 230 мм; ПВАМ 0,35 черный — 1 шт по 90 мм"
+    assert printed["semis"] == []
+    assert plain(mark_print["semis"]) == [(wire_set, "14")]
+    # The tube inputs are exactly what the two cuts handed over (28 ТТК pieces, 560 printed marker pieces).
+    assert plain(mark_on["semis"]) == [(wire_set, "14"), *plain(tubes["result"]), *plain(mark_print["result"])]
+    assert [norm for _, norm in plain(mark_on["semis"])] == ["14", "28", "560"]
+    assert plain(mark_heat["semis"]) == [("Провода нарезаны: ПВАМ 0,35 красный — 1 шт по 230 мм; ПВАМ 0,35 черный — 1 шт по 90 мм; маркировка надета", "14")]

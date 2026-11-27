@@ -20,9 +20,11 @@ from .autoplan_api import _techcards, _units, references_uow_factory
 from .autoplan_application import card_key
 from .dispatch import local, localize
 from .domain import ProductionStatus, ProductionTask, WorkShift
+from .launchable import unknown_time_warning
 from .equipment_catalog import EquipmentCatalog, load_catalog
 from .machine_load import (
     MachineStep,
+    unknown_time_steps,
     Occupancy,
     conflict_text,
     conflicts,
@@ -82,13 +84,15 @@ def _snapshot(
     warnings: list[str] = []
     for task in sorted(tasks, key=lambda item: item.number):
         card = cards.get(card_key(task.project, task.item))
-        own, task_warnings = task_steps(task, card.document if card is not None else None, units)
+        own, task_warnings = task_steps(task, card.document_for(task) if card is not None else None, units)
         steps.update(own)
         occupancies.extend(task_occupancies(task, own, holidays, shift))
         if any(operation.shares for operation in task.operations):
             warnings.extend(task_warnings)
     for machine in sorted({item.code for item in occupancies if item.machine not in units}):
         warnings.append(f"Станок {machine} не найден в БД.ОБ — считаю, что он один")
+    if unknown := unknown_time_steps(steps):
+        warnings.append(unknown_time_warning(unknown, "на станках учтены"))
     return _Snapshot(
         {task.id: task for task in tasks}, steps, tuple(occupancies), units, names, operator_sites, site_units, site_labels, holidays, shift,
         tuple(dict.fromkeys(warnings)),
@@ -147,6 +151,7 @@ def load(
         "machines": [row_payload(row) for row in rows],
         "sites": [{"site": site, "machines": [row_payload(row) for row in local_rows]} for site, local_rows in sites.items()],
         "warnings": list(snapshot.warnings),
+        "unknown_time": unknown_time_steps(snapshot.steps),
     }
 
 

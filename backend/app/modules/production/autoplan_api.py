@@ -95,8 +95,24 @@ def _techcards(factory: Callable[[], TechcardsUnitOfWork] | None, closed: frozen
     result: dict[tuple[str, str], CardSnapshot] = {}
     rows.sort(key=lambda item: (item.issued_at or item.updated_at, item.updated_at, str(item.id)))
     for card in rows:
-        result[card_key(card.project, card.item_index)] = CardSnapshot(card.id, card.version, card.document)
+        result[card_key(card.project, card.item_index)] = CardSnapshot(
+            card.id, card.version, card.document, card.revision, _older_revisions(factory, card.id),
+        )
     return result, ready_cards(rows, kitsets, closed)
+
+
+def _older_revisions(factory: Callable[[], TechcardsUnitOfWork], card_id: UUID) -> Callable[[int], Any]:
+    """Документ закреплённой ревизии ЭТК (по требованию, с кэшем): задание планируется по той ЭТК, с которой запущено."""
+    cache: dict[int, Any] = {}
+
+    def load(revision: int):
+        if revision not in cache:
+            with factory() as techcards:
+                row = next((item for item in techcards.techcards.revisions(card_id) if item.revision == revision), None)
+            cache[revision] = row.document if row is not None and row.document else None
+        return cache[revision]
+
+    return load
 
 
 def _units(factory: Callable[[], Any] | None) -> EquipmentCatalog:

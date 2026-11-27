@@ -591,6 +591,18 @@ Describe 'ВАЦ v2: рабочее место' {
         $script:ioValues['CALCulate(1).trace5.FORMat'] = 'MLOG'
         ($null -eq (Invoke-BenchOp device_status).screen_hash) | Should Be $true
     }
+    It 'калибровка и развёртка на S2VNA без наклона мощности по портам (СИ.002, 26.2.2)' {
+        # PORT(n).LEVel has only IMMediate there: the slope reads as null and cannot be written (26.11).
+        foreach ($port in 1,2) {
+            $script:ioValues["SOURce(1).POWer.PORT($port).LEVel.SLOPe"] = $null
+            $script:ioValues["SOURce(1).POWer.PORT($port).LEVel.SLOPe.STATe"] = $null
+        }
+        Initialize-BenchCalibrated
+        [void](Invoke-BenchOp apply_screen @{ screen = (New-BenchScreen); screen_hash = $script:benchHash })
+        $result = Invoke-BenchOp capture $script:captureArgs
+        $result.screen_hash | Should Be $script:benchHash
+        @(Get-BenchSets '*SLOPe*').Count | Should Be 0
+    }
     It 'capture v2: свежая развёртка, данные по трассам экрана, температуры и эхо отпечатка' {
         Initialize-BenchCalibrated
         [void](Invoke-BenchOp apply_screen @{ screen = (New-BenchScreen); screen_hash = $script:benchHash }); $script:ioLog.Clear()

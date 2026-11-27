@@ -1,6 +1,8 @@
 """«ВАЦ — рабочее место» end to end: the S5 screen's API against a stub protocol-v2 agent (S3 + S4)."""
 
 import base64
+from pathlib import Path
+import re
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -17,7 +19,7 @@ from app.modules.production.rf_infrastructure import RfRepository
 from app.modules.production.rf_interfaces import RfDetails, RfInterface
 from app.modules.production.vna_check_infrastructure import VnaCheckRow
 from app.modules.production.vna_checks import KitStandard, kit_response
-from app.modules.production.vna_session_infrastructure import VnaBenchItemRow, VnaSessionRow
+from app.modules.production.vna_session_infrastructure import VnaBenchItemRow, VnaCommandRow, VnaSessionRow
 from app.modules.warehouse.devices import DeviceRow, VnaBindingRow, VnaControlRow
 from app.modules.warehouse.scan_agents import ScanAgentRow
 from app.shared.http_auth import Principal, authenticated_principal
@@ -63,6 +65,19 @@ def grid(profile):
 
 def gamma(vswr):
     return complex((vswr - 1) / (vswr + 1), 0)
+
+
+AGENT_PS1 = Path(__file__).parents[3] / "tools" / "print-agent" / "agent.ps1"
+
+
+def agent_lease_rule() -> tuple[set[str], set[str]]:
+    """The real agent's Assert-VnaLease, read from agent.ps1: states it refuses every command in, and the only ops it
+    still runs while `aborting`. The stub applies it, so a server flow the agent would refuse cannot pass here."""
+    body = re.search(r"function Assert-VnaLease \{(.*?)\n\}", AGENT_PS1.read_text(encoding="utf-8"), re.S).group(1)
+    names = lambda text: set(re.findall(r"'([a-z_]+)'", text))  # noqa: E731
+    refused = re.search(r"\$Status\.state -in @\(([^)]*)\)", body).group(1)
+    aborting = re.search(r"\$Status\.state -eq 'aborting' -and \$Command\.op -notin @\(([^)]*)\)", body).group(1)
+    return names(refused), names(aborting)
 
 
 class Agent:
@@ -146,6 +161,15 @@ class Agent:
         assert response.status_code == 200, response.text
         return response.json()["job"]
 
+    def assert_lease(self, command):
+        """What the agent checks before touching the device (Assert-VnaLease): the session status it reads back."""
+        response = TestClient(app).get(f"/api/stock/vna/sessions/{command['session_id']}",
+                                       headers={**self.env["agent"], "X-Agent-Machine-Id": "pc-1"})
+        assert response.status_code == 200, response.text
+        status, (refused, aborting_ops) = response.json(), agent_lease_rule()
+        assert status["lease_held"] and status["state"] not in refused, (command["op"], status["state"])
+        assert status["state"] != "aborting" or command["op"] in aborting_ops, (command["op"], status["state"])
+
     def send(self, command, payload=None):
         return TestClient(app).post(f"/api/stock/vna/commands/{command['id']}/result", json=payload or self.answer(command),
                                     headers={**self.env["agent"], "X-Agent-Machine-Id": "pc-1"})
@@ -157,6 +181,7 @@ class Agent:
             if command is None:
                 return
             assert command["protocol_version"] == 2
+            self.assert_lease(command)
             response = self.send(command)
             assert response.status_code == 200, response.text
         pytest.fail("Агент не дождался паузы")
@@ -732,6 +757,101 @@ def test_abort_returns_the_device_and_frees_the_lease(env):
     assert state(env)["session"] is None
     with env["sessions"]() as session:
         assert session.scalar(select(VnaSessionRow.state)) == "aborted"
+    assert post(env, "/sessions")["session"]["status"] == "open"
+
+
+def _stuck(env, view, operator_id=None):
+    with env["sessions"]() as session:
+        row = session.get(VnaSessionRow, UUID(view["session"]["id"]))
+        row.state, row.error = "recovery_required", "Ответ ВАЦ потерян; требуется остановка и восстановление"
+        if operator_id is not None:
+            row.operator_id = operator_id
+        session.commit()
+    return state(env)
+
+
+def _events(env, event_type):
+    with env["sessions"]() as db:
+        return db.scalar(select(func.count()).select_from(AuditEventRow).where(AuditEventRow.event_type == event_type))
+
+
+def test_a_failing_restore_is_closed_without_restoring_by_an_admin(env):
+    """26.11 СИ.002: restore failed its readback, the session fell back to recovery_required and «Восстановить»
+    would loop. The admin closes it without loading the backup; the agent releases the VNA, the bench is free."""
+    view = _stuck(env, calibrate(env))
+    assert view["session"]["can_release_unrestored"] is True
+    env["stub"].errors["restore"] = "ВАЦ: проверка чтением не совпала: восстановленное состояние и назначения набора"
+    post(env, session_path(view, "/abort"), {"version": view["session"]["version"]})
+    env["stub"].drive()
+    view = state(env)
+    assert view["session"]["state"] == "recovery_required" and "проверка чтением" in view["session"]["error"]
+    post(env, session_path(view, "/release-unrestored"), {"version": view["session"]["version"]})
+    with env["sessions"]() as session:
+        command = session.scalars(select(VnaCommandRow).where(VnaCommandRow.status == "pending")).one()
+        assert (command.op, command.args["screen_hash"]) == ("release", None)
+    # Until the agent takes it (offline PC), the card shows the queued closing — not a silent dead end.
+    view = state(env)
+    assert view["session"]["state"] == "releasing" and view["session"]["command"]["label"] == "закрытие сеанса"
+    assert view["session"]["command"]["state"] == "queued"
+    env["stub"].drive()   # the stub refuses, like the agent, anything Assert-VnaLease would refuse
+    assert state(env)["session"] is None
+    with env["sessions"]() as session:
+        assert session.scalar(select(VnaSessionRow.state)) == "aborted"
+    assert _events(env, "production.vna_bench_closed_unrestored") == 1
+    assert post(env, "/sessions")["session"]["status"] == "open"
+
+
+def test_the_lease_rule_is_read_from_the_agent():
+    refused, aborting_ops = agent_lease_rule()
+    assert {"aborted", "recorded", "failed", "recovery_required"} <= refused and aborting_ops == {"abort", "restore"}
+
+
+def test_only_an_admin_closes_without_restoring_and_only_a_stuck_session(env, monkeypatch):
+    view = calibrate(env)
+    refused = post(env, session_path(view, "/release-unrestored"), {"version": view["session"]["version"]}, expect=409)
+    assert refused["detail"]["code"] == "stale"
+    view = _stuck(env, view)
+    with monkeypatch.context() as patch:
+        patch.setitem(app.dependency_overrides, authenticated_principal, lambda: Principal(
+            actor=Actor(id=uuid4(), name="Контролёр", department="ОТК"), email="qc@example.test",
+            roles=frozenset({"qc"}), permissions={"quality": "edit"}))
+        # Someone else's session is invisible to a controller: neither recovery nor the escape.
+        for tail in ("/abort", "/release-unrestored"):
+            assert env["admin"].post(URL + session_path(view, tail), json={"version": view["session"]["version"]},
+                                     headers=_csrf(env["admin"])).status_code == 404
+    assert _events(env, "production.vna_bench_closed_unrestored") == 0
+
+
+def test_an_admin_recovers_someone_elses_stuck_session_once(env):
+    """The opener is away: an administrator recovers the session (journaled); a double click is refused as stale."""
+    view = _stuck(env, calibrate(env), operator_id=uuid4())
+    assert view["session"]["owned"] is False and view["session"]["can_recover"] is True
+    version = view["session"]["version"]
+    post(env, session_path(view, "/abort"), {"version": version})
+    refused = post(env, session_path(view, "/abort"), {"version": version}, expect=409)
+    assert refused["detail"]["code"] == "stale"
+    assert _events(env, "production.vna_bench_session_stopped_by_admin") == 1
+    env["stub"].drive()
+    assert state(env)["session"] is None
+
+
+def test_a_lost_device_answer_is_recovered_from_the_card(env):
+    """24.11: a session stuck in recovery_required had no command, so the card offered no way out."""
+    view = calibrate(env)
+    with env["sessions"]() as session:
+        row = session.get(VnaSessionRow, UUID(view["session"]["id"]))
+        row.state, row.error = "recovery_required", "Ответ ВАЦ потерян; требуется остановка и восстановление"
+        session.commit()
+    view = state(env)
+    assert view["session"]["state"] == "recovery_required" and view["session"]["command"] is None
+    # Any other action — and a new session — names the way out instead of a generic «занят».
+    refused = post(env, session_path(view, "/steps/calibration"), {"version": view["session"]["version"]}, expect=409)
+    assert refused["detail"]["code"] == "recovery_required" and "Восстановить" in refused["detail"]["message"]
+    refused = post(env, "/sessions", expect=409)
+    assert refused["detail"]["code"] == "recovery_required"
+    post(env, session_path(view, "/abort"), {"version": view["session"]["version"]})
+    env["stub"].drive()
+    assert state(env)["session"] is None
     assert post(env, "/sessions")["session"]["status"] == "open"
 
 

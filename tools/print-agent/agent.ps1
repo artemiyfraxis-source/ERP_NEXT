@@ -40,7 +40,7 @@ try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::
 
 $script:LogMaxBytes = 1MB
 # Версия агента: сервер читает эту строку из файла и сравнивает с тем, что агент сообщил (поднять число при каждом изменении).
-$script:AgentVersion = '2.13.2'
+$script:AgentVersion = '2.13.3'
 $script:VnaIdnNextProbe = [datetime]::MinValue
 $script:TaskName = 'Fraxis — печать этикеток'
 $script:HeartbeatEverySec = 120
@@ -3003,6 +3003,15 @@ function Get-S2ProfileWrites {
     $writes['CALCulate(1).FSIMulator.STATe'] = $false
     return $writes
 }
+function Test-S2Slope {
+    param($Scpi, [string]$Path)
+    # 2.12.2: S2VNA 26.2.2 at СИ.002 has no per-port power slope — SOURce(1).POWer.PORT(n).LEVel exposes only IMMediate;
+    # reading the path gives null, writing threw «The property 'STATe' cannot be found» and failed every apply_profile.
+    # The slope write/check runs only where the instrument has it; no other missing property is tolerated.
+    $parent = $Path.Substring(0, $Path.LastIndexOf('.'))
+    try { $node = Invoke-S2Io $Scpi $parent } catch { return $false }
+    return $null -ne $node -and @($node | Get-Member -Name 'STATe' -ErrorAction SilentlyContinue).Count -gt 0
+}
 function Assert-S2Profile {
     param($Scpi, $Profile, [switch]$Apply)
     if ($Profile.sweep -cne 'LIN' -or $Profile.impedance_ohm -ne 50 -or $Profile.averaging -ne $false -or
@@ -3024,6 +3033,7 @@ function Assert-S2Profile {
     }
     $writes = Get-S2ProfileWrites $Profile
     foreach ($path in $writes.Keys) {
+        if ($path -like '*.LEVel.SLOPe.STATe' -and -not (Test-S2Slope $Scpi $path)) { continue }
         if ($Apply) { Set-S2Checked $Scpi $path $writes[$path] }
         else { Assert-VnaEqual (Invoke-S2Io $Scpi $path) $writes[$path] $path }
     }
@@ -3554,6 +3564,7 @@ function Assert-S2BenchReady {
     $writes = Get-S2ProfileWrites $Owner.profile
     $writes.Remove('CALCulate(1).PARameter(1).COUNt')
     foreach ($path in @($writes.Keys)) {
+        if ($path -like '*.LEVel.SLOPe.STATe' -and -not (Test-S2Slope $Scpi $path)) { continue }   # 2.12.2: no per-port slope
         $actual = Invoke-S2Io $Scpi $path
         $same = $true
         try { Assert-VnaEqual $actual $writes[$path] $path } catch { $same = $false }
@@ -4080,6 +4091,9 @@ function Invoke-S2Command {
             Invoke-S2Io $scpi 'MMEMory.LOAD.STATe' set $owner.state_path
             # CDST contains the measurement/calibration; restore the store mode changed to create it.
             Set-S2Checked $scpi 'MMEMory.STORe.STYPe' $owner.original.values.'MMEMory.STORe.STYPe'
+            # 2.12.1: the state file does not carry the sweep trigger; restore stopped it above (26.11 СИ.002 readback failure).
+            Set-S2Checked $scpi 'TRIGger.SEQuence.SOURce' $owner.original.values.'TRIGger.SEQuence.SOURce'
+            Set-S2Checked $scpi 'INITiate(1).CONTinuous' $owner.original.values.'INITiate(1).CONTinuous'
             Assert-VnaEqual (Get-S2State $scpi) $owner.original 'восстановленное состояние и назначения набора'
             $verifyKitPath = $owner.kit_path + '.verify'
             Invoke-S2KitFile $scpi STORe ([int]$owner.slot) $verifyKitPath

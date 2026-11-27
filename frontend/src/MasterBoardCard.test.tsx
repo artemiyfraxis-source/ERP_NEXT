@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { KitsetKbStage, KitsetTile, ProductionOperation, ProductionTask } from "./api";
 import { forgetOpenProject, MasterBoard } from "./MasterBoard";
-import { boardCard, type BoardCardInput } from "./MasterBoardCard";
+import { boardCard, projectClosed, type BoardCardInput } from "./MasterBoardCard";
 
 // Владелец 29.10: «пересмотреть формат карточек — инфы много, она разная, ООО такое маленькое».
 const NOW = new Date("2026-10-29T12:00:00");
@@ -154,5 +154,47 @@ describe("доска мастера: карточки проектов", () => {
     fireEvent.click(within(screen.getByRole("dialog", { name: "Проект CALM" })).getByRole("button", { name: /Закрыть/ }));
     fireEvent.click(screen.getByRole("checkbox", { name: "только нераспределённые" }));
     expect(order()).toEqual(["TODO"]);
+  });
+});
+
+describe("отгруженный проект на доске (26.11)", () => {
+  const shippedTile = tile("713К.4", { status: "Отгружено", kb_stages: [kb("КБ1", { status: "Отгружено" }), kb("КБ2", { status: "Отменён" })] });
+
+  it("закрыт, когда этап проекта или все КБ — «Отгружено» и дальше", () => {
+    expect(projectClosed(shippedTile, STAGES)).toBe(true);
+    expect(projectClosed(tile("713К.4", { status: "В работе", kb_stages: [kb("КБ1", { status: "Отгружено" }), kb("КБ2")] }), STAGES)).toBe(false);
+    expect(projectClosed(tile("713К.4", { status: "Отгружено", kb_stages: [] }), STAGES)).toBe(true);
+    expect(projectClosed(undefined, STAGES)).toBe(false);
+  });
+
+  it("у отгруженного проекта нет фактов про ТК и набор, а остаток работы назван прямо", () => {
+    const model = boardCard(input({
+      tile: { ...shippedTile, tc_ready: false, kit_picked: false, kb_stages: [kb("КБ1", { status: "Отгружено", review: null, kit: false })] },
+      closedOpen: 3,
+    }));
+    expect(model.problems.map((line) => line.text)).toEqual(["отгружен, осталось 3 незакрытых операций — закройте или снимите"]);
+    expect(model.rank).toBe(0);
+  });
+});
+
+describe("доска мастера: отгруженные проекты", () => {
+  beforeEach(() => { vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ["Date"] }); vi.setSystemTime(NOW); });
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); forgetOpenProject(); });
+
+  it("без живой работы отгруженного проекта нет ни в списке, ни в счётчиках «Сегодня»; с живой — карточка с причиной", async () => {
+    const shipped = (project: string) => tile(project, { status: "Отгружено", kb_stages: [kb("КБ1", { status: "Отгружено" })] });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ items: [shipped("TAIL"), shipped("LIVE"), tile("WORK")], statuses: STAGES }), { status: 200, headers: { "Content-Type": "application/json" } })));
+    const tasks = [
+      task("1", "TAIL", [op("a1", { operator_ids: [] }), op("a2", { position: 2, operator_ids: [] })]),
+      task("2", "LIVE", [op("b1", { operator_ids: ["p1"] }), op("b2", { position: 2, operator_ids: [] })]),
+      task("3", "WORK", [op("c1", { operator_ids: [] })]),
+    ];
+    render(<MasterBoard tasks={tasks} operators={[]} skills={[]} absences={[]} canEdit={false} busy="" mutate={async () => {}} openTask={() => {}} projectDeadlines={{}} />);
+    await waitFor(() => expect(screen.getByText("LIVE").closest(".mb-card")?.textContent).toMatch(/отгружен, осталось 1 незакрытых операций — закройте или снимите/));
+    expect(Array.from(document.querySelectorAll(".mb-card .mb-card-no")).map((node) => node.textContent).sort()).toEqual(["LIVE", "WORK"]);
+    expect(screen.queryByText("TAIL")).toBeNull();
+    // Хвост TAIL (операции без исполнителя в отгруженном проекте) в «Сегодня» и «без исполнителя» не считается.
+    expect(screen.getByRole("group", { name: "Сегодня" }).textContent).toContain("не начато, план истёк: 0");
+    expect(document.querySelector(".mb-projects .mb-head .mb-count")?.textContent).toBe("без исполнителя: 2");
   });
 });
