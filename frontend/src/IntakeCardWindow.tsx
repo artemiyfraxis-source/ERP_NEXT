@@ -5,7 +5,7 @@ import { PageWindow } from "./PageWindow";
 import { StatusChip } from "./StatusChip";
 import { needsTrack } from "./carriers";
 import { formatDay, formatNumber, NBSP } from "./format";
-import { updGapAction, type ActionId, type BoardCard, type CardAction } from "./intakeBoard";
+import { firstGapField, updGapAction, type ActionId, type BoardCard, type CardAction } from "./intakeBoard";
 import { handedOf, leftOf } from "./IntakeWindow";
 import { num, packable, permittedPack } from "./intakeStages";
 import type { ActShare } from "./dispatchPositionRows";
@@ -20,10 +20,13 @@ import { leaveUnsaved } from "./EditSection";
 
 const dash = <span className="muted">—</span>;
 const UPD_WORDS = ["тип УПД", "№ УПД", "файл УПД", "разрешение на отгрузку без УПД"];
-/** Что в окне открыть сразу: поле, у которого стоит карандаш. */
-export type FocusField = "upd" | "upd_number" | "upd_file" | "track";
-export const FOCUS_OF: Partial<Record<ActionId, FocusField>> = { "enter-upd": "upd", "enter-upd-number": "upd_number", "enter-upd-file": "upd_file", "enter-track": "track" };
-const FIELD_LABEL: Record<Exclude<FocusField, "upd_file">, string> = { upd: "УПД", upd_number: "№ УПД", track: "Трек" };
+/** Что в окне открыть сразу: подпись поля, у которого стоит карандаш, или «file» — выбор файла УПД. */
+export type FocusField = string;
+export const FOCUS_OF: Partial<Record<ActionId, FocusField>> = { "enter-upd": "УПД", "enter-upd-number": "№ УПД", "enter-upd-file": "file", "enter-track": "Трек" };
+/** Куда ведёт главная кнопка карточки в окне: «Заполнить данные…» — на первое пустое поле. */
+export function focusOf(action: CardAction, shipment: DispatchShipment | undefined): FocusField | null {
+  return FOCUS_OF[action.id] ?? (action.id === "fill" && shipment ? firstGapField(shipment) : null);
+}
 
 export interface WindowRights { canEdit: boolean; canHistory: boolean; canWarehouse: boolean; canRollback: boolean }
 
@@ -34,9 +37,13 @@ function Step({ index, title, done, value, button }: { index: number; title: str
   </li>;
 }
 
-export function IntakeCardWindow({ card, rights, focus, busy, docLink, shares, onAction, onShipment, onHistory, onConflict, onDelivery, onRollback, onPrintLabel, close }: {
+export function IntakeCardWindow({ card, rights, focus, busy, docLink, shares, piecesReady, onAccept, onAction, onShipment, onHistory, onConflict, onDelivery, onRollback, onPrintLabel, close }: {
   card: BoardCard; rights: WindowRights; focus: FocusField | null; busy: boolean;
   docLink: (shipment: DispatchShipment, document: "pl" | "dn") => ReactNode;
+  /** Сколько сдал цех по КБ и ещё не принято. */
+  piecesReady: (kb: IntakeRow) => number;
+  /** «Принять выбранные»: только отмеченные КБ. */
+  onAccept: (kbs: IntakeRow[]) => void;
   /** Остаток КБ на складе по актам приёмки. */
   shares: (kb: IntakeRow) => ActShare[];
   onAction: (card: BoardCard, action: CardAction) => void;
@@ -51,11 +58,14 @@ export function IntakeCardWindow({ card, rights, focus, busy, docLink, shares, o
   const box = useRef<HTMLDivElement>(null);
   const shipment = card.shipment;
   const [positionsOpen, setPositionsOpen] = useState(true);
+  const takeable = card.column === "production" && card.group === "production" && rights.canWarehouse ? card.kbs.filter((kb) => piecesReady(kb) > 0 || num(kb.remaining) > 0) : [];
+  const [chosen, setChosen] = useState<ReadonlySet<string>>(() => new Set(takeable.filter((kb) => piecesReady(kb) > 0).map((kb) => kb.item_index)));
+  const toggle = (index: string) => setChosen((current) => { const next = new Set(current); if (!next.delete(index)) next.add(index); return next; });
   const title = shipment ? shipmentTitle(shipment) : `${card.project}${card.customer ? ` · ${card.customer}` : ""}`;
   const pencilOf = (label: string) => box.current?.querySelector<HTMLElement>(`[data-label="${label}"] .inline-field-pencil`);
   const focusField = (field: FocusField) => {
-    if (field === "upd_file") box.current?.querySelector<HTMLElement>('button[aria-label^="Загрузить файл УПД"], button[aria-label^="Заменить файл УПД"]')?.click();
-    else pencilOf(FIELD_LABEL[field])?.click();
+    if (field === "file") box.current?.querySelector<HTMLElement>('button[aria-label^="Загрузить файл УПД"], button[aria-label^="Заменить файл УПД"]')?.click();
+    else pencilOf(field)?.click();
   };
   useEffect(() => { if (focus) focusField(focus); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const guardedClose = () => { if (leaveUnsaved(shipment?.id)) close(); };
@@ -65,7 +75,7 @@ export function IntakeCardWindow({ card, rights, focus, busy, docLink, shares, o
     <div className="board-window-actions">
       {shipment && <StatusChip status={shipment.status} />}
       {card.action && <button type="button" className={card.action.disabled ? "secondary small" : "primary small"} disabled={card.action.disabled || busy}
-        title={card.action.note} onClick={() => { const field = FOCUS_OF[card.action!.id]; if (field && shipment) focusField(field); else onAction(card, card.action!); }}>{card.action.label}</button>}
+        title={card.action.note} onClick={() => { const field = focusOf(card.action!, shipment); if (field && shipment) focusField(field); else onAction(card, card.action!); }}>{card.action.label}</button>}
       <button type="button" className="secondary small" onClick={guardedClose}>Закрыть</button>
     </div>
   </header>;
@@ -78,11 +88,11 @@ export function IntakeCardWindow({ card, rights, focus, busy, docLink, shares, o
     return <PageWindow label={`Карточка ${title}`} close={guardedClose} width={1280}><div ref={box}><section className="panel intake-window board-window">
       {head}{status}
       <div className="board-table-wrap"><table className="board-table">
-        <thead><tr><th>КБ</th><th>Наименование</th>{production
+        <thead><tr>{takeable.length > 0 && <th aria-label="Принять"></th>}<th>КБ</th><th>Наименование</th>{production
           ? <><th className="num">Заказано</th><th className="num">Запущено</th><th className="num">Сдано цехом</th><th className="num">Принято</th><th className="num">Остаток</th><th>Задания</th></>
           : <><th>ГРН</th><th>Качество</th><th>Принято</th><th className="num">На складе</th><th className="num">Можно упаковать</th><th>Разрешение</th></>}</tr></thead>
         <tbody>{card.kbs.map((kb) => production
-          ? <tr key={kb.item_index}><td>{kb.item_index}</td><td>{kb.name}</td><td className="num">{formatNumber(num(kb.needed))}</td><td className="num">{num(kb.launched) > 0 ? formatNumber(num(kb.launched)) : dash}</td>
+          ? <tr key={kb.item_index}>{takeable.length > 0 && <td>{takeable.includes(kb) ? <input type="checkbox" aria-label={`Принять ${kb.item_index}`} checked={chosen.has(kb.item_index)} onChange={() => toggle(kb.item_index)} /> : null}</td>}<td>{kb.item_index}</td><td>{kb.name}</td><td className="num">{formatNumber(num(kb.needed))}</td><td className="num">{num(kb.launched) > 0 ? formatNumber(num(kb.launched)) : dash}</td>
             <td className="num">{handedOf(kb) > 0 ? formatNumber(handedOf(kb)) : dash}</td><td className="num">{num(kb.accepted) > 0 ? formatNumber(num(kb.accepted)) : dash}</td>
             <td className="num">{leftOf(kb) > 0 ? formatNumber(leftOf(kb)) : dash}</td>
             <td className="muted" title={kb.tasks.map((task) => `${task.number} · сдано ${task.delivered} из ${task.quantity}`).join("\n")}>{kb.tasks.map((task) => task.number).join(", ") || "—"}</td></tr>
@@ -98,6 +108,8 @@ export function IntakeCardWindow({ card, rights, focus, busy, docLink, shares, o
             <td>{index === 0 ? (permittedPack(kb) > 0 || (kb as IntakeRow & { pack_auto_allowed?: boolean }).pack_auto_allowed
               ? <span className="tone-ok">{(kb as IntakeRow & { pack_auto_allowed?: boolean }).pack_auto_allowed ? "не нужно: весь заказ принят" : "разрешено"}</span> : <span className="tone-warn">нужно разрешение</span>) : ""}</td></tr>))}</tbody>
       </table></div>
+      {takeable.length > 0 && <p className="board-window-links"><button type="button" className="primary small" disabled={chosen.size === 0 || busy}
+        onClick={() => onAccept(takeable.filter((kb) => chosen.has(kb.item_index)))}>Принять выбранные ({chosen.size} КБ)</button></p>}
       {rights.canEdit && <p className="board-window-links"><button type="button" className="link-button" onClick={() => onDelivery(card)}>Доставка КБ…</button></p>}
     </section></div></PageWindow>;
   }
@@ -117,12 +129,12 @@ export function IntakeCardWindow({ card, rights, focus, busy, docLink, shares, o
         button={active ? <button type="button" className="secondary small" disabled={busy} onClick={() => onAction(card, { id: "make-pl", label: "Сформировать PL" })}>Сформировать PL</button> : undefined} />
       <Step index={2} title="DN" done={Boolean(shipment.dn_number)} value={docLink(shipment, "dn")}
         button={active && shipment.pl_number ? <button type="button" className="secondary small" disabled={busy} onClick={() => onAction(card, { id: "make-dn", label: "Сформировать DN" })}>Сформировать DN</button>
-          : <span className="muted">после PL</span>} />
+          : <span className="muted">{shipment.pl_number ? "не сформирован" : "после PL"}</span>} />
       <Step index={3} title="УПД" done={!updMissing} value={shipment.upd_type === "БЕЗ УПД" ? "без УПД, разрешено" : [shipment.upd_type, shipment.upd_number && `№ ${shipment.upd_number}`].filter(Boolean).join(" ") || "внесён"}
-        button={rights.canEdit ? <button type="button" className="secondary small" onClick={() => focusField(updAction?.id === "enter-upd-number" ? "upd_number" : updAction?.id === "enter-upd-file" ? "upd_file" : "upd")}>{updAction?.label ?? "Внести УПД…"}</button> : undefined} />
+        button={rights.canEdit ? <button type="button" className="secondary small" onClick={() => focusField(updAction?.id === "enter-upd-number" ? "№ УПД" : updAction?.id === "enter-upd-file" ? "file" : "УПД")}>{updAction?.label ?? "Внести УПД…"}</button> : undefined} />
       <Step index={4} title="Трек" done={!trackNeeded || Boolean(track)} value={trackNeeded ? track : "не нужен"}
-        button={rights.canEdit && (shipment.ready_for_track ?? false) ? <button type="button" className="secondary small" onClick={() => focusField("track")}>Вписать трек…</button>
-          : <span className="muted">после УПД и ТК</span>} />
+        button={rights.canEdit && (shipment.ready_for_track || shipment.status === "Отгружена") ? <button type="button" className="secondary small" onClick={() => focusField("Трек")}>Вписать трек…</button>
+          : <span className="muted">{["Отгружена", "Закрыта"].includes(shipment.status) ? "не внесён" : "после УПД и ТК"}</span>} />
     </ol>
     <div className="board-positions">
       <button type="button" className="intake-fold" aria-expanded={positionsOpen} onClick={() => setPositionsOpen(!positionsOpen)}>

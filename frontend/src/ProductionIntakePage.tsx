@@ -5,9 +5,9 @@ import { ItemDeliveryWindow } from "./ProjectData";
 import { formatNumber, NBSP, plural } from "./format";
 import { actShares } from "./dispatchPositionRows";
 import { dispatchBoard, kbKey, num, permittedPack, round2 } from "./intakeStages";
-import { acceptPlan, buildBoard, type BoardCard, type CardAction, type ColumnId } from "./intakeBoard";
+import { acceptable, acceptPlan, buildBoard, type BoardCard, type CardAction, type ColumnId } from "./intakeBoard";
 import { IntakeBoard, type MenuItem } from "./IntakeBoardView";
-import { FOCUS_OF, IntakeCardWindow, type FocusField } from "./IntakeCardWindow";
+import { focusOf, IntakeCardWindow, type FocusField } from "./IntakeCardWindow";
 import { canAct, canSee, hasFullAccess, urlParam } from "./navigation";
 import { deliveryGroups, intakeApi, type DispatchShipment, type IntakeAct, type IntakeRow as ApiIntakeRow } from "./productionIntakeApi";
 import { IntakeWindow, RollbackActWindow } from "./IntakeWindow";
@@ -63,7 +63,9 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   const [accepting, setAccepting] = useState<ReturnType<typeof acceptPlan> | null>(null);
   const [rollingBack, setRollingBack] = useState<RollingBack | null>(null);
   const [opened, setOpened] = useState<Opened | null>(null);
-  const [card, setCard] = useState<{ id: string; focus: FocusField | null } | null>(linked.current.get("shipment") ? { id: `s:${linked.current.get("shipment")}`, focus: null } : null);
+  // `?tab=journal` открывает только «Журнал»; `?shipment=` — окно отправки, а если её нет на доске (старше 30 дней, отменена) — «Журнал».
+  const linkedShipment = useRef(linked.current.get("tab") === "journal" ? null : linked.current.get("shipment"));
+  const [card, setCard] = useState<{ id: string; focus: FocusField | null } | null>(linkedShipment.current ? { id: `s:${linkedShipment.current}`, focus: null } : null);
   const [header, setHeader] = useState<"journal" | "good" | "request" | null>(linked.current.get("tab") === "journal" ? "journal" : null);
   const [label, setLabel] = useState<{ grn: string; result: PrintResult | null; error: string; busy: boolean } | null>(null);
   const [projectData, setProjectData] = useState<string | null>(null);
@@ -102,6 +104,11 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     [rows, shipments, addressees, canManage, canWarehouse, canDispatch]);
   const head = useMemo(() => Object.fromEntries(board.rows.map((row) => [row.project, row] as const).reverse()), [board]);
   const open = card ? cards.find((item) => item.id === card.id) ?? null : null;
+  useEffect(() => {
+    if (!loaded || !linkedShipment.current) return;
+    linkedShipment.current = null;
+    if (!open) { setCard(null); setHeader("journal"); }
+  }, [loaded]); // eslint-disable-line react-hooks/exhaustive-deps
   const projectRows = (project: string) => rows.filter((row) => row.project === project);
   const projectShips = (project: string) => shipments.filter((shipment) => shipment.lines.some((line) => line.project.trim().toUpperCase() === project.trim().toUpperCase()));
   const piecesReady = (kb: ApiIntakeRow) => board.pieces.get(kbKey(kb))?.ready ?? 0;
@@ -195,6 +202,11 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     return shippedCount > 0;
   }
 
+  /** Окно приёмки только для переданных КБ: у сданных цехом — их штуки, у остальных поле пустое. */
+  function acceptKbs(kbs: ApiIntakeRow[]) {
+    const plan = acceptPlan(kbs, piecesReady);
+    if (plan.rows.length) setAccepting(plan as typeof plan & { rows: IntakeRow[] });
+  }
   const openCard = (target: BoardCard, focus: FocusField | null = null) => setCard({ id: target.id, focus });
   /** Главная кнопка карточки: те же запросы и проверки, что у прежних кнопок строк и отправок. */
   function act(target: BoardCard, action: CardAction) {
@@ -202,8 +214,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     const title = shipment ? shipmentTitle(shipment) : target.project;
     switch (action.id) {
       case "accept": {
-        const plan = acceptPlan(target, piecesReady);
-        if (plan.rows.length) setAccepting(plan);
+        acceptKbs(acceptable(target, piecesReady));
         return;
       }
       case "pack": setOpened({ kind: "pack", project: target.project }); return;
@@ -211,7 +222,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       case "make-pl": if (shipment) void mutate(`pl:${shipment.id}`, () => shippingApi.issueDocument(shipment.id, shipment.version, "pl"), `PL сформирован: ${title}`); return;
       case "make-dn": if (shipment) void mutate(`dn:${shipment.id}`, () => shippingApi.issueDocument(shipment.id, shipment.version, "dn"), `DN сформирован: ${title}`); return;
       case "ship": if (shipment) void shipShipments([shipment]); return;
-      default: openCard(target, FOCUS_OF[action.id] ?? null);
+      default: openCard(target, focusOf(action, shipment));
     }
   }
   const menuOf = (target: BoardCard): MenuItem[] => {
@@ -221,14 +232,15 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     if (shipment) {
       if (canDispatch && ["Новая", "Собрана", "Упакована"].includes(shipment.status)) items.push({ label: shipment.status === "Упакована" ? "Изменить упаковку…" : "Открыть упаковку…", run: () => setOpened({ kind: "pack", project: firstProject }) });
       if (canDispatch && ["Отгружена", "Закрыта"].includes(shipment.status)) items.push({ label: "Действия…", run: () => setOpened({ kind: "ship", project: firstProject }) });
-      if (target.column === "packed") {
+      if (target.column === "packed" || target.column === "accepted") {
         if (canWarehouse && onlyUpdBlocks(shipment) && (shipment.status === "Упакована" || Boolean(shipment.dn_number))) items.push({ label: "Отгрузить без УПД…", run: () => setOpened({ kind: "noupd", shipment }) });
         if (rights.canUnship && shipment.lines.some((line) => num(line.picked) > 0) && shipment.missing_ship.length > 0) items.push({ label: "Уже отгружена…", run: () => setOpened({ kind: "bare", shipment }) });
       }
       return items;
     }
+    // Данные проекта видят и те, кто их не правит: окно только для чтения.
+    items.push({ label: "Данные доставки проекта…", run: () => setProjectData(target.project) });
     if (canDispatch) {
-      items.push({ label: "Данные доставки проекта…", run: () => setProjectData(target.project) });
       if (itemAddressees[target.project]?.length) items.push({ label: "Всем КБ проекта…", run: () => setDeliveryEdit({ project: target.project, items: itemAddressees[target.project] }) });
     }
     if (target.column === "accepted" && canDispatch) {
@@ -271,7 +283,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     </>}
     {open && <IntakeCardWindow key={open.id} card={open} focus={card?.focus ?? null} busy={Boolean(busy)} docLink={docLink}
       rights={{ canEdit: canDispatch, canHistory: rights.canUnship, canWarehouse, canRollback }}
-      shares={(kb) => actShares(kb, shipments)} onAction={act} onShipment={replaceShipment} onHistory={(shipment) => setShipmentData(shipment.id)} onConflict={reload}
+      shares={(kb) => actShares(kb, shipments)} piecesReady={piecesReady} onAccept={acceptKbs} onAction={act} onShipment={replaceShipment} onHistory={(shipment) => setShipmentData(shipment.id)} onConflict={reload}
       onDelivery={deliveryFor} onRollback={(row, rolledAct, onStock) => setRollingBack({ row, act: rolledAct, onStock })} onPrintLabel={(grn) => void printLabel(grn)} close={() => setCard(null)} />}
     {accepting && <IntakeWindow rows={accepting.rows} quantities={accepting.quantities} blank={accepting.blank} close={() => setAccepting(null)} onDone={accepted} />}
     {rollingBack && <RollbackActWindow row={rollingBack.row} act={rollingBack.act} onStock={rollingBack.onStock} close={() => setRollingBack(null)} onDone={rolledBack} />}

@@ -101,16 +101,43 @@ export function updGapAction(shipment: DispatchShipment): CardAction | null {
   return null;
 }
 
+/** Слово сервера о пробеле → поле окна, где его вносят (подпись поля); пусто — поля нет (DN, PL, разрешение). */
+const GAP_FIELD: Record<string, string> = {
+  "условия доставки": "Способ доставки", "способ доставки": "Способ доставки", "организация": "Организация", "телефон получателя": "Телефон",
+  "телефон": "Телефон", "перевозчик": "ТК", "адрес доставки": "Адрес", "адрес": "Адрес", "тип УПД": "УПД", "№ УПД": "№ УПД", "трек-номер": "Трек",
+};
+/** Поле первого пробела отправки, которое можно заполнить прямо в окне. */
+export function firstGapField(shipment: DispatchShipment): string | null {
+  for (const gap of shipmentGaps(shipment)) if (GAP_FIELD[gap]) return GAP_FIELD[gap];
+  return null;
+}
+
+/** Что мешает закрыть отгруженную отправку — правила закрытия (`Shipment.close`): № УПД, файл УПД, трек, дата отгрузки. */
+export function closingGaps(shipment: DispatchShipment): string[] {
+  const gaps: string[] = [];
+  if (!shipment.upd_number.trim()) gaps.push("№ УПД");
+  if (!shipment.upd_url) gaps.push("файл УПД");
+  if (needsTrack(shipment) && !shipment.track_number.trim()) gaps.push("трек-номер");
+  if (!shipment.shipped_at) gaps.push("дата отгрузки");
+  return gaps;
+}
+
 /** Отправка до отгрузки: PL → DN → УПД → трек; блокер называет, чего нет и кто вносит. */
-export function shipmentBlocker(shipment: DispatchShipment, closing = false): Blocker | null {
-  const gaps = shipmentGaps(shipment);
+export function shipmentBlocker(shipment: DispatchShipment): Blocker | null {
+  const gaps = shipmentGaps(shipment).filter((gap) => !/^DN\b/i.test(gap));
   const docs: string[] = [];
   if (!shipment.pl_number) docs.push("PL");
-  else if (!shipment.dn_number && !gaps.some((gap) => /DN/i.test(gap))) docs.push("DN");
+  else if (!shipment.dn_number) docs.push("DN");
   const list = [...docs, ...gaps];
-  if (!list.length) return closing ? { text: "не закрыта", who: "закроется сама, когда всё внесено" } : null;
-  const who = docs.length ? "формирует склад или менеджер" + (gaps.length ? "; данные вносит склад или менеджер" : "") : whoFills(gaps);
-  return { text: `${closing ? "не закрыта — " : ""}нет: ${list.join(", ")}`, who: closing ? "закроется сама: " + who : who };
+  if (!list.length) return null;
+  return { text: `нет: ${list.join(", ")}`, who: docs.length ? "формирует склад или менеджер" + (gaps.length ? "; данные вносит склад или менеджер" : "") : whoFills(gaps) };
+}
+
+/** Отгруженная, но не закрытая: ждёт того, что требует закрытие; кто вносит — по пробелу. */
+export function closingBlocker(shipment: DispatchShipment): Blocker | null {
+  const gaps = closingGaps(shipment);
+  if (!gaps.length) return null;
+  return { text: `не закрыта — нет: ${gaps.join(", ")}`, who: "закроется сама: " + (gaps.every((gap) => gap === "трек-номер") ? "вписывает склад" : gaps.includes("дата отгрузки") && gaps.length === 1 ? "дату исправляет руководитель" : "вносит склад или менеджер") };
 }
 
 export interface BuildInput {
@@ -166,7 +193,7 @@ export function buildBoard({ rows, shipments, addressees, rights, now = new Date
 
   // Отправки: стадия — по статусу и готовности; «Отгружено» — за 30 дней.
   for (const shipment of shipments) {
-    const stage = shipmentDispatchStage(shipment, "Принято складом");
+    const stage = shipment.status === "Собрана" && shipment.ready_to_ship ? "to_ship" : shipmentDispatchStage(shipment, "Принято складом");
     if (!stage || stage === "waiting" || stage === "production" || stage === "ready") continue;
     if (stage === "shipped" && !recentShipment(shipment, now)) continue;
     const projects = [...new Set(shipment.lines.map((line) => line.project))];
@@ -174,23 +201,28 @@ export function buildBoard({ rows, shipments, addressees, rights, now = new Date
     const kbs = shipment.lines.filter((line) => num(line.picked) > 0 || shipment.lines.every((other) => !(num(other.picked) > 0)));
     const column: ColumnId = stage === "accepted" ? "accepted" : stage;
     const closed = shipment.status === "Закрыта";
-    const gaps = shipmentGaps(shipment);
-    const pickupLike = isPickup(shipment.carrier) || shipment.terms === "САМОВЫВОЗ";
     const trackWord = shipment.track_number.trim() ? ` · трек ${shipment.track_number.trim()}` : "";
     const delivery = deliveryText(shipment);
     let blocker: Blocker | null = null; let action: CardAction | null = null; const extra: CardAction[] = []; let okText = "";
     if (column === "accepted") {
-      blocker = { text: "нет: PL — не сформирован", who: "формирует склад или менеджер" };
-      if (rights.canDispatch) action = { id: "make-pl", label: "Сформировать PL" };
+      const picked = shipment.lines.some((line) => num(line.picked) > 0);
+      if (!picked) {
+        // «Новая» заявка, в которую ничего не набрано: PL сервер не выдаст — сначала набрать (окно упаковки).
+        blocker = { text: "ничего не набрано", who: "набирает склад или менеджер в окне упаковки" };
+        if (rights.canDispatch) action = { id: "pack", label: "Открыть упаковку…" };
+      } else {
+        blocker = { text: "нет: PL — не сформирован", who: "формирует склад или менеджер" };
+        if (rights.canDispatch) action = { id: "make-pl", label: "Сформировать PL" };
+      }
     } else if (column === "packed") {
       blocker = shipmentBlocker(shipment);
       const upd = updGapAction(shipment);
       if (rights.canDispatch) {
         if (!shipment.pl_number) action = { id: "make-pl", label: "Сформировать PL" };
-        else if (!shipment.dn_number && !gaps.some((gap) => /DN/i.test(gap))) action = { id: "make-dn", label: "Сформировать DN" };
+        else if (!shipment.dn_number) action = { id: "make-dn", label: "Сформировать DN" };
         else if (upd) action = upd;
         else if (needsTrack(shipment) && !shipment.track_number.trim() && readyForTrack(shipment)) action = { id: "enter-track", label: "Вписать трек…" };
-        else action = { id: "fill", label: "Заполнить данные…" };
+        else if (firstGapField(shipment)) action = { id: "fill", label: "Заполнить данные…" };
       }
     } else if (column === "to_ship") {
       okText = "всё заполнено — можно отгружать";
@@ -199,11 +231,13 @@ export function buildBoard({ rows, shipments, addressees, rights, now = new Date
     } else {
       if (closed) okText = "закрыта";
       else {
-        blocker = shipmentBlocker(shipment, true);
-        const upd = updGapAction(shipment);
+        blocker = closingBlocker(shipment);
+        if (!blocker) okText = "закроется сама";
+        const missing = closingGaps(shipment);
         if (rights.canDispatch) {
-          if (upd) action = upd;
-          else if (needsTrack(shipment) && !shipment.track_number.trim() && !pickupLike) action = { id: "enter-track", label: "Вписать трек…" };
+          if (missing.includes("№ УПД")) action = !shipment.upd_type || shipment.upd_type === "БЕЗ УПД" ? { id: "enter-upd", label: "Внести УПД…" } : { id: "enter-upd-number", label: "Вписать № УПД…" };
+          else if (missing.includes("файл УПД")) action = { id: "enter-upd-file", label: "Загрузить УПД…" };
+          else if (missing.includes("трек-номер")) action = { id: "enter-track", label: "Вписать трек…" };
         }
       }
     }
@@ -250,11 +284,13 @@ export function matchesFilter(card: BoardCard, filter: BoardFilter, now = new Da
   return words.every((word) => text.includes(word));
 }
 
-/** КБ-строки карточки, которые принимает окно приёмки: сданное цехом — по умолчанию, иначе остаток досрочно. */
-export function acceptPlan(card: BoardCard, piecesReady: (kb: IntakeRow) => number): { rows: IntakeRow[]; quantities: Record<string, number>; blank: boolean } {
-  const rows = card.kbs.filter((kb) => piecesReady(kb) > 0 || num(kb.remaining) > 0);
-  const anyReady = rows.some((kb) => piecesReady(kb) > 0);
-  const quantities = Object.fromEntries(rows.map((kb) => [`${kb.project}\u0000${kb.item_index}`,
-    piecesReady(kb) > 0 ? piecesReady(kb) : round2(num(kb.remaining))]));
-  return { rows, quantities, blank: !anyReady };
+/** Окно приёмки для выбранных КБ: у сданных цехом — их штуки, у остальных поле пустое (досрочно — склад вписывает сам). */
+export function acceptPlan(kbs: IntakeRow[], piecesReady: (kb: IntakeRow) => number): { rows: IntakeRow[]; quantities: Record<string, number | null>; blank: boolean } {
+  const rows = kbs.filter((kb) => piecesReady(kb) > 0 || num(kb.remaining) > 0);
+  return { rows, blank: false, quantities: Object.fromEntries(rows.map((kb) => [`${kb.project}\u0000${kb.item_index}`, piecesReady(kb) > 0 ? piecesReady(kb) : null])) };
+}
+/** КБ карточки, которые можно принять: сданные цехом, а если таких нет — все, что ещё можно принять досрочно. */
+export function acceptable(card: BoardCard, piecesReady: (kb: IntakeRow) => number): IntakeRow[] {
+  const ready = card.kbs.filter((kb) => piecesReady(kb) > 0);
+  return ready.length ? ready : card.kbs.filter((kb) => num(kb.remaining) > 0);
 }

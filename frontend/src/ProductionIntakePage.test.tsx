@@ -41,6 +41,7 @@ function stub() {
     calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
     if (url === "/api/shipping/intake") return json({ rows: intakeRows });
     if (url === "/api/shipping/shipments" && method === "GET") return json({ shipments });
+    if (url.startsWith("/api/shipping/shipments?shipment=")) return json({ shipments: [] });
     if (url.startsWith("/api/shipping/item-addressees?")) return json({ items: [] });
     if (url === "/api/shipping/project-addressees") return json({ addressees: [] });
     if (url.endsWith("/head")) return json({ shipment: shipment({ version: 4, contact: "Петров" }) });
@@ -246,5 +247,105 @@ describe("доска по стадиям", () => {
     fireEvent.click(screen.getByRole("button", { name: "Мои действия" }));
     expect(cardsIn("Отгружено")).toHaveLength(0);
     expect(cardsIn("На отгрузку")).toHaveLength(2);
+  });
+
+  it("можно принять часть КБ: 4 КБ в карточке, отмечена только КБ3 — в окно приёмки идёт одна строка, у несданных поле пустое", async () => {
+    const kb = (item_index: string, over: Record<string, unknown> = {}) => row({ project: "800К.1", customer: "Четыре КБ", item_index, name: `Узел ${item_index}`, needed: "10", launched: "10", delivered: "0", accepted: "0", remaining: "10", tasks: [], ...over });
+    intakeRows = [kb("КБ1"), kb("КБ2"), kb("КБ3", { delivered: "4" }), kb("КБ4")];
+    await load(warehouse);
+    // Кнопка карточки принимает то, что сдал цех, — одну КБ3, а не всё подряд.
+    fireEvent.click(within(cardsIn("Производство")[0]).getByRole("button", { name: "Принять на склад…" }));
+    let intake = screen.getAllByRole("dialog").at(-1)!;
+    expect(intake.textContent).toContain("КБ3");
+    expect(intake.textContent).not.toMatch(/КБ1|КБ2|КБ4/);
+    fireEvent.click(within(intake).getByRole("button", { name: "Закрыть" }));
+    // Окно карточки: флажки у КБ, «Принять выбранные» — только отмеченные; несданная КБ без подставленного остатка.
+    fireEvent.click(within(cardsIn("Производство")[0]).getByRole("button", { name: /^Открыть 800К\.1/ }));
+    const card = await screen.findByRole("dialog", { name: /Карточка 800К\.1/ });
+    expect(within(card).getByRole("checkbox", { name: "Принять КБ3" })).toBeChecked();
+    expect(within(card).getByRole("checkbox", { name: "Принять КБ1" })).not.toBeChecked();
+    fireEvent.click(within(card).getByRole("checkbox", { name: "Принять КБ1" }));
+    fireEvent.click(within(card).getByRole("button", { name: "Принять выбранные (2 КБ)" }));
+    intake = screen.getAllByRole("dialog").at(-1)!;
+    expect(intake.textContent).toMatch(/КБ1[\s\S]*КБ3/);
+    expect(intake.textContent).not.toMatch(/КБ2|КБ4/);
+    const quantities = [...intake.querySelectorAll("input")].filter((input) => input.type === "number" || input.inputMode === "decimal" || input.className.includes("ship-qty"));
+    expect(quantities.map((input) => input.value)).toEqual(["", "4"]);
+    fireEvent.click(within(intake).getByRole("button", { name: "Закрыть" }));
+    fireEvent.click(within(card).getByRole("checkbox", { name: "Принять КБ1" }));
+    fireEvent.click(within(card).getByRole("checkbox", { name: "Принять КБ3" }));
+    expect(within(card).getByRole("button", { name: "Принять выбранные (0 КБ)" })).toBeDisabled();
+  });
+
+  it("«Сформировать DN» показывается, когда у отправки есть PL без DN (слова сервера)", async () => {
+    shipments = [shipment({ dn_number: "", missing_ship: ["DN не сформирован", "тип УПД"], missing_data: [] })];
+    await load(warehouse);
+    expect(cardsIn("Упаковано")[0].querySelector(".board-card-blocker")!.textContent).toContain("нет: DN, тип УПД");
+    fireEvent.click(within(cardsIn("Упаковано")[0]).getByRole("button", { name: "Сформировать DN" }));
+    await waitFor(() => expect(writes()).toEqual([expect.objectContaining({ url: "/api/shipping/shipments/s1/issue-document", body: expect.objectContaining({ document: "dn" }) })]));
+  });
+
+  it("«Новая» без набранного ведёт в окно упаковки; «Собрана» готовая к отгрузке — в «На отгрузку»", async () => {
+    shipments = [shipment({ id: "n1", status: "Новая", pl_number: "", dn_number: "", lines: [line({ picked: "0" })] }),
+      shipment({ id: "n2", status: "Собрана", ready_to_ship: true, missing_ship: [], missing_data: [], lines: [line({ id: "l9", project: "777К.1" })] })];
+    intakeRows = [];
+    await load(warehouse);
+    const empty = cardsIn("Принято")[0];
+    expect(empty.querySelector(".board-card-blocker")!.textContent).toContain("ничего не набрано");
+    expect(within(empty).queryByRole("button", { name: "Сформировать PL" })).toBeNull();
+    expect(within(empty).getByRole("button", { name: "Открыть упаковку…" })).toBeInTheDocument();
+    expect(within(cardsIn("На отгрузку")[0]).getByRole("button", { name: "Отгрузить" })).toBeEnabled();
+  });
+
+  it("«Отгружено» без № УПД: блокер по правилам закрытия и кнопка ведёт к полю", async () => {
+    shipments = [shipment({ status: "Отгружена", shipped_at: "2026-11-05", upd_type: "БЕЗ УПД", missing_data: ["адрес доставки"], missing_ship: ["адрес доставки"], dn_number: "" })];
+    intakeRows = [];
+    await load(warehouse);
+    const sent = cardsIn("Отгружено")[0];
+    expect(sent.querySelector(".board-card-blocker")!.textContent).toBe("⚠ не закрыта — нет: № УПД, файл УПД — закроется сама: вносит склад или менеджер");
+    fireEvent.click(within(sent).getByRole("button", { name: "Внести УПД…" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("combobox", { name: "УПД" })).toBeInTheDocument();
+  });
+
+  it("шаг DN не говорит «после PL», когда PL уже есть; «Заполнить данные…» ведёт к первому пустому полю", async () => {
+    shipments = [shipment({ dn_number: "", missing_ship: ["DN не сформирован", "адрес доставки"], missing_data: ["адрес доставки"] })];
+    await load(manager);
+    fireEvent.click(within(cardsIn("Упаковано")[0]).getByRole("button", { name: "Сформировать DN" }));
+    cleanup(); stub(); setRightsPrincipal(null);
+    shipments = [shipment({ missing_ship: ["адрес доставки"], missing_data: ["адрес доставки"] })];
+    await load(manager);
+    fireEvent.click(within(cardsIn("Упаковано")[0]).getByRole("button", { name: "Заполнить данные…" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("textbox", { name: "Адрес" })).toBeInTheDocument();
+    expect(within(dialog).queryByText("после PL")).toBeNull();
+  });
+
+  it("«Журнал» вместо окна: ?tab=journal&shipment= открывает только журнал, неизвестная отправка — тоже журнал", async () => {
+    shipments = SHIPMENTS();
+    window.history.replaceState({}, "", "/?tab=journal&shipment=s2");
+    await load(warehouse);
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    expect(screen.queryByRole("dialog", { name: /Карточка/ })).toBeNull();
+    cleanup(); stub();
+    window.history.replaceState({}, "", "/?shipment=нет-такой");
+    await load(warehouse);
+    expect(screen.queryByRole("dialog", { name: /Карточка/ })).toBeNull();
+    expect(await screen.findAllByRole("dialog")).toHaveLength(1);
+  });
+
+  it("меню «⋯»: фокус внутрь, стрелки, Esc возвращает фокус на кнопку; данные проекта открываются и у наблюдателя", async () => {
+    await load(viewer);
+    const card = cardsIn("Принято")[0] ?? cardsIn("Производство")[0];
+    const button = within(card).getByRole("button", { name: /^Ещё действия/ });
+    button.focus();
+    fireEvent.click(button);
+    const items = within(card).getAllByRole("menuitem");
+    expect(items[0]).toHaveFocus();
+    expect(items[0].textContent).toBe("Данные доставки проекта…");
+    fireEvent.keyDown(items[0], { key: "ArrowDown" });
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(within(card).queryByRole("menu")).toBeNull();
+    expect(button).toHaveFocus();
   });
 });

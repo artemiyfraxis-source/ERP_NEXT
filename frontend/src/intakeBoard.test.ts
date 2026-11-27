@@ -42,10 +42,12 @@ describe("buildBoard", () => {
   it("порядок дел в «Упаковано»: PL → DN → УПД → трек → данные", () => {
     const action = (over: Partial<DispatchShipment>) => buildBoard({ rows: [], addressees: [], rights: warehouse, now, shipments: [ship(over)] })[0].action?.id;
     expect(action({ pl_number: "", missing_ship: ["тип УПД"] })).toBe("make-pl");
-    expect(action({ dn_number: "", missing_ship: ["тип УПД"] })).toBe("make-dn");
+    // Слова сервера: PL выдан, DN нет — `missing_ship` содержит «DN не сформирован» (`shipping_gaps`).
+    expect(action({ dn_number: "", missing_ship: ["DN не сформирован", "тип УПД"] })).toBe("make-dn");
     expect(action({ missing_ship: ["№ УПД", "трек-номер"] })).toBe("enter-upd-number");
     expect(action({ terms: "ДОСТАВКА ТК", carrier: "СДЭК", missing_ship: ["трек-номер"], ready_for_track: true })).toBe("enter-track");
-    expect(action({ missing_ship: ["адрес"] })).toBe("fill");
+    expect(action({ missing_ship: ["адрес доставки"] })).toBe("fill");
+    expect(action({ missing_ship: ["разрешение на отгрузку без УПД"] })).toBeUndefined();
   });
 
   it("«Принято»: нет разрешения — блокер и кнопка менеджера; есть — «Упаковать»", () => {
@@ -58,14 +60,40 @@ describe("buildBoard", () => {
     expect(asManager.extra).toEqual([{ id: "permit", label: "Разрешить упаковку…" }]);
   });
 
-  it("«Отгружено»: незакрытая называет, чего нет, и ведёт к недостающему; закрытая — «закрыта»", () => {
-    const [open] = buildBoard({ rows: [], addressees: [], rights: warehouse, now, shipments: [ship({ status: "Отгружена", shipped_at: "2026-11-08", missing_ship: ["файл УПД"], upd_type: "БУМАГА" })] });
-    expect(open.blocker).toEqual({ text: "не закрыта — нет: файл УПД", who: "закроется сама: вносит склад или менеджер" });
-    expect(open.action).toEqual({ id: "enter-upd-file", label: "Загрузить УПД…" });
+  it("«Отгружено»: блокер — по правилам закрытия (№ УПД, файл, трек, дата), а не по гейтам отгрузки", () => {
+    const shipped: Partial<DispatchShipment> = { status: "Отгружена", shipped_at: "2026-11-08", missing_data: ["адрес доставки"], missing_ship: ["адрес доставки", "DN не сформирован"], dn_number: "" };
+    const [open] = buildBoard({ rows: [], addressees: [], rights: warehouse, now, shipments: [ship({ ...shipped, upd_type: "БУМАГА" })] });
+    expect(open.blocker).toEqual({ text: "не закрыта — нет: № УПД, файл УПД", who: "закроется сама: вносит склад или менеджер" });
+    expect(open.action).toEqual({ id: "enter-upd-number", label: "Вписать № УПД…" });
+    // Отгружена «без УПД»: № нет, закрыться она не может — ведём менять тип УПД, а не обещаем «закроется сама».
+    const [bare] = buildBoard({ rows: [], addressees: [], rights: warehouse, now, shipments: [ship({ ...shipped, upd_type: "БЕЗ УПД" })] });
+    expect(bare.blocker?.text).toBe("не закрыта — нет: № УПД, файл УПД");
+    expect(bare.action).toEqual({ id: "enter-upd", label: "Внести УПД…" });
+    // Файл есть, трека нет у доставки ТК — просим трек; на карточке нет ни адреса, ни DN.
+    const [track] = buildBoard({ rows: [], addressees: [], rights: warehouse, now, shipments: [ship({ ...shipped, upd_number: "У-1", upd_url: "/f", terms: "ДОСТАВКА ТК", carrier: "СДЭК" })] });
+    expect(track.blocker).toEqual({ text: "не закрыта — нет: трек-номер", who: "закроется сама: вписывает склад" });
+    expect(track.action).toEqual({ id: "enter-track", label: "Вписать трек…" });
+    const [done] = buildBoard({ rows: [], addressees: [], rights: warehouse, now, shipments: [ship({ ...shipped, upd_number: "У-1", upd_url: "/f" })] });
+    expect(done.blocker).toBeNull();
+    expect(done.okText).toBe("закроется сама");
     const [closed] = buildBoard({ rows: [], addressees: [], rights: warehouse, now, shipments: [ship({ status: "Закрыта", shipped_at: "2026-11-08" })] });
     expect(closed.okText).toBe("закрыта");
     expect(closed.action).toBeNull();
   });
+
+  it("«Новая» без набранного — «ничего не набрано» и окно упаковки, а не «Сформировать PL»; «Собрана» с ready_to_ship — на отгрузку", () => {
+    const empty = ship({ status: "Новая", pl_number: "", dn_number: "", lines: [{ ...ship().lines[0], picked: "0" }] });
+    const [card] = buildBoard({ rows: [], addressees: [], rights: warehouse, now, shipments: [empty] });
+    expect(card.column).toBe("accepted");
+    expect(card.blocker).toEqual({ text: "ничего не набрано", who: "набирает склад или менеджер в окне упаковки" });
+    expect(card.action).toEqual({ id: "pack", label: "Открыть упаковку…" });
+    const [assembled] = buildBoard({ rows: [], addressees: [], rights: warehouse, now, shipments: [ship({ status: "Собрана", ready_to_ship: true })] });
+    expect(assembled.column).toBe("to_ship");
+    expect(assembled.action).toEqual({ id: "ship", label: "Отгрузить" });
+    const [picked] = buildBoard({ rows: [], addressees: [], rights: warehouse, now, shipments: [ship({ status: "Собрана", pl_number: "" })] });
+    expect(picked.action).toEqual({ id: "make-pl", label: "Сформировать PL" });
+  });
+
 });
 
 describe("shipmentBlocker и фильтры", () => {
@@ -73,6 +101,7 @@ describe("shipmentBlocker и фильтры", () => {
     expect(shipmentBlocker(ship({ missing_ship: ["трек-номер"] }))).toEqual({ text: "нет: трек-номер", who: "вписывает склад после УПД и ТК" });
     expect(shipmentBlocker(ship({ missing_ship: ["разрешение на отгрузку без УПД"] }))?.who).toBe("разрешает уполномоченный по ПИН");
     expect(shipmentBlocker(ship())).toBeNull();
+    expect(shipmentBlocker(ship({ dn_number: "", missing_ship: ["DN не сформирован"] }))).toEqual({ text: "нет: DN", who: "формирует склад или менеджер" });
   });
 
   it("поиск по словам, «Срок горит» и «Заказчик»", () => {

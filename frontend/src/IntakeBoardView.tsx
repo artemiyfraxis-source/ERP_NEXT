@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { COLUMNS, GROUPS, matchesFilter, NO_FILTER, PAGE_SIZE, type BoardCard, type BoardFilter, type CardAction, type ColumnId, type ProductionGroup } from "./intakeBoard";
 import { plural } from "./format";
 
@@ -15,18 +15,32 @@ const loadFolded = (): Record<ProductionGroup, boolean> => {
 function CardMenu({ items, label }: { items: MenuItem[]; label: string }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLSpanElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const close = (back: boolean) => { setOpen(false); if (back) trigger.current?.focus(); };
+  const entries = () => [...(box.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [])];
+  // Открылось — фокус на первый пункт; Esc с любого места закрывает и возвращает фокус на «⋯»; клик мимо закрывает.
   useEffect(() => {
     if (!open) return;
+    entries()[0]?.focus();
     const away = (event: MouseEvent) => { if (!box.current?.contains(event.target as Node)) setOpen(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") { event.stopPropagation(); close(true); } };
     document.addEventListener("mousedown", away);
-    return () => document.removeEventListener("mousedown", away);
+    document.addEventListener("keydown", escape, true);
+    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", escape, true); };
   }, [open]);
   if (!items.length) return null;
+  const move = (event: ReactKeyboardEvent) => {
+    const list = entries(); const at = list.indexOf(document.activeElement as HTMLButtonElement);
+    const step = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : event.key === "Home" ? -at : event.key === "End" ? list.length - 1 - at : 0;
+    if (!step && event.key !== "Home") { if (event.key === "Tab") close(false); return; }
+    event.preventDefault();
+    list[(at + step + list.length) % list.length]?.focus();
+  };
   return <span className="board-menu" ref={box} onClick={(event) => event.stopPropagation()}>
-    <button type="button" className="secondary small board-menu-btn" aria-haspopup="menu" aria-expanded={open} aria-label={`Ещё действия: ${label}`}
-      onClick={() => setOpen(!open)} onKeyDown={(event) => { if (event.key === "Escape") setOpen(false); }}>⋯</button>
-    {open && <span className="board-menu-list" role="menu">{items.map((item) => <button key={item.label} type="button" role="menuitem" disabled={item.disabled}
-      onClick={() => { setOpen(false); item.run(); }}>{item.label}</button>)}</span>}
+    <button type="button" ref={trigger} className="secondary small board-menu-btn" aria-haspopup="menu" aria-expanded={open} aria-label={`Ещё действия: ${label}`}
+      onClick={() => setOpen(!open)} onKeyDown={(event) => { if (event.key === "ArrowDown" && !open) { event.preventDefault(); setOpen(true); } }}>⋯</button>
+    {open && <span className="board-menu-list" role="menu" onKeyDown={move}>{items.map((item) => <button key={item.label} type="button" role="menuitem" disabled={item.disabled}
+      onClick={() => { close(true); item.run(); }}>{item.label}</button>)}</span>}
   </span>;
 }
 
