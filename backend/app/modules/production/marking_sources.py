@@ -13,33 +13,65 @@ def expand_serial(text: str, serial: int) -> str:
     return TOKEN.sub(lambda match: str(serial).zfill(int(match[1] or 0)), text)
 
 
-def serial_designation(document, task):
-    """«Изделие» заводского номера FRX.<проект>.<изделие>.<k> (владелец 27.11) из ЭТК задания: обозначение технолога
-    в операции маркировки (`fields.serial.product` / `.designation`), иначе из шаблона `FRX.<проект>.<изделие>.{№}`
-    (`fields.serial.template` или надпись с {№}), иначе «КБ<n>» позиции. Ничего — None: заводской номер не выдаётся."""
+def serial_source(document, task):
+    """(изделие, шаблон) заводского номера FRX.<проект>.<изделие>.<k> (владелец 27.11) из ЭТК задания.
+
+    Номерной шаблон FRX…{№} (`fields.serial.template` или надпись) главный: изделие берётся из него, и напечатанная
+    этикетка совпадает с хранимым номером. Шаблон не разобрать или он другого проекта, разные шаблоны, обозначение
+    `fields.serial.designation` (`.product`) не как в шаблоне — ValueError: печать отказывает, а не хранит другой номер.
+    Без шаблона — обозначение технолога, иначе «КБ<n>» позиции (на этикетке заводского номера нет); ничего — None.
+    Изделие — в хранимом виде (`clean_designation`)."""
     project = factory_project(task.project)
-    templates = []
+    templates, explicit = [], []
     for operation in (document or {}).get("operations") or []:
         fields = operation.get("fields") or {}
         serial = fields.get("serial") if isinstance(fields.get("serial"), dict) else {}
-        for key in ("product", "designation"):
-            if (own := clean_designation(serial.get(key))) is not None:
-                return own
-        templates.append(serial.get("template"))
-        templates.extend(mark.get("text") for mark in fields.get("marks") or () if isinstance(mark, dict))
-    for text in templates:
-        if (own := _template_designation(text, project)) is not None:
-            return own
-    return default_designation(task.item)
+        explicit.extend(str(serial[key]) for key in ("designation", "product") if str(serial.get(key) or "").strip())
+        texts = [serial.get("template"), *(mark.get("text") for mark in fields.get("marks") or () if isinstance(mark, dict))]
+        for text in texts:
+            clean = re.sub(r"\s+", "", str(text or ""))
+            if clean[:4].upper() == "FRX." and TOKEN.search(clean):
+                templates.append(clean)
+    if templates:
+        parsed = {}
+        for text in templates:
+            own = _template_designation(text, project)
+            if own is None:
+                raise ValueError(f"Шаблон заводского номера «{text}» не разобрать: нужен FRX.{project or '<проект>'}."
+                                 f"<изделие>.{{№}} проекта задания «{task.project}» — пересоберите ЭТК")
+            parsed.setdefault(own, text)
+        if len(parsed) > 1:
+            raise ValueError("В ЭТК разные шаблоны заводского номера: " + ", ".join(f"«{text}»" for text in parsed.values())
+                             + " — пересоберите ЭТК")
+        [(designation, template)] = parsed.items()
+        for value in explicit:
+            if clean_designation(value) != designation:
+                raise ValueError(f"Обозначение изделия «{value}» в ЭТК не совпадает с шаблоном заводского номера "
+                                 f"«{template}» — пересоберите ЭТК")
+        return designation, template
+    for value in explicit:
+        if (own := clean_designation(value)) is None:
+            raise ValueError(f"Обозначение изделия «{value}» в ЭТК недопустимо: буквы, цифры, «.», «/», «-»")
+        return own, None
+    return default_designation(task.item), None
+
+
+def serial_designation(document, task):
+    """Изделие заводского номера из ЭТК задания (`serial_source`); ValueError — ЭТК противоречит сама себе."""
+    return serial_source(document, task)[0]
+
+
+_TEMPLATE_END = re.compile(r"\.\{№(?::[1-6])?\}$")
 
 
 def _template_designation(text, project):
     """<изделие> of a label template FRX.<project>.<изделие>.{№}: the project may hold dots, so it is matched against
     the task's project; the rest up to «.{№}» is the designation."""
     clean = re.sub(r"\s+", "", str(text or ""))
-    if not project or not clean[:4].upper() == "FRX." or not clean.endswith(".{№}"):
+    end = _TEMPLATE_END.search(clean)
+    if not project or not clean[:4].upper() == "FRX." or end is None:
         return None
-    body = clean[4:-4]
+    body = clean[4:end.start()]
     for index, char in enumerate(body):
         if char == "." and factory_project(body[:index]) == project:
             return clean_designation(body[index + 1:])

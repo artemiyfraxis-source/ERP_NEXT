@@ -18,6 +18,7 @@ from app.modules.production.domain import ProductionValidationError
 from app.modules.production.infrastructure import ProductionSerialRow, SqlAlchemyProductionUnitOfWork
 from app.modules.techcards.infrastructure import ProjectTechcardRow
 from app.shared.http_auth import authenticated_principal
+from app.modules.production.traceability import factory_number_key
 from app.shared.persistence import AuditEventRow
 from tests.production.test_api import issue_card, production_api  # noqa: F401
 from tests.workflows.test_marking_labels import BASE, NOW, enqueue, marking, preview  # noqa: F401
@@ -84,7 +85,7 @@ def test_a_task_with_printed_numbers_is_never_deleted(marking):
 
 @pytest.mark.parametrize(("template", "expected"), [
     ("FRX.591K.3.34.226.{№}", [f"FRX.591К.3.34.226.{k}" for k in range(1, 6)]),            # НПК РТС
-    ("FRX.591К.3.120907/AA.{№}", [f"FRX.591К.3.120907/AA.{k}" for k in range(1, 6)]),       # PN заказчика
+    ("FRX.591К.3.120907/AA.{№}", [f"FRX.591К.3.120907/АА.{k}" for k in range(1, 6)]),       # PN заказчика
     ("FRX.591К.3.КБ1.{№}", KB),
 ])
 def test_the_designation_comes_from_the_label_template(marking, template, expected):
@@ -93,7 +94,7 @@ def test_the_designation_comes_from_the_label_template(marking, template, expect
     _batch, _request, shown = enqueue(marking)
     assert [number for *_rest, number in _numbers(factory, task.id)] == expected
     printed = [row["text"] for row in shown["labels"] if row["serial"] is not None]
-    assert [text.replace("591K", "591К") for text in printed] == expected   # на этикетке — тот же номер
+    assert [factory_number_key(text) for text in printed] == [factory_number_key(n) for n in expected]  # тот же номер
 
 
 @pytest.mark.parametrize("scan", ["FRX.591К.3.КБ1.3", "frx.591k.3.kb1.03", "FRX.591K.3.34.226.3", "FRX.591К.3.120907/aa.3"])
@@ -199,7 +200,7 @@ def test_labels_printed_before_0222_keep_their_numbers(marking, monkeypatch):
     _mark_text(marking, "FRX.591К.3.34.226.{№}")
     group_id, (first, second) = make_group(marking, "second")
     with monkeypatch.context() as old:
-        old.setattr(workflow, "factory_scope", lambda task, document, uow: (None, False))
+        old.setattr(workflow, "factory_scope", lambda task, document, uow: (None, None, False))
         old.setattr(workflow, "allocate_factory_numbers_in", lambda *args, **kwargs: [])
         enqueue(marking, key="before", payload=_group_payload(marking, group_id))
     _batch, _request, shown = enqueue(marking, key="after", payload=_group_payload(marking, group_id))
@@ -207,3 +208,96 @@ def test_labels_printed_before_0222_keep_their_numbers(marking, monkeypatch):
     assert serials == {(str(task.id), k) for task in (first, second) for k in range(1, 6)}
     assert [n for *_r, n in _numbers(factory, first.id)] == [f"FRX.591К.3.34.226.{k}" for k in range(1, 6)]
     assert all(n is None for *_r, n in _numbers(factory, second.id))
+
+
+def _set_serial_field(marking, serial):
+    factory, card = marking[1], marking[4]
+    with factory() as uow:
+        row = uow.session.get(ProjectTechcardRow, card.id)
+        document = deepcopy(row.document)
+        document["operations"][0]["fields"]["serial"] = serial
+        row.document = document
+        uow.commit()
+
+
+def test_a_designation_disagreeing_with_the_template_refuses_the_print(marking):
+    client, factory, payload, task, *_ = marking
+    _mark_text(marking, "FRX.591К.3.34.226.{№}")
+    _set_serial_field(marking, {"template": "FRX.591К.3.34.226.{№}", "designation": "КБ1"})
+    refused = client.post(BASE + "/preview", json=payload)
+    assert refused.status_code == 422 and "не совпадает с шаблоном" in refused.json()["detail"], refused.text
+    _mark_text(marking, "FRX.591К.120907/AA.{№}")   # проект 591К., задание — 591K.3: не «КБ1»
+    _set_serial_field(marking, {})
+    refused = client.post(BASE + "/preview", json=payload)
+    assert refused.status_code == 422 and "не разобрать" in refused.json()["detail"], refused.text
+    assert all(number is None for *_rest, number in _numbers(factory, task.id))
+
+
+def test_a_label_that_no_longer_reads_as_the_stored_number_is_not_printed(marking):
+    """ЭТК сменила изделие после первой печати: номера изделий уже выданы (КБ1), этикетка читалась бы как 34.226."""
+    client, factory, payload, task, *_ = marking
+    _mark_text(marking, "FRX.591К.3.КБ1.{№}")
+    enqueue(marking)
+    _mark_text(marking, "FRX.591К.3.34.226.{№}")
+    shown = preview(marking)
+    refused = client.post(BASE + "/batches", json={**payload, "idempotency_key": "changed",
+                                                   "manifest_hash": shown["manifest_hash"]})
+    assert refused.status_code == 422 and "не совпадает с заводским номером" in refused.json()["detail"], refused.text
+    assert [number for *_rest, number in _numbers(factory, task.id)] == KB
+
+
+def test_the_etk_screen_counts_per_designation_and_says_provisional(marking):
+    """Два КБ с одним обозначением «34.226»: экран ЭТК второго показывает 6–10 (первый напечатал 1–5) — предварительно."""
+    from decimal import Decimal
+
+    from app.modules.production.domain import link_inputs
+    from tests.production.test_my_readiness import _etk_url, _launch
+    from tests.production.test_network_execution import _op
+
+    client, factory, _payload, task, _card, _equipment, operator = marking
+    _mark_text(marking, "FRX.591К.3.34.226.{№}")
+    second_card = issue_card("591K.3", "КБ2", [("OP-01", "Нарезка", "10", "0"), ("OP-02", "Маркировка", "10", "0")])
+    with factory() as uow:
+        row = uow.session.get(ProjectTechcardRow, second_card.id)
+        document = deepcopy(row.document)
+        document["operations"][0]["fields"] = {"marks": [{"text": "FRX.591К.3.34.226.{№}", "qty": "1",
+                                                          "material": "Этикетка"}]}
+        row.document = document
+        uow.commit()
+    route = link_inputs((_op(1, "Нарезка"), _op(2, "Маркировка")), {2: ((1, Decimal(1)),)})
+    second = _launch(factory, operator, "kb2-shared", route, item="591K.3.КБ2")
+    before = client.get(_etk_url(second, 1)).json()["serial"]
+    assert (before["first"], before["last"], before["provisional"]) == (1, 5, True)
+    enqueue(marking)
+    shown = client.get(_etk_url(second, 1)).json()["serial"]
+    assert (shown["first"], shown["last"], shown["provisional"]) == (6, 10, True)
+    own = client.get(_etk_url(task, 1)).json()["serial"]
+    assert (own["first"], own["last"], own["provisional"]) == (1, 5, False)
+
+
+def test_printed_numbers_are_never_reused_after_cancel(marking):
+    """Печать → отмена задания (даже с освобождением номеров) → новый запуск той же позиции печатает 6–10."""
+    from decimal import Decimal
+    from uuid import uuid4
+
+    from app.modules.production.domain import MARKS_RELEASED_EVENT, link_inputs
+    from tests.production.test_my_readiness import _launch
+    from tests.production.test_network_execution import _op
+
+    client, factory, payload, task, _card, _equipment, operator = marking
+    enqueue(marking)
+    with factory() as uow:
+        version = uow.production.get(task.id).version
+    cancelled = client.post(f"/api/production/tasks/{task.id}/cancel", json={"version": version, "cancelled": True})
+    assert cancelled.status_code == 200, cancelled.text
+    with factory() as uow:   # даже событие освобождения номеров (отмена без работы) не отдаёт напечатанные
+        uow.session.add(AuditEventRow(id=uuid4(), aggregate_id=task.id, event_type=MARKS_RELEASED_EVENT,
+                                      actor_id=operator, actor_name="Мастер", actor_department="", occurred_at=NOW,
+                                      details={"after": task.number}))
+        uow.commit()
+    route = link_inputs((_op(1, "Нарезка"), _op(2, "Маркировка")), {2: ((1, Decimal(1)),)})
+    again = _launch(factory, operator, "after-cancel", route, item=task.item)
+    source = {"task_id": str(again.id), "operation_id": str(again.operations[0].id), "version": again.version}
+    enqueue(marking, key="after-cancel", payload={**payload, "source": source})
+    assert [number for *_rest, number in _numbers(factory, again.id)] == [f"FRX.591К.3.КБ1.{k}" for k in range(6, 11)]
+    assert [number for *_rest, number in _numbers(factory, task.id)] == KB

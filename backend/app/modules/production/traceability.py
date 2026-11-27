@@ -101,9 +101,12 @@ def factory_project(project: str) -> str:
 
 
 def clean_designation(value: object) -> str | None:
-    """Своё обозначение изделия технолога без пробелов и точек по краям; не обозначение — None."""
+    """Своё обозначение изделия технолога в хранимом виде: без пробелов и точек по краям, верхний регистр, латинские
+    двойники — кириллицей («120907/aa» ≡ «120907/АА»: один счёт и одна уникальность); не обозначение — None."""
     text = re.sub(r"\s+", "", str(value or "")).strip(".")
-    return text if len(text) <= DESIGNATION_LIMIT and _DESIGNATION.fullmatch(text) else None
+    if len(text) > DESIGNATION_LIMIT or not _DESIGNATION.fullmatch(text):
+        return None
+    return text.upper().translate(_LOOKALIKE)
 
 
 def default_designation(item: str) -> str | None:

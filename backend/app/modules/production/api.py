@@ -90,6 +90,7 @@ from .execution import (
     start_work,
     submit_work,
 )
+from .marking_sources import serial_designation
 from .traceability import TAKEABLE_BOX, BoxStatus, DefectDisposition, DefectRecord, InstrumentFileKind, InstrumentKind, InstrumentStatus, MaterialInput, ProductionBox, ProductionOutput, WorkSession
 from .instrument_serials import InstrumentSerialContext, in_house_serial_number
 from .worklog import SUMMARY_KEYS, WorkTimeEntry, percent, time_fact
@@ -1153,10 +1154,17 @@ def operation_etk(
     positions = list(operation.etk_positions)
     # serial — номера изделий задания для «№ изделия» в надписях меток (сквозь задания позиции, mark_serial_range);
     # null — задание отменено без работы, его номера освобождены. Выданные с надписями «№ изделия» — след работы.
-    serial = issue_mark_serials(task, has_numbered_marks(result.get("document")), principal.actor, now, uow_factory())
+    # provisional — заводские номера ещё не выданы печатью этикетки (0222): диапазон может сдвинуться до печати.
+    try:
+        designation = serial_designation(result.get("document"), task)
+    except ValueError:
+        designation = None  # противоречивая ЭТК: экран открывается, печать откажет с причиной
+    serial, provisional = issue_mark_serials(task, has_numbered_marks(result.get("document")), principal.actor, now,
+                                             uow_factory(), designation)
     return {"card": result, "revision": revision, "focus": {
         "position": positions[0], "positions": positions, "code": operation_code(operation.code),
-    }, "serial": {"first": serial[0], "last": serial[1], "task": task.number} if serial else None}
+    }, "serial": {"first": serial[0], "last": serial[1], "task": task.number, "provisional": provisional}
+        if serial else None}
 
 
 @router.get("/my/tasks/{task_id}/harness")

@@ -25,7 +25,7 @@ from sqlalchemy import Text, cast, or_, select
 
 from app.modules.production.domain import mark_serial_range
 from app.modules.production.marking_outside import MarkingOutsidePrintRow
-from app.modules.production.marking_sources import TOKEN, expand_serial, labels, serial_designation
+from app.modules.production.marking_sources import TOKEN, expand_serial, labels, serial_source
 from app.modules.warehouse.label_jobs import LabelJobRow
 from app.modules.warehouse.marking_profiles import MarkingBatchRow
 
@@ -276,15 +276,22 @@ def wire_diameters(document: Mapping | None) -> list[float]:
     return sorted(values)
 
 
-def factory_scope(task, document, uow):
-    """(изделие, legacy) of the task's factory numbers (0222): изделие from the ETK (`serial_designation`); legacy —
-    numbered labels of the task were printed before it got stored numbers: its count stays per item (the numbers on
-    those labels must not move), and its numbers are stored only where no other item holds them."""
-    designation = serial_designation(document, task) if document else None
+def factory_scope(task, document, uow, strict=True):
+    """(изделие, шаблон, legacy) of the task's factory numbers (0222): изделие and the numbered FRX template from the ETK
+    (`serial_source`; a self-contradicting ETK raises ValueError when `strict`, a read-only view gets no изделие);
+    legacy — numbered labels of the task were printed before it got stored numbers: its count stays per item (the
+    numbers on those labels must not move), and its numbers are stored only where no other item holds them."""
+    try:
+        designation, template = serial_source(document, task) if document else (None, None)
+    except ValueError:
+        if strict:
+            raise
+        designation, template = None, None
     if not designation or task.id in uow.serials.stored_ranges([task.id]):
-        return designation, False
+        return designation, template, False
     printed = printed_counts(uow.session, [task.id])
-    return designation, any(serial is not None and count > 0 for (_task, serial, _text), count in printed.items())
+    return designation, template, any(serial is not None and count > 0
+                                      for (_task, serial, _text), count in printed.items())
 
 
 def serial_range_of(task, uow, document=None):
@@ -292,7 +299,7 @@ def serial_range_of(task, uow, document=None):
     the task's ETK: the factory-number count runs per (project, изделие) (0222, `factory_scope`)."""
     project = uow.production.for_project(task.project)
     ids = [item.id for item in project]
-    designation, legacy = factory_scope(task, document, uow)
+    designation, _template, legacy = factory_scope(task, document, uow, strict=False)
     return mark_serial_range(task, project, uow.production.mark_events(ids), uow.serials.stored_ranges(ids),
                              None if legacy else designation)
 

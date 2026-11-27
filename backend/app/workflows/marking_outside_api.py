@@ -93,7 +93,7 @@ def mark(payload: OutsideInput, principal: PrintUser, factory: Factory, now: Now
             for task, document in entries:
                 if not numbered_mark_keys(document, task):
                     continue
-                designation, legacy = factory_scope(task, document, uow)
+                designation, template, legacy = factory_scope(task, document, uow)
                 count_by = None if legacy else designation
                 serial_range = issue_mark_serials_in(task, False, principal.actor, now, uow, count_by, pending)
                 if serial_range and count_by:
@@ -112,7 +112,7 @@ def mark(payload: OutsideInput, principal: PrintUser, factory: Factory, now: Now
                 if fresh and not payload.dry_run:
                     issue_mark_serials_in(task, True, principal.actor, now, uow, count_by, pending)  # spent outside
                     allocate_factory_numbers_in(task, serial_range, designation, principal.actor, now, uow,
-                                                legacy=legacy)  # 0222: printed outside — stored too
+                                                legacy=legacy, template=template)  # 0222: printed outside — stored
             if not rows:
                 raise ValueError("В ЭТК выбранных КБ нет номерных этикеток — отмечать нечего")
             if not payload.dry_run and new:

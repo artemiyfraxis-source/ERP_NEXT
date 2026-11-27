@@ -513,7 +513,7 @@ def source_rows(source, selected, principal, uow, now, interleave=False, remaini
             document, revision = issued_document(task, uow)
         # Calculate (numbered=False only reads); the enqueue issues below through the established semantics in this
         # transaction. The range does not depend on issue events (mark_serial_range), so issuing after the loop is the same.
-        designation, legacy = designations[str(task.id)] = factory_scope(task, document, uow)
+        designation, _template, legacy = designations[str(task.id)] = factory_scope(task, document, uow)
         serial = issue_mark_serials_in(task, False, principal.actor, now, uow, None if legacy else designation, pending)
         if serial and designation and not legacy:
             pending[task.id] = (*serial, designation)
@@ -539,11 +539,12 @@ def source_rows(source, selected, principal, uow, now, interleave=False, remaini
         raise ValueError("За один раз — не более 500 этикеток")
     if issue:
         for task_id in dict.fromkeys(row["task_id"] for row in rows if row["serial"] is not None):
-            designation, legacy = designations[task_id]
+            designation, template, legacy = designations[task_id]
             serial = issue_mark_serials_in(tasks[task_id], True, principal.actor, now, uow, None if legacy else designation,
                                            pending)
             # 0222 (владелец 27.11, решение 4): печать выдаёт и хранит заводские номера изделий задания.
-            allocate_factory_numbers_in(tasks[task_id], serial, designation, principal.actor, now, uow, legacy=legacy)
+            allocate_factory_numbers_in(tasks[task_id], serial, designation, principal.actor, now, uow, legacy=legacy,
+                                        template=template)
     return rows, {"group": group_snapshot, "tasks": snapshots}
 
 
