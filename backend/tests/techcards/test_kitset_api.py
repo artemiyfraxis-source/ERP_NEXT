@@ -1195,3 +1195,13 @@ def test_refresh_never_writes_placeholder_customer(kitset_api):
     app.state.kitset_sheets_reader = FakeSheets(calc_sheets(customer='ООО "'))
     assert _load(client, number="708К.4").status_code == 200
     assert client.get("/api/techcards/kitsets/708К.4").json()["customer"] == "ООО Заказчик"
+
+
+@pytest.mark.parametrize("cell", ["720", "2000-К"])
+def test_load_refuses_invalid_nonempty_number_with_its_own_text(kitset_api, cell):
+    client, _lot = kitset_api
+    app.state.kitset_sheets_reader = FakeSheets(calc_sheets(project_cell=cell), title="Расчет")
+    response = _load(client)
+    assert response.status_code == 422, response.text
+    assert f"«{cell}» не подходит" in response.text
+    assert "не заполнен" not in response.text

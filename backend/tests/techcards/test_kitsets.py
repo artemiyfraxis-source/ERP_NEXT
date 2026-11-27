@@ -521,6 +521,6 @@ def test_placeholder_customer_is_detected(value):
     assert customer_is_placeholder(value)
 
 
-@pytest.mark.parametrize("value", ['ООО "Вионет"', "ИП Иванов", "АО «Вектор»", "Вионет"])
+@pytest.mark.parametrize("value", ['ООО "Вионет"', "ИП Иванов", "Индивидуальный предприниматель Петров", "LLC Acme", "АО «Вектор»", "Вионет"])
 def test_real_customer_is_not_a_placeholder(value):
     assert not customer_is_placeholder(value)

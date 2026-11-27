@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
@@ -375,7 +376,12 @@ def load_kitset(
             )
         data = replace(data, project=number)
     if not project_number_valid(data.project):
-        raise KitsetValidationError("В расчёте не заполнен № проекта (ЗКЗ!B2) — впишите № в поле „№ проекта“")
+        shown = str(data.project or "").strip()
+        if not re.search(r"\d", shown):
+            raise KitsetValidationError("В расчёте не заполнен № проекта (ЗКЗ!B2) — впишите № в поле „№ проекта“")
+        raise KitsetValidationError(
+            f"№ проекта в расчёте (ЗКЗ!B2) «{shown}» не подходит — впишите правильный № в поле „№ проекта“"
+        )
     with techcards_uow() as uow:
         current = uow.kitsets.get(data.project)
         if customer_is_placeholder(data.customer):
