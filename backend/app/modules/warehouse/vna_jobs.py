@@ -161,7 +161,7 @@ def recent_captures(uow, requested_by: str, instrument_id: UUID, limit: int) -> 
 
 
 def control_station(session, serial: str, now: datetime, *, machine_id: str | None = None,
-                    methods: set[str] | None = None, ops: set[str] | None = None) -> str:
+                    methods: set[str] | None = None, ops: set[str] | None = None, source: str = "s2vna") -> str:
     """Resolve/lock the registry's existing physical owner, never an arbitrary browser PC header."""
     binding = session.get(VnaBindingRow, serial)
     if binding is None or (machine_id is not None and binding.machine_id != machine_id):
@@ -178,16 +178,16 @@ def control_station(session, serial: str, now: datetime, *, machine_id: str | No
     if not agent or agent.legacy or as_utc(reported) < as_utc(now) - LIVE_FOR:
         raise ScanJobClosed("Агент на закреплённом ПК не отвечает — проверьте ПК и запуск агента ERP")
     device = session.scalar(select(DeviceRow).where(
-        DeviceRow.machine_id == owner, DeviceRow.kind == "s2vna", DeviceRow.device_id == serial,
+        DeviceRow.machine_id == owner, DeviceRow.kind == source, DeviceRow.device_id == serial,
         DeviceRow.present.is_(True), DeviceRow.last_seen >= now - LIVE_FOR))
     if device is None:
         raise ScanJobClosed("Подключённый ВАЦ с нужным серийным номером не найден")
-    supported = control_capability(session, owner, now)
+    supported = control_capability(session, owner, now, serial=serial, source=source)
     if methods and not methods.issubset(supported):
         raise ScanJobClosed("Метод калибровки не подтверждён агентом на этом ПК")
     if ops is not None:
         # A bench session speaks protocol 2: the agent must advertise exactly version 2 and every op it will receive.
-        available = control_ops(session, owner, now)
+        available = control_ops(session, owner, now, serial=serial, source=source)
         if available is None:
             raise ScanJobClosed("Агент на этом ПК говорит по протоколу vna_control версии 1; рабочему месту ВАЦ нужна версия 2")
         missing = sorted(set(ops) - available)

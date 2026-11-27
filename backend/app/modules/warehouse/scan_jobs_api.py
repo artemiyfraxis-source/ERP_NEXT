@@ -303,6 +303,82 @@ class VnaControlCapability(BaseModel):
         return self
 
 
+ARINST_CONTROL_OPS = {"connect", "read_profile", "apply_profile", "measure_standard", "capture", "close"}
+
+
+class VnaDeviceControl(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    source: Literal["s2vna", "arinst"]
+    name: str = Field(default="", max_length=500)
+    serial: str = Field(min_length=1, max_length=300, pattern=r"^\S(?:.*\S)?$")
+    version: int = Field(ge=1, le=100, strict=True)
+    methods: list[Literal["acm", "solt1", "solt2"]] = Field(default_factory=list, max_length=3)
+    ops: list[Annotated[str, Field(max_length=64)]] = Field(default_factory=list, max_length=32)
+    model: str = Field(default="", max_length=80)
+    firmware: str = Field(default="", max_length=80)
+    hardware_uid: str = Field(default="", max_length=100)
+    identity_verified: bool = False
+    license_state: Literal["unknown", "not_required"] = "unknown"
+    control_ready: bool = False
+    reason: str = Field(default="", max_length=500)
+    observed_at: datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_licence_fields(cls, data):
+        # Agents before the native protocol reported an SCPI licence/trial. Such a report never
+        # makes a device ready: the stale field is dropped and any licence state but the native
+        # 'not_required' becomes 'unknown' with control refused until the agent is updated.
+        if not isinstance(data, dict):
+            return data
+        data = {key: value for key, value in data.items() if key != "trial_remaining_seconds"}
+        if data.get("source") == "arinst" and data.get("license_state", "unknown") not in ("unknown", "not_required"):
+            data.update(license_state="unknown", control_ready=False,
+                        reason="Агент ERP сообщает устаревшее состояние лицензии — обновите агент ERP на этом ПК")
+        return data
+
+    @model_validator(mode="after")
+    def valid_device(self):
+        if self.observed_at.tzinfo is None:
+            raise ValueError("Время проверки ВАЦ должно содержать часовой пояс")
+        if self.source == "arinst":
+            if (self.version != 3 or self.model != "VNA-DL" or not self.identity_verified or not self.firmware
+                    or self.serial != devices.arinst_serial(self.hardware_uid)):
+                raise ValueError("Arinst требует подтверждённый UID, модель, прошивку и протокол 3")
+            if self.methods or len(set(self.ops)) != len(self.ops) or not set(self.ops) <= ARINST_CONTROL_OPS:
+                raise ValueError("Некорректные операции Arinst; калибровку выполняет сервер")
+            if self.control_ready and self.license_state != "not_required":
+                raise ValueError("Управление Arinst возможно только по протоколу ArinstVL")
+        else:
+            if self.serial.lower().startswith("arinst:") or self.hardware_uid:
+                raise ValueError("UID Arinst нельзя использовать как серийный номер S2VNA")
+            if devices.idn_serial(self.name) != self.serial:
+                raise ValueError("Серийный номер S2VNA не совпадает с полным ответом идентификации")
+            legacy = VnaControlCapability(version=self.version, methods=self.methods, ops=self.ops)
+            self.ops = legacy.ops
+            if self.license_state != "unknown":
+                raise ValueError("Состояние лицензии Arinst недопустимо для S2VNA")
+        return self
+
+
+class VnaControlInventory(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    version: Literal[1]
+    devices: list[VnaDeviceControl] = Field(default_factory=list, max_length=16)
+
+    @model_validator(mode="after")
+    def unique_devices(self):
+        if len({item.serial for item in self.devices}) != len(self.devices):
+            raise ValueError("Повторяющийся серийный номер ВАЦ")
+        return self
+
+
+class ArinstCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    usb_path: str = Field(min_length=1, max_length=500, pattern=r"(?i)^USB\\VID_0483&PID_5740[\\&]")
+    port: str = Field(pattern=r"^COM[1-9][0-9]{0,4}$")
+
+
 class AgentHeartbeatInput(BaseModel):
     machine_id: str = Field(min_length=1, max_length=scan_agents.MACHINE_ID_MAX)
     pc_name: str = Field(default="", max_length=128)
@@ -312,6 +388,8 @@ class AgentHeartbeatInput(BaseModel):
     vna: VnaCapability | None = None
     vna_sources: list[Literal["s2vna", "arinst"]] | None = Field(default=None, max_length=2)
     vna_control: VnaControlCapability | None = None
+    vna_controls: VnaControlInventory | None = None
+    arinst_candidates: list[ArinstCandidate] | None = Field(default=None, max_length=16)
     printers: list["PrinterCapability"] = Field(default_factory=list, max_length=50)
 
 
@@ -380,7 +458,10 @@ def scan_agent_heartbeat(
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     devices.control_heartbeat(uow_factory(), machine_id,
-                              payload.vna_control.model_dump() if payload.vna_control else None, now)
+                              payload.vna_control.model_dump() if payload.vna_control else None, now,
+                              inventory=payload.vna_controls.model_dump() if payload.vna_controls else None,
+                              candidates=[item.model_dump() for item in payload.arinst_candidates]
+                              if payload.arinst_candidates is not None else None)
     devices.printer_heartbeat(uow_factory(), machine_id, [item.model_dump() for item in payload.printers], now)
     return {"ok": True, "update": update_for(payload.version)}
 

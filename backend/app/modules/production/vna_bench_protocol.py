@@ -1,20 +1,23 @@
-"""VNA bench protocol v2 contract: typed screen, status, confidence, memory and release ops.
+"""VNA bench contracts: Planar v2 and commissioning-gated Arinst v3.
 
 Protocol v1 (`vna_sessions.py`) is unchanged; v2 adds ops and extends the capture receipt. No instrument IO, SCPI
 text, COM member names or file paths live here — the agent maps each typed op to its own fixed calls.
+Protocol v3 uses native exact-grid, raw partial-channel receipts; physical comparison still gates quality saves.
 """
 
 from __future__ import annotations
 
 import math
+import base64
+from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, Field, model_validator
+from pydantic import AfterValidator, Field, field_validator, model_validator
 
 from .vna_sessions import (ARGS, OPS, RESULTS, CaptureArgs, Captured, Digest, EmptyArgs, Profile, Result,
                            StrictModel, Trace, fingerprint, validate_result)
 
-PROTOCOL_VERSIONS = (1, 2)
+PROTOCOL_VERSIONS = (1, 2, 3)
 V2_OPS = ("device_status", "apply_screen", "acm_confidence", "store_memory", "release", "read_kit")
 OPS_V2 = OPS + V2_OPS
 SCREEN_TRACES_MAX = 16
@@ -248,7 +251,7 @@ RESULTS_V2 = {**RESULTS, "capture": CapturedV2, "device_status": DeviceStatus, "
 
 def command_args(protocol: int, op: str, raw: dict) -> dict:
     """Validated, canonical args of one command; unknown protocols and ops are refused."""
-    table = {1: ARGS, 2: ARGS_V2}.get(protocol)
+    table = {1: ARGS, 2: ARGS_V2, 3: ARGS_V3}.get(protocol)
     if table is None or op not in table:
         raise ValueError(f"Операция {op!r} не входит в протокол vna_control версии {protocol}")
     return table[op].model_validate(raw).model_dump(mode="json")
@@ -295,3 +298,198 @@ def validate_result_v2(op: str, args: dict, serial: str, raw: dict):
     elif op == "read_kit" and result.label != args["label"]:
         raise ValueError("Прочитан другой калибровочный набор")
     return result.model_dump(mode="json"), []
+
+
+# Persist the established command op names (the database CHECK is shared with Planar).
+# Only the protocol-3 wire envelope translates these aliases; there is no Arinst abort/RF-off.
+ARINST_WIRE_OPS = {"prepare": "connect", "device_status": "read_profile", "release": "close",
+                   "abort": "close"}
+ARINST_OPS = ("connect", "read_profile", "apply_profile", "measure_standard", "capture", "close")
+
+
+class ArinstProfile(StrictModel):
+    start_hz: int = Field(ge=1_000_000, le=9_000_000_000)
+    stop_hz: int = Field(ge=1_000_000, le=9_000_000_000)
+    points: int = Field(ge=2, le=1000, strict=True)
+    if_bandwidth_hz: int = Field(ge=1, le=1_000_000, strict=True)
+
+    @field_validator("start_hz", "stop_hz", mode="before")
+    @classmethod
+    def integer_hz(cls, value):
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value  # Field bounds also reject integers too large to convert to a float.
+        if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+            return int(value)
+        raise ValueError("Частоты Arinst задаются целым числом герц")
+
+    @model_validator(mode="after")
+    def ordered(self):
+        if self.start_hz >= self.stop_hz:
+            raise ValueError("Начало диапазона должно быть меньше конца")
+        if self.stop_hz - self.start_hz < self.points - 1:
+            raise ValueError("Шаг сетки Arinst должен быть не меньше одного герца")
+        return self
+
+    def frequencies(self) -> list[int]:
+        """The exact integer-Hz grid sent by the native agent, including both endpoints."""
+        return [self.start_hz + i * (self.stop_hz - self.start_hz) // (self.points - 1)
+                for i in range(self.points)]
+
+
+class ArinstOptions(StrictModel):
+    scan_range_hz: tuple[Annotated[int, Field(ge=1_000_000, le=9_000_000_000, strict=True)],
+                         Annotated[int, Field(ge=1_000_000, le=9_000_000_000, strict=True)]]
+    bandwidths_hz: list[Annotated[int, Field(ge=1, le=1_000_000, strict=True)]] = Field(min_length=1, max_length=256)
+    max_slice_points: int = Field(ge=1, le=255, strict=True)
+    raw: str = Field(min_length=1, max_length=4096)
+
+    @model_validator(mode="after")
+    def ordered(self):
+        if self.scan_range_hz[0] >= self.scan_range_hz[1] or len(set(self.bandwidths_hz)) != len(self.bandwidths_hz):
+            raise ValueError("Некорректные возможности Arinst")
+        return self
+
+    def validate_profile(self, profile: ArinstProfile):
+        if (profile.start_hz < self.scan_range_hz[0] or profile.stop_hz > self.scan_range_hz[1]
+                or profile.if_bandwidth_hz not in self.bandwidths_hz):
+            raise ValueError("Профиль не поддерживается подключённым Arinst")
+
+
+class ArinstApply(StrictModel):
+    profile: ArinstProfile
+
+
+class ArinstCapture(ArinstApply):
+    orientation: Literal["forward", "reverse"]
+
+
+class ArinstStandard(ArinstCapture):
+    standard: Literal["OPEN", "SHORT", "LOAD", "THRU"]
+
+
+ARGS_V3 = {"prepare": EmptyArgs, "device_status": EmptyArgs, "apply_profile": ArinstApply,
+           "capture": ArinstCapture, "measure_standard": ArinstStandard, "release": EmptyArgs, "abort": EmptyArgs}
+
+
+class ArinstLicense(StrictModel):
+    """Native ArinstVL needs no licence: the only accepted state is 'not_required'."""
+    license_state: Literal["not_required"]
+    message: str = Field(max_length=300)
+
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_null_trial(cls, data):
+        # Agents of the first native build still sent an always-null trial field; drop only that.
+        if isinstance(data, dict) and "trial_remaining_seconds" in data and data["trial_remaining_seconds"] is None:
+            data = {key: value for key, value in data.items() if key != "trial_remaining_seconds"}
+        return data
+
+
+class ArinstDrain(StrictModel):
+    discarded_bytes: int = Field(ge=0, le=2097152, strict=True)
+    discarded_base64: str = Field(max_length=2796204)
+
+    @model_validator(mode="after")
+    def content(self):
+        if len(base64.b64decode(self.discarded_base64, validate=True)) != self.discarded_bytes:
+            raise ValueError("Размер сброшенных байтов не совпадает")
+        return self
+
+
+class ArinstWire(StrictModel):
+    tx_base64: str = Field(min_length=1, max_length=4096)
+    rx_base64: str = Field(max_length=2796204)
+    complete: Literal[True]
+
+    @model_validator(mode="after")
+    def content(self):
+        base64.b64decode(self.tx_base64, validate=True)
+        base64.b64decode(self.rx_base64, validate=True)
+        return self
+
+
+class ArinstEvidence(StrictModel):
+    drain: ArinstDrain
+    wire: list[ArinstWire] = Field(min_length=1, max_length=1004)
+
+
+class ArinstPartial(StrictModel):
+    schema_: Literal["arinst.partial.v1"] = Field(alias="schema")
+    measured_channels: list[Literal["S11", "S21"]] = Field(min_length=1, max_length=2)
+    data: dict[Literal["S11", "S21"], Annotated[list[Complex], Field(min_length=2, max_length=1000)]]
+    orientation: Literal["forward", "reverse"]
+    points: int = Field(ge=2, le=1000, strict=True)
+    grid_confirmed: Literal[True]
+    frequencies_hz: list[Annotated[int, Field(ge=1_000_000, le=9_000_000_000, strict=True)]] = Field(min_length=2, max_length=1000)
+    correction_origin: Literal["raw"]
+
+    @model_validator(mode="after")
+    def channels(self):
+        if (len(set(self.measured_channels)) != len(self.measured_channels)
+                or set(self.measured_channels) != set(self.data)
+                or set(self.data) != {"S11", "S21"}
+                or any(len(v) != self.points for v in self.data.values())):
+            raise ValueError("Неполные или повторяющиеся каналы Arinst")
+        if (len(self.frequencies_hz) != self.points
+                or any(a >= b for a, b in zip(self.frequencies_hz, self.frequencies_hz[1:]))):
+            raise ValueError("Неверная сетка частот Arinst")
+        return self
+
+
+class ArinstResult(StrictModel):
+    source: Literal["arinst"]
+    serial: str = Field(pattern=r"^arinst:(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})-(0|[1-9][0-9]{0,9})$")
+    hardware_uid: str = Field(min_length=5, max_length=32)
+    firmware: str = Field(min_length=1, max_length=80)
+    model: Literal["VNA-DL"]
+    options: ArinstOptions
+    license: ArinstLicense
+    op: Literal["connect", "read_profile", "apply_profile", "measure_standard", "capture", "close"]
+    started_at: datetime
+    finished_at: datetime
+    duration_ms: int = Field(ge=0, le=180000, strict=True)
+    parser_status: Literal["complete"]
+    correction_origin: Literal["raw"]
+    profile: ArinstProfile | None = None
+    acquisition: ArinstPartial | None = None
+    standard: Literal["OPEN", "SHORT", "LOAD", "THRU"] | None = None
+    closed: Literal[True] | None = None
+    rf_stopped: None = None
+    raw_evidence: ArinstEvidence
+    raw_sha256: Digest
+
+
+def validate_result_v3(op: str, args: dict, serial: str, raw: dict) -> dict:
+    command_args(3, op, args)
+    result = ArinstResult.model_validate(raw)
+    if (result.serial != serial or result.serial != "arinst:" + result.hardware_uid
+            or any(int(word) > 4294967295 for word in result.hardware_uid.split("-"))):
+        raise ValueError("UID Arinst не совпадает с сессией")
+    if result.op != ARINST_WIRE_OPS.get(op, op):
+        raise ValueError("Ответ относится к другой операции Arinst")
+    if (result.started_at.utcoffset() is None or result.finished_at.utcoffset() is None
+            or result.started_at.utcoffset().total_seconds() != 0
+            or result.finished_at.utcoffset().total_seconds() != 0 or result.finished_at < result.started_at):
+        raise ValueError("Некорректное время квитанции Arinst")
+    # The wire structure contains only base64, booleans and integer byte counts:
+    # canonical JSON therefore agrees with the agent, without float/Unicode differences.
+    if fingerprint(result.raw_evidence.model_dump()) != result.raw_sha256:
+        raise ValueError("Контрольная сумма исходного обмена не совпадает")
+    acquisition = op in ("capture", "measure_standard")
+    if (result.acquisition is not None) != acquisition:
+        raise ValueError("Данные развёртки не соответствуют операции")
+    if op != "device_status" and (result.profile is not None) != (acquisition or op == "apply_profile"):
+        raise ValueError("Нет профиля сеанса Arinst")
+    if result.profile is not None:
+        result.options.validate_profile(result.profile)
+    if result.profile is not None and "profile" in args and result.profile != ArinstProfile.model_validate(args["profile"]):
+        raise ValueError("Прочитанный профиль Arinst не совпадает с заданным")
+    if acquisition and (result.acquisition.points != result.profile.points
+                        or result.acquisition.orientation != args["orientation"]
+                        or result.acquisition.frequencies_hz != result.profile.frequencies()):
+        raise ValueError("Сетка или ориентация развёртки не соответствует команде")
+    if result.standard != (args["standard"] if op == "measure_standard" else None):
+        raise ValueError("Измерена другая калибровочная мера")
+    if (result.closed is True) != (result.op == "close"):
+        raise ValueError("Закрытие не подтверждено")
+    return result.model_dump(mode="json", by_alias=True)

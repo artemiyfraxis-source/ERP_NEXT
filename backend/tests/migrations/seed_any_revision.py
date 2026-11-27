@@ -315,6 +315,11 @@ _OVER_CHECK: dict[tuple[str, str], Any] = {
     ("production_vswr_traces", "trace"): [[1000.0, 1.0], [2000.0, 1.0]],
     ("production_vswr_traces", "samples"): [[1e9, 1.0], [2e9, 1.0]],
     ("production_vswr_traces", "complex_samples"): [[1e9, 0.0, 0.0], [2e9, 0.0, 0.0]],
+    # 0219_arinst_control: a seeded capability is an unverified, not-ready Planar row (`source IN (…)` of the readiness
+    # CHECK would otherwise give 'arinst'); an identity association is an Arinst UID (serial = 'arinst:' || UID).
+    ("warehouse_vna_control", "source"): "s2vna",
+    ("warehouse_vna_control", "hardware_uid"): "",
+    ("warehouse_vna_identities", "source"): "arinst",
 }
 # Values a CHECK shapes beyond `IN (…)`: an internal project number is «ВП-…» (0135_internal_projects), unique; the
 # label printer settings are bounded ranges and a numeric `dpi IN (203, 300)` (0138_warehouse_labels).
@@ -360,6 +365,9 @@ _SHAPED_VALUES: dict[tuple[str, str], Any] = {
     ("warehouse_upd_llm_settings", "base_url"): lambda i: "https://llm.example.test/v1",
     # A machine snapshot speaks bridge protocol 1 only (0193_machines).
     ("production_machine_snapshots", "proto"): lambda i: 1,
+    # One association per Arinst UID, its serial derived from it (0219_arinst_control, both UNIQUE).
+    ("warehouse_vna_identities", "hardware_uid"): lambda i: f"{i + 1}-0-0",
+    ("warehouse_vna_identities", "serial"): lambda i: f"arinst:{i + 1}-0-0",
 }
 # Shaped values win over a CHECK's first `IN (…)` value; a table with a UNIQUE of shaped pairs gets no more rows than
 # there are pairs.

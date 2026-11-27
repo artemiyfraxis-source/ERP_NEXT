@@ -1,16 +1,19 @@
 """Device inventory from heartbeats. Queue polling never refreshes device liveness."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
+import hashlib
+import re
 from typing import Callable
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, or_, select, update
+from sqlalchemy import JSON, Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, UniqueConstraint, Uuid, delete, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.shared.persistence import Base
 from app.shared.events import AuditEvent
 from app.shared.identity import Actor
+from app.shared.clock import as_utc
 
 from .scan_agents import LIVE_FOR, ScanAgentRow, strict_scanner_version
 from .scan_jobs import FAILED, OPEN_STATUSES, ScanJobClosed, ScanJobRow, _session
@@ -87,8 +90,23 @@ class VnaControlRow(Base):
     """Separate opt-in protocol; capture capability never implies permission to write."""
 
     __tablename__ = "warehouse_vna_control"
-    __table_args__ = (CheckConstraint("version >= 1", name="ck_vna_control_version"),)
+    __table_args__ = (
+        CheckConstraint("version >= 1", name="ck_vna_control_version"),
+        CheckConstraint("source IN ('s2vna','arinst')", name="ck_vna_control_source"),
+        CheckConstraint("trim(serial) <> '' AND ((source = 'arinst' AND serial = 'arinst:' || hardware_uid AND hardware_uid <> '') OR (source = 's2vna' AND lower(serial) NOT LIKE 'arinst:%'))", name="ck_vna_control_serial"),
+        CheckConstraint("license_state IN ('unknown','not_required')", name="ck_vna_control_license"),
+        CheckConstraint("source <> 'arinst' OR NOT control_ready OR (identity_verified AND version = 3 AND license_state = 'not_required')", name="ck_vna_control_ready"),
+    )
     machine_id: Mapped[str] = mapped_column(String(80), ForeignKey("warehouse_scan_agents.machine_id", ondelete="CASCADE"), primary_key=True)
+    serial: Mapped[str] = mapped_column(String(300), primary_key=True)
+    source: Mapped[str] = mapped_column(String(8), nullable=False)
+    model: Mapped[str] = mapped_column(String(80), nullable=False, default="", server_default="")
+    firmware: Mapped[str] = mapped_column(String(80), nullable=False, default="", server_default="")
+    hardware_uid: Mapped[str] = mapped_column(String(100), nullable=False, default="", server_default="")
+    identity_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    license_state: Mapped[str] = mapped_column(String(12), nullable=False, default="unknown", server_default="unknown")
+    control_ready: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    reason: Mapped[str] = mapped_column(String(500), nullable=False, default="", server_default="")
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     methods: Mapped[list] = mapped_column(JSON, nullable=False)
     # Bench ops of protocol 2 the agent implements (0205_vna_bench_sessions); bench commands go only to them.
@@ -96,24 +114,168 @@ class VnaControlRow(Base):
     reported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
-def control_heartbeat(uow, machine_id: str, capability: dict | None, now: datetime) -> None:
+class VnaIdentityRow(Base):
+    """An explicit operator association, never inferred from a USB candidate or printed serial."""
+
+    __tablename__ = "warehouse_vna_identities"
+    __table_args__ = (
+        UniqueConstraint("source", "hardware_uid", name="uq_vna_identity_uid"),
+        UniqueConstraint("serial", name="uq_vna_identity_serial"),
+        CheckConstraint("source = 'arinst' AND hardware_uid <> '' AND serial = 'arinst:' || hardware_uid", name="ck_vna_identity_serial"),
+        CheckConstraint("trim(firmware) <> ''", name="ck_vna_identity_firmware"),
+    )
+    instrument_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("production_instruments.id", ondelete="RESTRICT"), primary_key=True)
+    source: Mapped[str] = mapped_column(String(8), nullable=False)
+    serial: Mapped[str] = mapped_column(String(300), nullable=False)
+    hardware_uid: Mapped[str] = mapped_column(String(100), nullable=False)
+    firmware: Mapped[str] = mapped_column(String(80), nullable=False)
+    verified_machine_id: Mapped[str] = mapped_column(String(80), ForeignKey("warehouse_scan_agents.machine_id", ondelete="RESTRICT"), nullable=False)
+    verified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    verified_by: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+
+
+def arinst_serial(uid: str) -> str:
+    if not re.fullmatch(r"(?:0|[1-9][0-9]{0,9})-(?:0|[1-9][0-9]{0,9})-(?:0|[1-9][0-9]{0,9})", uid) or any(
+            int(word) > 4294967295 for word in uid.split("-")):
+        raise ValueError("Некорректный аппаратный UID Arinst")
+    return "arinst:" + uid
+
+
+def instrument_identity(session, instrument_id: UUID) -> VnaIdentityRow | None:
+    return session.get(VnaIdentityRow, instrument_id)
+
+
+def _observed_utc(value: datetime, now: datetime) -> datetime:
+    # SQLite strips offsets from the ERP clock's Moscow wall time.
+    return as_utc(value if value.tzinfo else value.replace(tzinfo=now.tzinfo))
+
+
+def associate_vna(uow, *, instrument_id: UUID, serial: str, machine_id: str, actor: Actor, now: datetime) -> None:
     with uow:
         session = _session(uow)
-        row = session.get(VnaControlRow, machine_id)
-        if capability is None:
-            if row is not None:
-                session.delete(row)
-        else:
-            if row is None:
-                row = VnaControlRow(machine_id=machine_id)
-                session.add(row)
-            row.version, row.methods, row.reported_at = capability["version"], capability["methods"], now
-            row.ops = list(capability.get("ops") or []) if capability["version"] == 2 else []
+        control = session.get(VnaControlRow, (machine_id, serial))
+        device = session.get(DeviceRow, (machine_id, "arinst", serial))
+        if (not control or control.source != "arinst" or not control.identity_verified or not device or not device.present
+                or _observed_utc(control.reported_at, now) < as_utc(now) - LIVE_FOR
+                or _observed_utc(device.last_seen, now) < as_utc(now) - LIVE_FOR):
+            raise ScanJobClosed("Сначала подтвердите UID подключённого Arinst через агент ERP")
+        existing = instrument_identity(session, instrument_id)
+        if existing:
+            if existing.serial != serial:
+                raise ScanJobClosed("СИ уже связано с другим аппаратным UID — проверьте привязку")
+            return
+        if session.scalar(select(VnaIdentityRow).where(VnaIdentityRow.serial == serial)):
+            raise ScanJobClosed("Аппаратный UID уже связан с другим СИ")
+        try:
+            with session.begin_nested():
+                session.add(VnaIdentityRow(instrument_id=instrument_id, source="arinst", serial=serial,
+                    hardware_uid=control.hardware_uid, firmware=control.firmware, verified_machine_id=machine_id,
+                    verified_at=now, verified_by=actor.id))
+                session.flush()
+        except IntegrityError:
+            raise ScanJobClosed("Привязка СИ изменилась — проверьте прибор ещё раз") from None
+        uow.audit.add(AuditEvent(id=uuid4(), aggregate_id=instrument_id, event_type="warehouse.vna_identity_verified",
+            actor=actor, occurred_at=now, details={"source": "arinst", "serial": serial, "machine_id": machine_id}))
         uow.commit()
 
 
-def control_capability(session, machine_id: str, now: datetime) -> list[str]:
-    pc, control = session.get(ScanAgentRow, machine_id), session.get(VnaControlRow, machine_id)
+def dissociate_vna(uow, *, instrument_id: UUID, serial: str, actor: Actor, now: datetime,
+                   check_sessions: Callable[[Session], None]) -> None:
+    """Admin unbind of a wrong/replaced UID; re-association then goes through associate_vna again."""
+    with uow:
+        session = _session(uow)
+        # Same binding-row lock as session creation and transfer: no session can open meanwhile.
+        session.execute(update(VnaBindingRow).where(VnaBindingRow.serial == serial).values(serial=serial))
+        check_sessions(session)
+        existing = instrument_identity(session, instrument_id)
+        if existing is None or existing.serial != serial:
+            raise ScanJobClosed("Привязка СИ изменилась — обновите карточку и проверьте прибор ещё раз")
+        session.delete(existing)
+        uow.audit.add(AuditEvent(id=uuid4(), aggregate_id=instrument_id, event_type="warehouse.vna_identity_removed",
+            actor=actor, occurred_at=now, details={"source": existing.source, "serial": serial,
+                                                   "verified_machine_id": existing.verified_machine_id}))
+        uow.commit()
+
+
+def _claim_binding(session, serial, machine_id):
+    if session.get(VnaBindingRow, serial) is None:
+        try:
+            with session.begin_nested():
+                session.add(VnaBindingRow(serial=serial, machine_id=machine_id))
+                session.flush()
+        except IntegrityError:
+            if session.get(VnaBindingRow, serial) is None:
+                raise
+
+
+def control_heartbeat(uow, machine_id: str, capability: dict | None, now: datetime,
+                      *, inventory: dict | None = None, candidates: list[dict] | None = None) -> None:
+    with uow:
+        session = _session(uow)
+        if inventory is not None:
+            reports = inventory["devices"]
+            session.execute(delete(VnaControlRow).where(VnaControlRow.machine_id == machine_id))
+            session.execute(update(DeviceRow).where(DeviceRow.machine_id == machine_id,
+                DeviceRow.kind.in_(("s2vna", "arinst")), DeviceRow.device_id != "arinst").values(present=False))
+        else:
+            session.execute(delete(VnaControlRow).where(VnaControlRow.machine_id == machine_id, VnaControlRow.source == "s2vna"))
+            owned = list(session.scalars(select(DeviceRow).join(VnaBindingRow,
+                (DeviceRow.device_id == VnaBindingRow.serial) & (DeviceRow.machine_id == VnaBindingRow.machine_id)).where(
+                DeviceRow.machine_id == machine_id, DeviceRow.kind == "s2vna", DeviceRow.present.is_(True),
+                DeviceRow.last_seen >= now - LIVE_FOR)))
+            reports = [{**capability, "serial": owned[0].device_id, "name": owned[0].name, "source": "s2vna", "control_ready": True,
+                        "identity_verified": True}] if capability and len(owned) == 1 else []
+        for item in reports:
+            reported = item.get("observed_at") or now
+            if isinstance(reported, str):
+                reported = datetime.fromisoformat(reported.replace("Z", "+00:00"))
+            # Cached observations retain their age; reject clock skew before opening a route.
+            if as_utc(reported) > as_utc(now) + timedelta(seconds=5):
+                continue
+            reported = min(as_utc(reported), as_utc(now)).astimezone(now.tzinfo)
+            row = VnaControlRow(machine_id=machine_id, serial=item["serial"], source=item["source"],
+                version=item["version"], methods=list(item.get("methods") or []),
+                ops=list(item.get("ops") or []) if item["version"] in (2, 3) else [], reported_at=reported)
+            for field in ("model", "firmware", "hardware_uid", "identity_verified", "license_state",
+                          "control_ready", "reason"):
+                if field in item:
+                    setattr(row, field, item[field])
+            session.add(row)
+            if item.get("identity_verified") and item["serial"] != "arinst":
+                _claim_binding(session, item["serial"], machine_id)
+                device = session.get(DeviceRow, (machine_id, item["source"], item["serial"]))
+                if device is None:
+                    device = DeviceRow(machine_id=machine_id, kind=item["source"], device_id=item["serial"])
+                    session.add(device)
+                device.name = (f"Arinst,VNA-DL,{item['hardware_uid']},{item['firmware']}" if item["source"] == "arinst"
+                               else item["name"])
+                device.present, device.last_seen = True, reported
+        if candidates is not None:
+            session.execute(update(DeviceRow).where(DeviceRow.machine_id == machine_id,
+                DeviceRow.kind == "arinst", DeviceRow.device_id.like("candidate:%")).values(present=False))
+            for candidate in candidates:
+                key = "candidate:" + hashlib.sha256(candidate["usb_path"].encode()).hexdigest()
+                device = session.get(DeviceRow, (machine_id, "arinst", key))
+                if device is None:
+                    device = DeviceRow(machine_id=machine_id, kind="arinst", device_id=key)
+                    session.add(device)
+                device.name = f"USB {candidate['port']} — требуется подтверждение UID Arinst"
+                device.present, device.last_seen = True, now
+        uow.commit()
+
+
+def _control(session, machine_id, serial, source):
+    if serial:
+        row = session.get(VnaControlRow, (machine_id, serial))
+        return row if row and row.source == source else None
+    # Compatibility for old Planar session callers, never select the first arbitrary device.
+    rows = list(session.scalars(select(VnaControlRow).where(
+        VnaControlRow.machine_id == machine_id, VnaControlRow.source == source)))
+    return rows[0] if len(rows) == 1 and source == "s2vna" else None
+
+
+def control_capability(session, machine_id: str, now: datetime, *, serial: str = "", source: str = "s2vna") -> list[str]:
+    pc, control = session.get(ScanAgentRow, machine_id), _control(session, machine_id, serial, source)
     reported = control.reported_at if control else None
     if reported is not None and reported.tzinfo is None:
         reported = reported.replace(tzinfo=now.tzinfo)  # SQLite drops timezone information.
@@ -123,16 +285,19 @@ def control_capability(session, machine_id: str, now: datetime) -> list[str]:
         installed = ()
     # Protocol 2 is a superset of 1: a v2 agent still serves v1 session commands.
     if (not pc or pc.legacy or len(installed) != 3 or installed <= (2, 7, 0) or not control
-            or control.version not in (1, 2) or reported < now - LIVE_FOR):
+            or control.version not in ((3,) if source == "arinst" else (1, 2)) or reported < now - LIVE_FOR):
         raise ScanJobClosed("Агент не поддерживает актуальный протокол vna_control версии 1 или 2")
+    if source == "arinst":
+        if not control.control_ready or not control.identity_verified or control.license_state != "not_required":
+            raise ScanJobClosed(control.reason or "Arinst не готов к управлению через ERP")
     return control.methods
 
 
-def control_ops(session, machine_id: str, now: datetime) -> set[str] | None:
+def control_ops(session, machine_id: str, now: datetime, *, serial: str = "", source: str = "s2vna") -> set[str] | None:
     """Bench ops of a live agent speaking exactly protocol 2; None for protocol 1 (bench sessions route by this)."""
-    control_capability(session, machine_id, now)
-    control = session.get(VnaControlRow, machine_id)
-    return set(control.ops or ()) if control.version == 2 else None
+    control_capability(session, machine_id, now, serial=serial, source=source)
+    control = _control(session, machine_id, serial, source)
+    return set(control.ops or ()) if control.version in (2, 3) else None
 
 
 def idn_serial(name: str) -> str:
@@ -144,24 +309,18 @@ def heartbeat(uow, machine_id: str, scanners: list[dict], vna: dict | None,
               sources: list[str] | None, now: datetime) -> None:
     reported = [("scan", item["id"].strip() or item["name"].strip(), item["name"].strip())
                 for item in scanners if item["name"].strip()]
-    if vna and vna["ready"] and idn_serial(vna["name"]):
+    if vna and vna["ready"] and idn_serial(vna["name"]) and not idn_serial(vna["name"]).lower().startswith("arinst:"):
         reported.append(("s2vna", idn_serial(vna["name"]), vna["name"]))
     if "arinst" in (sources or []):
         reported.append(("arinst", "arinst", "Arinst VNA-DL"))
     with uow:
         session = _session(uow)
         # Keep missing devices for an actionable offline message, but stop routing immediately.
-        session.execute(update(DeviceRow).where(DeviceRow.machine_id == machine_id).values(present=False))
+        session.execute(update(DeviceRow).where(DeviceRow.machine_id == machine_id,
+            or_(DeviceRow.kind.in_(("scan", "s2vna")), DeviceRow.device_id == "arinst")).values(present=False))
         for kind, device_id, name in set(reported):
-            if kind == "s2vna" and session.get(VnaBindingRow, device_id) is None:
-                try:
-                    # The unique serial arbitrates simultaneous first reports across API processes.
-                    with session.begin_nested():
-                        session.add(VnaBindingRow(serial=device_id, machine_id=machine_id))
-                        session.flush()
-                except IntegrityError:
-                    if session.get(VnaBindingRow, device_id) is None:
-                        raise
+            if kind == "s2vna":
+                _claim_binding(session, device_id, machine_id)
             row = session.get(DeviceRow, (machine_id, kind, device_id))
             if row is None:
                 row = DeviceRow(machine_id=machine_id, kind=kind, device_id=device_id)
@@ -206,11 +365,11 @@ def vna_binding(uow, serial: str) -> dict | None:
 
 
 def transfer_vna(uow, *, serial: str, owner: str, target: str, instrument_id: UUID,
-                 actor: Actor, now: datetime, check_sessions: Callable[[Session], None]) -> None:
+                 actor: Actor, now: datetime, check_sessions: Callable[[Session], None], source: str = "s2vna") -> None:
     with uow:
         session = _session(uow)
         target_device = session.scalar(select(DeviceRow).where(
-            DeviceRow.machine_id == target, DeviceRow.kind == "s2vna", DeviceRow.device_id == serial,
+            DeviceRow.machine_id == target, DeviceRow.kind == source, DeviceRow.device_id == serial,
             DeviceRow.present.is_(True), DeviceRow.last_seen >= now - LIVE_FOR))
         if target == owner or target_device is None:
             raise ScanJobClosed("Выберите другой ПК, который сейчас сообщает этот серийный номер ВАЦ")
@@ -220,13 +379,13 @@ def transfer_vna(uow, *, serial: str, owner: str, target: str, instrument_id: UU
             raise ScanJobClosed("Привязка ВАЦ уже изменилась — проверьте прибор ещё раз")
         # The binding update serializes this cross-module guard against new sessions using control_station.
         check_sessions(session)
-        session.execute(update(DeviceRow).where(DeviceRow.kind == "s2vna", DeviceRow.device_id == serial,
+        session.execute(update(DeviceRow).where(DeviceRow.kind == source, DeviceRow.device_id == serial,
             DeviceRow.machine_id != target).values(present=False))
         # No queued or in-flight capture from the previous owner may survive a transfer.
-        jobs = session.execute(select(ScanJobRow.id, ScanJobRow.vna_name).where(
-            ScanJobRow.kind == "vna", ScanJobRow.source == "s2vna", ScanJobRow.target_machine_id == owner,
+        jobs = session.execute(select(ScanJobRow.id, ScanJobRow.vna_name, ScanJobRow.instrument_id).where(
+            ScanJobRow.kind == "vna", ScanJobRow.source == source, ScanJobRow.target_machine_id == owner,
             ScanJobRow.status.in_(OPEN_STATUSES)))
-        cancelled = [job.id for job in jobs if idn_serial(job.vna_name) == serial]
+        cancelled = [job.id for job in jobs if job.instrument_id == instrument_id or idn_serial(job.vna_name) == serial]
         if cancelled:
             session.execute(update(ScanJobRow).where(ScanJobRow.id.in_(cancelled), ScanJobRow.status.in_(OPEN_STATUSES))
                 .values(status=FAILED, finished_at=now, error="ВАЦ перенесён на другой ПК — снимите трассу ещё раз"))
@@ -239,9 +398,12 @@ def vna_agents(uow, now: datetime, source: str, serial: str = "", *, online: boo
     with uow:
         query = select(ScanAgentRow, DeviceRow).join(DeviceRow).where(
             ScanAgentRow.legacy.is_(False), DeviceRow.kind == source)
-        if source == "s2vna":
+        if source == "s2vna" or serial.startswith("arinst:"):
             # A missing serial cannot identify a physical instrument.
             query = query.where(DeviceRow.device_id == serial)
+        else:
+            # The explicitly labelled legacy import route has no verified hardware identity.
+            query = query.where(DeviceRow.device_id == "arinst")
         if online:
             query = query.where(DeviceRow.present.is_(True), DeviceRow.last_seen >= now - LIVE_FOR)
         rows = _session(uow).execute(query.order_by(DeviceRow.last_seen.desc(), ScanAgentRow.pc_name))

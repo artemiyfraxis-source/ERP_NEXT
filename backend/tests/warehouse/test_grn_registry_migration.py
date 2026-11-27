@@ -175,7 +175,7 @@ def test_upgrade_downgrade_upgrade_preserves_legacy_rows_and_single_head(databas
     with sqlite3.connect(database) as db:
         assert snapshot(db) == before
     command.upgrade(config(database), REVISION)
-    assert ScriptDirectory.from_config(config(database)).get_heads() == [REVISION]
+    assert len(ScriptDirectory.from_config(config(database)).get_heads()) == 1   # later migrations may follow 0218
     with sqlite3.connect(database) as db:
         assert snapshot(db) == first_upgrade
     engine = create_engine(f"sqlite+pysqlite:///{database.as_posix()}")

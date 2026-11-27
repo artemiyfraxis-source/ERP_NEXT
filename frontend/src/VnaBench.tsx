@@ -1,11 +1,17 @@
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
-import { ApiError, failureText, productionApi, vnaCaptureApi, type ProductionInstrument, type VnaAgent } from "./api";
+import { ApiError, failureText, productionApi, rfInterfacesApi, vnaCaptureApi, type ProductionInstrument, type VnaAgent } from "./api";
 import { formatMoment, formatNumber, glueUnits, toNumber } from "./format";
 import { VswrChart } from "./VswrChart";
+import { ArinstPartialChart } from "./vnaCapture";
 import { VnaTargetList } from "./VnaTargetList";
 import { ScreenSwitcher, VnaScreensEditor, lossTitle } from "./VnaScreensEditor";
+import { benchItem, benchMainAction } from "./vnaBenchWorkflow";
 import {
   CALIBRATION_REFUSALS,
+  arinstBenchApi,
+  type ArinstBenchState,
+  type ArinstOptions,
+  type ArinstProfile,
   REFUSAL_FALLBACK,
   refusalText,
   vnaBenchApi,
@@ -57,12 +63,6 @@ const STEP_HINTS: Record<VnaBenchStepKey, string> = {
   load_port1: "Отключите АКМ, не сдвигая кабели. Наверните нагрузку LOAD 6650F27 на кабель порта 1 и затяните тарированным ключом. Норма — КСВН не больше 1,06 во всей полосе.",
   load_port2: "Перенесите нагрузку LOAD на кабель порта 2 и затяните ключом. Норма та же — КСВН не больше 1,06.",
 };
-const STEP_ACTIONS: Partial<Record<VnaBenchStepKey, string>> = {
-  calibration: "Калибровать АКМ",
-  load_port1: "Измерить нагрузку на порту 1",
-  load_port2: "Измерить нагрузку на порту 2",
-};
-const RECALIBRATE = "Откалибровать заново";
 
 const STATUS: Record<VnaBenchStatus, { label: string; tone: string }> = {
   pending: { label: "Ждёт", tone: "" },
@@ -131,6 +131,295 @@ type Tab = "measure" | "checks" | "screens";
 const TABS: { id: Tab; label: string }[] = [{ id: "measure", label: "Замер" }, { id: "checks", label: "Проверки" },
   { id: "screens", label: "Экраны" }];
 
+type ArinstAct = (key: string, operation: () => Promise<ArinstBenchState>) => Promise<void>;
+const ARINST_SAVE_REASON = "Сохранение в КБ/СИ — после стендового сравнения Arinst";
+const ARINST_STANDARDS = { OPEN: "открытый конец", SHORT: "короткое замыкание (КЗ)", LOAD: "согласованная нагрузка", THRU: "перемычка для S21" };
+const arinstProfileText = (profile: ArinstProfile | null) => profile
+  ? `${num(profile.start_hz / 1e6, 3)}–${num(profile.stop_hz / 1e6, 3)} МГц · ${formatNumber(profile.points)} точек · ПЧ ${formatNumber(profile.if_bandwidth_hz)} Гц`
+  : "Профиль сеанса не задан";
+
+/** Separate protocol-3 workplace: no ACM, automatic verdict or full two-port claims. */
+export function ArinstBench({ instrumentId, pc, agentOnline, lastSeen, connection }: {
+  instrumentId: string; pc: string; agentOnline: boolean; lastSeen: string | null; connection?: ReactNode;
+}) {
+  const [state, setState] = useState<ArinstBenchState | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const [busy, setBusy] = useState("");
+  const [feedback, setFeedback] = useState<{ key: string; text: string; failed: boolean } | null>(null);
+  const [orientation, setOrientation] = useState<"forward" | "reverse">("forward");
+  const [retry, setRetry] = useState(0);
+  const pending = useRef(false);
+  const generation = useRef(0);
+  const mounted = useRef(false);
+  const calibrationPanel = useRef<HTMLDetailsElement>(null);
+  const accept = (next: ArinstBenchState) => {
+    if (next.source !== "arinst" || next.device.instrument_id !== instrumentId) throw new Error("Ответ относится к другому прибору — обновите карточку");
+    return next;
+  };
+  useEffect(() => {
+    mounted.current = true;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    let controller: AbortController;
+    async function poll() {
+      if (pending.current) { if (active) timer = setTimeout(poll, POLL_MS); return; }
+      controller = new AbortController();
+      const stamp = generation.current;
+      try {
+        const next = accept(await arinstBenchApi.state(instrumentId, controller.signal));
+        if (active && stamp === generation.current) { setState(next); setLoadError(""); }
+      } catch (reason) {
+        if (active && stamp === generation.current) setLoadError(failureText(reason, "Не удалось прочитать состояние Arinst — проверьте связь"));
+      } finally {
+        if (active) timer = setTimeout(poll, POLL_MS);
+      }
+    }
+    void poll();
+    return () => { active = false; mounted.current = false; clearTimeout(timer); controller?.abort(); };
+    // The instrument is keyed by its registry UUID in AnalyserCard.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instrumentId, retry]);
+  useEffect(() => {
+    if (feedback?.text === "Отправлено агенту — ожидается результат" && state && !state.session?.command) {
+      setFeedback({ ...feedback, text: state.session?.error ? `Отказ: ${state.session.error}` : !state.session
+        ? "Сеанс завершён; состояние обновлено" : "Команда завершена", failed: Boolean(state.session?.error) });
+    }
+  }, [state, feedback]);
+
+  const act: ArinstAct = async (key, operation) => {
+    if (pending.current) return;
+    pending.current = true; generation.current += 1;
+    setBusy(key); setFeedback({ key, text: "Отправлено…", failed: false });
+    try {
+      const next = accept(await operation());
+      if (mounted.current) { setState(next); setLoadError(""); setFeedback({ key, text: next.session?.command ? "Отправлено агенту — ожидается результат" : "Принято сервером", failed: false }); }
+    } catch (reason) {
+      if (mounted.current) {
+        setFeedback({ key, text: `Отказ: ${failureText(reason, "Команда Arinst не выполнена")}`, failed: true });
+        setLoadError("Обновляем состояние после отказа — дождитесь связи с сервером");
+      }
+    } finally { pending.current = false; if (mounted.current) { setBusy(""); setRetry((value) => value + 1); } }
+  };
+  const result = (key: string) => feedback?.key === key
+    ? <span role="status" className={feedback.failed ? "tone-danger" : "machine-muted"}>{feedback.text}</span> : null;
+  if (!state) return <div className="vna-bench">{loadError
+    ? <p className="error-banner" role="alert">{loadError} <button type="button" className="secondary" onClick={() => setRetry((value) => value + 1)}>Повторить</button></p>
+    : <p className="empty" role="status">Загрузка состояния Arinst…</p>}</div>;
+
+  const { device, session, profile, calibration } = state;
+  const open = session?.status === "open";
+  const owned = open && session.owned === true;
+  const ready = owned && session.state === "ready" && !session.command;
+  const connectionReason = loadError || (!device.connection_ready ? "Проверьте привязку прибора и связь с агентом закреплённого ПК" : "");
+  const sessionConnectionReason = connectionReason || (!ready ? "Завершите текущий шаг или прервите сеанс" : busy ? "Дождитесь ответа сервера" : "");
+  const reconnect = ready && !device.control_ready && device.connection_ready;
+  const refreshHint = !device.control_ready && device.connection_ready ? "Подключите прибор через ERP — обновите данные о нём" : "";
+  const unavailable = loadError ? "Нет свежего состояния — проверьте связь" : !device.control_ready ? device.reason || "Прибор не готов к управлению через ERP"
+    : !open ? "Сначала откройте сеанс" : !owned ? `Сеанс ведёт ${session.operator || "другой сотрудник"}`
+      : !ready ? "Завершите текущий шаг или прервите сеанс" : busy ? "Дождитесь ответа сервера" : "";
+  const operationReason = (op: string) => unavailable || (!device.supported_ops.includes(op) ? "Операция не подтверждена агентом для этого прибора" : "");
+  const current = session?.steps[session.step];
+  const awaiting = owned && (session.state === "awaiting_standard" || session.state === "awaiting_dut");
+  const standard = current?.args.standard;
+  const prompt = standard ? `Подключите ${ARINST_STANDARDS[standard]} в плоскости измерения и подтвердите.`
+    : current?.label || "Подключите изделие в выбранной ориентации и подтвердите.";
+  const appOpen = Boolean(device.reason?.includes("Закройте ArinstVL"));
+  const nextStep = loadError ? "Восстановите связь с ERP" : appOpen ? "Закройте ArinstVL на ПК прибора"
+    : refreshHint || (!device.control_ready ? device.reason || "Проверьте подключение прибора" : !open ? "Откройте сеанс через ERP"
+      : awaiting ? `Подключите ${standard ? ARINST_STANDARDS[standard] : "изделие"} по инструкции ниже` : session.command ? "Дождитесь выполнения команды" : !profile ? "Задайте профиль сеанса"
+        : "Выберите калибровку или снимите диагностические S11/S21");
+  const primaryLabel = !open ? "Открыть сеанс через ERP" : reconnect ? "Переподключить через ERP" : awaiting ? "Подключено — измерить"
+    : session.command || !ready ? "Выполняется…" : !calibration.valid ? "Калибровать" : "Замерить";
+  const primaryReason = !open ? connectionReason : reconnect ? sessionConnectionReason
+    : awaiting ? loadError || (!device.control_ready || !current?.human
+      || !device.supported_ops.includes(current?.op === "measure_standard" ? "measure_standard" : "capture") ? nextStep : "")
+      : operationReason(!calibration.valid ? "measure_standard" : "capture") || (!profile ? "Сначала задайте профиль сеанса" : "");
+  function primaryAction() {
+    if (busy || primaryReason) return;
+    if (!open) void act("session", () => arinstBenchApi.start(instrumentId));
+    else if (reconnect) void act("session", () => arinstBenchApi.connect(session.id, session.version));
+    else if (awaiting) void act("confirm", () => arinstBenchApi.confirm(session.id, session.version));
+    else if (!calibration.valid && calibrationPanel.current) {
+      calibrationPanel.current.open = true;
+      calibrationPanel.current.querySelector("summary")?.focus();
+      calibrationPanel.current.scrollIntoView?.({ block: "nearest" });
+    } else void act("capture", () => arinstBenchApi.capture(session.id, session.version, orientation));
+  }
+  return <div className="vna-bench" style={{ fontVariantNumeric: "tabular-nums" }}>
+    <section className="panel vna-bench-head" aria-label="Состояние Arinst">
+      <div className="vna-bench-status-row">
+        <div className="vna-bench-status-strip" role="status">
+          <strong className={loadError || !device.control_ready ? "tone-warn" : ""}>{loadError ? "Нет свежего состояния" : appOpen ? "Закройте ArinstVL на ПК прибора" : refreshHint || (device.control_ready ? "ВАЦ готов" : "ВАЦ не готов")}</strong>
+          <span>{calibration.valid ? "Калибровка подтверждена" : "Нужна калибровка"}</span>
+          <span>{open ? `Сеанс: ${session.operator || "оператор не указан"}` : "Сеанс не открыт"}</span>
+        </div>
+        <div className="vna-bench-main-action"><button type="button" className="primary" disabled={Boolean(busy || primaryReason)}
+          aria-describedby={primaryReason ? "arinst-action-reason" : undefined} onClick={primaryAction}>{primaryLabel}</button>
+          {primaryReason && <span className="machine-muted" id="arinst-action-reason">{primaryReason}</span>}
+        </div>
+      </div>
+      <details className="vna-bench-connection"><summary>Подключение · {pc || "ПК не подтверждён"}{lastSeen ? ` · ${formatMoment(lastSeen)}` : ""}</summary>
+      <p className={`analyser-status ${loadError || !device.control_ready ? "tone-warn" : ""}`}>{nextStep}</p>
+      <p className="machine-muted">ПК последнего обнаружения: {pc || "не подтверждён"} · Агент этого ПК: {agentOnline ? "на связи" : "связь не подтверждена"}
+        {lastSeen ? ` · сигнал ${formatMoment(lastSeen)}` : ""} · Прибор: {loadError ? "данные устарели" : device.control_ready ? "готов к управлению" : "не готов"}
+        {` · ArinstVL ${device.control_ready && !loadError ? "закрыт" : appOpen ? "открыт" : "— состояние не подтверждено"}`}</p>
+      <p>Для управления через ERP программа ArinstVL должна быть закрыта.</p>
+      {connection}
+      </details>
+      <p className="machine-muted">Связь: протокол ArinstVL</p>
+      {loadError && <p role="alert" className="error-banner">{loadError}</p>}
+      <div className="analyser-command" aria-label="Сеанс Arinst">
+        {open && <>
+            {!reconnect && <button type="button" className="secondary" disabled={Boolean(sessionConnectionReason)}
+              onClick={() => void act("session", () => arinstBenchApi.connect(session.id, session.version))}>Переподключить через ERP</button>}
+            <button type="button" className="secondary" disabled={Boolean(sessionConnectionReason)}
+              onClick={() => void act("session", () => arinstBenchApi.close(session.id, session.version))}>Закрыть сеанс</button>
+            <button type="button" className="secondary" disabled={Boolean(!owned || busy || loadError || session.state === "releasing")}
+              onClick={() => void act("session", () => arinstBenchApi.abort(session.id, session.version))}>Прервать сеанс</button>
+          </>}
+        {result("session")}
+      </div>
+      {unavailable && <p className="machine-muted">{unavailable}</p>}
+      {session?.error && <p role="alert" className="error-banner">{session.error}</p>}
+      {session?.command && <p role="status">Команда выполняется агентом — дождитесь результата. Повторно отправлять её не нужно.</p>}
+      {awaiting && <div className="vna-bench-active-check">
+        <h3>Подключение: {standard ? ARINST_STANDARDS[standard] : "изделие"}</h3><p>{prompt}</p>
+        <div className="analyser-command">{result("confirm")}</div>
+      </div>}
+    </section>
+    <ArinstProfileEditor profile={profile} options={device.options ?? null} reason={operationReason("apply_profile")} act={act} session={session} result={result("profile")} />
+    <ArinstCalibration panelRef={calibrationPanel} reason={operationReason("measure_standard") || (!profile ? "Сначала задайте профиль сеанса" : "")} session={session} act={act} result={result("calibration")} />
+    <section className="machine-facts" aria-label="Диагностический замер">
+      <h3>Диагностический замер S11 / S21</h3>
+      <p className={calibration.valid ? "" : "warning-inline"}>{calibration.valid ? "Калибровка подтверждена" : calibration.status === "blocked"
+        ? `Калибровка не подтверждена: ${calibration.reason || "нужна независимая проверка"}`
+        : calibration.status === "acquiring" ? "Снимаются меры — следуйте инструкции подключения выше" : calibration.reason || "Калибровка не выполнена"}</p>
+      <div className="analyser-command">
+        <label>Ориентация <select name="arinst-orientation" value={orientation} onChange={(event) => setOrientation(event.target.value as "forward" | "reverse")}>
+          <option value="forward">Прямая</option><option value="reverse">Обратная</option>
+        </select></label>
+        <button type="button" className="secondary" disabled={Boolean(operationReason("capture") || !profile)}
+          onClick={() => session && void act("capture", () => arinstBenchApi.capture(session.id, session.version, orientation))}>Снять S11 / S21</button>{result("capture")}
+      </div>
+      {(operationReason("capture") || !profile) && <p className="machine-muted">{operationReason("capture") || "Сначала задайте профиль сеанса"}</p>}
+      <div className="analyser-command"><button type="button" className="secondary" disabled>Сохранить в КБ/СИ</button>
+        <span>{state.acceptance.eligible ? "Диагностическая трасса не предназначена для записи в КБ/СИ" : ARINST_SAVE_REASON}</span></div>
+      {!state.acceptance.eligible && <p className="machine-muted">{state.acceptance.message}</p>}
+      {state.latest_trace ? <ArinstPartialChart trace={state.latest_trace} /> : <p className="machine-muted">Трасс ещё нет — подключите изделие и снимите S11/S21.</p>}
+    </section>
+    {session && session.artifacts.length > 0 && <details className="machine-facts"><summary>Квитанции прибора · {session.artifacts.length}</summary>
+      <ul>{session.artifacts.map((artifact, index) => <li key={artifact.id}><a href={arinstBenchApi.artifactUrl(session.id, artifact.id)} download>
+        Скачать квитанцию {index + 1}</a> <span className="machine-muted" style={{ overflowWrap: "anywhere" }}>SHA-256: {artifact.sha256}</span></li>)}</ul>
+    </details>}
+  </div>;
+}
+
+function ArinstProfileEditor({ profile, options, reason, act, session, result }: {
+  profile: ArinstProfile | null; options: ArinstOptions | null; reason: string; act: ArinstAct; session: ArinstBenchState["session"]; result: ReactNode;
+}) {
+  const unavailable = reason || (!options ? "Переподключите прибор, чтобы получить доступные диапазон и полосу ПЧ" : "");
+  const [draft, setDraft] = useState(() => profile
+    ? { start: String(profile.start_hz / 1e6), stop: String(profile.stop_hz / 1e6), points: String(profile.points), ifbw: String(profile.if_bandwidth_hz) }
+    : { start: "", stop: "", points: "", ifbw: "" });
+  const [review, setReview] = useState<ArinstProfile | null>(null);
+  const [error, setError] = useState("");
+  const signature = JSON.stringify(profile);
+  const readback = useRef(signature);
+  useEffect(() => {
+    if (readback.current === signature) return;
+    readback.current = signature;
+    setDraft(profile ? { start: String(profile.start_hz / 1e6), stop: String(profile.stop_hz / 1e6), points: String(profile.points), ifbw: String(profile.if_bandwidth_hz) }
+      : { start: "", stop: "", points: "", ifbw: "" });
+    setReview(null);
+    setError("");
+    // Reset only on actual readback changes, not on each state poll.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signature]);
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    const frequencyHz = (text: string) => {
+      const normalized = text.trim().replace(",", ".");
+      if (!/^\d+(?:\.\d{1,6})?$/.test(normalized)) return NaN;
+      const [whole, fraction = ""] = normalized.split(".");
+      return Number(whole) * 1e6 + Number(fraction.padEnd(6, "0"));
+    };
+    const next = { start_hz: frequencyHz(draft.start), stop_hz: frequencyHz(draft.stop), points: Number(draft.points), if_bandwidth_hz: Number(draft.ifbw) };
+    if (!options || ![next.start_hz, next.stop_hz].every(Number.isSafeInteger) || next.start_hz < options.scan_range_hz[0] || next.stop_hz > options.scan_range_hz[1] || next.stop_hz <= next.start_hz
+      || !Number.isInteger(next.points) || next.points < 2 || next.points > 1000 || next.stop_hz - next.start_hz < next.points - 1 || !options.bandwidths_hz.includes(next.if_bandwidth_hz)) {
+      setError("Укажите возрастающий диапазон прибора с целыми частотами в Гц, 2–1000 разных точек и полосу ПЧ из списка"); return;
+    }
+    setError(""); setReview(next);
+  }
+  return <details className="machine-facts"><summary>Профиль · {arinstProfileText(profile)}</summary>
+    <form onSubmit={submit}>
+      <p>В сеансе: {arinstProfileText(profile)}</p>
+      {options && <p className="machine-muted">Диапазон прибора: {num(options.scan_range_hz[0] / 1e6, 3)}–{num(options.scan_range_hz[1] / 1e6, 3)} МГц</p>}
+      <div className="form-grid">
+        {([['start', 'Начало, МГц'], ['stop', 'Конец, МГц'], ['points', 'Число точек']] as const).map(([key, label]) => <label key={key}>{label}
+          <input name={`arinst-${key}`} autoComplete="off" inputMode={key === "points" ? "numeric" : "decimal"} required value={draft[key]}
+            onChange={(event) => { setDraft({ ...draft, [key]: event.target.value }); setReview(null); }} /></label>)}
+        <label>Полоса ПЧ, Гц<select name="arinst-ifbw" required value={draft.ifbw} onChange={(event) => { setDraft({ ...draft, ifbw: event.target.value }); setReview(null); }}>
+          <option value="">Выберите полосу</option>{(options?.bandwidths_hz ?? []).map((value) => <option key={value} value={value}>{formatNumber(value)}</option>)}
+        </select></label>
+      </div>
+      {error && <p role="alert" className="error-banner">{error}</p>}
+      <div className="analyser-command"><button type="submit" className="secondary" disabled={Boolean(unavailable)}>Проверить изменения</button>{result}</div>
+      {unavailable && <p className="machine-muted">{unavailable}</p>}
+      {review && <div className="vna-bench-active-check"><p>В сеансе: {arinstProfileText(profile)} → Применить: {arinstProfileText(review)}. Калибровка станет недействительной.</p>
+        <div className="analyser-command"><button type="button" className="primary" disabled={Boolean(unavailable)} onClick={() => {
+          if (session) { void act("profile", () => arinstBenchApi.profile(session.id, session.version, review)); setReview(null); }
+        }}>Применить профиль сеанса</button><button type="button" className="secondary" onClick={() => setReview(null)}>Отменить изменения</button></div>
+      </div>}
+    </form>
+  </details>;
+}
+
+function ArinstCalibration({ reason, session, act, result, panelRef }: { reason: string; session: ArinstBenchState["session"]; act: ArinstAct; result: ReactNode;
+  panelRef: React.RefObject<HTMLDetailsElement | null> }) {
+  const [instruments, setInstruments] = useState<ProductionInstrument[] | null>(null);
+  const [opened, setOpened] = useState(false);
+  const [kit, setKit] = useState("");
+  const [kitReady, setKitReady] = useState(false);
+  const [kitReason, setKitReason] = useState("");
+  const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0);
+  const [plane, setPlane] = useState("");
+  const [transmission, setTransmission] = useState(true);
+  useEffect(() => {
+    if (!opened || instruments) return;
+    let active = true;
+    productionApi.instruments().then(({ instruments: rows }) => { if (active) { setInstruments(rows.filter((row) => row.status === "Действует")); setError(""); } })
+      .catch((reason) => { if (active) setError(failureText(reason, "Не удалось загрузить реестр мер")); });
+    return () => { active = false; };
+  }, [opened, attempt, instruments]);
+  useEffect(() => {
+    setKitReady(false);
+    if (!kit) { setKitReason("Выберите зарегистрированный калибровочный набор"); return; }
+    let active = true;
+    setKitReason("Проверяем роль набора…");
+    rfInterfacesApi.get(kit).then(({ rf }) => { if (active) { setKitReady(rf.role === "solt_kit"); setKitReason(rf.role === "solt_kit" ? "" : "Это не набор SOL: набор нагрузок SMA-MF06 не заменяет открытый конец и КЗ"); } })
+      .catch((reason) => { if (active) setKitReason(failureText(reason, "Не удалось проверить роль набора")); });
+    return () => { active = false; };
+  }, [kit]);
+  const disabledReason = reason || kitReason || (!kitReady ? "Выберите набор SOL" : !plane.trim() ? "Укажите плоскость измерения" : "");
+  return <details ref={panelRef} className="machine-facts" onToggle={(event) => setOpened(event.currentTarget.open)}><summary>Калибровка по мерам · открытый конец → КЗ → нагрузка → перемычка</summary>
+    <p>Меры SMA-MF06: открытый конец, КЗ и нагрузка; для S21 — перемычка. Используйте набор с зарегистрированной ролью SOL, а не только набор нагрузок.</p>
+    <p className="warning-inline">Снятие мер сохраняет исходные данные. Для калибровки нужны подтверждённые характеристики мер; для сохранения результата в КБ/СИ — стендовое сравнение.</p>
+    {error && <p role="alert" className="error-banner">{error} <button type="button" className="secondary" onClick={() => setAttempt((value) => value + 1)}>Повторить загрузку мер</button></p>}
+    {!instruments && !error && <p role="status">Загрузка реестра мер…</p>}
+    {instruments?.length === 0 && <p className="machine-muted">В реестре нет действующих мер — добавьте калибровочный набор.</p>}
+    <div className="form-grid"><label>Калибровочный набор<select name="arinst-kit" value={kit} onChange={(event) => { setKitReady(false); setKit(event.target.value); }}>
+      <option value="">Выберите набор из реестра</option>{instruments?.map((row) => <option key={row.id} value={row.id}>{row.inventory_number} · {row.name}</option>)}
+    </select></label>
+      <label>Плоскость измерения<input name="arinst-plane" autoComplete="off" maxLength={300} value={plane} onChange={(event) => setPlane(event.target.value)} /></label>
+      <label><span>Передача S21</span><span style={{ display: "flex", alignItems: "center", gap: 8 }}><input type="checkbox" style={{ width: "auto" }} name="arinst-transmission" checked={transmission} onChange={(event) => setTransmission(event.target.checked)} /> С перемычкой</span></label>
+    </div>
+    <div className="analyser-command"><button type="button" className="secondary" disabled={Boolean(disabledReason)}
+      onClick={() => session && void act("calibration", () => arinstBenchApi.calibration(session.id, session.version, kit, plane.trim(), transmission))}>Начать калибровку по мерам</button>{result}</div>
+    {disabledReason && <p className="machine-muted">{disabledReason}</p>}
+  </details>;
+}
+
 export function VnaBench({ canEdit, connection }: { canEdit: boolean; connection?: (device: VnaBenchDevice) => ReactNode }) {
   const [state, setState] = useState<VnaBenchState | null>(null);
   const [error, setError] = useState("");
@@ -140,13 +429,17 @@ export function VnaBench({ canEdit, connection }: { canEdit: boolean; connection
   const [attempt, setAttempt] = useState(0);
   const [notice, setNotice] = useState("");
   const stateRequest = useRef<Promise<VnaBenchState> | null>(null);
+  const operationPending = useRef(false);
+  const stateGeneration = useRef(0);
 
   useEffect(() => {
     let active = true;
+    if (operationPending.current) return;
+    const stamp = stateGeneration.current;
     const request = stateRequest.current ?? vnaBenchApi.state();
     stateRequest.current = request;
-    request.then((next) => { if (active) { setState(next); setLoadError(""); } })
-      .catch((reason) => { if (active) setLoadError(failureText(reason, "Не удалось прочитать состояние ВАЦ")); })
+    request.then((next) => { if (active && stamp === stateGeneration.current) { setState(next); setLoadError(""); } })
+      .catch((reason) => { if (active && stamp === stateGeneration.current) setLoadError(failureText(reason, "Не удалось прочитать состояние ВАЦ")); })
       .finally(() => { if (stateRequest.current === request) stateRequest.current = null; });
     return () => { active = false; };
   }, [attempt]);
@@ -172,13 +465,19 @@ export function VnaBench({ canEdit, connection }: { canEdit: boolean; connection
       : failureText(reason, "")) || REFUSAL_FALLBACK;
   };
   const act: Act = async (key, operation) => {
-    if (busy) return;
+    if (operationPending.current) return;
+    operationPending.current = true;
+    stateGeneration.current += 1;
+    stateRequest.current = null;
     setBusy(key); setError("");
     try {
       setState(await operation());
+      setLoadError("");
     } catch (reason) {
       setError(refusalOf(reason));
+      setAttempt((value) => value + 1);
     } finally {
+      operationPending.current = false;
       setBusy("");
     }
   };
@@ -186,7 +485,10 @@ export function VnaBench({ canEdit, connection }: { canEdit: boolean; connection
   const showScreen = async (screenId: string): Promise<string> => {
     const open = state?.session?.status === "open" ? state.session : null;
     if (!open) return "Сеанс не открыт — откройте его на вкладке «Замер»";
-    if (busy) return "Дождитесь окончания предыдущего действия и нажмите ещё раз";
+    if (operationPending.current) return "Дождитесь окончания предыдущего действия и нажмите ещё раз";
+    operationPending.current = true;
+    stateGeneration.current += 1;
+    stateRequest.current = null;
     setBusy("show-screen");
     try {
       setState(await vnaBenchApi.showScreen(open.id, open.version, screenId));
@@ -194,6 +496,7 @@ export function VnaBench({ canEdit, connection }: { canEdit: boolean; connection
     } catch (reason) {
       return refusalOf(reason);
     } finally {
+      operationPending.current = false;
       setBusy("");
     }
   };
@@ -211,7 +514,8 @@ export function VnaBench({ canEdit, connection }: { canEdit: boolean; connection
   const canAct = canEdit && (!session || session.owned !== false);
   // Остановить и восстановить чужой сеанс может администратор: открывший мог уйти, а прибор нужен.
   const canRecover = canEdit && Boolean(session) && (session?.owned !== false || Boolean(session?.can_recover));
-  const notReady = state.device.s2vna_ready === false || Boolean(state.device.refusal);
+  const notReady = !state.device.agent_online || state.device.vna_online === false
+    || state.device.s2vna_ready !== true || Boolean(state.device.refusal) || Boolean(loadError);
   /** Открыть сеанс (для КБ — на полосе ЭТК задания); открытый сеанс сначала закрывается. */
   // Стрелки, Home и End переключают вкладки (как «Разделы ОТК»).
   const tabKeys = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -236,7 +540,13 @@ export function VnaBench({ canEdit, connection }: { canEdit: boolean; connection
     return vnaBenchApi.state();
   });
   return <section className="vna-bench" aria-label="ВАЦ — рабочее место">
-    <BenchHeader state={state} />
+    <ObjectPanel state={state} session={session} calibrationValid={state.calibration.valid} canEdit={canAct}
+      busy={Boolean(busy) || commandBusy} blockedStart={notReady} act={act} open={open}
+      freshReadings={!loadError && state.device.agent_online && state.device.vna_online !== false}
+      visible={tab === "measure"} header={(action) => <>
+    <BenchHeader state={state} action={tab === "measure" ? action : !session && canAct
+      ? <button type="button" className="primary" disabled={Boolean(busy) || notReady} onClick={() => void open()}>Открыть сеанс</button> : null}
+      connection={connection?.(state.device)} />
     {state.device.transfer && canEdit && <div className="form-actions">
       {state.device.transfer.agents.map((target) => <button type="button" className="secondary" key={target.id}
         disabled={Boolean(busy)} onClick={() => void transfer(target)}>
@@ -268,27 +578,16 @@ export function VnaBench({ canEdit, connection }: { canEdit: boolean; connection
             void act("release-unrestored", () => vnaBenchApi.releaseUnrestored(session.id, session.version));
         }}>{busy === "release-unrestored" ? "Закрываем…" : "Закрыть без восстановления"}</button>}
     </div>}
-    <div className="seg-tabs sub" role="tablist" aria-label="Разделы рабочего места ВАЦ" onKeyDown={tabKeys}>
+    <div className="seg-tabs sub vna-bench-tools" role="tablist" aria-label="Разделы рабочего места ВАЦ" onKeyDown={tabKeys}>
       {TABS.map((item) => <button key={item.id} type="button" role="tab" id={`vna-bench-tab-${item.id}`} aria-controls="vna-bench-panel"
         aria-selected={tab === item.id} tabIndex={tab === item.id ? 0 : -1} className={tab === item.id ? "on" : ""}
         onClick={() => setTab(item.id)}>{item.label}</button>)}
     </div>
-    <div className="vna-bench-body" role="tabpanel" id="vna-bench-panel" aria-labelledby={`vna-bench-tab-${tab}`}>
-      {!session && tab === "measure" && <div className="panel vna-bench-start">
-        <p>Сеанс не открыт. Перед началом: ВАЦ включён и прогрет не меньше 40 минут, S2VNA показывает «Готов», АКМ подключён по USB
-          и горит зелёным, разъёмы осмотрены и почищены. Сеанс для СИ и проверок калибруется на сетке «ОТК — переход»
-          (10 МГц – 18 ГГц); для КБ найдите изделие ниже — сеанс откроется на полосе его ЭТК.</p>
-        {canAct && state.device.s2vna_ready === false && <p className="tone-warn">Начать можно, когда S2VNA покажет «Готов».</p>}
-        {canAct && <button type="button" className="primary" disabled={Boolean(busy) || notReady}
-          onClick={() => void open()}>Открыть сеанс для СИ и проверок</button>}
-      </div>}
-      {session && tab === "measure" && <StepList session={session} calibrationValid={state.calibration.valid}
-        calibrationReason={state.calibration.reason} canEdit={canAct} busy={Boolean(busy)}
-        run={(step) => void act(`step:${step}`, () => vnaBenchApi.runStep(session.id, session.version, step))} />}
-      {session && tab === "measure" && canAct && state.calibration.valid && <ScreenSwitcher session={session}
-        disabled={Boolean(busy) || Boolean(session.command)} show={showScreen} />}
-      {tab === "measure" && <ObjectPanel session={session} calibrationValid={state.calibration.valid} canEdit={canAct}
-        busy={Boolean(busy)} blockedStart={notReady} act={act} open={(assembly) => void open(assembly)} />}
+    </>} />
+    <div className="vna-bench-body" role={tab === "measure" ? undefined : "tabpanel"}
+      id={tab === "measure" ? undefined : "vna-bench-panel"} aria-labelledby={`vna-bench-tab-${tab}`}>
+      {session && tab === "measure" && canAct && state.calibration.valid && <details className="vna-bench-view"><summary>Вид графиков на приборе</summary><ScreenSwitcher session={session}
+        disabled={Boolean(busy) || Boolean(session.command)} show={showScreen} /></details>}
       {session && tab === "measure" && canAct && <div className="form-actions vna-bench-close">
         <button type="button" className="secondary small" disabled={Boolean(busy) || Boolean(session.command)}
           onClick={() => { if (window.confirm("Закрыть сеанс? Калибровка и шаги текущего сеанса будут сброшены.")) void act("close", () => vnaBenchApi.close(session.id, session.version)); }}>Закрыть сеанс</button>
@@ -297,7 +596,6 @@ export function VnaBench({ canEdit, connection }: { canEdit: boolean; connection
       {tab === "screens" && <VnaScreensEditor session={session} calibrationValid={state.calibration.valid} canEdit={canEdit}
         show={showScreen} />}
     </div>
-    {connection?.(state.device)}
   </section>;
 }
 
@@ -322,12 +620,27 @@ export function dueText(due: VnaBenchDue | undefined): { text: string; tone: str
   return { text: day ? `просрочена с ${day}` : "просрочена", tone: "tone-danger" };
 }
 
-function BenchHeader({ state }: { state: VnaBenchState }) {
+function BenchHeader({ state, action, connection }: { state: VnaBenchState; action: ReactNode; connection?: ReactNode }) {
   const { device, calibration } = state;
   const ready = device.s2vna_ready === true;
   const weekly = dueText(state.due.find((due) => due.kind === "weekly"));
   const monthly = dueText(state.due.find((due) => due.kind === "monthly"));
+  const nextDue = [...state.due].filter((due) => due.kind !== "flex").sort((a, b) =>
+    (a.status === "ok" ? 1 : 0) - (b.status === "ok" ? 1 : 0) || (a.due_at ?? "").localeCompare(b.due_at ?? ""))[0];
+  const nextDueText = dueText(nextDue);
+  const status = !device.agent_online ? "Нет связи с ПК" : device.vna_online === false ? "ВАЦ не подключён"
+    : device.refusal ? "ВАЦ не готов" : ready ? "ВАЦ готов" : "ВАЦ не готов";
   return <div className="panel vna-bench-head">
+    <div className="vna-bench-status-row">
+      <div className="vna-bench-status-strip" role="status">
+        <strong className={!device.agent_online || device.vna_online === false ? "tone-danger" : !ready || device.refusal ? "tone-warn" : ""}>{status}</strong>
+        <span>Прогрев {device.warmup_min === null ? "не подтверждён" : `${formatNumber(device.warmup_min)} / 40 мин`}</span>
+        <span className={calibration.valid ? "" : "tone-warn"}>{calibration.valid ? `Калибровка до ${clock(calibration.valid_until)}` : "Нужна калибровка"}</span>
+        <span className={nextDue?.status === "ok" ? "" : nextDueText.tone}>{nextDue ? `${nextDue.kind === "weekly" ? "Еженедельная" : "Ежемесячная"}: ${nextDueText.text}` : "Срок проверок неизвестен"}</span>
+      </div>
+      <div className="vna-bench-main-action">{action}</div>
+    </div>
+    <details className="vna-bench-connection"><summary><b>Подключение</b> · связь с агентом: {device.agent_online ? "На связи" : "Нет связи"} · ПК {device.bound_pc ?? device.pc_name ?? "не указан"}{device.read_at ? ` · ${clock(device.read_at)}` : ""}</summary>
     <dl className="vna-bench-facts">
       <div><dt>ПК</dt><dd>{device.bound_pc ?? device.pc_name ?? "—"} <span className={device.agent_online ? "tone-ok" : "tone-danger"}>{device.agent_online ? "Агент на связи" : "Агент не на связи"}</span></dd></div>
       <div><dt>ВАЦ</dt><dd>{device.instrument_number} {device.model}{device.serial ? `, зав. № ${device.serial}` : ""}
@@ -340,6 +653,8 @@ function BenchHeader({ state }: { state: VnaBenchState }) {
       <div><dt>Еженедельная</dt><dd className={weekly.tone}>{weekly.text}</dd></div>
       <div><dt>Ежемесячная</dt><dd className={monthly.tone}>{monthly.text}</dd></div>
     </dl>
+    {connection}
+    </details>
     {device.refusal && <div className="warning-inline" role="alert">{refusalText(device.refusal)}</div>}
     {device.last_seen_pc && device.last_seen_pc !== (device.bound_pc ?? device.pc_name)
       && device.refusal?.code !== "vna_not_connected" && <p className="warning-inline">
@@ -348,9 +663,8 @@ function BenchHeader({ state }: { state: VnaBenchState }) {
   </div>;
 }
 
-function StepList({ session, calibrationValid, calibrationReason, canEdit, busy, run }: {
-  session: VnaBenchSession; calibrationValid: boolean; calibrationReason: string | null; canEdit: boolean; busy: boolean;
-  run: (step: VnaBenchStepKey) => void;
+function StepList({ session, calibrationValid, calibrationReason }: {
+  session: VnaBenchSession; calibrationValid: boolean; calibrationReason: string | null;
 }) {
   const byKey = new Map(session.steps.map((step) => [step.key, step]));
   const current = STEP_ORDER.find((key) => byKey.get(key)?.status !== "passed");
@@ -360,11 +674,7 @@ function StepList({ session, calibrationValid, calibrationReason, canEdit, busy,
   const failed = currentStep?.status === "failed"
     || (currentStep?.status === "refused" && CALIBRATION_REFUSALS.has(currentStep.refusal?.code ?? ""));
   const refused = currentStep?.status === "refused" && !failed;
-  const running = currentStep?.status === "running" || Boolean(session.command);
   const expired = !current && !calibrationValid;
-  const action: { label: string; step: VnaBenchStepKey } | null = failed || expired ? { label: RECALIBRATE, step: "calibration" }
-    : refused && current ? { label: "Повторить", step: current }
-      : current && STEP_ACTIONS[current] ? { label: STEP_ACTIONS[current] as string, step: current } : null;
   return <div className="panel vna-bench-steps-panel">
     <ol className="vna-bench-steps" aria-label="Шаги сеанса">
       {STEP_ORDER.map((key, index) => {
@@ -385,8 +695,6 @@ function StepList({ session, calibrationValid, calibrationReason, canEdit, busy,
           : refused ? <><strong>{STEP_TITLES[current as VnaBenchStepKey]}: команда не выполнена.</strong>{" "}
             {refusalText(currentStep?.refusal ?? { code: "refused", message: "" })} Устраните причину и повторите.</>
           : <><strong>{STEP_TITLES[current as VnaBenchStepKey]}.</strong> {STEP_HINTS[current as VnaBenchStepKey]}</>}</span>
-      {canEdit && action && <button type="button" className="primary small" disabled={busy || running}
-        onClick={() => run(action.step)}>{action.label}</button>}
     </div>}
   </div>;
 }
@@ -398,16 +706,19 @@ const planTraceTitle = (label: string) => {
 };
 
 function PlanCard({ plan }: { plan: VnaBenchPlan }) {
-  return <dl className="vna-bench-plan">
+  return <>
+    <dl className="vna-bench-plan">
+      <div><dt>Полоса</dt><dd className="num">{formatNumber(plan.band_mhz[0], { digits: 0 })} – {formatNumber(plan.band_mhz[1], { digits: 0 })} МГц</dd></div>
+      <div><dt>Норма</dt><dd>{plan.norm_vswr === null ? "не установлена — не оценивается"
+        : `КСВН ≤ ${vswr(plan.norm_vswr)}${plan.uncertainty !== null ? `, U ${num(plan.uncertainty, 3)}` : ""}`}{plan.norm_source ? ` · ${glueUnits(plan.norm_source)}` : ""}</dd></div>
+    </dl>
+    <details className="vna-bench-settings"><summary>Параметры замера</summary><dl className="vna-bench-plan">
     <div><dt>Экран</dt><dd>{plan.screen_name || "—"}</dd></div>
-    <div><dt>Полоса</dt><dd className="num">{formatNumber(plan.band_mhz[0], { digits: 0 })} – {formatNumber(plan.band_mhz[1], { digits: 0 })} МГц</dd></div>
     <div><dt>Точек</dt><dd className="num">{formatNumber(plan.points, { digits: 0 })}</dd></div>
     <div><dt>ПЧ</dt><dd className="num">{formatNumber(plan.ifbw_hz >= 1000 ? plan.ifbw_hz / 1000 : plan.ifbw_hz, { digits: 1 })} {plan.ifbw_hz >= 1000 ? "кГц" : "Гц"}</dd></div>
     <div><dt>Мощность</dt><dd className="num">{formatNumber(plan.power_dbm, { digits: 1 })} дБм</dd></div>
     <div className="wide"><dt>Графики</dt><dd>{plan.traces.map((trace) => glueUnits(`${planTraceTitle(trace.label)} (${trace.scale})`)).join(" · ") || "—"}</dd></div>
-    <div className="wide"><dt>Норма</dt><dd>{plan.norm_vswr === null ? "не установлена — не оценивается"
-      : `КСВН ≤ ${vswr(plan.norm_vswr)}${plan.uncertainty !== null ? `, U ${num(plan.uncertainty, 3)}` : ""}`}{plan.norm_source ? ` · ${glueUnits(plan.norm_source)}` : ""}</dd></div>
-  </dl>;
+  </dl></details></>;
 }
 
 /** Оснастка — карточки СИ со своим файлом .s2p (СТО 12.2: без своего файла замер с оснасткой не выполняют). */
@@ -432,19 +743,24 @@ function FixturePicker({ side, fixtures, value, onChange, disabled }: {
   </div>;
 }
 
-function ObjectPanel({ session, calibrationValid, canEdit, busy, blockedStart, act, open }: {
+function ObjectPanel({ state, session, calibrationValid, canEdit, busy, blockedStart, act, open, header, visible, freshReadings }: {
+  state: VnaBenchState; header: (action: ReactNode) => ReactNode; visible: boolean;
+  freshReadings: boolean;
   session: VnaBenchSession | null; calibrationValid: boolean; canEdit: boolean; busy: boolean; blockedStart: boolean; act: Act;
-  open: (assembly?: { task_id: string; operation_id?: string | null }) => void;
+  open: (assembly?: { task_id: string; operation_id?: string | null }) => Promise<void>;
 }) {
   const [query, setQuery] = useState("");
   const [candidates, setCandidates] = useState<VnaBenchTarget[] | null>(null);
-  const [target, setTarget] = useState<VnaBenchTarget | null>(null);
+  const [target, setTarget] = useState<VnaBenchTarget | null>(() => session?.items.at(-1)?.target ?? null);
   const [plan, setPlan] = useState<VnaBenchPlan | null>(null);
   const [error, setError] = useState("");
   const [looking, setLooking] = useState(false);
   const [fixtures, setFixtures] = useState<ProductionInstrument[] | null>(null);
+  const [fixtureError, setFixtureError] = useState("");
+  const [fixtureAttempt, setFixtureAttempt] = useState(0);
   const [fmaxText, setFmaxText] = useState("");
   const [fmaxError, setFmaxError] = useState("");
+  const [cleaned, setCleaned] = useState(false);
   // Только последний запрос плана: ответ на устаревший (сменили оснастку, объект, сеанс) отбрасывается.
   const planRequest = useRef(0);
   const sessionId = session?.id ?? null;
@@ -465,14 +781,21 @@ function ObjectPanel({ session, calibrationValid, canEdit, busy, blockedStart, a
 
   async function pick(next: VnaBenchTarget) {
     setTarget(next); setFmaxText(""); setFmaxError("");
-    if (next.kind === "instrument" && fixtures === null) {
-      productionApi.instruments().then((result) => setFixtures(result.instruments)).catch(() => setFixtures([]));
-    }
-    await loadPlan(next);
+    if (!session && canEdit && !busy && !blockedStart) {
+      await open(next.kind === "assembly" ? { task_id: next.task_id, operation_id: next.operation_id ?? null } : undefined);
+    } else await loadPlan(next);
   }
 
   // Сеанс сменился (открыт сеанс для КБ) — план пересчитывается по новой калибровке.
   useEffect(() => { if (target) void loadPlan(target); }, [sessionId]);
+  const instrumentSelected = target?.kind === "instrument";
+  useEffect(() => {
+    if (!instrumentSelected || fixtures !== null) return;
+    let active = true;
+    productionApi.instruments().then((result) => { if (active) { setFixtures(result.instruments); setFixtureError(""); } })
+      .catch((reason) => { if (active) setFixtureError(failureText(reason, "Не удалось загрузить оснастку")); });
+    return () => { active = false; };
+  }, [instrumentSelected, fixtures, fixtureAttempt]);
 
   async function find(event: FormEvent) {
     event.preventDefault();
@@ -512,7 +835,7 @@ function ObjectPanel({ session, calibrationValid, canEdit, busy, blockedStart, a
     if ((value ?? null) !== (target.fmax_ghz ?? null)) retarget({ fmax_ghz: value });
   }
 
-  const item = target && session ? [...session.items].reverse().find((entry) => targetKey(entry.target) === targetKey(target)) ?? null : null;
+  const item = benchItem(session, target);
   // Замер объекта идёт (не окончательный и не отказ) — цепочку и частоту не меняют.
   const inProgress = item !== null && !itemDone(item);
   const blocked = !session ? "" : !ready ? (stepsDone ? "Калибровка недействительна — откалибруйте заново."
@@ -520,8 +843,29 @@ function ObjectPanel({ session, calibrationValid, canEdit, busy, blockedStart, a
   const wrongCalibration = plan?.refusal?.code === "other_calibration";
   const assemblyOpen = target?.kind === "assembly" ? { task_id: target.task_id, operation_id: target.operation_id ?? null } : undefined;
   const suggestedGhz = plan && !plan.refusal ? plan.band_mhz[1] / 1000 : null;
-  return <div className="panel vna-bench-object">
-    <h2>Объект</h2>
+  const action = benchMainAction(state, target, plan);
+  const calibrationAction = action.kind === "step" && action.step === "calibration";
+  const actionReason = blockedStart ? state.device.refusal ? refusalText(state.device.refusal)
+    : state.device.agent_online && state.device.vna_online !== false && state.device.warmup_min !== null && state.device.warmup_min < 40
+    ? `Дождитесь прогрева: ещё ${formatNumber(40 - state.device.warmup_min)} мин` : "Проверьте связь с ВАЦ и готовность прибора" : busy ? "Дождитесь завершения текущего действия"
+    : calibrationAction && !state.device.acm ? "Подключите АКМ по USB" : calibrationAction && !cleaned ? "Подтвердите очистку разъёмов" : action.reason;
+  async function execute() {
+    if (!canEdit || busy || actionReason) return;
+    if (action.kind === "open") { await open(assemblyOpen); return; }
+    if (!session) return;
+    if (action.kind === "step" && action.step) await act(`step:${action.step}`, () => vnaBenchApi.runStep(session.id, session.version, action.step!));
+    else if (action.kind === "measure" && target) await act("measure", () => vnaBenchApi.measure(session.id, session.version, target));
+    else if (action.kind === "connection" && item) await act("connection", () => vnaBenchApi.nextConnection(session.id, item.id, item.version));
+    else if (action.kind === "record" && item) await act("record", () => vnaBenchApi.record(session.id, item.id, item.version));
+  }
+  return <>{header(canEdit && <>
+    <button type="button" className="primary" disabled={Boolean(actionReason) || action.kind === "wait"} aria-describedby={actionReason ? "vna-action-reason" : undefined}
+      onClick={() => void execute()}>{action.label}</button>
+    {actionReason && <span className="machine-muted" id="vna-action-reason">{actionReason}</span>}
+  </>)}
+  <div className="vna-bench-body" hidden={!visible} role="tabpanel" id={visible ? "vna-bench-panel" : undefined} aria-labelledby="vna-bench-tab-measure">
+  <div className="panel vna-bench-object">
+    <h2>Что меряем</h2>
     <form className="vna-bench-find" onSubmit={(event) => void find(event)}>
       <label>СИ или КБ — скан или номер
         <input name="vna-object" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="СИ.035, ПЗ-0001/3 или скан этикетки…" autoComplete="off" spellCheck={false} />
@@ -537,23 +881,34 @@ function ObjectPanel({ session, calibrationValid, canEdit, busy, blockedStart, a
           aria-pressed={Boolean(target && targetKey(target) === targetKey(candidate))} onClick={() => void pick(candidate)}>{targetTitle(candidate)}</button>
       </li>)}
     </ul>}
-    {target && <div className="vna-bench-target">
-      <h3>{targetTitle(target)}</h3>
-      <button type="button" className="secondary small" disabled={busy || looking || inProgress || Boolean(session?.command)}
-        onClick={() => {
-          planRequest.current += 1;
-          setTarget(null); setPlan(null); setCandidates(null); setQuery(""); setError("");
-        }}>Выбрать другой объект</button>
+    {!target && !candidates && <p className="muted-text">Отсканируйте СИ или КБ — сеанс откроется на нужной полосе.</p>}
+    {target && <h3 className="vna-bench-selected">{targetTitle(target)}</h3>}
+    {target && <button type="button" className="secondary small" disabled={busy || looking || inProgress || Boolean(session?.command)}
+      onClick={() => {
+        planRequest.current += 1;
+        setTarget(null); setPlan(null); setCandidates(null); setQuery(""); setError("");
+      }}>Выбрать другой объект</button>}
+  </div>
+  <div className={`vna-bench-readiness${!freshReadings ? " machine-muted" : ""}`} role="group" aria-label="Готовность к калибровке">
+    <span>{freshReadings && state.device.warmup_min !== null && state.device.warmup_min >= 40 ? "✓" : "○"} Прогрев ≥ 40 мин</span>
+    <span>{!freshReadings ? "○ АКМ: нет свежих данных" : state.device.acm ? "✓ АКМ подключён" : "○ Подключите АКМ по USB"}</span>
+    <label><input type="checkbox" name="vna-cleaned" checked={cleaned} disabled={!canEdit || busy}
+      onChange={(event) => setCleaned(event.target.checked)} /> Разъёмы осмотрены и почищены</label>
+  </div>
+  {session && (ready ? <details className="vna-bench-settings vna-bench-completed"><summary>Калибровка пройдена · 4 шага</summary>
+    <StepList session={session} calibrationValid={calibrationValid} calibrationReason={state.calibration.reason} /></details>
+    : <StepList session={session} calibrationValid={calibrationValid} calibrationReason={state.calibration.reason} />)}
+    {target && <div className="panel vna-bench-target">
+      <h3>Замер и результат</h3>
       {!session && <>
         <p className="vna-bench-hint">{target.kind === "assembly"
-          ? `Для КБ калибровка идёт на полосе ЭТК задания ${target.task_number} — откроется отдельный сеанс.`
-          : "Переход измеряют в сеансе на сетке «ОТК — переход» — откройте его кнопкой выше."}</p>
-        {canEdit && target.kind === "assembly" && <button type="button" className="primary" disabled={busy || blockedStart}
-          onClick={() => open(assemblyOpen)}>Открыть сеанс для КБ</button>}
+          ? `Для КБ калибровка идёт на полосе ЭТК задания ${target.task_number}.`
+          : "СИ — полоса «ОТК — переход», 10 МГц – 18 ГГц."}</p>
       </>}
       {session && !plan && !error && <p className="empty" role="status">Составляю план замера…</p>}
       {session && plan && <>
-        {target.kind === "instrument" && !wrongCalibration && <div className="vna-bench-chain">
+        {target.kind === "instrument" && !wrongCalibration && <details className="vna-bench-settings"><summary>Оснастка и частота · {target.left || target.right ? "с оснасткой" : "напрямую"}</summary><div className="vna-bench-chain">
+          {fixtureError && <p className="error-banner" role="alert">{fixtureError} <button type="button" className="secondary" onClick={() => setFixtureAttempt((value) => value + 1)}>Повторить загрузку оснастки</button></p>}
           <FixturePicker side="left" fixtures={(fixtures ?? []).filter((f) => isFixture(f, target.instrument_id) && f.id !== target.right?.instrument_id)}
             value={target.left ?? null} disabled={busy || inProgress} onChange={(left) => retarget({ left })} />
           <FixturePicker side="right" fixtures={(fixtures ?? []).filter((f) => isFixture(f, target.instrument_id) && f.id !== target.left?.instrument_id)}
@@ -567,23 +922,19 @@ function ObjectPanel({ session, calibrationValid, canEdit, busy, blockedStart, a
             {fmaxError ? <span id="vna-bench-fmax-error" className="tone-danger" role="alert">{fmaxError}</span>
               : <span className="muted-text">{suggestedGhz !== null ? `по серии и норме: до ${formatNumber(suggestedGhz, { digits: 2 })} ГГц` : ""}</span>}
           </label>
-        </div>}
+        </div></details>}
         {!wrongCalibration && <PlanCard plan={plan} />}
         {plan.refusal && <div className="warning-inline" role="alert">{refusalText(plan.refusal)}{wrongCalibration && target.kind === "assembly"
           ? ` Для КБ калибровка идёт на полосе ЭТК задания ${target.task_number}: текущий сеанс закроется, откроется новый.` : ""}</div>}
-        {wrongCalibration && canEdit && <button type="button" className="primary" disabled={busy || Boolean(session.command)}
-          onClick={() => open(assemblyOpen)}>{target.kind === "assembly" ? "Открыть сеанс для КБ" : "Открыть сеанс для СИ и проверок"}</button>}
         {!item && !plan.refusal && <>
           <p className="vna-bench-hint">{plan.connection_hint ?? "Подключите объект через кабели, не к портам ВАЦ напрямую."}</p>
           {blocked && <p className="tone-warn">{blocked}</p>}
-          {canEdit && <button type="button" className="primary" disabled={busy || Boolean(blocked) || Boolean(session.command)}
-            onClick={() => void act("measure", () => vnaBenchApi.measure(session.id, session.version, target))}>Измерить</button>}
         </>}
       </>}
-      {session && item && <ItemResult item={item} session={session} canEdit={canEdit} busy={busy || Boolean(blocked)} act={act}
-        remeasure={plan && !plan.refusal ? () => void act("measure", () => vnaBenchApi.measure(session.id, session.version, target)) : null} />}
+      {session && item && <ItemResult item={item} remeasure={action.kind === "record" && canEdit && plan && !plan.refusal
+        ? () => void act("measure", () => vnaBenchApi.measure(session.id, session.version, target)) : undefined} busy={busy || blockedStart} />}
     </div>}
-  </div>;
+  </div></>;
 }
 
 /** Замер объекта закончен: решение окончательное или отказ без идущей команды — можно мерить заново. */
@@ -623,15 +974,12 @@ function verdictNumbers(verdict: VnaBenchVerdict, item: VnaBenchItem): string {
   return parts.join(" · ");
 }
 
-function ItemResult({ item, session, canEdit, busy, act, remeasure }: {
-  item: VnaBenchItem; session: VnaBenchSession; canEdit: boolean; busy: boolean; act: Act; remeasure: (() => void) | null;
-}) {
+function ItemResult({ item, remeasure, busy }: { item: VnaBenchItem; remeasure?: () => void; busy: boolean }) {
   const [printing, setPrinting] = useState(false);
   const [printed, setPrinted] = useState("");
   const [printError, setPrintError] = useState("");
   const verdict = item.verdict;
   const prompt = connectionPrompt(item);
-  const next = item.connections.find((connection) => connection.status === "pending");
 
   async function printLabel(id: string) {
     setPrinting(true); setPrinted(""); setPrintError("");
@@ -652,11 +1000,8 @@ function ItemResult({ item, session, canEdit, busy, act, remeasure }: {
       <span className="num">{verdictNumbers(verdict, item)}</span>
       {verdict.reason && <span className="muted-text">{verdict.reason}</span>}
     </div>}
-    {prompt && next && <div className="vna-bench-prompt" role="status">
+    {prompt && <div className="vna-bench-prompt" role="status">
       <strong>{prompt}</strong>
-      {canEdit && <button type="button" className="primary small" disabled={busy || Boolean(session.command)}
-        onClick={() => void act("connection", () => vnaBenchApi.nextConnection(session.id, item.id, item.version))}>
-        Измерить: {connectionName(item, next.no)}</button>}
     </div>}
     {item.connections.length > 1 && <table className="vna-bench-connections" aria-label="Подключения">
       <thead><tr><th scope="col">Подключение</th><th scope="col" className="num">Наибольший КСВН</th><th scope="col" className="num">Частота, МГц</th><th scope="col">Состояние</th></tr></thead>
@@ -673,11 +1018,8 @@ function ItemResult({ item, session, canEdit, busy, act, remeasure }: {
         <span className="tone-ok">Записано{item.recorded_to ? `: ${item.recorded_to}` : ""}, {formatMoment(item.recorded_at)}</span>
         {item.label_instrument_id && <button type="button" className="secondary small" disabled={printing}
           onClick={() => void printLabel(item.label_instrument_id as string)}>{printing ? "Печать…" : "Печать этикетки"}</button>}
-      </div>
-      : canEdit && verdict?.final && item.target.kind === "instrument" && <button type="button" className="primary" disabled={busy}
-        onClick={() => void act("record", () => vnaBenchApi.record(session.id, item.id, item.version))}>Записать в карточку</button>}
-    {canEdit && remeasure && itemDone(item) && <button type="button" className="secondary" disabled={busy || Boolean(session.command)}
-      onClick={remeasure}>Измерить заново</button>}
+      </div> : null}
+    {remeasure && <button type="button" className="secondary" disabled={busy} onClick={remeasure}>Измерить заново</button>}
     {verdict?.final && item.target.kind === "assembly" && !item.recorded_at
       && <p className="muted-text">Каждый замер КБ уже записан в «Замеры КСВН» изделия.</p>}
     {printed && <div className="success-banner" role="status">{printed}</div>}

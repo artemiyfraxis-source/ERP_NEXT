@@ -2,10 +2,34 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { productionApi, vnaCaptureApi, warehouseApi, type Principal, type ProductionInstrument, type VswrTaskOverview, type VswrMeasurement, type VnaCaptureJob, type VnaCaptureSettings } from "./api";
 import { VswrSection } from "./VswrSection";
-import { VnaCapture, captureRefusals, captureWarnings, VnaSettings } from "./vnaCapture";
+import { ArinstPartialChart, VnaCapture, captureRefusals, captureWarnings, VnaSettings } from "./vnaCapture";
+import type { ArinstTrace } from "./vnaBenchApi";
 import { setRightsPrincipal } from "./rights";
 
 const principal = (id: string): Principal => ({ user: { id, email: "", name: "", department: "" }, roles: [], permissions: {} });
+
+const nativeTrace = (): ArinstTrace => ({
+  command_id: "c1", artifact_id: "a1", sha256: "abc", acceptance_eligible: false,
+  profile: { start_hz: 1e6, stop_hz: 9e6, points: 3, if_bandwidth_hz: 20 },
+  acquisition: { schema: "arinst.partial.v1", points: 3, orientation: "forward", measured_channels: ["S11", "S21"],
+    data: { S11: [[1, 0], [0.5, 0], [0.25, 0]], S21: [[0.5, 0], [0.25, 0], [0.125, 0]] },
+    frequencies_hz: [1e6, 3e6, 9e6], grid_confirmed: true, correction_origin: "raw" },
+});
+
+it("plots native samples on their confirmed frequencies and identifies uncorrected data", () => {
+  render(<ArinstPartialChart trace={nativeTrace()} />);
+  const chart = screen.getByRole("img", { name: "Модуль S11 и S21, дБ, по частоте, МГц" });
+  expect(screen.getByText(/Частотная сетка подтверждена · без коррекции/)).toBeInTheDocument();
+  expect(chart.querySelector("path")!.getAttribute("d")).toMatch(/M64,[^ ]+ L232,[^ ]+ L736,/);
+  expect(screen.getByText("Частота, МГц · S11 — сплошная, S21 — пунктир")).toBeInTheDocument();
+});
+
+it.each([[1e6, 1e6, 9e6], [1e6, 9e6], [1e6, NaN, 9e6]])("keeps invalid or incomplete grids on sample coordinates: %s", (...frequencies) => {
+  const value = nativeTrace(); value.acquisition.frequencies_hz = frequencies;
+  render(<ArinstPartialChart trace={value} />);
+  expect(screen.getByRole("img", { name: /по номеру отсчёта/ })).toBeInTheDocument();
+  expect(screen.getByText(/Частотная сетка не подтверждена/)).toBeInTheDocument();
+});
 
 const name = "Planar, S50180, 26030095, 26.2.2/2";
 const instruments = [
