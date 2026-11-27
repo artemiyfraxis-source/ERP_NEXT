@@ -29,6 +29,8 @@ Claude main is the orchestrator, Codex CLI the workhorse.
   Limit: ≤ 3 editing workers, affected tests only with `-n 4`, one full gate at a time (verifier only). Owner worried
   about speed: model time dominates, 4 parallel full suites were not faster (shared cores + RAM paging).
 
+- **23.11.2026: Codex quota exhausted again — off until 30.11.2026 10:23** (limit hit mid-runs). Claude subagents per orchestrate «Without Codex»; after the date try one cheap read-only call first.
+- **23.11.2026 ~15:18: Codex quota exhausted again — off until 30.11.2026 10:23** (limit message in the run logs).
 - **17.11.2026: Codex quota exhausted — off until 22.11.2026** (owner: «до 22 ноября без него; оркестрирование
   сохранить и доработать»). Until then `orchestrate` «Without Codex»: same plan → worktree → review → verifier
   process with Claude subagents, ≤ 2 editing at once, small fixes by main. On/after 22.11 probe with one cheap
