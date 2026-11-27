@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm.exc import StaleDataError
 
 from app.shared.article_maker import split_article_maker
+from app.shared.article_match import compact
 from app.shared.clock import moscow_now
 from app.shared.http_auth import (
     Principal,
@@ -25,6 +26,9 @@ from app.shared.http_auth import (
 from app.shared.events import AuditEvent
 from app.shared.warehouse_location import STORAGE_LOCATION_MAX_LENGTH, RackLayout, current_rack_layout, rack_layout_from_config
 from app.modules.references.domain import TERMINAL_TABS, TechOperationTab
+from app.workflows.lot_names_refresh import name_needs_full
+from app.workflows.stock_name import build_stock_name
+from app.workflows.stock_name_types import LotHints
 from app.workflows.stock_receipt import expected_in_receiving, procurement_line, purchasing_item
 from app.workflows.warehouse_article import infer_article_identity
 from app.workflows.warehouse_grn_context import validate_warehouse_grn_context
@@ -667,6 +671,44 @@ def _factory(request: Request, name: str):
     return factory if callable(factory) else None
 
 
+FULL_NAME_SOURCE = "полное наименование"
+
+
+def _name_taken(uow_factory: Callable[[], UnitOfWork], name: str, article: str) -> bool:
+    """Another article's lot already carries `name` (review 27.11: receiving skipped the collision check, so two
+    different articles could get one name). A taken name is not offered; the refresh tells such articles apart."""
+    own = compact(article)
+    with uow_factory() as uow:
+        lots = uow.warehouse.list(limit=500, query=name, include_zero=True)
+    wanted = " ".join(name.split()).casefold()
+    return any(" ".join(str(lot.name or "").split()).casefold() == wanted and compact(lot.article) != own for lot in lots)
+
+
+def _with_full_name(
+    info: dict | None, article: str, records: list, identity, uow_factory: Callable[[], UnitOfWork] | None = None,
+) -> dict | None:
+    """A new receipt stops copying a family-level name («Amass XT 2pin (однорядный)», owner 27.11.2026): the full-name
+    builder's COMPLETE name wins over the last lot's or the reference's name that fails `name_needs_full` (the article,
+    the old family name, no gender word / lug size, a supplier's line). A good human name of the last lot stays."""
+    if not info:
+        return info
+    current = str(info.get("name") or "")
+    maker = str(info.get("manufacturer") or "")
+    built = build_stock_name(LotHints(
+        article=article, item_type=str(info.get("item_type") or (identity.item_type if identity is not None else "")),
+        manufacturer=maker, name=current, description=str(info.get("description") or ""),
+    ), records)
+    if built is None or not built.complete or built.name == current:
+        return info
+    if not name_needs_full(current, article, maker, built=built,
+                           old_name=identity.name if identity is not None else ""):
+        return info
+    if uow_factory is not None and _name_taken(uow_factory, built.name, article):
+        return info
+    source = ", ".join(part for part in (str(info.get("source") or ""), FULL_NAME_SOURCE) if part)
+    return {**info, "name": built.name, "source": source}
+
+
 @router.get("/article-info")
 def article_info(
     request: Request,
@@ -709,7 +751,7 @@ def article_info(
         supplier=supplier, invoice_number=invoice_number, article=article,
     )
     return {
-        "info": facts.info,
+        "info": _with_full_name(facts.info, article, records, identity, uow_factory),
         "places": facts.places,
         "expected": None if expected is None else {"order_number": expected.order_number, "supplier": expected.supplier},
     }

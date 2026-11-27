@@ -323,7 +323,9 @@ def test_article_info_fills_from_the_last_lot_then_the_reference_db_then_purchas
     _accept(client, receipt["id"], article="N-C58P", name="Разъём N на кабель", storage_location="2A1")
 
     after = client.get("/api/stock/article-info?q=n-c58p&warehouse=ЦАР").json()
-    assert after["info"]["name"] == "Разъём N на кабель"  # the last lot wins
+    # The last lot wins for the other fields; its «Разъём N на кабель» lacks male/female, so the full name replaces it
+    # (owner 27.11: «где папа где мама»).
+    assert after["info"]["name"] == "N-male RG-58"
     assert after["info"]["datasheet"] == ""  # the LAST lot had none, the first one is not read
     assert after["info"]["series"] == "N" and after["info"]["manufacturer"] == "Амфенол"
     assert after["info"]["expiry_date"] is None

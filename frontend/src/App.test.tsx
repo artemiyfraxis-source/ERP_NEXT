@@ -599,6 +599,7 @@ it("lands an old «Отгрузка» link on «Приёмка с произво
     if (path === "/api/shipping/intake") return json({ rows: [] });
     if (path === "/api/shipping/goods") return json({ goods: [] });
     if (path === "/api/shipping/shipments") return json({ shipments: [] });
+    if (path === "/api/shipping/project-addressees") return json({ addressees: [] });
     if (path === "/api/production/finished-goods-ready") return json({ boxes: [] });
     throw new Error(`Unexpected request: ${path}`);
   });
@@ -607,7 +608,8 @@ it("lands an old «Отгрузка» link on «Приёмка с произво
 
   expect(await screen.findByRole("heading", { name: "Приёмка с производства", level: 1 })).toBeInTheDocument();
   expect(new URLSearchParams(window.location.search).get("section")).toBe("intake");
-  expect(await screen.findByRole("tab", { name: /^Упаковано/ })).toHaveAttribute("aria-selected", "true");
+  // Доска без вкладок: старая ссылка «shipments» подсвечивает колонку «Упаковано».
+  expect(await screen.findByRole("region", { name: "Упаковано" })).toHaveClass("is-picked");
   expect(screen.queryByRole("heading", { name: "Отгрузка", level: 1 })).not.toBeInTheDocument();
 });
 

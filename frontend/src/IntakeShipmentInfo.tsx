@@ -7,6 +7,7 @@ import { formatDay } from "./format";
 import { InlineField } from "./InlineField";
 import type { DispatchShipment } from "./productionIntakeApi";
 import { UPD_TYPES, updLabel } from "./ShipmentData";
+import { shipmentTitle } from "./shipmentTitle";
 import { editableKeys, PartialSaveError, saveShipment, storedValue, type DraftKey, type ShipmentDraft } from "./shipmentSaves";
 
 /* Данные одной отправки на экране «Приёмка с производства» (владелец 26.11, v2): блоки «Документы», «Доставка»,
@@ -49,6 +50,7 @@ export function IntakeShipmentInfo({ shipment, rights, gaps, pl, dn, deliveryBut
   /** 409 «Отгрузка изменилась»: перечитать отправку (данные экрана). */
   onConflict: () => Promise<void> | void;
 }) {
+  const name = shipmentTitle(shipment);
   const editable = editableKeys(shipment, rights.canEdit);
   const can = (key: DraftKey) => editable.has(key);
   const [fileBusy, setFileBusy] = useState(false);
@@ -87,7 +89,7 @@ export function IntakeShipmentInfo({ shipment, rights, gaps, pl, dn, deliveryBut
     finally { setFileBusy(false); }
   };
   const removeFile = async () => {
-    if (!window.confirm(`Убрать файл УПД из отправки ${shipment.number}?`)) return;
+    if (!window.confirm(`Убрать файл УПД из отправки ${name}?`)) return;
     setFileBusy(true); setFileError("");
     try { await save({ upd_url: "" }); }
     catch (reason) { setFileError(reason instanceof Error ? reason.message : String(reason)); }
@@ -98,14 +100,14 @@ export function IntakeShipmentInfo({ shipment, rights, gaps, pl, dn, deliveryBut
     <span className="intake-field-label">Файл УПД</span>
     <span className="intake-field-value intake-file" data-label="Файл УПД">
       {shipment.upd_url
-        ? <a href={shipment.upd_url} target="_blank" rel="noreferrer" aria-label={`Открыть файл УПД ${shipment.number}`}>Открыть файл</a>
+        ? <a href={shipment.upd_url} target="_blank" rel="noreferrer" aria-label={`Открыть файл УПД ${name}`}>Открыть файл</a>
         : noUpd || !shipment.upd_type ? dash : <span className="muted">файл не приложен</span>}
       {canFile && <>
-        <button type="button" className="link-button" disabled={fileBusy} aria-label={`${shipment.upd_url ? "Заменить" : "Загрузить"} файл УПД ${shipment.number}`}
+        <button type="button" className="link-button" disabled={fileBusy} aria-label={`${shipment.upd_url ? "Заменить" : "Загрузить"} файл УПД ${name}`}
           onClick={() => fileInput.current?.click()}>{fileBusy ? "Загружаем…" : shipment.upd_url ? "Заменить" : "Загрузить"}</button>
-        {shipment.upd_url && <button type="button" className="link-button" disabled={fileBusy} aria-label={`Убрать файл УПД ${shipment.number}`}
+        {shipment.upd_url && <button type="button" className="link-button" disabled={fileBusy} aria-label={`Убрать файл УПД ${name}`}
           onClick={() => void removeFile()}>Убрать</button>}
-        <input ref={fileInput} type="file" hidden accept=".pdf,.xml,.zip,image/*,application/xml,text/xml,application/zip" aria-label={`Файл УПД ${shipment.number}`}
+        <input ref={fileInput} type="file" hidden accept=".pdf,.xml,.zip,image/*,application/xml,text/xml,application/zip" aria-label={`Файл УПД ${name}`}
           onChange={(event) => { const chosen = event.target.files?.[0]; event.target.value = ""; void upload(chosen); }} />
       </>}
     </span>
@@ -116,7 +118,7 @@ export function IntakeShipmentInfo({ shipment, rights, gaps, pl, dn, deliveryBut
   const track = shipment.track_number.trim();
   const trackDisplay = track || (needsTrack(shipment) ? dash : <span className="muted">не нужен</span>);
   const historyButton = historical && rights.canHistory
-    ? <button type="button" className="link-button" aria-label={`Исправить историю ${shipment.number}`} onClick={onHistory}>Исправить историю…</button> : null;
+    ? <button type="button" className="link-button" aria-label={`Исправить историю ${name}`} onClick={onHistory}>Исправить историю…</button> : null;
 
   const docKeys: DraftKey[] = ["upd_type", "upd_number", "upd_date"];
   const deliveryKeys: DraftKey[] = ["terms", "carrier", "track_number"];
