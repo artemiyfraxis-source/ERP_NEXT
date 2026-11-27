@@ -49,6 +49,19 @@ function setup(options: Partial<ReferenceInstrumentsResult> = {}, handle?: (requ
   return { requests, onCount, ...rendered };
 }
 
+// With the ОТК edit right the card is the full instrument window: it saves through the production endpoint
+// and reads its RF/matings/VNA blocks (ОТК-1: the registry tab moved here, the window kept every ОТК function).
+const production = "/api/production/instruments";
+function productionWindow(request: Request): Response | null {
+  if (request.path.endsWith("/rf-interfaces")) return json({ rf: { version: 0, interfaces: [], role: "unknown", confirmed: false, source: "", f_min_ghz: null, max_points: null, kit_definition: "" } });
+  if (request.path.endsWith("/matings")) return json({ instrument_id: "x", resource: null, status: "unknown", has_connectors: false, ends: [] });
+  if (request.path.endsWith("/vna-checks")) return json({ instrument_id: "x", applicable: false, due: [], records: [] });
+  if (request.path === `${production}/canonical` && request.method === "PATCH") {
+    return json({ instrument: { ...instrument, ...request.body, version: 8 } });
+  }
+  return null;
+}
+
 afterEach(() => {
   cleanup(); vi.restoreAllMocks(); window.localStorage.clear(); window.history.replaceState({}, "", "/");
 });
@@ -62,7 +75,7 @@ it("lists all 118 canonical records without collapsing repeated models and count
   expect(await screen.findByText("118 записей · 119 шт.")).toBeInTheDocument();
   expect(screen.getAllByRole("row")).toHaveLength(119);
   expect(screen.getByText("СИ.118")).toBeInTheDocument();
-  expect(screen.getAllByText("Линейка", { selector: "td .instrument-cell" })).toHaveLength(118);
+  expect(screen.getAllByText("Линейка", { selector: "td .instrument-name" })).toHaveLength(118);
   expect(onCount).toHaveBeenCalledWith(118, 119);
   expect(screen.getByRole("button", { name: "+ Столбец" })).toBeEnabled();
   expect(screen.getByRole("button", { name: /Колонки/ })).toBeInTheDocument();
@@ -173,7 +186,7 @@ it("updates a stale address to the measuring tab when opening a canonical row", 
 
 it.each([false, true])("shows article, measurement category and notes with identity editing capability=%s", async (editable) => {
   const detailed = { ...instrument, article: "Л-150", measurement_category: "Линейные измерения", notes: "Беречь рабочую поверхность" };
-  const { requests } = setup({ instruments: [detailed], can_edit_identity: editable });
+  const { requests } = setup({ instruments: [detailed], can_edit_identity: editable }, editable ? productionWindow : undefined);
   fireEvent.click(await screen.findByText("СИ.001"));
   const dialog = screen.getByRole("dialog", { name: "Средство измерений: Линейка" });
   const fields = [
@@ -193,7 +206,7 @@ it.each([false, true])("shows article, measurement category and notes with ident
     fireEvent.click(within(dialog).getByRole("button", { name: "Сохранить" }));
     await within(dialog).findByText("Запись сохранена");
     expect(requests.filter((request) => request.method === "PATCH")).toEqual([{
-      path: `${base}/canonical`, method: "PATCH", body: {
+      path: `${production}/canonical`, method: "PATCH", body: {
         version: 7, article: "Л-300", measurement_category: "Контроль размеров", notes: "Хранить в футляре",
       },
     }]);
@@ -226,7 +239,7 @@ it("reads files and combined legacy/canonical history through reference-scoped U
 
 it("saves a custom-only change without revalidating an incomplete imported passport even with identity rights", async () => {
   const imported = { ...instrument, instrument_type: "" };
-  const { requests } = setup({ instruments: [imported], can_edit_identity: true });
+  const { requests } = setup({ instruments: [imported], can_edit_identity: true }, productionWindow);
   fireEvent.click(await screen.findByText("СИ.001"));
   const dialog = screen.getByRole("dialog", { name: "Средство измерений: Линейка" });
   expect(within(dialog).getByLabelText("Тип")).toHaveValue("");
@@ -234,8 +247,24 @@ it("saves a custom-only change without revalidating an incomplete imported passp
   fireEvent.click(within(dialog).getByRole("button", { name: "Сохранить" }));
   await within(dialog).findByText("Запись сохранена");
   expect(requests.filter((request) => request.method === "PATCH")).toEqual([{
-    path: `${base}/canonical`, method: "PATCH", body: {
+    path: `${production}/canonical`, method: "PATCH", body: {
       version: 7, custom_fields: { Полка: "Ячейка 3", Источник: "Старый реестр" },
     },
   }]);
+});
+
+it("offers adding and label printing only to who edits the passport («ОТК»), and keeps the view toggle for everyone", async () => {
+  const view = setup({ can_edit_identity: false });
+  await screen.findByText("СИ.001");
+  expect(screen.queryByRole("button", { name: "+ Средство измерений" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "+ Общая принадлежность" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Печать этикеток" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "По приборам" })).toBeInTheDocument();
+  expect(screen.getByText("просрочена")).toBeInTheDocument();
+  view.unmount();
+  setup({ can_edit_identity: true });
+  await screen.findByText("СИ.001");
+  expect(screen.getByRole("button", { name: "+ Средство измерений" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "+ Общая принадлежность" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Печать этикеток" })).toBeInTheDocument();
 });

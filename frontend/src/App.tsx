@@ -26,6 +26,7 @@ import {
   procurementMenuTab,
   runsTheSystem,
   sectionOfTab,
+  MOVED_TAB_NAMES,
   ALIAS_VIEW,
   visibleBlocks,
   visibleNav as visibleNavFor,
@@ -85,6 +86,8 @@ function placeFromUrl(): Place {
   if (moved && moved !== value) {
     const url = new URL(window.location.href);
     url.searchParams.set("section", moved);
+    const renamed = value ? MOVED_TAB_NAMES[value]?.[params.get("tab") ?? ""] : undefined;
+    if (renamed) url.searchParams.set("tab", renamed);
     if (value === "labeldesigner") url.searchParams.set("printer", "labels");
     const view = value ? ALIAS_VIEW[value] : undefined;
     if (view) url.searchParams.set("view", view);

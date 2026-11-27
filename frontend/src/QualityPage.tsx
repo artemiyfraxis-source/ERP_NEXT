@@ -15,9 +15,8 @@ import {
   type VswrTaskListItem,
   type VswrTaskOverview,
 } from "./api";
-import { InstrumentRegistry } from "./InstrumentRegistry";
 import { formatDay, formatMoment, formatNumber } from "./format";
-import { canAct, canSee } from "./navigation";
+import { canAct } from "./navigation";
 import { isFinal } from "./productionGraph";
 import { BoxName, boxCodeKey } from "./BoxLabel";
 import { VswrSection, progressText, type VswrRejectRequest } from "./VswrSection";
@@ -28,13 +27,13 @@ import { useCanPrint } from "./rights";
 
 type Mutate = (key: string, operation: () => Promise<unknown>) => Promise<boolean>;
 // «ВАЦ — рабочее место» переехало в карточку прибора «Оборудования» (владелец 20.11.2026); `?tab=vna` ведёт туда (MOVED_TABS).
-type QualityTab = "queue" | "vswr" | "rejects" | "instruments";
+type QualityTab = "queue" | "vswr" | "rejects";
 
 function urlTab(): string {
   return new URLSearchParams(window.location.search).get("tab") ?? "";
 }
 
-/* «ОТК» (owner, 04.10.2026): очередь на проверку, брак на решение и реестр средств измерения вынесены из «Ресурсного
+/* «ОТК» (owner, 04.10.2026): очередь на проверку и брак на решение вынесены из «Ресурсного
    планирования». Права — только по разделам: приёмку ОТК и реестр средств измерения ведёт правка «ОТК» (`quality`),
    решение по браку принимает правка «Ресурсного планирования» (`production`); уровни с полным доступом проходят оба. */
 export function QualityPage({ principal }: { principal: Principal }) {
@@ -95,7 +94,6 @@ export function QualityPage({ principal }: { principal: Principal }) {
   const tabs: { id: QualityTab; label: string }[] = [
     ...(canQuality ? [{ id: "queue" as const, label: `Очередь ОТК · ${ready.length}` }, { id: "vswr" as const, label: "Замеры КСВН" }] : []),
     ...(canEdit ? [{ id: "rejects" as const, label: `Брак · ${rejectCount}` }] : []),
-    ...(canQuality ? [{ id: "instruments" as const, label: "Средства измерения" }] : []),
   ];
   const tab = tabs.find((item) => item.id === pickedTab)?.id ?? tabs[0]?.id;
   useEffect(() => {
@@ -170,9 +168,6 @@ export function QualityPage({ principal }: { principal: Principal }) {
       <QcRejectionReview rejections={qcRejections} busy={Boolean(busy)} mutate={mutate} />
       <DefectReview defects={defects} operators={operators} busy={Boolean(busy)} mutate={mutate} />
     </div></div>}
-    {loaded && canQuality && <div role="tabpanel" id="quality-panel-instruments" aria-labelledby="quality-tab-instruments" hidden={tab !== "instruments"}>
-      <InstrumentRegistry instruments={instruments} onChanged={reload} canSeeReferences={canSee(principal, "erpref")} />
-    </div>}
     {loaded && !canQuality && !canEdit && <div className="empty">ОТК открыт вам только на просмотр.</div>}
   </section>;
 }

@@ -55,6 +55,8 @@ DEPENDENCIES = {
     # One СИ registry (0217, 23.11.2026): the «Средства измерений» card opens with «Справочник» view (ОТК / «Справочник»
     # edit rights are checked inside); a token edits only with `refs:write`.
     "instrument_edit": instrument_catalog_api.instrument_edit_principal,
+    # The registry became a «База данных» tab (ОТК-1, 27.11.2026): «Справочник» view or «ОТК» view opens it.
+    "instrument_view": instrument_catalog_api.instrument_view_principal,
 }
 
 
