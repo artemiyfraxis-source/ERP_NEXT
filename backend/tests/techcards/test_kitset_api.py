@@ -1156,3 +1156,42 @@ def test_technologist_adds_a_component_that_goes_into_the_kit_and_survives_refre
 
     app.dependency_overrides[authenticated_principal] = _principal({"projects": "view", "tcgen": "view"})
     assert client.post(url, json={"art": "Лента", "per": "1"}).status_code == 403
+
+
+@pytest.mark.parametrize("customer", ['ООО "', "АО «»", "ИП"])
+def test_load_refuses_placeholder_customer(kitset_api, customer):
+    client, _lot = kitset_api
+    app.state.kitset_sheets_reader = FakeSheets(calc_sheets(customer=customer))
+    response = _load(client)
+    assert response.status_code == 422, response.text
+    assert "Не заполнен заказчик (ЗКЗ!B3)" in response.text
+    assert client.get("/api/techcards/kitsets/708К.4").status_code == 404
+
+
+def test_load_accepts_real_customer(kitset_api):
+    client, _lot = kitset_api
+    app.state.kitset_sheets_reader = FakeSheets(calc_sheets(customer='ООО "Вионет"'))
+    assert _load(client).status_code == 200
+
+
+def test_load_refuses_unfilled_project_number(kitset_api):
+    client, _lot = kitset_api
+    app.state.kitset_sheets_reader = FakeSheets(calc_sheets(project_cell="К."), title="Расчет")
+    response = _load(client)
+    assert response.status_code == 422, response.text
+    assert "В расчёте не заполнен № проекта (ЗКЗ!B2)" in response.text
+
+
+def test_load_takes_number_from_file_name_for_unfilled_cell(kitset_api):
+    client, _lot = kitset_api
+    app.state.kitset_sheets_reader = FakeSheets(calc_sheets(project_cell="К."), title="853К. Расчет")
+    assert _load(client).status_code == 200
+    assert client.get("/api/techcards/kitsets/853К.").status_code == 200
+
+
+def test_refresh_never_writes_placeholder_customer(kitset_api):
+    client, _lot = kitset_api
+    assert _load(client).status_code == 200
+    app.state.kitset_sheets_reader = FakeSheets(calc_sheets(customer='ООО "'))
+    assert _load(client, number="708К.4").status_code == 200
+    assert client.get("/api/techcards/kitsets/708К.4").json()["customer"] == "ООО Заказчик"

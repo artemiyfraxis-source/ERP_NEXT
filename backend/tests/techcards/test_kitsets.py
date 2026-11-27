@@ -8,6 +8,7 @@ import pytest
 from app.modules.fulfillment.domain import FulfillmentLine, FulfillmentRequest, LotSnapshot
 from app.modules.techcards.kitset_calc import calc_project_number, parse_calc_sheets
 from app.modules.techcards.kitsets import (
+    customer_is_placeholder,
     KitComponent,
     KitLot,
     KitsetValidationError,
@@ -508,3 +509,18 @@ def test_generator_bom_skips_a_row_zeroed_in_the_spec():
     zeroed, _ = kitset.with_edits([{"index": "КБ1", "art": "GHR-04V-S", "per": "0", "scrap": "0"}], who="Т", now=NOW)
     rows = generator_bom(zeroed, zeroed.assembly("КБ1"), [])["components"]
     assert [(c["id"], c["art"]) for c in rows] == [("kit-0", "Силиконовый 28AWG черный")]
+
+
+def test_calc_number_from_file_name_when_cell_is_an_unfilled_template():
+    assert calc_project_number("К.", "853К. Расчет") == "853К."
+    assert calc_project_number("К.", "Расчет без номера") == "К."
+
+
+@pytest.mark.parametrize("value", ['ООО "', "АО «»", "ИП", "", "  ", "ООО «  »"])
+def test_placeholder_customer_is_detected(value):
+    assert customer_is_placeholder(value)
+
+
+@pytest.mark.parametrize("value", ['ООО "Вионет"', "ИП Иванов", "АО «Вектор»", "Вионет"])
+def test_real_customer_is_not_a_placeholder(value):
+    assert not customer_is_placeholder(value)
