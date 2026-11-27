@@ -10,6 +10,13 @@ whatever the old warehouse wrote: often the article itself as the name, no type,
   collapsed; case and separators count — «SMA-female RG-58» for «SMA-Female RG-58» is the house style, owner after the
   prod dry run 26.10), an «article@MAKER» / «article##6000» leftover, or the article with the maker («JST XHP-4»).
   «BNC-male RG-174», «Клемма JST XH 2.54 мм, 4 pin, розетка» stay.
+  Connectors, crimp contacts, lugs and coax (owner 27.11.2026, «полные наименования»: «непонятно где папа где мама»)
+  get OUR full name of `stock_name.build_stock_name` — written only when it is complete and the current name fails
+  `name_needs_full`: the article (as above), one name of two or more articles, the old family name of
+  `infer_article_identity`, no gender word / lug size the builder knows, a supplier's line, a lowercase start or
+  supplier Latin («HSD female 0 4 pin non waterproof all code»). A unique human name with its gender and size stays.
+  No complete name and no complete name of another lot of the article → the lot goes to the review CSV with what is
+  missing; the model never names these types.
 * «Тип» — only where empty, and only a value of the stock's type dictionary (`receipt_llm.item_type_of`). Lugs and
   ferrules (НШВ, НШВИ, НКИ, РПИ, ПМ…) get «Наконечник» — also over «Терминал» or an old «наконечник кольцевой /
   втулочный», source «правило: наконечник» (owner 26.10.2026); crimp contacts of connectors stay «Терминал».
@@ -26,15 +33,17 @@ settings: env, else «Склад» → «Распознавание УПД»), t
 dropped — better empty than vague. No key — the model part is skipped and said so. Article, quantities, places, ГРН and
 receipt links are never touched; no row is added.
 
-    deploy/erp.sh cli python -m app.workflows.lot_names_refresh --csv /app/data/import/lot-names.csv   # пробный прогон
+    deploy/erp.sh cli python -m app.workflows.lot_names_refresh --csv /app/data/import/lot-names.csv \
+        --review-csv /app/data/import/lot-names-review.csv   # пробный прогон
     deploy/erp.sh cli python -m app.workflows.lot_names_refresh --apply --from /app/data/import/lot-names.csv
     deploy/erp.sh cli python -m app.workflows.lot_names_refresh --revert --from /app/data/import/lot-names.csv
 
 The dry run (the default) prints «ГРН | артикул | поле | было → стало | источник» and the totals, and `--csv` writes the
-same table (UTF-8 with BOM, «;» — opens in Russian Excel). `--apply --from` writes exactly the reviewed CSV — the
-model is not called on apply: a value is written only where the lot still holds what the CSV says it «было» (a fill
-only into an empty field), one transaction and one `warehouse.row_edited` audit event per lot (actor «обновление склада
-26.10», «было → стало» per field, the source) — the stock journal shows it. A second apply finds everything written
+same table (UTF-8 with BOM, «;» — opens in Russian Excel); `--review-csv` — the lots left for review (lot id, ГРН,
+article, current name, what is missing, which source would give it). `--apply --from` writes exactly the reviewed CSV —
+the model is not called on apply: a value is written only where the lot still holds what the CSV says it «было» (a
+fill only into an empty field), one transaction and one `warehouse.row_edited` audit event per lot (actor «полные
+наименования 27.11», «было → стало» per field, the source) — the stock journal shows it. A second apply finds everything written
 and changes nothing; `--revert --from` puts «было» back where the lot still holds «стало».
 """
 
@@ -48,7 +57,7 @@ import re
 import sys
 import time
 import uuid
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -71,15 +80,17 @@ from app.shared.events import AuditEvent
 from app.shared.identity import Actor
 from app.shared.persistence import StockVersionConflict
 from app.workflows.item_names import ReferenceNames
+from app.workflows.stock_name import build_stock_name, has_builder, is_coax, resolve_collisions
+from app.workflows.stock_name_types import LotHints, StockName
 from app.workflows.warehouse_article import infer_article_identity
 
 log = logging.getLogger(__name__)
 # БД.ТЕР is «Терминалы» + «Наконечники» since migration 0165: the makers of both.
 _TERMINAL_VALUES = frozenset(tab.value for tab in TERMINAL_TABS)
 
-ACTOR_NAME = "обновление склада 26.10"
-REVERT_ACTOR_NAME = "откат обновления склада 26.10"
-REASON = "обновление склада 26.10 (наименование, тип, производитель, наим. по УПД)"
+ACTOR_NAME = "полные наименования 27.11"
+REVERT_ACTOR_NAME = "откат: полные наименования 27.11"
+REASON = "полные наименования 27.11 (наименование, тип, производитель, наим. по УПД)"
 # Field → the label of the report / CSV and the column of the stock journal.
 FIELDS = {"name": "наименование", "item_type": "тип", "manufacturer": "производитель", "upd_name": "наим. по УПД"}
 JOURNAL_COLUMNS = {"name": "НАИМЕНОВАНИЕ", "item_type": "ТИП", "manufacturer": "ПРОИЗВОДИТЕЛЬ", "upd_name": "НАИМ. ПО УПД"}
@@ -207,6 +218,92 @@ def name_pins(name: object) -> int | None:
     return int(found[1]) if found else None
 
 
+# ── When the full name replaces the current one (owner 27.11.2026) ────────────────────────────────
+
+
+# The builder's gender word: «(папа)» / «(мама)» of connectors, contacts and lugs; coax keeps the house style's
+# male / female (by the centre contact). The current name must carry the same word.
+_FULL_GENDER = re.compile(r"\((папа|мама)\)", re.IGNORECASE)
+_COAX_GENDER = re.compile(r"(?<![a-z])(female|male)(?![a-z])", re.IGNORECASE)
+# Latin words a name of ours may hold in lower case («SMA-female bulkhead», «4pin»); any other one («non waterproof
+# all code», «connector») is a supplier's line in English.
+_LATIN_OK = frozenset({"male", "female", "bulkhead", "panel", "pin", "awg", "mm", "smd", "dip", "pcb"})
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
+
+NEEDS_ARTICLE = "наименование — артикул"
+NEEDS_SHARED = "одно наименование у разных артикулов"
+NEEDS_OLD = "старое наименование по семейству"
+NEEDS_GENDER = "нет пола"
+NEEDS_SIZE = "нет размера"
+NEEDS_SUPPLIER = "строка поставщика"
+NEEDS_LOWER = "со строчной буквы"
+NEEDS_LATIN = "латиница поставщика"
+
+
+def _numbers(value: object) -> set[float]:
+    return {float(number.replace(",", ".")) for number in _NUMBER.findall(str(value or ""))}
+
+
+def _gender_word(name: str) -> str:
+    found = _FULL_GENDER.search(name) or _COAX_GENDER.search(name)
+    return found[1].casefold() if found else ""
+
+
+def _says_gender(name: str, word: str) -> bool:
+    if word in ("папа", "мама"):
+        return word in name.casefold()
+    return any(found.casefold() == word for found in _COAX_GENDER.findall(name))
+
+
+def supplier_latin(name: object) -> bool:
+    """«HSD female 0 4 pin non waterproof all code», «FAKRA HSD female connector»: lower-case English words."""
+    return any(word.islower() and len(word) >= 3 and word not in _LATIN_OK
+               for word in re.findall(r"[A-Za-z]+", _plain(name)))
+
+
+def name_needs_full(
+    name: object, article: object, maker: object = "", *, upd_name: object = "", built: StockName | None = None,
+    shared: Collection[str] = frozenset(), old_name: object = "",
+) -> str:
+    """Why the full name replaces this one, or «» when the name stays (owner 27.11.2026): the article
+    (`name_is_article`); one name of two or more articles of the stock (`shared` — casefolded, `shared_names`); the
+    old family name (`old_name` — `infer_article_identity(...).name`); no gender word / lug section and size that
+    `built` knows; a supplier's line (the article inside, the printed УПД line); a lowercase start; supplier Latin.
+    A unique human name with its gender and size stays."""
+    text = _plain(name)
+    if name_is_article(text, article, maker):
+        return NEEDS_ARTICLE
+    folded = text.casefold()
+    if folded in shared:
+        return NEEDS_SHARED
+    if _plain(old_name) and folded == _plain(old_name).casefold():
+        return NEEDS_OLD
+    if built is not None:
+        word = _gender_word(built.name)
+        if word and not _says_gender(text, word):
+            return NEEDS_GENDER
+        sizes = [_numbers(built.attrs.get(attr)) for attr in ("section", "size")]
+        if any(numbers and not numbers <= _numbers(text) for numbers in sizes):
+            return NEEDS_SIZE
+    if embeds_article(text, article) or (_plain(upd_name) and text == _plain(upd_name)):
+        return NEEDS_SUPPLIER
+    if text[:1].islower():
+        return NEEDS_LOWER
+    if supplier_latin(text):
+        return NEEDS_LATIN
+    return ""
+
+
+def shared_names(lots: Iterable[StockLot]) -> frozenset[str]:
+    """The names (casefolded) two or more DIFFERENT articles of the stock carry: «Amass XT 2pin (однорядный)»."""
+    keys: dict[str, set[str]] = {}
+    for lot in lots:
+        name, key = _plain(lot.name).casefold(), _group_key(lot)
+        if name and key:
+            keys.setdefault(name, set()).add(key)
+    return frozenset(name for name, found in keys.items() if len(found) >= 2)
+
+
 # ── Sources ────────────────────────────────────────────────────────────────────────────────────────
 
 
@@ -225,6 +322,22 @@ class Catalog:
     purchasing: Callable[[str], Mapping[str, str] | None] | None = None
     _names: ReferenceNames | None = field(default=None, init=False, repr=False)
     _makers: dict[str, str] = field(default_factory=dict, init=False, repr=False)
+    _identities: dict[str, Any] = field(default_factory=dict, init=False, repr=False)
+
+    def identity(self, article: str) -> Any:
+        """`infer_article_identity` of the article (the old family-level name and type), once per article."""
+        if article not in self._identities:
+            self._identities[article] = infer_article_identity(article, self.records)
+        return self._identities[article]
+
+    def reference_maker(self, article: str) -> str:
+        """The maker БД.ТЕР or the connector family's title names, «» when neither does."""
+        maker = self._makers.get(article_key(article), "")
+        if maker:
+            return maker
+        housing = housing_of(article)
+        first = str((housing or {}).get("title") or "").split(" ", 1)[0]
+        return normalize_maker(first) if first.casefold() in HOUSING_MAKERS else ""
 
     def __post_init__(self) -> None:
         self.records = tuple(self.records)
@@ -257,7 +370,7 @@ class Catalog:
             if text:
                 found[name] = Found(text[:LIMITS[name]], source)
 
-        identity = infer_article_identity(article, self.records)
+        identity = self.identity(article)
         if identity is not None:
             put("name", identity.name, f"{DB}: {identity.source}")
             put("item_type", identity.item_type, f"{DB}: {identity.source}")
@@ -316,10 +429,26 @@ class Change:
 
 
 @dataclass(frozen=True)
+class Review:
+    """A lot whose name has to be replaced (`reason`) but no complete name was found: what is `missing`."""
+
+    lot_id: UUID
+    warehouse: str
+    grn: str
+    package: str
+    article: str
+    item_type: str
+    name: str
+    reason: str
+    missing: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class Plan:
     lots: int  # lots looked at
     changes: tuple[Change, ...]
     model_note: str  # why the model did (not) help, for the report
+    review: tuple[Review, ...] = ()
 
 
 def _group_key(lot: StockLot) -> str:
@@ -330,15 +459,18 @@ def _newest_first(lots: Iterable[StockLot]) -> list[StockLot]:
     return sorted(lots, key=lambda lot: (lot.grn, lot.package), reverse=True)
 
 
-def _sibling(lots: Sequence[StockLot], name: str, types: Sequence[str]) -> Found | None:
-    """The newest lot of the article that already has the field (a human name, a dictionary type, a maker)."""
+def _sibling(lots: Sequence[StockLot], name: str, types: Sequence[str],
+             replaced: Callable[[StockLot], str] | None = None) -> Found | None:
+    """The newest lot of the article that already has the field (a human name, a dictionary type, a maker). A name
+    `replaced` gives a reason for (`name_needs_full`) never travels to the other lots."""
     for lot in _newest_first(lots):
         value = " ".join(str(getattr(lot, name) or "").split())
         if not value:
             continue
         # Only our names travel to the other lots: not the article, not a printed УПД line kept as the name.
         if name == "name" and (name_is_article(value, lot.article, lot.manufacturer)
-                               or embeds_article(value, lot.article) or value == _plain(lot.upd_name)):
+                               or embeds_article(value, lot.article) or value == _plain(lot.upd_name)
+                               or (replaced is not None and replaced(lot))):
             continue
         if name == "item_type":
             value = receipt_llm.item_type_of(canonical_item_type(value), types)
@@ -374,22 +506,74 @@ def _model_row(article: str, lots: Sequence[StockLot], known: Mapping[str, Found
     }
 
 
+def _group_type(group: Sequence[StockLot], article: str, catalog: Catalog) -> str:
+    """The type the full name is built for: the lots' own (the lug rule's «Наконечник» over «Терминал» or empty), else
+    the reference DB's."""
+    kind = next((canonical_item_type(lot.item_type) for lot in _newest_first(group) if lot.item_type.strip()), "")
+    if any(is_lug(lot) for lot in group) and (not kind or type_key(kind) in LUG_REPLACEABLE):
+        return LUG_TYPE
+    if kind:
+        return kind
+    identity = catalog.identity(article)
+    return canonical_item_type(identity.item_type) if identity is not None else ""
+
+
+def _hints(group: Sequence[StockLot], article: str, kind: str, catalog: Catalog) -> LotHints:
+    newest = _newest_first(group)
+    first = lambda name: next((_plain(getattr(lot, name)) for lot in newest if _plain(getattr(lot, name))), "")  # noqa: E731
+    written = _written_maker(group)
+    maker = (normalize_maker(first("manufacturer")) or (written.value if written else "")
+             or catalog.reference_maker(article))
+    return LotHints(article=article, item_type=kind, manufacturer=maker, name=_plain(newest[0].name),
+                    upd_name=first("upd_name"), description=first("description"))
+
+
+def _full_source(item: StockName) -> str:
+    return f"{DB}: полное наименование" + (f" ({item.source})" if item.source else "")
+
+
 def plan_changes(
     lots: Sequence[StockLot], catalog: Catalog, types: Sequence[str] = ITEM_TYPES_CANON, model: Model | None = None,
 ) -> Plan:
     """Every change the rules ask for, with its source. Pure: reads nothing, writes nothing. The model (if any) is
-    asked once per article, only for what the catalog left missing."""
+    asked once per article, only for what the catalog left missing — never for the name of a type with a full-name
+    builder (connectors, contacts, lugs, coax): those get the builder's complete name, else a complete name of another
+    lot of the article, else go to `Plan.review`."""
     groups: dict[str, list[StockLot]] = {}
     for lot in lots:
         groups.setdefault(_group_key(lot), []).append(lot)
+    shared = shared_names(lots)
+    articles: dict[str, str] = {}
+    olds: dict[str, str] = {}
+    built: dict[str, StockName] = {}
+    for key, group in groups.items():
+        if not key:
+            continue
+        article = articles[key] = split_article_maker(_newest_first(group)[0].article).article
+        identity = catalog.identity(article)
+        olds[key] = identity.name if identity is not None else ""
+        found = build_stock_name(_hints(group, article, _group_type(group, article, catalog), catalog), catalog.records)
+        if found is not None:
+            built[key] = found
+    # Two different articles never get one name: the maker, the variant tail, else review.
+    resolved = resolve_collisions({articles[key]: item for key, item in built.items()})
+    built = {key: resolved[articles[key]] for key in built}
+
+    def replaced(lot: StockLot) -> str:
+        key = _group_key(lot)
+        return name_needs_full(lot.name, lot.article, lot.manufacturer, upd_name=lot.upd_name, built=built.get(key),
+                               shared=shared, old_name=olds.get(key, ""))
+
     wanted: dict[str, dict[str, Found]] = {}
     asks: list[tuple[str, dict]] = []
     for key, group in groups.items():
         if not key:
             continue
-        article = split_article_maker(_newest_first(group)[0].article).article
+        article = articles[key]
+        full = built.get(key)
         needs = {
-            "name": any(name_is_article(lot.name, lot.article, lot.manufacturer) for lot in group),
+            "name": any(replaced(lot) if full is not None else name_is_article(lot.name, lot.article, lot.manufacturer)
+                        for lot in group),
             "item_type": any(not lot.item_type.strip() and not is_lug(lot) for lot in group),
             "manufacturer": any(not lot.manufacturer.strip() for lot in group),
         }
@@ -398,14 +582,19 @@ def plan_changes(
         reference = catalog.lookup(article, types)
         known: dict[str, Found] = {}
         for name in ("name", "item_type", "manufacturer"):
-            found = _sibling(group, name, types)
-            if found is None and name == "manufacturer":
-                found = _written_maker(group)
-            found = found or reference.get(name)
+            if name == "name" and full is not None:  # the builder, then a complete name of another lot; no guess
+                found = (Found(full.name[:LIMITS[name]], _full_source(full)) if full.complete
+                         else _sibling(group, name, types, replaced))
+            else:
+                found = _sibling(group, name, types, replaced if name == "name" else None)
+                if found is None and name == "manufacturer":
+                    found = _written_maker(group)
+                found = found or reference.get(name)
             if found is not None:
                 known[name] = found
         wanted[key] = known
-        if any(needs[name] and name not in known for name in needs):
+        asked = [name for name in needs if not (name == "name" and full is not None)]
+        if any(needs[name] and name not in known for name in asked):
             asks.append((key, _model_row(article, group, known)))
 
     note = ""
@@ -420,7 +609,7 @@ def plan_changes(
             answered += 1
             known = wanted[key]
             short = model_name(answer.get("short_name"), row["article"], [row["maker"], answer.get("manufacturer")])
-            if "name" not in known and short:
+            if "name" not in known and short and key not in built:
                 known["name"] = Found(short[:LIMITS["name"]], MODEL)
             kind = receipt_llm.item_type_of(answer.get("item_type"), types)
             if "item_type" not in known and kind:
@@ -431,16 +620,26 @@ def plan_changes(
         note = f"модель: спрошено артикулов {len(asks)}, ответ на {answered}"
 
     changes: list[Change] = []
+    review: list[Review] = []
     for lot in sorted(lots, key=lambda lot: (lot.warehouse, lot.grn, lot.package)):
-        known = wanted.get(_group_key(lot), {})
+        key = _group_key(lot)
+        known = wanted.get(key, {})
 
         def change(name: str, now: str, source: str) -> None:
             was = str(getattr(lot, name) or "")
             if now and now != was:
                 changes.append(Change(lot.id, lot.warehouse, lot.grn, lot.package, lot.article, name, was, now, source))
 
-        if name_is_article(lot.name, lot.article, lot.manufacturer) and "name" in known:
-            change("name", known["name"].value, known["name"].source)
+        full = built.get(key)
+        if full is None:
+            if name_is_article(lot.name, lot.article, lot.manufacturer) and "name" in known:
+                change("name", known["name"].value, known["name"].source)
+        elif reason := replaced(lot):
+            if "name" in known:
+                change("name", known["name"].value, known["name"].source)
+            else:
+                review.append(Review(lot.id, lot.warehouse, lot.grn, lot.package, lot.article, lot.item_type,
+                                     lot.name, reason, tuple(full.missing)))
         if lug_type_change(lot):
             change("item_type", LUG_TYPE, LUG_SOURCE)
         elif not lot.item_type.strip() and not is_lug(lot) and "item_type" in known:
@@ -449,44 +648,63 @@ def plan_changes(
             change("manufacturer", known["manufacturer"].value, known["manufacturer"].source)
         if not lot.upd_name.strip():
             change("upd_name", " ".join(lot.article.split())[:LIMITS["upd_name"]], ARTICLE)
-    return Plan(lots=len(lots), changes=tuple(changes), model_note=note)
+    return Plan(lots=len(lots), changes=tuple(changes), model_note=note, review=tuple(review))
 
 
 # ── The model ──────────────────────────────────────────────────────────────────────────────────────
 
 
-# The house style of «Наименование» (owner 26.10.2026), what the model is told to follow.
+# The house style of «Наименование» (owner 26.10.2026; full names — owner 27.11.2026), what the model is told to follow.
 STYLE_RULES = (
     "Формат наименования — как на нашем складе, коротко, без артикула, без производителя (кроме названия серии), "
     "без слов «Соединитель», «Разъём», «электрический»:\n"
-    "- соединитель (корпус, разъём, колодка): «<серия> <N>pin (однорядный|двухрядный)»; «розетка»/«вилка» и "
-    "«угловая на плату» — только если уверен: «XH розетка 4pin (однорядный)», «C-Grid III 10pin (двухрядный)», "
-    "«CNLINKO LP-12 2pin»;\n"
+    "- соединитель (корпус, разъём, колодка): «<серия> <вилка (папа)|розетка (мама)> <N>pin (однорядный|двухрядный)»; "
+    "пол — по контактам: штыри — «вилка (папа)», гнёзда — «розетка (мама)»: «XH розетка (мама) 4pin (однорядный)», "
+    "«SM вилка (папа) 4pin (однорядный)», «Amass XT60H вилка (папа) 2pin»;\n"
     "- коаксиальный соединитель: «<серия>-<male|female>[ R/A] <кабель>»: «SMA-female RG-58», «BNC-male RG-174», "
     "«2.92mm-male RG-405»;\n"
-    "- контакт (терминал): «Контакт <серия> <Female|Male>»: «Контакт XH Female»;\n"
+    "- контакт (терминал): «Контакт <серия> <штырь (папа)|гнездо (мама)>»: «Контакт XH гнездо (мама)»;\n"
+    "- наконечник: «Наконечник <марка> <сечение>-<размер>» с десятичной запятой: «Наконечник НВИ 1,5-4», "
+    "«Наконечник НШВ 0,5-8»;\n"
     "- провод: «Провод <марка> <сечение> мм² <цвет>»: «Провод ПВАМ 0,35 мм² красный»;\n"
     "- термоусадочная трубка: «Трубка <марка> <D/d> <цвет>».\n"
     "Число контактов бери из артикула, где оно в нём закодировано (02SUR-32S — 2 контакта, серия SUR; XHP-4 — 4). "
-    "Не знаешь серию (и у соединителя — число контактов) — short_name пустая строка: лучше пусто, чем общее "
+    "Не знаешь серию (у соединителя — число контактов и пол) — short_name пустая строка: лучше пусто, чем общее "
     "«Соединитель Molex» или «Соединитель, 20 контактов»."
 )
 STYLE_PER_TYPE = 6
 STYLE_TOTAL = 40
 STYLE_LENGTH = 48
+_LUG_SIZE = re.compile(r"\d+(?:,\d+)?-\d")
+
+
+def _full_style(name: str, kind: str) -> bool:
+    """A name of a type with a full-name builder is an example only in the full standard: its gender word (coax —
+    male / female), a lug — its section-size with a decimal comma."""
+    if is_coax(kind):
+        return bool(_COAX_GENDER.search(name))
+    if type_key(kind) == type_key(LUG_TYPE):
+        return bool(_LUG_SIZE.search(name))
+    if has_builder(kind):
+        return bool(_FULL_GENDER.search(name))
+    return True
 
 
 def style_examples(lots: Iterable[StockLot], types: Sequence[str] = ITEM_TYPES_CANON) -> dict[str, list[str]]:
-    """Real human names of the stock by dictionary type — the pattern the model follows: not the article, not with the
-    article inside, not a printed УПД line, short; the most used first. At most STYLE_PER_TYPE per type, STYLE_TOTAL."""
+    """Real human names of the stock by dictionary type — the pattern the model follows: complete names only (not the
+    article, not with the article inside, not a printed УПД line, not one name of several articles, no lowercase start or
+    supplier Latin; connectors, contacts, lugs and coax — with their gender / size), short; the most used first. At
+    most STYLE_PER_TYPE per type, STYLE_TOTAL."""
+    lots = list(lots)
+    shared = shared_names(lots)
     counts: dict[str, dict[str, int]] = {}
     for lot in lots:
         name = _plain(lot.name)
         kind = receipt_llm.item_type_of(canonical_item_type(lot.item_type), types)
-        if (not kind or not name or len(name) > STYLE_LENGTH or name == _plain(lot.upd_name)
+        if (not kind or not name or len(name) > STYLE_LENGTH
                 or (is_lug(lot) and kind != LUG_TYPE)  # a lug filed as «Терминал» is no example of a terminal
-                or name_is_article(name, lot.article, lot.manufacturer) or embeds_article(name, lot.article)
-                or not has_series_word(name, [lot.manufacturer])):
+                or name_needs_full(name, lot.article, lot.manufacturer, upd_name=lot.upd_name, shared=shared)
+                or not has_series_word(name, [lot.manufacturer]) or not _full_style(name, kind)):
             continue
         counts.setdefault(kind, {})
         counts[kind][name] = counts[kind].get(name, 0) + 1
@@ -594,6 +812,13 @@ def format_report(plan: Plan) -> str:
                  f"({by_field}); источник: {by_source}")
     if plan.model_note:
         lines.append(plan.model_note)
+    if plan.review:
+        missing: dict[str, int] = {}
+        for item in plan.review:
+            for what in item.missing or ("—",):
+                missing[what] = missing.get(what, 0) + 1
+        lines.append(f"На проверку (полного наименования нет): партий {len(plan.review)}; не хватает: "
+                     + ", ".join(f"{what} {count}" for what, count in sorted(missing.items(), key=lambda x: -x[1])))
     return "\n".join(lines)
 
 
@@ -604,6 +829,37 @@ def write_csv(path: Path, changes: Iterable[Change]) -> None:
         for item in changes:
             writer.writerow((str(item.lot_id), item.warehouse, item.grn, item.package, item.article,
                              FIELDS[item.field], item.was, item.now, item.source))
+
+
+REVIEW_COLUMNS = ("id", "склад", "ГРН", "пакет", "артикул", "тип", "наименование сейчас", "почему менять",
+                  "не хватает", "нужен источник")
+# What the builder lacks → where it is found (the review CSV's last column).
+NEEDED_SOURCE = {
+    "пол": "контакты: паспорт производителя / БД.ТЕР",
+    "число контактов": "паспорт производителя",
+    "серия": "паспорт производителя",
+    "сечение": "БД.ТЕР / паспорт производителя",
+    "размер": "БД.ТЕР / паспорт производителя",
+    "кабель": "БД.КОАКС / паспорт производителя",
+    "исполнение": "БД.КОАКС / паспорт производителя",
+    "одинаковые данные": "чем артикулы отличаются: паспорт производителя",
+}
+DEFAULT_SOURCE = "паспорт производителя"
+
+
+def needed_source(missing: Iterable[str]) -> str:
+    found = [NEEDED_SOURCE.get(str(what).strip().casefold(), DEFAULT_SOURCE) for what in missing]
+    return "; ".join(dict.fromkeys(found)) or DEFAULT_SOURCE
+
+
+def write_review_csv(path: Path, review: Iterable[Review]) -> None:
+    """The lots left for review: their name must go, but no complete name was found (UTF-8 with BOM, «;»)."""
+    with open(path, "w", encoding="utf-8-sig", newline="") as stream:
+        writer = csv.writer(stream, delimiter=";")
+        writer.writerow(REVIEW_COLUMNS)
+        for item in review:
+            writer.writerow((str(item.lot_id), item.warehouse, item.grn, item.package, item.article, item.item_type,
+                             item.name, item.reason, ", ".join(item.missing), needed_source(item.missing)))
 
 
 _FIELD_BY_LABEL = {label: name for name, label in FIELDS.items()}
@@ -758,12 +1014,14 @@ def format_applied(result: ApplyResult, revert: bool = False) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Склад по правилам приёмки 26.10: наше наименование, тип, производитель, наим. по УПД.")
+        description="Склад: полные наименования 27.11 (наше наименование, тип, производитель, наим. по УПД).")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="только показать изменения (по умолчанию)")
     mode.add_argument("--apply", action="store_true", help="записать ровно то, что в файле --from (модель не зовётся)")
     mode.add_argument("--revert", action="store_true", help="вернуть «было» из файла --from")
     parser.add_argument("--csv", type=Path, help="пробный прогон: записать таблицу изменений в этот файл")
+    parser.add_argument("--review-csv", type=Path,
+                        help="пробный прогон: партии без полного наименования (чего не хватает) — в этот файл")
     parser.add_argument("--from", dest="source", type=Path, help="CSV пробного прогона для --apply / --revert")
     parser.add_argument("--no-model", action="store_true", help="пробный прогон без модели, только база")
     args = parser.parse_args(argv)
@@ -821,6 +1079,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.csv is not None:
         write_csv(args.csv, plan.changes)
         print(f"Таблица: {args.csv} (строк {len(plan.changes)})")
+    if args.review_csv is not None:
+        write_review_csv(args.review_csv, plan.review)
+        print(f"На проверку: {args.review_csv} (строк {len(plan.review)})")
     return 0
 
 
