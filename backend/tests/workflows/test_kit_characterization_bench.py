@@ -22,6 +22,7 @@ from app.modules.production.rf_kit_characterization import KitStandard
 from app.modules.production.rf_kit_characterization_infrastructure import (RfKitRepository, RfKitStandardRow,
                                                                            RfStandardCharacterizationRow)
 from app.modules.production.vna_dsp import from_t, multiply, to_t
+from app.modules.production.vna_check_infrastructure import VnaCheckRow
 from app.modules.production.vna_session_infrastructure import VnaSessionRow
 from app.shared.persistence import AuditEventRow
 from tests.identity.test_api_tokens import _csrf, tokens_api  # noqa: F401
@@ -126,15 +127,23 @@ def act(env, view, path, body=None, expect=200):
     return post(env, session_path(view, path), {"version": view["session"]["version"], **(body or {})}, expect)
 
 
-def calibrate(env, view):
+def calibrate(env, view, *, full=True):
+    """The bench calibration is calibration-only since 26.11.2026. The SMA-MF06 pass still needs confidence + LOAD
+    (owner 27.11: decided separately), so by default the test records them on the session's check row."""
     env["stub"].network = None
     env["stub"].drive()
     view = state(env)
-    for key in ("calibration", "load_port1", "load_port2"):
-        act(env, view, f"/steps/{key}")
-        env["stub"].drive()
-        view = state(env)
+    act(env, view, "/steps/calibration")
+    env["stub"].drive()
+    view = state(env)
     assert view["calibration"]["valid"], view["session"]["steps"]
+    if full:
+        with env["sessions"]() as db:
+            row = db.get(VnaSessionRow, UUID(view["session"]["id"]))
+            check = db.get(VnaCheckRow, row.calibration_check_id)
+            check.confidence_passed, check.confidence_tx_dev_db, check.confidence_rx_dev_db = True, 0.01, 0.01
+            check.load_p1_vswr, check.load_p2_vswr, check.passed = 1.02, 1.02, True
+            db.commit()
     return view
 
 
@@ -287,6 +296,15 @@ def test_activation_needs_all_eight_validated_and_a_failed_check_blocks_it(env):
     view = sweep(env, view, direct(GAMMA[("OPEN", "female")]), {"standard_id": female_open})
     view = act(env, view, f"/characterization/pieces/{female_open}/save")
     assert pieces(view)[("OPEN", "female")]["state"] == "validated"
+
+
+def test_the_sma_mf06_pass_waits_for_the_owners_decision_on_a_shortened_calibration(env):
+    """Owner 27.11: dropping the confidence test and LOAD covers measurements; for the SMA-MF06 pass it is decided
+    separately — a calibration-only session takes no characterization sweep."""
+    view = post(env, "/sessions", {"characterization": {"kit_id": str(env["ids"]["mf06"])}})
+    view = calibrate(env, view, full=False)
+    refused = sweep(env, view, None, {"fixture_id": str(env["ids"]["fa"])}, 409)
+    assert refused["detail"]["code"] == "kit_calibration_pending" and "отдельно" in refused["detail"]["message"]
 
 
 def test_refusals_fixture_first_band_and_ill_conditioned_removal(env):

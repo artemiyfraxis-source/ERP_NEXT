@@ -28,7 +28,7 @@ it("shows overdue control, due date and one value per journal column", async () 
   const table = screen.getByRole("region", { name: "Записи журнала проверок ВАЦ" });
   expect(within(table).getAllByText("Не годен").some((node) => node.classList.contains("tone-danger"))).toBe(true);
   expect(within(table).getByText("1,071")).toBeInTheDocument();
-  expect(within(table).getByRole("cell", { name: "Калибровка: доверительный тест и LOAD" })).toBeInTheDocument();
+  expect(within(table).getByRole("cell", { name: "Калибровка АКМ" })).toBeInTheDocument();
 });
 
 it("hides the journal on a card that is not a VNA and shows a Russian error on failure", async () => {

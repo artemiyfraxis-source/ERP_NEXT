@@ -9,7 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.shared.persistence import Base
 from .vna_checks import due_items, KIND_LABELS
 
-# Frozen in migration 0195_vna_check_journal; change only through a new migration.
+# Frozen in migrations 0195_vna_check_journal and 0221_vna_calibration_only_check; change only through a new one.
 VNA_CHECKS = {
     "ck_vna_check_kind": "kind IN ('session','flex','control_standard','kit_standards')",
     "ck_vna_check_source": "length(trim(source)) > 0",
@@ -28,7 +28,10 @@ VNA_CHECKS = {
     "ck_vna_check_session": "kind <> 'session' OR (confidence_passed IS NOT NULL AND confidence_tx_dev_db IS NOT NULL AND "
                             "(NOT confidence_passed OR (confidence_tx_dev_db <= 0.1 AND load_p1_vswr IS NOT NULL AND "
                             "load_p2_vswr IS NOT NULL)) AND passed = (CASE WHEN confidence_passed AND load_p1_vswr <= 1.06 "
-                            "AND load_p2_vswr <= 1.06 THEN TRUE ELSE FALSE END))",
+                            "AND load_p2_vswr <= 1.06 THEN TRUE ELSE FALSE END)) OR "
+                            # 0221: «только калибровка» — confidence and LOAD dropped by the owner (26.11.2026).
+                            "(confidence_passed IS NULL AND confidence_tx_dev_db IS NULL AND confidence_rx_dev_db IS NULL "
+                            "AND load_p1_vswr IS NULL AND load_p2_vswr IS NULL AND passed = TRUE)",
     "ck_vna_check_flex": "kind <> 'flex' OR (s21_dev_db IS NOT NULL AND vswr_dev IS NOT NULL AND load_p1_vswr IS NOT NULL AND "
                          "load_p2_vswr IS NOT NULL AND passed = (CASE WHEN s21_dev_db <= 0.05 AND load_p1_vswr <= 1.06 AND "
                          "load_p2_vswr <= 1.06 THEN TRUE ELSE FALSE END))",

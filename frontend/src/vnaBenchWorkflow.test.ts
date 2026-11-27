@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { BENCH_STEPS, benchMainAction } from "./vnaBenchWorkflow";
-import type { VnaBenchItem, VnaBenchPlan, VnaBenchState, VnaBenchTarget } from "./vnaBenchApi";
+import { benchMainAction } from "./vnaBenchWorkflow";
+import type { VnaBenchItem, VnaBenchPlan, VnaBenchState, VnaBenchStep, VnaBenchStepKey, VnaBenchTarget } from "./vnaBenchApi";
 
 const target: VnaBenchTarget = { kind: "instrument", instrument_id: "si35", number: "СИ.035", name: "Переход", serial_number: null };
 const plan: VnaBenchPlan = { screen_name: "Переход", band_mhz: [10, 18000], points: 1601, ifbw_hz: 1000, power_dbm: 0,
@@ -10,28 +10,40 @@ function state(): VnaBenchState {
     model: "Planar", serial: "1", s2vna_ready: true, warmup_min: 50, temperatures: null, acm: null, refusal: null, read_at: null },
     calibration: { valid: true, calibrated_at: null, valid_until: null, reason: null, temperatures: null }, due: [],
     session: { id: "s1", version: 1, status: "open", operator: "ОТК", started_at: "", command: null, checks: [], items: [],
-      steps: BENCH_STEPS.map((key) => ({ key, status: "passed", result_text: null, refusal: null, finished_at: null })) } };
+      steps: [step("calibration")] } };
 }
+function step(key: VnaBenchStepKey, status: VnaBenchStep["status"] = "passed", refusal: VnaBenchStep["refusal"] = null): VnaBenchStep {
+  return { key, status, result_text: null, refusal, finished_at: null };
+}
+const OLD_STEPS: VnaBenchStepKey[] = ["calibration", "confidence", "load_port1", "load_port2"];
 function item(extra: Partial<VnaBenchItem> = {}): VnaBenchItem {
   return { id: "i1", version: 1, target, plan, connections_total: 3, connections: [], trace: [], verdict: null,
     refusal: null, recorded_at: null, recorded_to: null, ...extra };
 }
 
 describe("the single workplace action", () => {
-  it("opens a session before calibration, then advances through both load ports", () => {
+  it("opens a session, calibrates the ACM and measures right after it — no confidence test, no LOAD (26.11.2026)", () => {
     const value = state(); value.session = null;
     expect(benchMainAction(value, target, null).kind).toBe("open");
     value.session = state().session!;
+    value.session.steps = [step("calibration", "pending")];
+    expect(benchMainAction(value, target, null)).toEqual({ kind: "step", step: "calibration", label: "Калибровать АКМ" });
     value.session.steps = [];
     expect(benchMainAction(value, target, null)).toMatchObject({ kind: "step", step: "calibration" });
-    value.session.steps = state().session!.steps.slice(0, 2);
-    expect(benchMainAction(value, target, plan)).toMatchObject({ step: "load_port1" });
-    value.session.steps = state().session!.steps.slice(0, 3);
-    expect(benchMainAction(value, target, plan)).toMatchObject({ step: "load_port2" });
+    value.session.steps = [step("calibration")];
+    expect(benchMainAction(value, target, plan)).toEqual({ kind: "measure", label: "Замерить" });
   });
 
-  it("waits for automatic confidence testing and running measurements", () => {
-    const value = state(); value.session!.steps = value.session!.steps.slice(0, 1);
+  it("an old session waiting for its LOAD or confidence test calibrates anew; a finished one measures", () => {
+    const value = state();
+    value.session!.steps = OLD_STEPS.map((key, index) => step(key, index < 2 ? "passed" : "pending"));
+    expect(benchMainAction(value, target, plan)).toEqual({ kind: "step", step: "calibration", label: "Откалибровать заново" });
+    value.session!.steps = OLD_STEPS.map((key) => step(key));
+    expect(benchMainAction(value, target, plan)).toEqual({ kind: "measure", label: "Замерить" });
+  });
+
+  it("waits for a running calibration and running measurements", () => {
+    const value = state(); value.session!.steps = [step("calibration", "running")];
     expect(benchMainAction(value, target, plan).kind).toBe("wait");
     value.session = state().session!;
     value.session.items = [item({ connections: [{ no: 1, status: "running", max_vswr: null, max_mhz: null, measured_at: null }] })];
@@ -39,12 +51,12 @@ describe("the single workplace action", () => {
   });
 
   it("recalibrates after a failed or expired calibration and retries other refusals", () => {
-    const value = state(); value.session!.steps[2].status = "failed";
-    expect(benchMainAction(value, target, plan)).toMatchObject({ step: "calibration" });
-    value.session!.steps[2] = { ...value.session!.steps[2], status: "refused", refusal: { code: "busy", message: "Занят" } };
-    expect(benchMainAction(value, target, plan)).toMatchObject({ step: "load_port1", label: "Повторить" });
-    value.session!.steps[1] = { ...value.session!.steps[1], status: "refused", refusal: { code: "busy", message: "Занят" } };
-    expect(benchMainAction(value, target, plan)).toMatchObject({ step: "confidence", label: "Повторить" });
+    const value = state(); value.session!.steps = [step("calibration", "failed")];
+    expect(benchMainAction(value, target, plan)).toMatchObject({ step: "calibration", label: "Откалибровать заново" });
+    value.session!.steps = [step("calibration", "refused", { code: "temperature_unknown", message: "Температура не прочитана" })];
+    expect(benchMainAction(value, target, plan)).toMatchObject({ step: "calibration", label: "Откалибровать заново" });
+    value.session!.steps = [step("calibration", "refused", { code: "busy", message: "Занят" })];
+    expect(benchMainAction(value, target, plan)).toMatchObject({ step: "calibration", label: "Повторить" });
     value.session = state().session!; value.calibration.valid = false;
     expect(benchMainAction(value, target, plan)).toMatchObject({ step: "calibration" });
   });

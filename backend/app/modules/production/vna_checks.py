@@ -1,7 +1,8 @@
 """VNA calibration and accuracy-control journal (СТО ФРАК-002-2026, 11.4, 14; form В.1).
 
 One append-only record per check written by the VNA program on the VNA's own card:
-- session — after every calibration: the ACM confidence test («Данные/Память», 4.1 limits) and LOAD on both ports;
+- session — after every calibration: since 26.11.2026 «только калибровка» (the owner dropped the ACM confidence
+  test and LOAD on both ports: no numbers, passed); older rows hold the confidence test (4.1 limits) and both LOADs;
 - flex — the cable bend check (10.6): LOAD on each cable end stays ≤ 1.06 and S21/S12 of a thru within ±0.05 dB;
 - control_standard — weekly: the control adapter (СИ.009) against its stored reference curve, deviation ≤ U;
 - kit_standards — monthly: the 6650F27 standards against their description, √(U² + δ²) (МП п. 10.6.61).
@@ -26,7 +27,7 @@ from .vna_dsp import TRACES, TwoPort, db, summary, vswr
 
 KINDS = ("session", "flex", "control_standard", "kit_standards")
 KIND_LABELS = {
-    "session": "Проверка калибровки: доверительный тест АКМ и LOAD",
+    "session": "Калибровка АКМ",
     "flex": "Проверка тракта на изгиб",
     "control_standard": "Контрольная мера (еженедельно)",
     "kit_standards": "Меры 6650F27 (ежемесячно)",
@@ -35,6 +36,8 @@ LOAD_LIMIT = 1.06            # 11.4: max VSWR of the LOAD on each port over the 
 CONFIDENCE_TX_LIMIT_DB = 0.1  # 4.1: transmission near 0 dB
 FLEX_S21_LIMIT_DB = 0.05      # 14: S21 of the thru while bending
 PERIODIC = ("control_standard", "kit_standards")
+SESSION_VALUES = ("confidence_passed", "confidence_tx_dev_db", "confidence_rx_dev_db", "load_p1_vswr", "load_p2_vswr")
+CALIBRATION_ONLY_NOTE = "доверительный тест и LOAD отменены решением владельца 26.11.2026"
 DUE_STATUS_LABELS = {
     "ok": "В срок",
     "overdue": "Контроль просрочен",
@@ -60,6 +63,12 @@ def expected_verdict(kind: str, values: dict) -> bool:
         if missing:
             raise ProductionValidationError(f"Для проверки «{KIND_LABELS[kind]}» не хватает значений: {', '.join(missing)}")
     if kind == "session":
+        if values.get("calibration_only"):
+            # 0221: confidence and LOAD dropped by the owner — the accepted calibration itself is the record.
+            given = [name for name in SESSION_VALUES if values.get(name) is not None]
+            if given:
+                raise ProductionValidationError(f"Запись «только калибровка» без значений проверки: {', '.join(given)}")
+            return True
         need("confidence_passed", "confidence_tx_dev_db")
         if values["confidence_passed"] and values["confidence_tx_dev_db"] > CONFIDENCE_TX_LIMIT_DB:
             raise ProductionValidationError("Доверительный тест отмечен годным, но отклонение передачи больше 0,1 дБ")

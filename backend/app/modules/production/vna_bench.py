@@ -1,6 +1,6 @@
 """The VNA workplace session (purpose='bench', protocol v2): one ACM calibration, then many items.
 
-СТО ФРАК-002-2026: калибровка АКМ (11.2) и её проверка (11.4: доверительный тест, LOAD на каждом порту), условия
+СТО ФРАК-002-2026: калибровка АКМ (11.2; доверительный тест и LOAD после неё отменены владельцем 26.11.2026), условия
 действия калибровки (11.5: 4 ч, ±1 °C, те же приборы, тот же профиль, «Кор»), замер перехода (12.2, 13.1, 13.3 с
 повтором 12.4 — три подключения с поворотом 120°), сборка (12.3, 13.2), проверка на изгиб (10.6) и контроль точности
 (разд. 14: еженедельно СИ.009 по эталонной кривой, ежемесячно меры 6650F27).
@@ -28,7 +28,7 @@ from . import arinst_calibration as arinst_math
 from .vna_checks import KitStandard, LOAD_LIMIT
 from .vna_dsp import TwoPort, remove_fixtures, select_band, write_touchstone
 from .vna_sessions import Profile, Standard, fingerprint
-from .vna_screens import FULL_BAND_HZ, ScreenDef, screen as bench_screen
+from .vna_screens import FULL_BAND_HZ
 
 ITEM_KINDS = ("instrument", "assembly", "load", "flex", "control_standard", "kit_standards")
 TARGETS = ("dut", "port1", "port2", "thru", "thru_bent")
@@ -40,7 +40,7 @@ REPEATS = 3                                  # 12.4: three connections rotated b
 KIT_LABEL = "6650F27"
 VNA_MODEL = "S50180"
 # Ops every bench session sends besides the v1 ones; the monthly kit check additionally needs `read_kit`.
-SESSION_OPS = frozenset({"device_status", "apply_screen", "acm_confidence", "store_memory", "release"})
+SESSION_OPS = frozenset({"device_status", "apply_screen", "store_memory", "release"})
 UNCALIBRATED = dict(calibrated_at=None, calibration_temps=None, profile_hash=None, calibration_check_id=None)
 PORT_TO_END = {"1": "А", "2": "Б"}
 ARINST_COMMISSIONING = ("Сохранение Arinst заблокировано: требуется стендовое сравнение "
@@ -210,15 +210,13 @@ def release_step(hash_: str | None) -> dict:
     return step("release", dict(screen_hash=hash_), item=dict(kind="close"))
 
 
-def calibration_steps(snapshot: dict, *, acm_connected: bool = False, load: ScreenDef | None = None) -> list[dict]:
-    """11.2 + 11.4: ACM calibration, its confidence test and LOAD on each port, on the session profile.
-    `acm_connected` — the operator's click already says the ACM is on the cables (no separate confirmation);
-    `load` — the stored «нагрузка» screen (production_vna_screens), the code preset without it."""
+def calibration_steps(snapshot: dict, *, acm_connected: bool = False) -> list[dict]:
+    """11.2: the ACM calibration on the session profile, «Кор» checked, then the device read once more — its accepted
+    reading (ready, the same ACM, «Кор» on every trace, readable temperatures) makes the calibration valid and gives the
+    temperatures it holds. The confidence test and LOAD on each port were dropped by the owner (26.11.2026).
+    `acm_connected` — the operator's click already says the ACM is on the cables (no separate confirmation)."""
     profile, acm = Profile.model_validate(snapshot["profile"]), snapshot["acm"]
     calibration = run("calibration")
-    load_screen = fit_screen(bench_screen(load or "load_check"), profile)
-    hash_ = screen_hash(load_screen)
-    loads = run("load", calibration_run=calibration["run_id"])
     standard = Standard(kind="ACM", ports=[1, 2], label="Подключите АКМ", kit_ports=[1, 2])
     return [
         step("begin_calibration", dict(method="acm", kit_id=acm["id"], kit_fingerprint=fingerprint(acm["definition"]),
@@ -226,17 +224,13 @@ def calibration_steps(snapshot: dict, *, acm_connected: bool = False, load: Scre
         step("acm_calibrate", dict(ports=[1, 2], kit_ports=[1, 2], module_serial=acm["serial"], start_hz=profile.start_hz,
                                    stop_hz=profile.stop_hz), human=not acm_connected, label=CONNECT_ACM, item=calibration),
         step("save_calibration", dict(method="acm", traces=profile.traces), item=calibration),
-        step("acm_confidence", dict(profile=profile, module_serial=acm["serial"]), item=calibration),
-        screen_step(load_screen, calibration),
-        capture_step(profile, hash_, "Отключите АКМ, не сдвигая кабели. Поставьте LOAD на конец кабеля порта 1",
-                     connection(loads, "port1")),
-        capture_step(profile, hash_, "Перенесите LOAD на конец кабеля порта 2", connection(loads, "port2")),
+        step("device_status", item=calibration),
     ]
 
 
-def session_steps(snapshot: dict, *, load: ScreenDef | None = None) -> list[dict]:
+def session_steps(snapshot: dict) -> list[dict]:
     profile = Profile.model_validate(snapshot["profile"])
-    return [step("prepare"), step("apply_profile", dict(profile=profile)), *calibration_steps(snapshot, load=load)]
+    return [step("prepare"), step("apply_profile", dict(profile=profile)), *calibration_steps(snapshot)]
 
 
 def item_steps(profile: Profile, screen: Screen, capture_label: str | None, item: dict, target: str = "dut",
@@ -274,7 +268,6 @@ REFUSAL_CODES = (
     ("АКМ заменён или не подключён", "acm_missing"),
     ("Статус коррекции не «Кор»", "correction_lost"),
     ("Профиль сессии изменён", "profile_changed"),
-    ("Доверительный тест АКМ возможен до", "points_over_limit"),
 )
 
 
@@ -288,7 +281,7 @@ def aware(moment: datetime, now: datetime) -> datetime:
 
 def calibration_refusal(calibrated_at: datetime | None, now: datetime) -> str:
     if calibrated_at is None:
-        return "Нет действующей калибровки — выполните калибровку АКМ и её проверку"
+        return "Нет действующей калибровки — выполните калибровку АКМ"
     age = as_utc(now) - as_utc(aware(calibrated_at, now))
     if age < timedelta(0) or age > CALIBRATION_VALID:
         return "Калибровка старше 4 часов или часы изменены — откалибруйте заново (СТО ФРАК-002-2026 п. 11.5)"

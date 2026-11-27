@@ -5,7 +5,7 @@ import { VswrChart } from "./VswrChart";
 import { ArinstPartialChart } from "./vnaCapture";
 import { VnaTargetList } from "./VnaTargetList";
 import { ScreenSwitcher, VnaScreensEditor, lossTitle } from "./VnaScreensEditor";
-import { benchItem, benchMainAction, kitDefaultFixtures, kitMainAction, type KitFixtures, type KitReversed } from "./vnaBenchWorkflow";
+import { benchItem, benchMainAction, benchSteps, calibrationDone, kitDefaultFixtures, kitMainAction, type KitFixtures, type KitReversed } from "./vnaBenchWorkflow";
 import {
   CALIBRATION_REFUSALS,
   arinstBenchApi,
@@ -40,8 +40,8 @@ import {
 } from "./vnaBenchApi";
 
 /* «ОТК → ВАЦ — рабочее место» (план «ВАЦ только через ERP», S5; СТО ФРАК-002-2026 разд. 10–14). ВАЦ Planar S50180
-   (СИ.002) управляется только отсюда, S2VNA — для просмотра графиков. Порядок сеанса: калибровка АКМ (доверительный
-   тест идёт сам сразу после неё) → нагрузка на порт 1 и порт 2 → объект (СИ или КБ). Сеанс для СИ и проверок — на сетке
+   (СИ.002) управляется только отсюда, S2VNA — для просмотра графиков. Порядок сеанса: калибровка АКМ → сразу объект
+   (СИ или КБ); доверительный тест и нагрузку после АКМ владелец отменил 26.11.2026 (их шаги — только у старого сеанса). Сеанс для СИ и проверок — на сетке
    «ОТК — переход»; для КБ — отдельный сеанс на полосе ЭТК задания. Каждый шаг говорит словами, что куда подключить. */
 
 const POLL_MS = 2000;
@@ -62,9 +62,8 @@ export const STEP_TITLES: Record<VnaBenchStepKey, string> = {
   load_port1: "Нагрузка: порт 1",
   load_port2: "Нагрузка: порт 2",
 };
-const STEP_ORDER: VnaBenchStepKey[] = ["calibration", "confidence", "load_port1", "load_port2"];
 const STEP_HINTS: Record<VnaBenchStepKey, string> = {
-  calibration: "Подключите АКМ к концам обоих кабелей: порт 1 и порт 2. Кабели закрепите — после калибровки их не двигать. Калибровка идёт около 30 секунд, сразу за ней — доверительный тест.",
+  calibration: "Подключите АКМ к концам обоих кабелей: порт 1 и порт 2. Кабели закрепите — после калибровки их не двигать. Калибровка идёт около 30 секунд — после неё можно сразу измерять.",
   confidence: "Тест идёт сам сразу после калибровки — АКМ с кабелей не снимайте. Норма: передача ±0,1 дБ, отражение ±0,4 дБ до 10 ГГц и ±0,5 дБ выше.",
   load_port1: "Отключите АКМ, не сдвигая кабели. Наверните нагрузку LOAD 6650F27 на кабель порта 1 и затяните тарированным ключом. Норма — КСВН не больше 1,06 во всей полосе.",
   load_port2: "Перенесите нагрузку LOAD на кабель порта 2 и затяните ключом. Норма та же — КСВН не больше 1,06.",
@@ -85,12 +84,12 @@ export const VERDICTS: Record<VnaBenchVerdict["code"], { label: string; tone: st
   not_assessed: { label: "Не оценивается", tone: "" },
 };
 
+/* Шевеление кабелей отменено владельцем 26.11.2026: его больше не запускают, название — для уже сделанных. */
 const CHECKS: { kind: VnaBenchCheckKind; title: string; what: string }[] = [
-  { kind: "flex", title: "Шевеление кабелей", what: "При каждой калибровке. LOAD на кабеле: КСВН остаётся ≤ 1,06; перемычка: S21 меняется не больше ±0,05 дБ." },
   { kind: "weekly", title: "Еженедельная — контрольная мера СИ.009", what: "Переход ADP1A СИ.009 сравнивается с эталонной кривой из его карточки: отклонение КСВН и S21 не больше U." },
   { kind: "monthly", title: "Ежемесячная — меры 6650F27", what: "OPEN, SHORT, LOAD на каждом порту и перемычка: 0 дБм, ПЧ 1 кГц, три подключения с поворотом на 120°." },
 ];
-const CHECK_TITLES = Object.fromEntries(CHECKS.map((check) => [check.kind, check.title])) as Record<VnaBenchCheckKind, string>;
+const CHECK_TITLES = { flex: "Шевеление кабелей", ...Object.fromEntries(CHECKS.map((check) => [check.kind, check.title])) } as Record<VnaBenchCheckKind, string>;
 
 /** Что сделать руками на фазе проверки — словами владельца; ключи фаз задаёт сервер, незнакомая — его название. */
 export function phaseHint(kind: VnaBenchCheckKind, phase: VnaBenchCheckPhase): string {
@@ -643,11 +642,6 @@ function temperatureText(state: VnaBenchState): string {
 
 export function dueText(due: VnaBenchDue | undefined): { text: string; tone: string } {
   if (!due) return { text: "нет данных", tone: "tone-neutral" };
-  if (due.kind === "flex") {
-    return due.status === "ok" ? { text: "пройдена после калибровки", tone: "tone-ok" }
-      : due.status === "failed" ? { text: "не пройдена — замените кабель", tone: "tone-danger" }
-        : { text: "нужна после калибровки", tone: "tone-warn" };
-  }
   const day = due.due_at ? formatMoment(due.due_at).slice(0, 5) : "";
   if (due.status === "ok") return { text: `до ${day}`, tone: "tone-ok" };
   if (due.status === "failed") return { text: "не пройдена — замеры остановлены", tone: "tone-danger" };
@@ -702,7 +696,8 @@ function StepList({ session, calibrationValid, calibrationReason }: {
   session: VnaBenchSession; calibrationValid: boolean; calibrationReason: string | null;
 }) {
   const byKey = new Map(session.steps.map((step) => [step.key, step]));
-  const current = STEP_ORDER.find((key) => byKey.get(key)?.status !== "passed");
+  const order = benchSteps(session);
+  const current = order.find((key) => byKey.get(key)?.status !== "passed");
   const currentStep = current ? byKey.get(current) : undefined;
   // «Не годен» или отказ из-за калибровки (К?, температура, 4 ч) — только новая калибровка (СТО 11.4, 11.5).
   // Отказ по другой причине (прибор занят, агент не на связи) — причина и «Повторить» того же шага.
@@ -712,7 +707,7 @@ function StepList({ session, calibrationValid, calibrationReason }: {
   const expired = !current && !calibrationValid;
   return <div className="panel vna-bench-steps-panel">
     <ol className="vna-bench-steps" aria-label="Шаги сеанса">
-      {STEP_ORDER.map((key, index) => {
+      {order.map((key, index) => {
         const step: VnaBenchStep = byKey.get(key) ?? { key, status: "pending", result_text: null, refusal: null, finished_at: null };
         const isCurrent = key === current;
         return <li key={key} className={isCurrent ? "current" : ""} aria-current={isCurrent ? "step" : undefined}>
@@ -802,7 +797,7 @@ function ObjectPanel({ state, session, calibrationValid, canEdit, busy, blockedS
   // Только последний запрос плана: ответ на устаревший (сменили оснастку, объект, сеанс) отбрасывается.
   const planRequest = useRef(0);
   const sessionId = session?.id ?? null;
-  const stepsDone = session ? STEP_ORDER.every((key) => session.steps.find((step) => step.key === key)?.status === "passed") : false;
+  const stepsDone = session ? calibrationDone(session) : false;
   const ready = stepsDone && calibrationValid;
 
   async function loadPlan(next: VnaBenchTarget) {
@@ -876,7 +871,7 @@ function ObjectPanel({ state, session, calibrationValid, canEdit, busy, blockedS
   // Замер объекта идёт (не окончательный и не отказ) — цепочку и частоту не меняют.
   const inProgress = item !== null && !itemDone(item);
   const blocked = !session ? "" : !ready ? (stepsDone ? "Калибровка недействительна — откалибруйте заново."
-    : "Сначала пройдите калибровку и нагрузку на обоих портах.") : "";
+    : "Сначала выполните калибровку АКМ.") : "";
   const wrongCalibration = plan?.refusal?.code === "other_calibration";
   const kitView = session?.characterization ?? null;
   const kitTarget = target?.kind === "instrument" && target.kit ? target : null;
@@ -952,7 +947,7 @@ function ObjectPanel({ state, session, calibrationValid, canEdit, busy, blockedS
     <label><input type="checkbox" name="vna-cleaned" checked={cleaned} disabled={!canEdit || busy}
       onChange={(event) => setCleaned(event.target.checked)} /> Разъёмы осмотрены и почищены</label>
   </div>
-  {session && (ready ? <details className="vna-bench-settings vna-bench-completed"><summary>Калибровка пройдена · 4 шага</summary>
+  {session && (ready ? <details className="vna-bench-settings vna-bench-completed"><summary>{session.steps.length > 1 ? `Калибровка пройдена · ${session.steps.length} шага` : "Калибровка АКМ пройдена"}</summary>
     <StepList session={session} calibrationValid={calibrationValid} calibrationReason={state.calibration.reason} /></details>
     : <StepList session={session} calibrationValid={calibrationValid} calibrationReason={state.calibration.reason} />)}
     {kitMode && kitView && kitSession && session && <KitPanel view={kitView} session={session} canEdit={canEdit} busy={busy} act={act}
@@ -1104,12 +1099,12 @@ function ChecksPanel({ state, session, canEdit, busy, act }: {
 }) {
   const active = session?.checks.find((check) => check.status === "pending" || check.status === "running") ?? null;
   const lastOf = (kind: VnaBenchCheckKind) => [...(session?.checks ?? [])].reverse().find((check) => check.kind === kind && check !== active);
-  const stepsDone = session ? STEP_ORDER.every((key) => session.steps.find((step) => step.key === key)?.status === "passed") : false;
+  const stepsDone = session ? calibrationDone(session) : false;
   const canStart = Boolean(session) && stepsDone && state.calibration.valid && !active;
   return <div className="panel vna-bench-checks">
     <h2>Проверки</h2>
     {!session && <p className="muted-text">Проверки идут внутри сеанса для СИ и проверок — откройте его на вкладке «Замер».</p>}
-    {session && !stepsDone && <p className="tone-warn">Сначала пройдите калибровку и нагрузку на обоих портах.</p>}
+    {session && !stepsDone && <p className="tone-warn">Сначала выполните калибровку АКМ.</p>}
     <table className="vna-bench-check-list" aria-label="Проверки ВАЦ">
       <thead><tr><th scope="col">Проверка</th><th scope="col">Что и критерий</th><th scope="col">Срок</th><th scope="col">В этом сеансе</th><th scope="col" aria-label="Действие" /></tr></thead>
       <tbody>{CHECKS.map((check) => {

@@ -16,18 +16,23 @@ SNAPSHOT = dict(profile=bench.adapter_profile().model_dump(mode="json"),
                 acm=dict(id="11111111-1111-1111-1111-111111111111", serial="26140008", definition={"role": "auto_calibration"}))
 
 
-def test_session_steps_follow_the_agent_order_and_screens_carry_every_traced_parameter():
+def test_session_steps_follow_the_agent_order():
+    """26.11.2026: the ACM calibration, «Кор», then one device reading — no confidence test, no LOAD (owner)."""
     steps = bench.session_steps(SNAPSHOT)
     assert [s["op"] for s in steps] == ["prepare", "apply_profile", "begin_calibration", "acm_calibrate", "save_calibration",
-                                        "acm_confidence", "apply_screen", "capture", "capture"]
-    assert [s["human"] for s in steps] == [False, False, False, True, False, False, False, True, True]
-    # apply_screen needs «Кор»: after save_calibration; every capture names the screen just applied.
-    applied = steps[6]["args"]
-    ApplyScreenArgs.model_validate(applied)
-    assert {s["args"]["screen_hash"] for s in steps[7:]} == {applied["screen_hash"]}
-    assert {t["param"] for t in applied["screen"]["traces"]} >= {"S11", "S21", "S12", "S22"}
-    assert [s["item"]["target"] for s in steps[7:]] == ["port1", "port2"]
+                                        "device_status"]
+    assert [s["human"] for s in steps] == [False, False, False, True, False, False]
+    assert {s["item"]["kind"] for s in steps[2:]} == {"calibration"} and len({s["item"]["run_id"] for s in steps[2:]}) == 1
+    assert "acm_confidence" not in bench.SESSION_OPS
     assert not bench.calibration_steps(SNAPSHOT, acm_connected=True)[1]["human"]
+
+
+def test_item_screens_carry_every_traced_parameter():
+    steps = bench.item_steps(bench.adapter_profile(), screen("adapter"), "Развёртка", bench.run("instrument"))
+    applied = steps[1]["args"]
+    ApplyScreenArgs.model_validate(applied)
+    assert steps[2]["args"]["screen_hash"] == applied["screen_hash"]
+    assert {t["param"] for t in applied["screen"]["traces"]} >= {"S11", "S21", "S12", "S22"}
 
 
 def test_fit_screen_adds_hidden_traces_clips_lines_and_drops_markers_outside_the_sweep():

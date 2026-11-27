@@ -12,7 +12,7 @@ from tests.factories import Actor
 from tests.identity.test_api_tokens import _bearer, _csrf, _issue, _login, tokens_api  # noqa: F401
 from tests.production.test_api import MASTER_ID, production_api  # noqa: F401
 from tests.warehouse.test_vna_jobs import CLAIM, HEARTBEAT, NAME, S2_INSTRUMENT, capture  # noqa: F401
-from tests.workflows.test_vna_bench_api import calibrate, env, measure, post, session_path, state  # noqa: F401
+from tests.workflows.test_vna_bench_api import calibrate, env, measure, post, session_path, start_old_flex, state  # noqa: F401
 
 URL = "/api/production/vna-bench/screens"
 
@@ -152,10 +152,9 @@ def test_bench_draws_the_stored_screen_and_shows_a_saved_one_without_a_sweep(env
     refused = post(env, session_path(view, "/screen"), {"version": view["session"]["version"], "screen_id": adapter["id"]},
                    expect=409)
     assert refused["detail"]["code"] == "calibration_expired"
-    for key in ("calibration", "load_port1", "load_port2"):
-        post(env, session_path(view, f"/steps/{key}"), {"version": view["session"]["version"]})
-        env["stub"].drive()
-        view = state(env)
+    post(env, session_path(view, "/steps/calibration"), {"version": view["session"]["version"]})
+    env["stub"].drive()
+    view = state(env)
     plan = post(env, session_path(view, "/plan"), {"target": dict(kind="instrument", instrument_id=str(env["ids"]["dut"]))})
     assert plan["screen_name"] == "Переход (правка)" and plan["traces"][1]["scale"] == "-0,2…0 дБ"
     view = measure(env, view)
@@ -205,9 +204,7 @@ def test_a_repeat_connection_sweeps_on_the_view_and_a_check_restores_its_own_scr
         shown = [s for s in row.steps if s["op"] == "apply_screen"][-1]
         assert captures[-1]["args"]["screen_hash"] == shown["args"]["screen_hash"]
     # A check started, then a view, then its next phase: the check's screen goes back before the sweep.
-    view = state(env)
-    post(env, session_path(view, "/checks"), {"version": view["session"]["version"], "kind": "flex"})
-    env["stub"].drive()
+    start_old_flex(env)
     view = state(env)
     post(env, session_path(view, "/screen"), {"version": view["session"]["version"], "screen_id": engineer["id"]})
     env["stub"].drive()
@@ -232,9 +229,8 @@ def test_a_flex_screen_without_memory_skips_the_memory_step(env, monkeypatch):
     bare = stored.model_construct(**{**dict(stored), "traces": [t.model_copy(update={"memory": False}) for t in stored.traces]})
     original = vna_bench_api._screen
     monkeypatch.setattr(vna_bench_api, "_screen", lambda uow, purpose: bare if purpose == "flex" else original(uow, purpose))
-    view = calibrate(env)
-    view = post(env, session_path(view, "/checks"), {"version": view["session"]["version"], "kind": "flex"})
-    env["stub"].drive()
+    calibrate(env)
+    start_old_flex(env)
     check = state(env)["session"]["checks"][0]
     for connected in (("load",), ("load",), ("thru",), ("thru",)):
         env["stub"].connected = connected

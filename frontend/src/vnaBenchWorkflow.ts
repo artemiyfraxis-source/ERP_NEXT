@@ -1,11 +1,16 @@
 import { CALIBRATION_REFUSALS, type KitBand, type KitCaptureInput, type KitPiece, type KitView, type VnaBenchItem, type VnaBenchPlan, type VnaBenchSession, type VnaBenchState, type VnaBenchStepKey, type VnaBenchTarget } from "./vnaBenchApi";
 
-export const BENCH_STEPS: VnaBenchStepKey[] = ["calibration", "confidence", "load_port1", "load_port2"];
+/** Шаги калибровки, которые прислал сервер: с 26.11.2026 — одна «Калибровка АКМ» (доверительный тест и нагрузку
+ *  владелец отменил); старый сеанс — свои четыре шага. */
+export const benchSteps = (session: VnaBenchSession): VnaBenchStepKey[] =>
+  session.steps.length ? session.steps.map((step) => step.key) : ["calibration"];
+export const calibrationDone = (session: VnaBenchSession): boolean =>
+  benchSteps(session).every((key) => session.steps.find((step) => step.key === key)?.status === "passed");
 export type BenchAction = {
   kind: "open" | "step" | "measure" | "connection" | "record" | "wait" | "kit-capture" | "kit-band" | "kit-save" | "kit-activate";
   label: string;
   reason?: string;
-  step?: VnaBenchStepKey;
+  step?: "calibration";
   /** «Характеристика мер»: что снять (мера или оснастка), какую меру сохранить, на какой проход перейти. */
   capture?: KitCaptureInput;
   pieceId?: string;
@@ -19,14 +24,17 @@ export const benchItem = (session: VnaBenchSession | null, target: VnaBenchTarge
   session && target ? [...session.items].reverse().find((item) => benchTargetKey(item.target) === benchTargetKey(target)) ?? null : null;
 
 export function benchStepAction(session: VnaBenchSession, calibrationValid: boolean): BenchAction | null {
-  const current = BENCH_STEPS.map((key) => session.steps.find((step) => step.key === key) ?? { key, status: "pending", refusal: null })
+  const current = benchSteps(session).map((key) => session.steps.find((step) => step.key === key) ?? { key, status: "pending", refusal: null })
     .find((step) => step.status !== "passed");
+  if (current?.status === "running") return { kind: "wait", label: "Дождитесь калибровки", reason: "Калибровка АКМ выполняется" };
+  // Старый сеанс, ждущий нагрузку или доверительный тест: эти шаги отменены — сразу новая калибровка.
   if (current?.status === "failed" || (current?.status === "refused" && CALIBRATION_REFUSALS.has(current.refusal?.code ?? ""))
-    || (!current && !calibrationValid)) return { kind: "step", label: "Откалибровать заново", step: "calibration" };
+    || (current && current.key !== "calibration") || (!current && !calibrationValid)) {
+    return { kind: "step", label: "Откалибровать заново", step: "calibration" };
+  }
   if (!current) return null;
-  if (current.status === "refused") return { kind: "step", step: current.key, label: "Повторить" };
-  if (current.status === "running" || current.key === "confidence") return { kind: "wait", label: "Дождитесь проверки", reason: "Доверительный тест выполняется автоматически" };
-  return { kind: "step", step: current.key, label: current.key === "calibration" ? "Калибровать АКМ" : `Измерить нагрузку на порту ${current.key === "load_port1" ? 1 : 2}` };
+  if (current.status === "refused") return { kind: "step", step: "calibration", label: "Повторить" };
+  return { kind: "step", step: "calibration", label: "Калибровать АКМ" };
 }
 
 /** Only UI navigation is derived here; the server remains the authority for commands and verdicts. */

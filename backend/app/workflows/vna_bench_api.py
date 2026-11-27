@@ -1,11 +1,12 @@
 """«ВАЦ — рабочее место» from ERP: a bench session (purpose='bench', protocol v2), one ACM calibration, many items.
 
 S3: open a session (the station: S2VNA card, its PC, its АКМ and two test cables) → profile → «подключите АКМ» →
-acm_calibrate → доверительный тест (judged here, СТО ФРАК-002-2026 п. 11.4) → LOAD on port 1 and 2 (judged here) →
-journal row (form В.1) → calibrated. Before every item the calibration must still hold (п. 11.5): < 4 h, ±1 °C, the
+acm_calibrate → «Кор» → the device read again (judged here) → journal row «только калибровка» (form В.1) → calibrated.
+The confidence test and LOAD on each port after the ACM were dropped by the owner (26.11.2026); an old session that
+still holds those steps is shown and judged as before. Before every item the calibration must still hold (п. 11.5): < 4 h, ±1 °C, the
 same ВАЦ/АКМ, the same profile, «Кор»; a failed weekly/monthly control stops measurements (разд. 14).
 S4: items — a СИ (переход, 12.2/13.1/13.3, «на границе» → 12.4 three connections, «Записать в карточку»), a КБ
-position (12.3 through the ОТК VSWR record), and checks — bend (10.6), weekly control standard, monthly 6650F27.
+position (12.3 through the ОТК VSWR record), and checks — weekly control standard, monthly 6650F27.
 
 The screen's contract is `frontend/src/vnaBenchApi.ts` (S5): every POST queues agent work and returns the state at once,
 the screen polls `GET state`; refusals are `detail: {code, message}`. Each accepted capture is judged in the agent's
@@ -29,6 +30,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import Field
 from sqlalchemy import Integer, func, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import object_session
 
 from app.modules.production import kit_characterization_run as kc
 from app.modules.production import vna_bench as bench
@@ -54,7 +56,7 @@ from app.modules.production.traceability import InstrumentFile, InstrumentFileKi
 from app.modules.production.vna_bench_protocol import ArinstOptions, ArinstProfile, Screen, screen_hash
 from app.modules.production.vna_check_infrastructure import VALUE_FIELDS, VnaCheckRepository, VnaCheckRow
 from app.modules.production.vna_characterization import is_characterization_file
-from app.modules.production.vna_checks import (LOAD_LIMIT, KitTolerance, assert_confidence_points, confidence_from_receipt,
+from app.modules.production.vna_checks import (CALIBRATION_ONLY_NOTE, LOAD_LIMIT, KitTolerance, confidence_from_receipt,
                                                control_standard, expected_verdict, flex, journal_number,
                                                kit_standard as judge_kit_standard, load_vswr, same_grid)
 from app.modules.production.vna_dsp import TRACES, TwoPort, VnaDataError, read_touchstone, select_band, summary, vswr, write_touchstone
@@ -81,6 +83,7 @@ Techcards = Annotated[Callable | None, Depends(techcards_uow_factory)]
 Refs = Annotated[Callable | None, Depends(references_uow_factory)]
 MEASURING = ("instrument", "assembly", "kit_characterization")   # stopped by a failed weekly/monthly control (разд. 14)
 ITEMS = ("instrument", "assembly")
+# "flex" stays only to show the bend checks already made (history, an old open session); it is no longer started.
 CHECKS = {"flex": "flex", "weekly": "control_standard", "monthly": "kit_standards"}
 CHECK_NAMES = {v: k for k, v in CHECKS.items()}
 JUDGE_ERRORS = (ProductionValidationError, VnaDataError, ValueError, KeyError)
@@ -95,6 +98,7 @@ FLEX_PHASES = (("load_p1", "LOAD на кабеле порта 1, кабель и
                ("load_p2", "LOAD на кабеле порта 2, кабель изгибается", "port2"),
                ("thru_memory", "Перемычка, кабели в рабочем положении — графики запоминаются", "thru"),
                ("thru_flex", "Перемычка, кабели изогнуты", "thru_bent"))
+FLEX_DROPPED = "Шевеление кабелей отменено владельцем (26.11.2026): после калибровки АКМ оно не нужно"
 
 
 class Refusal(Exception):
@@ -365,17 +369,10 @@ def _calibration(row, now):
 def _due(uow, vna, row, now):
     if vna is None:
         return []
+    # The weekly and monthly controls only: the bend check after every calibration was dropped by the owner (26.11.2026).
     statuses = {"ok": "ok", "overdue": "overdue", "never": "due", "failed": "failed"}
-    due = [dict(kind=CHECK_NAMES[d["kind"]], due_at=d["due_at"], last_at=d["last_at"], status=statuses[d["status"]])
-           for d in VnaCheckRepository(uow.session).due(vna.id, now)]
-    # 14: the bend check belongs to every calibration.
-    last = uow.session.scalar(select(VnaCheckRow).where(VnaCheckRow.instrument_id == vna.id, VnaCheckRow.kind == "flex")
-                              .order_by(VnaCheckRow.performed_at.desc()).limit(1))
-    fresh = bool(last and row is not None and row.calibrated_at
-                 and as_utc(bench.aware(last.performed_at, now)) >= as_utc(bench.aware(row.calibrated_at, now)))
-    due.insert(0, dict(kind="flex", due_at=None, last_at=last.performed_at if last else None,
-                       status=("ok" if last.passed else "failed") if fresh else "due"))
-    return due
+    return [dict(kind=CHECK_NAMES[d["kind"]], due_at=d["due_at"], last_at=d["last_at"], status=statuses[d["status"]])
+            for d in VnaCheckRepository(uow.session).due(vna.id, now)]
 
 
 def _runs(row) -> list[dict]:
@@ -421,10 +418,14 @@ def _refusal(row, run, all_runs):
 
 
 def _steps_view(uow, row, commands, items):
+    """The calibration's steps for the screen: since 26.11.2026 one «Калибровка АКМ» (acm_calibrate → «Кор» → the
+    device reading that makes it valid); an old session that still holds the confidence test and LOAD shows all four."""
     calibration = _latest_run(row, ("calibration",))
     if calibration is None:
         return []
     indexes = {s["op"]: i for i, s in _run_steps(row, calibration["run_id"])}
+    if "acm_confidence" not in indexes:
+        return [_calibration_step(uow, row, commands, calibration, indexes)]
     loads = [(i, s) for i, s in enumerate(row.steps) if (s.get("item") or {}).get("calibration_run") == calibration["run_id"]]
     view = []
     for key, index in (("calibration", indexes.get("acm_calibrate")), ("confidence", indexes.get("acm_confidence")),
@@ -444,14 +445,39 @@ def _steps_view(uow, row, commands, items):
             if found is not None and found.verdict is not None:
                 status = "passed" if found.verdict == "pass" else "failed"
                 text = f"КСВН {number_text(found.result['vswr'], 4)} ≤ 1,06"
-        refusal = None
-        if status in ("failed", "refused") and row.error:
-            refusal = dict(code=bench.refusal_code(row.error), message=row.error)
-        if command is not None and command.status == "failed":
-            refusal = dict(code=bench.refusal_code(command.result.get("error", "")), message=command.result.get("error", ""))
-        view.append(dict(key=key, status=status, result_text=text, refusal=refusal,
-                         finished_at=command.finished_at if command else None))
+        view.append(_step_view(row, key, status, text, command))
     return view
+
+
+def _calibration_step(uow, row, commands, calibration, indexes) -> dict:
+    """One step over the whole calibration run: running while any of its commands is, passed once the closing device
+    reading was accepted (its journal row exists), failed when a command or the judgement refused it."""
+    run_commands = [c for i, _ in _run_steps(row, calibration["run_id"]) if (c := _command_for(commands, i)) is not None]
+    final = indexes.get("device_status")
+    last = run_commands[-1] if run_commands else None
+    if any(c.status in ("pending", "claimed") for c in run_commands):
+        status = "running"
+    elif last is None:
+        status = "pending"
+    elif last.status != "done":
+        status = _status(last)
+    elif final is None or last.expected_step != final:
+        # The judgement cut the calibration short (e.g. a grid the ACM cannot cover), or the ACM is still to connect.
+        status = "failed" if final is None else "pending"
+    else:
+        accepted = VnaCheckRepository(uow.session).by_source(f"erp-vna-bench:{last.id}") is not None
+        status = "passed" if accepted else "failed"
+    return _step_view(row, "calibration", status, None, last if status != "pending" else None)
+
+
+def _step_view(row, key, status, text, command) -> dict:
+    refusal = None
+    if status in ("failed", "refused") and row.error:
+        refusal = dict(code=bench.refusal_code(row.error), message=row.error)
+    if command is not None and command.status == "failed":
+        refusal = dict(code=bench.refusal_code(command.result.get("error", "")), message=command.result.get("error", ""))
+    return dict(key=key, status=status, result_text=text, refusal=refusal,
+                finished_at=command.finished_at if command else None)
 
 
 def _command_view(row, commands):
@@ -1071,10 +1097,6 @@ def open_session(principal: Person, now: Now, factory: Factory, techcards_factor
                             vswr_max=plan["profile"]["limit_line"]["vswr_max"],
                             norm_source=(plan["profile"]["norm"].get("source") or plan["profile"]["norm"].get("label")
                                          or "норма ЭТК"))
-        try:
-            assert_confidence_points(profile.points)   # never calibrate a grid the confidence test cannot cover
-        except ProductionValidationError as error:
-            raise Refusal("points_over_limit", str(error)) from error
         with factory() as uow:
             rf = RfRepository(uow.session)
             vna = uow.instruments.get(vna_id)
@@ -1117,7 +1139,7 @@ def open_session(principal: Person, now: Now, factory: Factory, techcards_factor
                     row = repository.create(now=now, operator_id=principal.actor.id, machine_id=owner, purpose="bench",
                                             instrument_id=vna_id, instrument_serial=instrument["serial"], task_id=None,
                                             operation_id=None, product_position=None, snapshot=snapshot,
-                                            steps=bench.session_steps(snapshot, load=_screen(uow, "load")))
+                                            steps=bench.session_steps(snapshot))
             except IntegrityError:
                 if repository.active(vna_id, instrument["serial"]):
                     raise Refusal("device_busy", "Прибор занят активной сессией ВАЦ") from None
@@ -1131,38 +1153,25 @@ def open_session(principal: Person, now: Now, factory: Factory, techcards_factor
 
 
 @router.post(PREFIX + "/sessions/{session_id}/steps/{key}")
-def run_step(session_id: UUID, key: Literal["calibration", "confidence", "load_port1", "load_port2"], payload: Version,
-             principal: Person, now: Now, factory: Factory):
-    """The operator's click after connecting what the step says. Calibration and the LOAD steps confirm the waiting
-    connection; the confidence test runs by itself right after the calibration (the ACM still on the cables)."""
+def run_step(session_id: UUID, key: Literal["calibration"], payload: Version, principal: Person, now: Now,
+             factory: Factory):
+    """«Калибровать АКМ»: the operator connected the ACM — confirm the waiting calibration or redo it (11.5). An old
+    session still waiting for its LOAD (dropped 26.11.2026) drops that step and calibrates anew."""
     def action(uow, repository, row):
         _planar_only(row)
         _version(row, payload.version)
         current = row.steps[row.step] if row.step < len(row.steps) else {}
-        item = current.get("item") or {}
         waiting = row.state in ("awaiting_standard", "awaiting_dut")
-        if key == "calibration":
-            if waiting and current.get("op") == "acm_calibrate":
-                repository.act(row, "confirm", row.version, row.step, now)
-            elif row.state == "ready":
-                # 11.5: redo the calibration in the same session; the operator has connected the ACM.
-                repository.append(row, bench.calibration_steps(row.snapshot, acm_connected=True, load=_screen(uow, "load")), now,
-                                  error="", **bench.UNCALIBRATED)
-            else:
-                raise Refusal("device_busy", "Калибровку сейчас начать нельзя — дождитесь окончания команды")
-        elif key == "confidence":
-            if row.state == "ready" and row.calibrated_at is None:
-                raise Refusal("calibration_required", "Доверительный тест выполняется сразу после калибровки АКМ — "
-                                                      "повторите калибровку (СТО п. 11.4)")
-        else:
-            target = "port1" if key == "load_port1" else "port2"
-            if waiting and current.get("op") == "capture" and item.get("kind") == "load" and item.get("target") == target:
-                repository.act(row, "confirm", row.version, row.step, now)
-            elif row.state == "ready" and row.calibrated_at is None:
-                raise Refusal("calibration_required", "LOAD проверяется после калибровки — повторите калибровку АКМ "
-                                                      "(СТО п. 11.4)")
-            else:
-                raise Refusal("stale", "Сейчас ожидается другой шаг — экран обновлён")
+        if waiting and current.get("op") == "acm_calibrate":
+            repository.act(row, "confirm", row.version, row.step, now)
+            return
+        if waiting and (current.get("item") or {}).get("kind") == "load":
+            repository.act(row, "cancel_item", row.version, row.step, now)
+        if row.state != "ready":
+            raise Refusal("device_busy", "Калибровку сейчас начать нельзя — дождитесь окончания команды")
+        # 11.5: redo the calibration in the same session; the operator has connected the ACM.
+        repository.append(row, bench.calibration_steps(row.snapshot, acm_connected=True), now, error="",
+                          **bench.UNCALIBRATED)
     return _act(factory, session_id, principal, now, action)
 
 
@@ -1634,15 +1643,14 @@ def _one(uow, rows, what):
 def start_check(session_id: UUID, payload: CheckInput, principal: Person, now: Now, factory: Factory):
     def action(uow, repository, row):
         _version(row, payload.version)
+        if payload.kind == "flex":
+            raise Refusal("invalid", FLEX_DROPPED, 422)
         kind = CHECKS[payload.kind]
         _gates(uow, row, now, kind)
         profile = _profile(row)
-        if kind != "flex" and row.snapshot["profile_kind"] != "adapter":
+        if row.snapshot["profile_kind"] != "adapter":
             raise Refusal("other_calibration", "Проверки мерами — на сетке «ОТК — переход»; откройте сеанс без КБ")
-        if kind == "flex":
-            meta = bench.run("flex")
-            steps = bench.item_steps(profile, bench_screen(_screen(uow, "load")), None, meta)
-        elif kind == "control_standard":
+        if kind == "control_standard":
             if payload.instrument_id is not None:
                 card_id = payload.instrument_id
             else:
@@ -1780,7 +1788,9 @@ def _judge(uow, repository, row, command, item, now) -> dict:
         _matings(uow, f"vna-calibration-{command.id}", entries, row, now)
         return {}
     if op == "acm_confidence":
-        return _confidence(uow, row, command, now)
+        return _confidence(uow, row, command, now)   # an old session's step (before 26.11.2026)
+    if op == "device_status" and item.get("kind") == "calibration":
+        return _calibrated(uow, repository, row, command, now)
     if op == "device_status":
         refusal = (bench.device_refusal(result, row.snapshot["acm"]["serial"], _profile(row).traces)
                    or bench.temperature_refusal(row.calibration_temps, result["temperatures"]))
@@ -1809,8 +1819,11 @@ def _judge(uow, repository, row, command, item, now) -> dict:
 def _calibration_ref(row) -> dict:
     """The calibration a sweep was judged under — kept with the row: the card file and a repeat series use this one,
     never whatever calibration the session holds later."""
+    check = object_session(row).get(VnaCheckRow, row.calibration_check_id) if row.calibration_check_id else None
     return dict(check_id=str(row.calibration_check_id) if row.calibration_check_id else None,
-                calibrated_at=as_utc(row.calibrated_at).isoformat() if row.calibrated_at else None, load_check="pass")
+                calibrated_at=as_utc(row.calibrated_at).isoformat() if row.calibrated_at else None,
+                # «not_required»: the owner dropped LOAD after the ACM (26.11.2026); older calibrations passed it.
+                load_check="pass" if check is None or check.load_p1_vswr is not None else "not_required")
 
 
 def _add(repository, row, command, artifact_id, item, verdict, result, now, **values):
@@ -1931,7 +1944,25 @@ def _journal(uow, repository, row, command, kind, values: dict, temperatures: di
     return record_row
 
 
+def _calibrated(uow, repository, row, command, now):
+    """11.2 (owner, 26.11.2026): the device read right after the ACM calibration — S2VNA ready, the same ACM, «Кор» on
+    every trace, every temperature readable — makes the calibration valid with these temperatures; the journal row is
+    «только калибровка» (no confidence test, no LOAD)."""
+    result = command.result
+    temperatures = result["temperatures"]
+    if refusal := bench.device_refusal(result, row.snapshot["acm"]["serial"], _profile(row).traces):
+        raise ProductionValidationError(refusal)
+    if bench.temperature_refusal(temperatures, temperatures):
+        raise ProductionValidationError("Температура ВАЦ или АКМ не прочитана — калибровка не принята, откалибруйте заново")
+    record_row = _journal(uow, repository, row, command, "session", dict(calibration_only=True), temperatures, now,
+                          note=CALIBRATION_ONLY_NOTE)
+    calibrated = repository.receipts(row, "acm_calibrate")[-1]
+    return dict(calibrated_at=calibrated.finished_at, calibration_temps=temperatures,
+                profile_hash=bench.profile_hash(row.snapshot["profile"]), calibration_check_id=record_row.id)
+
+
 def _confidence(uow, row, command, now):
+    """An old session's confidence test (before 26.11.2026), judged as it was."""
     temperatures = command.result["temperatures"]
     if bench.temperature_refusal(temperatures, temperatures):
         raise ProductionValidationError("Температура ВАЦ или АКМ не прочитана — калибровка не проверена, откалибруйте заново")
@@ -1946,7 +1977,7 @@ def _confidence(uow, row, command, now):
 
 
 def _load(uow, repository, row, command, artifact, item, data, now):
-    """11.4.2: LOAD at the calibration plane of each port, max VSWR ≤ 1,06 over the whole band."""
+    """An old session's LOAD (before 26.11.2026): at the calibration plane of each port, max VSWR ≤ 1,06."""
     confidence_receipt = repository.receipts(row, "acm_confidence")[-1]
     calibration_temps = confidence_receipt.result["temperatures"]
     temperatures = command.result["temperatures"]
@@ -2261,7 +2292,7 @@ def _kit_audit(uow, row, action, now, details):
 
 @router.post(PREFIX + "/sessions/{session_id}/characterization/band")
 def characterization_band(session_id: UUID, payload: BandInput, principal: Person, now: Now, factory: Factory):
-    """The other pass: its profile and a full new ACM calibration with confidence test and LOAD checks (11.2, 11.4)."""
+    """The other pass: its profile and a full new ACM calibration (11.2)."""
     def action(uow, repository, row):
         _version(row, payload.version)
         characterization = _characterization(row)
@@ -2271,10 +2302,22 @@ def characterization_band(session_id: UUID, payload: BandInput, principal: Perso
         snapshot = {**row.snapshot, "profile": profile.model_dump(mode="json"),
                     "characterization": {**characterization, "band": payload.band}}
         steps = [bench.step("apply_profile", dict(profile=profile)),
-                 *bench.calibration_steps(snapshot, load=_screen(uow, "load"))]
+                 *bench.calibration_steps(snapshot)]
         repository.append(row, steps, now, snapshot=snapshot, error="", **bench.UNCALIBRATED)
         _kit_audit(uow, row, "vna_kit_characterization_band", now, dict(band=payload.band))
     return _act(factory, session_id, principal, now, action)
+
+
+KIT_CALIBRATION_PENDING = ("Характеристику мер SMA-MF06 на сокращённой калибровке (без доверительного теста и LOAD) не "
+                           "снимают: порядок калибровки для неё владелец решает отдельно")
+
+
+def _full_calibration_for_kit(uow, row):
+    """Owner 27.11: dropping the ACM confidence test and LOAD (26.11) covers measurements, not the SMA-MF06 metrology
+    pass — that is decided separately. Until then a characterization sweep needs a calibration with both."""
+    check = uow.session.get(VnaCheckRow, row.calibration_check_id) if row.calibration_check_id else None
+    if check is None or check.confidence_passed is None:
+        raise Refusal("kit_calibration_pending", KIT_CALIBRATION_PENDING)
 
 
 @router.post(PREFIX + "/sessions/{session_id}/characterization/captures")
@@ -2284,6 +2327,7 @@ def characterization_capture(session_id: UUID, payload: KitCaptureInput, princip
         _version(row, payload.version)
         characterization = _characterization(row)
         _gates(uow, row, now, "kit_characterization")
+        _full_calibration_for_kit(uow, row)
         band = characterization["band"]
         if kc.band_of(row.snapshot["profile"]) != band:
             raise Refusal("profile_changed", "Профиль сеанса не совпадает с сеткой характеристики — откалибруйте заново")
