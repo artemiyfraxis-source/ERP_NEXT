@@ -93,7 +93,9 @@ class KitAgent(Agent):
 
 
 @pytest.fixture()
-def env(bench_env):
+def env(bench_env, monkeypatch):
+    # the early session refusal is off here: these tests exercise the characterization logic itself
+    monkeypatch.setattr("app.workflows.vna_bench_api.KIT_EARLY_REFUSAL", False)
     ids = bench_env["ids"]
     ids.update(mf06=uuid4(), fa=uuid4(), fb=uuid4())
     with bench_env["sessions"]() as session:
@@ -305,6 +307,18 @@ def test_the_sma_mf06_pass_waits_for_the_owners_decision_on_a_shortened_calibrat
     view = calibrate(env, view, full=False)
     refused = sweep(env, view, None, {"fixture_id": str(env["ids"]["fa"])}, 409)
     assert refused["detail"]["code"] == "kit_calibration_pending" and "отдельно" in refused["detail"]["message"]
+
+
+def test_a_characterization_session_is_refused_early_by_default(env, monkeypatch):
+    """No ERP calibration is full now: the operator must not waste a calibration before the capture refusal."""
+    monkeypatch.setattr("app.workflows.vna_bench_api.KIT_EARLY_REFUSAL", True)
+    refused = post(env, "/sessions", {"characterization": {"kit_id": str(env["ids"]["mf06"])}}, 409)
+    assert refused["detail"]["code"] == "kit_calibration_pending" and "отдельно" in refused["detail"]["message"]
+    monkeypatch.setattr("app.workflows.vna_bench_api.KIT_EARLY_REFUSAL", False)
+    view = post(env, "/sessions", {"characterization": {"kit_id": str(env["ids"]["mf06"])}})
+    monkeypatch.setattr("app.workflows.vna_bench_api.KIT_EARLY_REFUSAL", True)
+    refused = act(env, view, "/characterization/band", {"band": "high"}, 409)
+    assert refused["detail"]["code"] == "kit_calibration_pending"
 
 
 def test_refusals_fixture_first_band_and_ill_conditioned_removal(env):
