@@ -99,7 +99,9 @@ export const NAV: NavItem[] = [
   { id: "techcards", label: "Техкарты проектов", sub: "карточки изделий · сборка и выдача ЭТК", permission: "techcards", block: "prod", within: "projects" },
   // «База данных» (owner, 29.09.2026): «Справочник» and «Шаблоны техкарт» are tabs of one section. Each tab keeps
   // its access key, so the card opens on either; ?section=tctemplates still lands on the templates tab.
-  { id: "references", label: "База данных", sub: "операции · оборудование · терминалы · коаксиал · провода · СПР.КАБ · соответствия", anyPermission: ["erpref", "erptctpl"], block: "refs" },
+  { id: "references", label: "База данных", sub: "операции · оборудование · терминалы · коаксиал · провода · СПР.КАБ · соответствия", anyPermission: ["erpref", "erptctpl"],
+    // ОТК (`quality`) входит сюда только на вкладку «Средства измерений» (ОТК-1, 27.11.2026): реестр СИ ушёл из «ОТК».
+    alsoPermission: ["quality"], block: "refs" },
   { id: "tctemplates", label: "Шаблоны техкарт", sub: "карточки операций · шаги и оснастка", permission: "erptctpl", block: "refs", within: "references" },
   { id: "production", label: "Ресурсное планирование", sub: "назначение операторов · автоплан · график", permission: "production", block: "prod" },
   // «Наладка оборудования» живёт в карточке станка раздела «Оборудование» (владелец 19.11.2026): старая ссылка
@@ -110,10 +112,10 @@ export const NAV: NavItem[] = [
   // ОТК (`quality`) открывает его тоже: рабочее место ВАЦ — в карточке анализатора цепей (владелец 20.11.2026).
   { id: "machines", label: "Оборудование", sub: "станки цеха · приборы · наладка · состояние на станке", anyPermission: ["production", "myops"], alsoPermission: ["quality", "warehouse"], alsoReadOnly: true, block: "prod" },
   // «Задания» (`myops`) и «ОТК» (`quality`) — разделы матрицы со своими ключами (owner 04.10.2026), не часть `production`.
-  // «ОТК»: очередь на проверку, брак цеха и ОТК, средства измерения; приёмку и реестр ведёт правка `quality`, решение по
+  // «ОТК»: очередь на проверку, брак цеха и ОТК; приёмку ведёт правка `quality`, решение по
   // браку — правка `production` (экран сам прячет то, что не открыто).
   { id: "myops", label: "Задания", sub: "мои операции", permission: "myops", block: "prod" },
-  { id: "quality", label: "ОТК", sub: "очередь на проверку · брак · средства измерения", permission: "quality", block: "prod" },
+  { id: "quality", label: "ОТК", sub: "очередь на проверку · брак", permission: "quality", block: "prod" },
   // Снабжение. «Оформить заявку» is a section of its own (SUPPLYMAP Portal.gs PORTAL_SECTIONS_, owner 27.08.2026).
   // NAV-SECTIONS: «Мои заявки» and «Заявки» keep their access keys but are no menu items since Витя's edits 2–3
   // (owner-approved 23.10): «Мои заявки» open from the personal card, the «Заявки» register from the «Заявки» tab of
@@ -158,7 +160,13 @@ export const MOVED_TABS: Readonly<Record<string, Readonly<Record<string, Section
     upd: "primarydocs", invoices: "primarydocs", chain: "primarydocs", docsearch: "primarydocs",
   },
   // «ОТК → ВАЦ — рабочее место» — карточка прибора в «Оборудовании» (владелец 20.11.2026): `&tab=vna` открывает её там.
-  quality: { vna: "machines" },
+  quality: { vna: "machines", instruments: "references" },
+};
+
+/** The tab a moved link opens in its new section, when the old tab name is not the new one: «ОТК → Средства измерения»
+ *  became «База данных → Средства измерений» (`ob_measuring`); `si` / `instrument` stay in the address. */
+export const MOVED_TAB_NAMES: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  quality: { instruments: "ob_measuring" },
 };
 
 /** Sections that are gone, and where their old links land: «Отгрузка» merged into «Приёмка с производства» (owner 29.10). */

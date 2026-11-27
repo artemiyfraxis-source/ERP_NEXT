@@ -526,11 +526,11 @@ it("opens the ОТК section at the quality route for an edit grant on «ОТК�
 
   expect(await screen.findByRole("heading", { name: "ОТК", level: 1 })).toBeInTheDocument();
   expect(await screen.findByText(/Коробок на проверку нет/)).toBeInTheDocument();
-  expect(screen.getByRole("tab", { name: "Средства измерения" })).toBeInTheDocument();
+  expect(screen.queryByRole("tab", { name: "Средства измерения" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "ОТК" })).toBeInTheDocument();
 });
 
-it("preserves the scanned inventory link through login and opens its passport card", async () => {
+it("preserves the scanned inventory link through login and opens its passport card in «База данных» (ОТК sees only that tab)", async () => {
   window.history.replaceState({}, "", "/?section=quality&tab=instruments&si=" + encodeURIComponent("СИ.034"));
   const adapter = { id: "adapter", version: 1, inventory_number: "СИ.034", name: "Переходник SMA", instrument_type: "Переходник",
     kind: "Принадлежность", parent_id: null, serial_number: "ADP-ss-26-034", manufacturer: "", doc_designation: "S-322",
@@ -544,6 +544,7 @@ it("preserves the scanned inventory link through login and opens its passport ca
     if (path === "/api/production/tasks") return json({ tasks: [], next_cursor: null });
     if (path === "/api/production/boxes") return json({ boxes: [] });
     if (path === "/api/production/instruments") return json({ instruments: [adapter] });
+    if (path === "/api/references/instruments") return json({ instruments: [adapter], count: 1, quantity: "1", custom_columns: [], can_edit_identity: true, can_edit_custom: false });
     if (path === "/api/production/vswr/tasks") return json({ tasks: [] });
     if (path.endsWith("/matings")) return json({ instrument_id: "x", resource: null, status: "unknown", has_connectors: false, ends: [{ end: "A", total: 0, version: 0, percent_used: null, status: "unknown", initial_recorded: false, can_initialize: true }], events: [] });
     if (path.endsWith("/vna-checks")) return json({ instrument_id: "x", applicable: false, due: [], records: [] });
@@ -559,6 +560,13 @@ it("preserves the scanned inventory link through login and opens its passport ca
   fireEvent.click(screen.getByRole("button", { name: "Войти" }));
   const card = await screen.findByRole("dialog", { name: "Средство измерений: Переходник SMA" });
   expect(within(card).getByRole("link", { name: "Паспорт (PDF)" })).toHaveAttribute("href", "/api/production/instruments/adapter/passport.pdf");
+  // The old ОТК address was redirected, and a person with only «ОТК» sees the one tab of the database.
+  const query = new URLSearchParams(window.location.search);
+  expect(query.get("section")).toBe("references");
+  expect(query.get("tab")).toBe("ob_measuring");
+  const tabs = within(screen.getByRole("navigation", { name: "Вкладки базы данных" })).getAllByRole("button");
+  expect(tabs).toHaveLength(1);
+  expect(tabs[0]).toHaveTextContent("Средства измерений");
 });
 
 it("does not open the ОТК section without the quality key, even with edit on planning", async () => {
