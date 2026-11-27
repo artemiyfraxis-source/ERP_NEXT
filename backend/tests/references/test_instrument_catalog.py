@@ -107,6 +107,22 @@ def test_reference_view_is_scoped_and_denied_user_has_no_access(catalog_api):
     assert catalog_api.get(ROOT + "/instruments").status_code == 403
 
 
+@pytest.mark.parametrize("mode,identity", [("view", False), ("edit", True)])
+def test_quality_alone_opens_the_registry_tab_without_reference_access(catalog_api, mode, identity):
+    """ОТК-1: the registry is a «База данных» tab; a person with only «ОТК» reads it (edit: also the passport)."""
+    as_user({"quality": mode})
+    item = first(catalog_api)
+    listed = catalog_api.get(ROOT + "/instruments").json()
+    assert len(listed["instruments"]) == 118
+    assert listed["can_edit_identity"] is identity and listed["can_edit_custom"] is False
+    assert catalog_api.get(ROOT + "/instruments/" + item["id"]).status_code == 200
+    assert catalog_api.get(ROOT + "/instruments/" + item["id"] + "/history").status_code == 200
+    # Other reference books stay closed to «ОТК» alone.
+    assert catalog_api.get(ROOT + "/maps").status_code == 403
+    as_user({"production": "edit"})
+    assert catalog_api.get(ROOT + "/instruments").status_code == 403
+
+
 def test_custom_columns_are_independent_versioned_and_journaled(catalog_api):
     client = catalog_api
     as_user({"erpref": "edit"})

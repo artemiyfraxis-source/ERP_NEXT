@@ -143,7 +143,7 @@ class ReferenceInstrumentCatalog:
         if item is None:
             raise LookupError("СИ не найдено")
         if any(edit.field not in own_columns or edit.field in FIELD_ATTRIBUTES for edit in edits):
-            raise StaleRecordError(f"Паспорт СИ меняется в реестре: /?section=quality&instrument={item.id}")
+            raise StaleRecordError(f"Паспорт СИ меняется в реестре: /?section=references&tab=ob_measuring&instrument={item.id}")
         values = dict(item.custom_fields)
         for edit in edits:
             if values.get(edit.field, "") != str(edit.old or "").strip():
@@ -205,7 +205,7 @@ class InstrumentReferenceRepository(SqlAlchemyTechOperationRepository):
     def delete(self, record_id):
         item = self.instrument_catalog.resolve(record_id)
         if item is not None:
-            raise ReferenceValidationError(f"СИ хранится в едином реестре: /?section=quality&instrument={item.id}")
+            raise ReferenceValidationError(f"СИ хранится в едином реестре: /?section=references&tab=ob_measuring&instrument={item.id}")
         return super().delete(record_id)
 
     def list(self, *, tab, query, limit):

@@ -156,14 +156,14 @@ function decide(dialog: HTMLElement, accepted: string, rejected: string) {
 
 const headings = () => screen.queryAllByRole("heading", { level: 2 }).map((heading) => heading.textContent);
 
-it("shows the QC inspector the queue and the instruments, not the master's reject decisions", async () => {
+it("shows the QC inspector the queue and VSWR, not the instruments (they live in «База данных») nor the master's reject decisions", async () => {
   const requested = qualityFetch({ instruments: [micrometer] });
   render(<QualityPage principal={qc} />);
 
   expect(await screen.findByRole("heading", { name: "Очередь ОТК" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "ОТК", level: 1 })).toBeInTheDocument();
   expect(headings()).toEqual(["Очередь ОТК"]);
-  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Очередь ОТК · 0", "Замеры КСВН", "Средства измерения"]);
+  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Очередь ОТК · 0", "Замеры КСВН"]);
   expect(screen.queryByRole("tab", { name: /Брак/ })).not.toBeInTheDocument();
   expect(requested).not.toContain("/api/production/defects");
   expect(requested).not.toContain("/api/production/qc/rejections");
@@ -354,19 +354,6 @@ it("dismisses the instrument popup on outside pointer or focus and offers an hon
   expect(screen.queryByRole("dialog", { name: /Выбрать СИ/ })).not.toBeInTheDocument();
 });
 
-it("opens the instrument editor in a modal and lists verification dates without time", async () => {
-  qualityFetch({ instruments: [micrometer] });
-  render(<QualityPage principal={qc} />);
-  fireEvent.click(await screen.findByRole("tab", { name: "Средства измерения" }));
-  const table = (await screen.findByRole("heading", { name: "Средства измерения" })).closest(".panel") as HTMLElement;
-  expect(within(table).getByRole("columnheader", { name: /Поверка до/ })).toBeInTheDocument();
-  expect(within(table).getByText("01.09.2027")).toBeInTheDocument();
-  expect(within(table).queryByText(/09:00/)).not.toBeInTheDocument();
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  fireEvent.click(within(table).getByText("СИ-014"));
-  expect(screen.getByRole("dialog")).toBeInTheDocument();
-  expect(screen.getByLabelText("Инв. №")).toHaveValue("СИ-014");
-});
 it("records the master's append-only decision for a QC rejection and for a shop defect", async () => {
   const posted: Array<{ path: string; body: unknown }> = [];
   const requested = qualityFetch({ rejections: [rejection], defects: [defect] }, (path, body) => {
@@ -402,15 +389,14 @@ it("says there is no reject to decide instead of leaving the master a blank page
   expect(screen.getByText(/Брака цеха на решение нет/)).toBeInTheDocument();
 });
 
-it("shows the administrator all four tabs, with only the selected job visible", async () => {
+it("shows the administrator all three tabs, with only the selected job visible", async () => {
   qualityFetch({ instruments: [micrometer], rejections: [rejection], defects: [defect] });
   render(<QualityPage principal={admin} />);
   expect(await screen.findByRole("heading", { name: "Очередь ОТК" })).toBeInTheDocument();
-  expect(screen.getAllByRole("tab")).toHaveLength(4);
+  expect(screen.getAllByRole("tab")).toHaveLength(3);
+  expect(screen.queryByRole("tab", { name: "Средства измерения" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("tab", { name: "Брак · 2" }));
   expect(headings()).toEqual(["Брак ОТК", "Брак цеха"]);
-  fireEvent.click(screen.getByRole("tab", { name: "Средства измерения" }));
-  expect(headings()).toEqual(["Средства измерения"]);
 });
 
 it("leaves boxes of a fully shipped КБ out of the QC queue", async () => {
@@ -437,8 +423,8 @@ it("keeps tab URLs, the box draft and loaded data when switching jobs", async ()
   fireEvent.keyDown(document, { key: "Escape" });
   fireEvent.click(within(dialog).getByRole("button", { name: "Отмена" }));
   const before = [...requested];
-  fireEvent.click(screen.getByRole("tab", { name: "Средства измерения" }));
-  expect(new URL(window.location.href).searchParams.get("tab")).toBe("instruments");
+  fireEvent.click(screen.getByRole("tab", { name: "Замеры КСВН" }));
+  expect(new URL(window.location.href).searchParams.get("tab")).toBe("vswr");
   expect(screen.queryByRole("heading", { name: "Очередь ОТК" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("tab", { name: "Очередь ОТК · 1" }));
   expect(requested).toEqual(before);
@@ -879,10 +865,10 @@ it("updates the queue measurement count after uploading a trace", async () => {
 });
 
 it("opens a deep-linked tab and follows keyboard and browser navigation", async () => {
-  window.history.replaceState({}, "", "/?section=quality&tab=instruments");
+  window.history.replaceState({}, "", "/?section=quality&tab=vswr");
   qualityFetch(); render(<QualityPage principal={admin} />);
-  expect(await screen.findByRole("tab", { name: "Средства измерения", selected: true })).toBeInTheDocument();
-  fireEvent.keyDown(screen.getByRole("tab", { name: "Средства измерения" }), { key: "Home" });
+  expect(await screen.findByRole("tab", { name: "Замеры КСВН", selected: true })).toBeInTheDocument();
+  fireEvent.keyDown(screen.getByRole("tab", { name: "Замеры КСВН" }), { key: "Home" });
   expect(screen.getByRole("tab", { name: "Очередь ОТК · 0" })).toHaveFocus();
   window.history.replaceState({}, "", "/?section=quality&tab=rejects");
   fireEvent.popState(window);
@@ -892,7 +878,7 @@ it("opens a deep-linked tab and follows keyboard and browser navigation", async 
 it("has no «ВАЦ — рабочее место» tab: the workplace lives in the analyser card of «Оборудование» (owner 20.11.2026)", async () => {
   qualityFetch();
   render(<QualityPage principal={qc} />);
-  expect(await screen.findByRole("tab", { name: "Средства измерения" })).toBeInTheDocument();
-  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Очередь ОТК · 0", "Замеры КСВН", "Средства измерения"]);
+  expect(await screen.findByRole("tab", { name: "Замеры КСВН" })).toBeInTheDocument();
+  expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Очередь ОТК · 0", "Замеры КСВН"]);
   expect(vi.mocked(globalThis.fetch).mock.calls.some(([input]) => String(input).includes("/vna-bench/"))).toBe(false);
 });
