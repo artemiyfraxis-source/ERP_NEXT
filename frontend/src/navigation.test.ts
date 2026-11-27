@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { ACCESS_LEVEL_LABELS, accessLevelLabel, type AccessMode, type Principal } from "./api";
 import {
-  BLOCKS, MOVED_TABS, NAV, canAct, canSee, hasFullAccess, isSection, isViewOnly, manualJobsDestination, procurementMenuTab, runsTheSystem, sectionOfTab,
+  ALIAS_PARAMS, BLOCKS, MOVED_TABS, NAV, canAct, canSee, hasFullAccess, isSection, isViewOnly, manualJobsDestination, procurementMenuTab, runsTheSystem, sectionOfTab,
   openUpdCard, visibleBlocks, visibleNav,
 } from "./navigation";
 
@@ -82,7 +82,7 @@ const EVERYTHING = {
   // «Мои заявки» and «Заявки» are no menu items (Витя's edits 2–3): the card and «Снабжение → Заявки» open them.
   "Снабжение": ["Оформить заявку", ...BUYER_MENU],
   "Склад": ["Приёмка", "Склад", "Запросы на комплектацию", "Выдача со списанием", "Приёмка с производства"],
-  "Менеджмент": ["Данные отправок", "Производственный план"],
+  "Менеджмент": ["Производственный план"],
   "Справочники": ["База данных", "Закупка"],
   "Администрирование": ["Сотрудники", "Доступы", "Системный журнал"],
 };
@@ -380,11 +380,16 @@ it("tells a person who runs the shop or the system from an operator with only th
   expect(runsTheSystem(as("superadmin", {}))).toBe(true);
 });
 
-it("«Данные отправок» in «Менеджмент» opens to editors of «Отгрузка» (manager, admin), not to the storekeeper's «Отгрузка — склад»", () => {
-  expect(section(as("pm", { shipping: "edit" }), "Менеджмент")).toContain("Данные отправок");
-  expect(section(as("pm", { shipping: "view" }), "Менеджмент")).not.toContain("Данные отправок");
-  expect(section(as("storekeeper", { shipping_goods: "edit" }), "Менеджмент")).not.toContain("Данные отправок");
-  expect(section(as("admin", {}), "Менеджмент")).toContain("Данные отправок");
+it("«Данные отправок» left the menu: the old link opens the intake board with the gaps filter, for manager and storekeeper alike", () => {
+  for (const principal of [as("pm", { shipping: "edit" }), as("storekeeper", { shipping_goods: "edit" }), as("admin", {})]) {
+    expect(section(principal, "Менеджмент")).not.toContain("Данные отправок");
+  }
+  expect(NAV.some((item) => item.label === "Данные отправок")).toBe(false);
+  expect(isSection("shipdata")).toBe(false);
+  expect(sectionOfTab("shipdata", null)).toBe("intake");
+  expect(ALIAS_PARAMS.shipdata).toEqual({ filter: "gaps" });
+  expect(section(as("pm", { shipping: "edit" }), "Склад")).toContain("Приёмка с производства");
+  expect(section(as("storekeeper", { shipping_goods: "edit" }), "Склад")).toContain("Приёмка с производства");
 });
 
 it("owner 28.10: the tabs of «Снабжение» are menu items in the order of doing, each opening its own ?tab=", () => {

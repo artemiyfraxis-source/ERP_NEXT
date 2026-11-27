@@ -278,7 +278,7 @@ def test_shipping_without_upd_number_is_refused_and_says_why(env):
     assert "№ УПД" in response.json()["detail"]
 
 
-def test_pack_only_manager_gets_packed_storekeeper_gets_assembled(env):
+def test_pack_manager_and_storekeeper_both_get_packed_with_pl(env):
     client, _ = env
     first, second = _stock(client, "КБ1"), _stock(client, "КБ2")
     _card(client, shipping_point="Москва")
@@ -291,8 +291,23 @@ def test_pack_only_manager_gets_packed_storekeeper_gets_assembled(env):
 
     assert (by_manager["shipment"]["status"], by_manager["shipped"]) == ("Упакована", False)
     assert by_manager["shipment"]["pl_number"]
-    assert by_storekeeper["shipment"]["status"] == "Собрана"
+    # Кладовщик упаковывает так же: PL выдан сразу, карточка уходит в «Упакована» (владелец 27.11).
+    assert by_storekeeper["shipment"]["status"] == "Упакована"
+    assert by_storekeeper["shipment"]["pl_number"]
     assert by_storekeeper["shipment"]["lines"][0]["picked"] == "3"
+
+
+def test_storekeeper_packs_with_deadline_and_upd_number(env):
+    client, _ = env
+    good = _stock(client)
+    _card(client, shipping_point="Москва")
+    _decide(client)
+    _as(STOREKEEPER)
+    made = _ship(client, _body([(good, "2")], addressee_version=1, documents={"upd_number": "РЭ-77", "upd_date": "2026-09-20", "deadline": "2026-10-05"}))
+    assert made.status_code == 200, made.text
+    shipment = made.json()["shipment"]
+    assert (shipment["upd_number"], shipment["upd_date"], shipment["deadline"]) == ("РЭ-77", "2026-09-20", "2026-10-05")
+    assert shipment["status"] == "Упакована" and shipment["pl_number"]
 
 
 def test_replay_with_same_key_and_body_returns_stored_result_and_writes_nothing(env):
@@ -369,11 +384,10 @@ def test_role_matrix(env):
 
     _as(STOREKEEPER)
     card_by_storekeeper = _ship(client, _body([(good, "1")], addressee_version=1, addressee={"contact": "Петров"}, ship=True), key="r1")
-    docs_by_storekeeper = _ship(client, _body([(good, "1")], addressee_version=1, documents={"upd_number": "5"}), key="r2")
     _as(MANAGER)
     ship_by_manager = _ship(client, _body([(good, "1")], addressee_version=1, ship=True), key="r3")
     assert undecided.status_code == 422 and "разреш" in undecided.json()["detail"]
-    assert (card_by_storekeeper.status_code, docs_by_storekeeper.status_code, ship_by_manager.status_code) == (403, 403, 403)
+    assert (card_by_storekeeper.status_code, ship_by_manager.status_code) == (403, 403)
     assert _snapshot(sessions) == before
 
     _as(STOREKEEPER)

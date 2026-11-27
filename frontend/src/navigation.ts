@@ -8,7 +8,7 @@ export type Section =
   | "cabinet" | "card"
   | "projects" | "techcards" | "tctemplates" | "references" | "production" | "myops" | "quality"
   | "newrequest" | "myrequests" | "requests" | "procurement" | "purchasingrefs" | "primarydocs"
-  | "receiving" | "stock" | "issues" | "handout" | "intake" | "shipdata"
+  | "receiving" | "stock" | "issues" | "handout" | "intake"
   | "prodplan" | "staff" | "access" | "notifications" | "operations" | "equipmentsetup" | "machines" | "manualjobs";
 
 export type NavCapabilities = { equipmentSetup?: boolean };
@@ -71,7 +71,7 @@ export const BLOCKS: Array<{ id: BlockId; title: string; sub: string }> = [
   { id: "supply", title: "Снабжение", sub: "оформить заявку · сегодня · заявки · запросы КП · закупка · счета и поставки · первичная документация · статистика" },
   // Приёмка sits in Склад: the storekeeper does incoming inspection, not the buyer (SUPPLYMAP, owner 26.07.2026).
   { id: "stock", title: "Склад", sub: "приёмка · остатки · выдача · отгрузка" },
-  { id: "mgmt", title: "Менеджмент", sub: "данные отправок · производственный план" },
+  { id: "mgmt", title: "Менеджмент", sub: "производственный план" },
   // Kept for old block URLs; hidden while empty. Purchasing documents now belong to «Снабжение» (owner 23.11).
   { id: "docs", title: "Документация", sub: "первичная документация" },
   // Reference books are not a production step (owner 29.09.2026): their own block, last in the menu.
@@ -137,9 +137,6 @@ export const NAV: NavItem[] = [
   // ключа матрицы, одна карточка: список читает любой из них.
   { id: "intake", label: "Приёмка с производства", sub: "принять · упаковать · отгрузить", anyPermission: ["shipping", "shipping_goods"], block: "stock" },
   // Менеджмент
-  // «Данные отправок» (владелец 28.10): менеджер (Ульяна) вносит данные для отгрузки — кладовщик без них не отправит.
-  // Открывает правка «Отгрузки» (менеджер, администратор): тот же ключ, что у правки отправки на сервере.
-  { id: "shipdata", label: "Данные отправок", sub: "тип доставки · адрес · получатель · УПД", permission: "shipping", minimum: "edit", block: "mgmt" },
   { id: "prodplan", label: "Производственный план", sub: "все проекты · блокеры · комплектующие · сроки", permission: "production", block: "mgmt" },
   // «Сотрудники» и «Доступы»: только superadmin / admin, вне матрицы (backend staffdir_principal, access_admin_principal).
   { id: "staff", label: "Сотрудники", sub: "справочник, уровни, отделы", fullAccessOnly: true, block: "admin" },
@@ -162,7 +159,11 @@ export const MOVED_TABS: Readonly<Record<string, Readonly<Record<string, Section
 };
 
 /** Sections that are gone, and where their old links land: «Отгрузка» merged into «Приёмка с производства» (owner 29.10). */
-export const SECTION_ALIASES: Readonly<Record<string, Section>> = { labeldesigner: "machines", shipping: "intake", equipment: "stock" };
+export const SECTION_ALIASES: Readonly<Record<string, Section>> = { labeldesigner: "machines", shipping: "intake", equipment: "stock", shipdata: "intake" };
+
+/** Параметры адреса, которые несёт старая ссылка: «Данные отправок» влились в доску — `?section=shipdata` открывает её
+ *  с чипом «Только с пробелами» (владелец 27.11). */
+export const ALIAS_PARAMS: Readonly<Record<string, Readonly<Record<string, string>>>> = { shipdata: { filter: "gaps" } };
 
 /** An old section that became a sub-tab of its new one: `?section=equipment` opens «Склад» on «Оборудование» (owner 29.10). */
 export const ALIAS_VIEW: Readonly<Record<string, string>> = { equipment: "equipment" };

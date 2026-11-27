@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { failureText, shippingApi, type ItemAddressee, type Principal, type ProjectAddressee } from "./api";
+import { failureText, shippingApi, type ItemAddressee, type Principal, type ProjectAddressee, type ProjectForecast } from "./api";
 import { DispatchCard } from "./DispatchCard";
+import type { DispatchStage } from "./dispatchStage";
+import { IntakePositionsWindow } from "./IntakePositionsWindow";
 import { ItemDeliveryWindow } from "./ProjectData";
 import { formatNumber, NBSP, plural } from "./format";
-import { actShares } from "./dispatchPositionRows";
+import { actShares, type DataRow } from "./dispatchPositionRows";
 import { dispatchBoard, kbKey, num, permittedPack, round2 } from "./intakeStages";
 import { acceptable, acceptPlan, buildBoard, type BoardCard, type CardAction, type ColumnId } from "./intakeBoard";
 import { IntakeBoard, type MenuItem } from "./IntakeBoardView";
@@ -66,9 +68,10 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
   // `?tab=journal` открывает только «Журнал»; `?shipment=` — окно отправки, а если её нет на доске (старше 30 дней, отменена) — «Журнал».
   const linkedShipment = useRef(linked.current.get("tab") === "journal" ? null : linked.current.get("shipment"));
   const [card, setCard] = useState<{ id: string; focus: FocusField | null } | null>(linkedShipment.current ? { id: `s:${linkedShipment.current}`, focus: null } : null);
-  const [header, setHeader] = useState<"journal" | "good" | "request" | null>(linked.current.get("tab") === "journal" ? "journal" : null);
+  const [header, setHeader] = useState<"journal" | "positions" | "good" | "request" | null>(linked.current.get("tab") === "journal" ? "journal" : null);
   const [label, setLabel] = useState<{ grn: string; result: PrintResult | null; error: string; busy: boolean } | null>(null);
-  const [projectData, setProjectData] = useState<string | null>(null);
+  const [projectData, setProjectData] = useState<{ project: string; stage: DispatchStage } | null>(null);
+  const [forecasts, setForecasts] = useState<Record<string, ProjectForecast>>({});
   const [permissionProject, setPermissionProject] = useState<string | null>(null);
   const [shipmentData, setShipmentData] = useState<string | null>(null);
   const [shipProgress, setShipProgress] = useState<{ done: number; total: number } | null>(null);
@@ -98,10 +101,12 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     } finally { setLoaded(true); }
   }
   useEffect(() => { void reload(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Прогноз цеха — подсказка к сроку на карточках «Производства»: не пришёл (нет связи, нет данных) — карточки остаются без него.
+  useEffect(() => { void shippingApi.forecast().then((answer) => setForecasts(answer?.projects ?? {}), () => undefined); }, []);
 
   const board = useMemo(() => dispatchBoard(rows, shipments), [rows, shipments]);
-  const cards = useMemo(() => buildBoard({ rows, shipments, addressees, rights: { canManage, canWarehouse, canDispatch } }),
-    [rows, shipments, addressees, canManage, canWarehouse, canDispatch]);
+  const cards = useMemo(() => buildBoard({ rows, shipments, addressees, forecasts, rights: { canManage, canWarehouse, canDispatch } }),
+    [rows, shipments, addressees, forecasts, canManage, canWarehouse, canDispatch]);
   const head = useMemo(() => Object.fromEntries(board.rows.map((row) => [row.project, row] as const).reverse()), [board]);
   const open = card ? cards.find((item) => item.id === card.id) ?? null : null;
   useEffect(() => {
@@ -239,7 +244,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
       return items;
     }
     // Данные проекта видят и те, кто их не правит: окно только для чтения.
-    items.push({ label: "Данные доставки проекта…", run: () => setProjectData(target.project) });
+    items.push({ label: "Данные доставки проекта…", run: () => setProjectData({ project: target.project, stage: target.column === "accepted" ? "accepted" : target.group === "waiting" ? "waiting" : "production" }) });
     if (canDispatch) {
       if (itemAddressees[target.project]?.length) items.push({ label: "Всем КБ проекта…", run: () => setDeliveryEdit({ project: target.project, items: itemAddressees[target.project] }) });
     }
@@ -261,6 +266,12 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     const items = (itemAddressees[project] ?? []).filter((item) => wanted.has(item.item_index));
     if (items.length) setDeliveryEdit({ project, items });
   };
+  /** Строка «Всех позиций»: отправка открывается карточкой доски (старше 30 дней — окном данных), проект — данными доставки. */
+  const openPosition = (row: DataRow) => {
+    if (row.shipment) {
+      if (cards.some((item) => item.id === `s:${row.shipment!.id}`)) setCard({ id: `s:${row.shipment.id}`, focus: null }); else setShipmentData(row.shipment.id);
+    } else setProjectData({ project: row.project, stage: row.stage ?? "production" });
+  };
   const shipmentOpen = shipmentData ? shipments.find((shipment) => shipment.id === shipmentData) : undefined;
   const initialFilter = { query: linked.current.get("q") ?? "", gaps: linked.current.get("filter") === "gaps" };
 
@@ -268,6 +279,7 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     <header className="page-head"><h1>Приёмка с производства</h1>
       <div className="page-actions">
         <button type="button" className="secondary small" onClick={() => setHeader("journal")}>Журнал</button>
+        <button type="button" className="secondary small" onClick={() => setHeader("positions")}>Все позиции (Excel)</button>
         {canManage && <button type="button" className="secondary small" onClick={() => setHeader("request")}>+ Заявка на отгрузку</button>}
         {canManage && <button type="button" className="secondary small" onClick={() => setHeader("good")}>+ Позиция ГП</button>}
         {/* Принтер и шаблон этикеток — складские настройки: видит тот, кому открыт склад, правит — кто его правит. */}
@@ -291,12 +303,14 @@ export function ProductionIntakePage({ principal }: { principal: Principal }) {
     {opened?.kind === "ship" && <ShipWindow project={opened.project} shipments={projectShips(opened.project)} rights={rights} reload={reload} close={() => setOpened(null)} />}
     {opened?.kind === "noupd" && <NoUpdWindow shipment={opened.shipment} mutate={mutate} close={() => setOpened(null)} />}
     {opened?.kind === "bare" && <ShipWithoutDataWindow shipment={opened.shipment} gaps={opened.shipment.missing_ship} mutate={mutate} close={() => setOpened(null)} />}
+    {header === "positions" && <IntakePositionsWindow shipments={shipments} intake={rows} addressees={addressees} itemAddressees={itemAddressees} forecasts={forecasts}
+      canEdit={canDispatch} onOpen={openPosition} onEditDelivery={(project, items) => setDeliveryEdit({ project, items })} close={() => setHeader(null)} />}
     {header === "journal" && <JournalWindow shipments={shipments} selectedShipment={shipments.find((shipment) => shipment.id === urlParam("shipment"))} initialQuery={urlParam("q")} close={() => setHeader(null)} />}
     {header === "good" && <RegisterGoodWindow reload={reload} close={() => setHeader(null)} />}
     {header === "request" && <CreateShipmentWindow reload={reload} close={() => setHeader(null)} />}
-    {permissionProject && <PackingPermissionWindow project={permissionProject} editable={canManage} close={() => setPermissionProject(null)} saved={reload} />}
+    {permissionProject && <PackingPermissionWindow project={permissionProject} editable={canDispatch} close={() => setPermissionProject(null)} saved={reload} />}
     {shipmentOpen && <ShipmentDataWindow key={shipmentOpen.id} shipment={shipmentOpen} canEdit={canDispatch} canCorrectHistory={rights.canUnship} close={() => setShipmentData(null)} onSaved={reload} />}
-    {projectData && <DispatchCard project={projectData} customer={head[projectData]?.customer} canEdit={canDispatch} onSaved={() => void reload()} close={() => setProjectData(null)} />}
+    {projectData && <DispatchCard project={projectData.project} stage={projectData.stage} customer={head[projectData.project]?.customer} canEdit={canDispatch} onSaved={() => void reload()} close={() => setProjectData(null)} />}
     {deliveryEdit && <ItemDeliveryWindow project={deliveryEdit.project} items={deliveryEdit.items} close={() => setDeliveryEdit(null)} onSaved={reload} />}
   </section>;
 }

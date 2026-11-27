@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { dispatchBoard, kbKey, recentShipment, stagePieces } from "./intakeStages";
-import { dataRows } from "./ShipmentDataPage";
+import { dataRows } from "./dispatchPositionRows";
 import type { DispatchShipment, IntakeRow } from "./productionIntakeApi";
 import type { Shipment } from "./api";
 

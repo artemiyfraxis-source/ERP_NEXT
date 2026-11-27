@@ -1487,8 +1487,8 @@ class ProjectShipCommand:
     """«Отгрузить» / «Упаковать, отгрузить позже» в карточке проекта — одной транзакцией.
 
     Карточка адресата (если правлена), отправка, файл УПД и, при `ship`, отгрузка с автозакрытием либо
-    записываются все, либо ничего. `as_manager` — у пользователя «Отгрузка» на правку: он заводит отправку
-    с № УПД и сроком (сразу «Упакована»); кладовщик упаковывает из склада ГП (остаётся «Собрана»).
+    записываются все, либо ничего. `as_manager` — у пользователя «Отгрузка» на правку: только он правит карточку проекта
+    и поднимает лимит упаковки. Срок и № УПД вносит и кладовщик; PL выдаётся сразу обоим — отправка «Упакована».
     """
 
     idempotency_key: str
@@ -1560,8 +1560,8 @@ def ship_project(command: ProjectShipCommand, uow: UnitOfWork) -> ProjectShipRes
         raise ShippingValidationError("Не указан проект")
     if command.upd_file is not None:
         _check_upd_file(command.upd_file.content)
-    if not command.as_manager and (command.addressee_fields or command.upd_number.strip() or command.upd_date or command.deadline):
-        raise ShippingPermissionError("Карточку проекта, № УПД и срок отгрузки заполняет менеджер (раздел «Отгрузка»)")
+    if not command.as_manager and command.addressee_fields:
+        raise ShippingPermissionError("Карточку проекта заполняет менеджер (раздел «Отгрузка»)")
     fingerprint = project_ship_fingerprint(command)
     shipment_id = project_ship_id(key)
     with uow:
@@ -1607,11 +1607,13 @@ def ship_project(command: ProjectShipCommand, uow: UnitOfWork) -> ProjectShipRes
         shipment = _create_shipment(CreateShipmentCommand(
             customer=customer, receiver="", receiver_fallback=project,
             shipping_point="", contact="", phone="", terms=None, carrier="", upd_type=None,
-            deadline=command.deadline if command.as_manager else None,
-            upd_number=command.upd_number.strip() if command.as_manager else "",
-            upd_date=command.upd_date if command.as_manager and command.upd_number.strip() else None,
+            deadline=command.deadline,
+            upd_number=command.upd_number.strip(),
+            upd_date=command.upd_date if command.upd_number.strip() else None,
             upd_url="", note="", lines=tuple(requested), actor=command.actor, now=command.now,
-            no_docs=not command.as_manager, grant_pack=command.as_manager,
+            # PL выдаётся сразу и кладовщику (владелец 27.11): отправка уходит в «Упакована», как у менеджера.
+            # Лимит упаковки поднимает только заявка менеджера — кладовщик упаковывает в пределах разрешённого.
+            no_docs=False, grant_pack=command.as_manager,
         ), uow, shipment_id=shipment_id, details={"idempotency_key": key, "fingerprint": fingerprint, "project": project})
         if command.upd_file is not None:
             shipment = _attach_upd(

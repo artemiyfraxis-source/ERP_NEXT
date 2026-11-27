@@ -54,7 +54,7 @@ describe("buildBoard", () => {
     const rows = [row({ item_index: "КБ1", accepted: "5", remaining: "0", pack_permission_remaining: "5" }), row({ item_index: "КБ2", accepted: "5", remaining: "0" })];
     const [asWarehouse] = buildBoard({ rows, shipments: [], addressees: [], rights: warehouse, now }).filter((card) => card.column === "accepted");
     expect(asWarehouse.action).toEqual({ id: "pack", label: "Упаковать КБ1…" });
-    expect(asWarehouse.blocker).toEqual({ text: "КБ2: нет разрешения упаковки", who: "даёт менеджер (раздел «Отгрузка»)" });
+    expect(asWarehouse.blocker).toEqual({ text: "КБ2: нет разрешения упаковки", who: "даёт менеджер или склад" });
     const [asManager] = buildBoard({ rows, shipments: [], addressees: [], rights: manager, now }).filter((card) => card.column === "accepted");
     expect(asManager.action).toEqual({ id: "pack", label: "Упаковать КБ1…" });
     expect(asManager.extra).toEqual([{ id: "permit", label: "Разрешить упаковку…" }]);

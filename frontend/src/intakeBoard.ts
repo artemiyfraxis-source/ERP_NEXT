@@ -1,4 +1,4 @@
-import type { ProjectAddressee } from "./api";
+import type { ProjectAddressee, ProjectForecast } from "./api";
 import { isPickup, needsTrack } from "./carriers";
 import { shipmentDispatchStage } from "./dispatchStage";
 import { formatDayMonth } from "./format";
@@ -6,6 +6,7 @@ import { isoDay } from "./Gantt";
 import { dispatchBoard, kbKey, num, packable, permittedPack, recentShipment, round2 } from "./intakeStages";
 import type { DispatchShipment, IntakeRow } from "./productionIntakeApi";
 import { readyForTrack } from "./ShipmentCard";
+import { readiness } from "./shippingCells";
 import { shipmentGroupKey, shipmentSequence } from "./ShipmentGroupHeader";
 import { shipmentSearch } from "./shipmentSearch";
 import { shipmentTitle } from "./shipmentTitle";
@@ -47,6 +48,8 @@ export interface BoardCard {
   code: string;
   /** «отгрузка 1 из 2», только когда у проекта несколько живых отправок. */
   sequence: string;
+  /** Прогноз готовности по плану цеха («Производство»); `late` — позже срока. */
+  forecast: { ready: string; late: boolean } | null;
   /** Что цех сдал и ещё что важно на карточке («сдано цехом 12»). */
   note: string;
   blocker: Blocker | null;
@@ -144,12 +147,14 @@ export interface BuildInput {
   rows: IntakeRow[];
   shipments: DispatchShipment[];
   addressees: Array<Pick<ProjectAddressee, "project" | "terms" | "carrier">>;
+  /** Прогноз цеха по проектам (`/api/shipping/forecast`); без него карточки «Производства» остаются без строки прогноза. */
+  forecasts?: Record<string, ProjectForecast>;
   rights: BoardRights;
   now?: Date;
 }
 
 /** Все карточки доски. Порядок внутри колонки: по сроку (просроченные выше), «Отгружено» — по дате отгрузки, новые сверху. */
-export function buildBoard({ rows, shipments, addressees, rights, now = new Date() }: BuildInput): BoardCard[] {
+export function buildBoard({ rows, shipments, addressees, forecasts = {}, rights, now = new Date() }: BuildInput): BoardCard[] {
   const board = dispatchBoard(rows, shipments, now);
   const cardOf = new Map(addressees.map((card) => [norm(card.project), card]));
   const cards: BoardCard[] = [];
@@ -166,7 +171,7 @@ export function buildBoard({ rows, shipments, addressees, rights, now = new Date
     const customer = kbs[0].customer;
     const piecesOf = (kb: IntakeRow) => board.pieces.get(kbKey(kb))!;
     const delivery = deliveryText(cardOf.get(norm(project)));
-    const base = { project, customer, code: "", sequence: "", gaps: false, sortDay: "" };
+    const base = { project, customer, code: "", sequence: "", gaps: false, sortDay: "", forecast: null };
     for (const [group] of [["production"], ["waiting"]] as const) {
       const here = kbs.filter((kb) => group === "production" ? piecesOf(kb).production > 0 || piecesOf(kb).ready > 0 : piecesOf(kb).waiting > 0);
       if (!here.length) continue;
@@ -175,6 +180,7 @@ export function buildBoard({ rows, shipments, addressees, rights, now = new Date
       cards.push({ ...base, id: `p:${project}:${group}`, column: "production", group, kbs: here, kbLine: kbSummary(here),
         deliveryLine: `${delivery} · ${dueText(nextDeadline(here))}`, note: group === "waiting" ? "ждёт запуска в цех" : handed > 0 ? `сдано цехом ${handed}` : "цех пока ничего не сдал",
         blocker: null, okText: "", deadline: nextDeadline(here), search: projectSearch(here),
+        forecast: readiness([project], forecasts, nextDeadline(here)),
         action: group === "production" && rights.canWarehouse && acceptable.length ? { id: "accept", label: "Принять на склад…" } : null, extra: [] });
     }
     const stock = kbs.filter((kb) => packable(kb) > 0);
@@ -184,10 +190,10 @@ export function buildBoard({ rows, shipments, addressees, rights, now = new Date
       const permit: CardAction = { id: "permit", label: "Разрешить упаковку…" };
       cards.push({ ...base, id: `p:${project}:accepted`, column: "accepted", kbs: stock, kbLine: kbSummary(stock), deliveryLine: `${delivery} · ${dueText(nextDeadline(stock))}`,
         note: "", okText: "", deadline: nextDeadline(stock), search: projectSearch(stock),
-        blocker: blocked.length ? { text: `${blocked.map((kb) => kb.item_index).slice(0, 4).join(", ")}: нет разрешения упаковки`, who: "даёт менеджер (раздел «Отгрузка»)" } : null,
+        blocker: blocked.length ? { text: `${blocked.map((kb) => kb.item_index).slice(0, 4).join(", ")}: нет разрешения упаковки`, who: "даёт менеджер или склад" } : null,
         action: rights.canDispatch && packNow.length ? { id: "pack", label: `Упаковать ${packNow.map((kb) => kb.item_index).slice(0, 3).join(", ")}${packNow.length > 3 ? " и др." : ""}…` }
-          : rights.canManage && blocked.length ? permit : null,
-        extra: rights.canManage && blocked.length && packNow.length ? [permit] : [] });
+          : rights.canDispatch && blocked.length ? permit : null,
+        extra: rights.canDispatch && blocked.length && packNow.length ? [permit] : [] });
     }
   }
 
@@ -249,7 +255,7 @@ export function buildBoard({ rows, shipments, addressees, rights, now = new Date
       kbLine: kbSummary(kbs), deliveryLine: stage === "shipped" ? `${delivery} · отгружено ${shipment.shipped_at ? formatDayMonth(shipment.shipped_at) : "—"}`
         : `${delivery}${trackWord} · ${dueText(shipment.deadline)}`,
       code: column === "accepted" ? "" : shipment.pl_number, sequence: live && Number(total) > 1 ? `отгрузка ${position} из ${total}` : "",
-      note: "", blocker, okText, action, extra, deadline: shipment.deadline, gaps: Boolean(blocker),
+      note: "", forecast: null, blocker, okText, action, extra, deadline: shipment.deadline, gaps: Boolean(blocker),
       search: [shipmentSearch(shipment).join(" "), shipment.customer, shipmentTitle(shipment)].join(" "),
       sortDay: shipment.shipped_at ?? "",
     });
