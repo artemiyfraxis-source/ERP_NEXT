@@ -156,6 +156,12 @@ def _housing_name(hints: LotHints, records: tuple[TechOperationRecord, ...]) -> 
         for extra in (tail, execution):
             if extra:
                 name = f"{name}, {extra}"
+    # Owner 27.11 «BLS, BLD одно и то же, хотя D двухрядные, а S однорядные»: БД.ТЕР lists the pair a contact fits,
+    # a housing is one of them — chosen by its rows.
+    picked = _series_by_rows(series, family, rows or _rows(housing, identity))
+    if picked and picked != series:
+        name = name.replace(series, picked, 1) if series and series in name else f"{picked} {name}".strip()
+        series = picked
     missing = tuple(label for label, absent in (
         ("серия", not series), ("пол", not gender), ("число контактов", not pins and not template),
     ) if absent)
@@ -298,6 +304,23 @@ def _pins_from(identity) -> int:
     return int(found[1]) if found else 0
 
 
+# Connfly DS1071 housings: one row = BLS, two rows = BLD (DS1071-01, pitch 2,0 — BLS2 / BLD2).
+ROW_SERIES = {"connfly-ds1071": ("BLS", "BLD"), "connfly-ds1071-01": ("BLS2", "BLD2")}
+_ROW_SERIES_TOKENS = {"BLS": "connfly-ds1071", "BLD": "connfly-ds1071", "BLS2": "connfly-ds1071-01",
+                      "BLD2": "connfly-ds1071-01"}
+
+
+def _series_by_rows(series: str, family: str, rows: str) -> str:
+    """The one series of a row-pair family by the housing's rows; "" when not such a family or rows unknown."""
+    pair = ROW_SERIES.get(family) or next(
+        (ROW_SERIES[_ROW_SERIES_TOKENS[token]] for token in re.split(r",\s*", series or "") if token in _ROW_SERIES_TOKENS),
+        None,
+    )
+    if not pair or rows not in ("однорядный", "двухрядный"):
+        return ""
+    return pair[0] if rows == "однорядный" else pair[1]
+
+
 def _rows(housing: Mapping | None, identity) -> str:
     if housing:
         if housing.get("kind", "grid") != "grid" or housing["family"].startswith(NO_ROWS):
@@ -364,6 +387,9 @@ def _contact_name(hints: LotHints, records: tuple[TechOperationRecord, ...]) -> 
                 source = source or "правило серии (warehouse_article.SERIES_RULES)"
             break
     section = _contact_section(row) if row else ""
+    # A contact fits both housings of a pair («BLS, BLD», «GHD, GH»): «BLS/BLD» reads «either», a comma read as one
+    # series (owner 27.11).
+    series = re.sub(r"\s*,\s*", "/", series)
     name = " ".join(part for part in ("Контакт", series, CONTACT_GENDER.get(gender, "")) if part)
     if section:  # review 27.11: the wire range tells SXH-001T from SXH-002T and keeps «…, 0,05–0,2 мм²» names
         name = f"{name}, {section}"

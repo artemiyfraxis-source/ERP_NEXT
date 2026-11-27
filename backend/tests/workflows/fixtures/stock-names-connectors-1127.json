@@ -457,7 +457,7 @@
    "item_type": "Соединитель",
    "manufacturer": "CONNFLY",
    "name": "BLS, BLD 3pin (однорядный)",
-   "expected": "BLS, BLD розетка (мама) 3pin (однорядный)",
+   "expected": "BLS розетка (мама) 3pin (однорядный)",
    "complete": true,
    "missing": []
   },
@@ -466,7 +466,7 @@
    "item_type": "Соединитель",
    "manufacturer": "CONNFLY",
    "name": "Соединитель I-DS1071-01-SCB01x3 (CONNFLY, BLS2)",
-   "expected": "BLD2, BLS2 розетка (мама) 3pin (однорядный)",
+   "expected": "BLS2 розетка (мама) 3pin (однорядный)",
    "complete": true,
    "missing": []
   },

@@ -209,3 +209,20 @@ def test_nylon_mark_after_the_size_is_kept():
     before = _name("НВИ(н) 1,5-4", "Наконечник")
     plain = _name("НВИ 1,5-4", "Наконечник")
     assert after.name == before.name != plain.name
+
+
+@pytest.mark.parametrize(("article", "name"), [
+    ("I-DS1071-SCB01x5", "BLS розетка (мама) 5pin (однорядный)"),
+    ("I-DS1071-SCB02x5", "BLD розетка (мама) 10pin (двухрядный)"),
+    ("I-DS1071-01-SCB01x5", "BLS2 розетка (мама) 5pin (однорядный)"),
+    ("I-DS1071-01-SCB02x10", "BLD2 розетка (мама) 20pin (двухрядный)"),
+    ("I-DS1071-SCB2x4", "BLD розетка (мама) 8pin (двухрядный)"),
+])
+def test_bls_is_one_row_and_bld_two(article: str, name: str) -> None:
+    # Owner 27.11: «BLS, BLD одно и то же, хотя D двухрядные, а S однорядные».
+    assert _name(article, manufacturer="CONNFLY").name == name
+
+
+def test_a_contact_of_a_housing_pair_names_both_with_a_slash() -> None:
+    built = _name("SSHL-002T-P0.2", "Терминал")
+    assert built.name.startswith(("Контакт GHD/GH ", "Контакт GH/GHD ")), built.name
