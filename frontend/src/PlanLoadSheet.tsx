@@ -687,7 +687,11 @@ function SheetCellView({ column, index, layout, row, canEdit, busy, suppliedValu
       : <span className="zg-project" title={title}>{content}</span>, note ? "zg-has-note" : "");
   }
   if (key === "customer") {
-    return td(<button className="zg-link" title={row.customer ? `${row.customer} — журнал проекта` : "Журнал проекта"} onClick={() => onOpenJournal(row)}>{row.customer || "—"}</button>);
+    // Заказчик ведёт в карточку проекта, как и №: «чтобы я переходил в проект, а не в ресурсное планирование»
+    // (владелец 27.11.2026). Журнал — только без доступа к «Проектам».
+    const where = onOpenProject ? "карточка проекта" : "журнал проекта";
+    return td(<button className="zg-link" title={row.customer ? `${row.customer} — ${where}` : where[0].toUpperCase() + where.slice(1)}
+      onClick={() => (onOpenProject ? onOpenProject(row) : onOpenJournal(row))}>{row.customer || "—"}</button>);
   }
   if (key === "days_left") {
     const days = workDays(row);
