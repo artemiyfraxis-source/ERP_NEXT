@@ -1161,6 +1161,8 @@ def allocate_factory_numbers_in(task: ProductionTask, serial_range: tuple[int, i
         if number is None:
             return []
         numbers[position] = (first + position - 1, number)
+    # Lock order of every allocation: project advisory lock → task row (`lock`) → its item rows (assign).
+    uow.production.lock(task.id)
     uow.serials.ensure_task(task.id, task.number, task.quantity)
     issued = uow.serials.assign_factory_numbers(task.id, clean_designation(designation), numbers)
     units = uow.serials.list_for_task(task.id)

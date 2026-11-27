@@ -2196,8 +2196,16 @@ class SqlAlchemySerialRepository:
         """Заводские номера изделиям задания: позиция → (k, номер) при изделии ``designation``; возвращает изделия,
         получившие номер сейчас.
         Выданный номер не меняется (перепечатка — тот же, ничего не возвращается).
-        Вызывающий держит замок проекта (печать); строки изделий — под замок (параллельная печать того же задания
-        ждёт и берёт номера победителя), UNIQUE (factory_number) — последняя защита; чужой номер — отказ."""
+        Замки всегда в одном порядке (как у печати, `lock`): advisory-замок проекта → строка задания → строки изделий
+        по позиции; у печати первые два уже взяты (повторный захват в той же транзакции не ждёт). Вторая печать того
+        же проекта ждёт первую целиком и видит её номера: чужой номер — отказ; UNIQUE (factory_number) — последняя
+        защита."""
+        project = self.session.scalar(select(ProductionTaskRow.project).where(ProductionTaskRow.id == task_id))
+        if project is None:
+            raise ProductionValidationError("Задание не найдено")
+        lock_project_run(self.session, project)
+        self.session.scalar(select(ProductionTaskRow.id).where(ProductionTaskRow.id == task_id).with_for_update())
+
         def locked():
             return list(self.session.scalars(
                 select(ProductionSerialRow).where(ProductionSerialRow.task_id == task_id)
@@ -2217,11 +2225,15 @@ class SqlAlchemySerialRepository:
                 f"Заводской номер {taken[0]} уже выдан изделию {taken[1]} задания {taken[2]} — печать остановлена: "
                 "номер не переиспользуется, два изделия с одним номером недопустимы")
         # No savepoint: pysqlite releases a savepoint opened before any write as a commit, and a refused print must
-        # leave nothing. A number taken between the check and this write (the print's project lock prevents it) fails
-        # the whole transaction on UNIQUE — the print is refused with «повторите», never stored twice.
-        for row, item_serial, number in fresh:
-            row.item_serial, row.product_designation, row.factory_number = item_serial, designation, number
-        self.session.flush()
+        # leave nothing. A number taken between the check and this write (the project lock prevents it) fails the
+        # whole transaction on UNIQUE — the print is refused, never stored twice. One UPDATE per item in k order (the
+        # ORM flush would order them by the random row id): two writers then meet the UNIQUE index in the same order.
+        for row, item_serial, number in sorted(fresh, key=lambda entry: entry[1]):
+            self.session.execute(update(ProductionSerialRow).where(
+                ProductionSerialRow.id == row.id, ProductionSerialRow.item_serial.is_(None),
+            ).values(item_serial=item_serial, product_designation=designation, factory_number=number))
+        rows = {row.id: row for row in locked()}
+        fresh = [(rows[row.id], item_serial, number) for row, item_serial, number in fresh]
         return [self._domain(row) for row, _item_serial, _number in fresh]
 
     def ensure_task(self, task_id: UUID, task_number: str, quantity: int) -> bool:
