@@ -58,9 +58,9 @@ from .domain import (
     add_work_seconds,
     next_working_moment,
 )
-from .launchable import route_from_document, stage_name
+from .launchable import route_from_document, stage_name, unknown_time_warning
 from .equipment_catalog import EMPTY, EquipmentCatalog
-from .machine_load import MachineStep, _machine, lay_out, operation_occupancies, planned_windows
+from .machine_load import MachineStep, _machine, code_mismatch_text, lay_out, operation_occupancies, planned_windows
 from .machine_load import inventory_prefix  # noqa: F401 — номер модели «ОБ.027» для читателей автоплана
 from .scheduling import (
     ScheduledOperation,
@@ -234,13 +234,10 @@ def operation_keys(
             index = part.position - 1
             step = route[index] if 0 <= index < len(route) else None
             if step is None or step.code != part.code:
-                warnings.append(
-                    f"{task.number} · этап {operation.position}: код {part.code or '—'} не совпадает с техкартой "
-                    f"({step.code or '—' if step else 'нет этапа'}) — наладка по коду операции"
-                    if not operation.etk_ops else
-                    f"{task.number} · ПФ {operation.position}, операция ЭТК {part.position}: код {part.code or '—'} "
-                    f"не совпадает с техкартой ({step.code or '—' if step else 'нет операции'}) — наладка по коду ПФ"
-                )
+                warnings.append(code_mismatch_text(
+                    task, operation, part, step, "наладка считается по коду операции."
+                    if not operation.etk_ops else "наладка считается по коду ПФ.",
+                ))
                 break
             found.append(setup_key(
                 code=part.code, stage=part.stage,
@@ -288,6 +285,9 @@ class AutoplanInput:
     steps: Mapping[UUID, tuple[MachineStep, ...]] = field(default_factory=dict)
     cutting_groups: tuple[tuple[UUID, ...], ...] = ()
     operator_options: Mapping[UUID, frozenset[UUID]] = field(default_factory=dict)
+    # Операции без нормы времени в ЭТК (launchable.unknown_time_operations): ставятся с известной частью (часто 0 с),
+    # считаются отдельно и не выдаются за посчитанные.
+    unknown: frozenset[UUID] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -315,6 +315,7 @@ class AutoplanResult:
     placements: tuple[Placement, ...]
     unplaced: tuple[Unplaced, ...]
     warnings: tuple[str, ...]
+    unknown_time: int = 0  # расставленные операции, у которых в ЭТК не задана норма времени
 
     @property
     def changeovers(self) -> int:
@@ -790,7 +791,10 @@ def plan(data: AutoplanInput, *, batching: bool = True) -> AutoplanResult:
         (Unplaced(planner.task_of[operation_id].id, operation_id, reason) for operation_id, reason in planner.unplaced.items()),
         key=lambda item: planner.priority(item.operation_id),
     )
-    return AutoplanResult(tuple(ordered), tuple(unplaced), tuple(warnings))
+    unknown = sum(1 for item in placed if item in data.unknown)
+    if unknown:
+        warnings.append(unknown_time_warning(unknown, "запланированы"))
+    return AutoplanResult(tuple(ordered), tuple(unplaced), tuple(warnings), unknown)
 
 
 @dataclass(frozen=True)

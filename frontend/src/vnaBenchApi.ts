@@ -191,6 +191,10 @@ export interface VnaBenchSession {
   state?: string;
   /** Сеанс открыл этот пользователь: управлять им может только он. */
   owned?: boolean;
+  /** Остановить или восстановить сеанс может открывший его или администратор (чужой сеанс — с записью в журнал). */
+  can_recover?: boolean;
+  /** Администратор: закрыть сеанс без восстановления настроек S2VNA, когда восстановление не проходит. */
+  can_release_unrestored?: boolean;
   error?: string | null;
   started_at: string;
   operator: string | null;
@@ -364,6 +368,9 @@ export const vnaBenchApi = {
     post<VnaBenchState>(`/sessions/${id(sessionId)}/checks/${id(checkId)}/next`, { version }),
   /** Прервать текущую команду и вернуть прибор оператору. */
   abort: (sessionId: string, version: number) => post<VnaBenchState>(`/sessions/${id(sessionId)}/abort`, { version }),
+  /** Администратор: освободить ВАЦ без загрузки резервной копии оператора (восстановление не проходит). */
+  releaseUnrestored: (sessionId: string, version: number) =>
+    post<VnaBenchState>(`/sessions/${id(sessionId)}/release-unrestored`, { version }),
   /** «Показать на ВАЦ»: сохранённый экран — на S2VNA в откалиброванном сеансе, без развёртки; калибровка остаётся. */
   showScreen: (sessionId: string, version: number, screenId: string) =>
     post<VnaBenchState>(`/sessions/${id(sessionId)}/screen`, { version, screen_id: screenId }),
@@ -387,7 +394,8 @@ const REFUSALS: Record<string, string> = {
   vna_not_connected: "ВАЦ не подключён — включите ВАЦ, подключите USB и запустите S2VNA.",
   agent_capability_missing: "Агент не подтвердил метод калибровки — проверьте подключение АКМ и настройки управления ВАЦ.",
   agent_old: "Агент на ПК ОТК старый и не умеет рабочее место ВАЦ — он обновится сам в течение 5 минут.",
-  device_busy: "ВАЦ занят другой командой — дождитесь её окончания или нажмите «Прервать».",
+  device_busy: "ВАЦ занят другой командой — дождитесь её окончания или нажмите «Прервать» в строке «Выполняется».",
+  recovery_required: "Ответ ВАЦ потерян — нажмите «Восстановить» над вкладками: прибор остановится и вернёт настройки оператора.",
   serial_changed: "Заводской номер ВАЦ не совпал с карточкой СИ.002 — подключён другой прибор. Замеры запрещены.",
   not_ready: "S2VNA не в состоянии «Готов» — дождитесь прогрева (не меньше 40 минут).",
   screen_changed: "Экран S2VNA изменили вручную — замер остановлен. S2VNA только для просмотра; экран ERP вернётся при следующем замере.",

@@ -52,6 +52,12 @@ class MachineStep:
     setup_seconds: Decimal
     unit_seconds: Decimal  # машинное время на штуку; нет — штучное время операции
     code: str = ""  # «ОБ.098»; пусто — ключ и есть номер
+    unknown: bool = False  # нормы времени нет (и машинного времени тоже): занятость — известная часть, «время не задано»
+
+
+def unknown_time_steps(steps: Mapping[UUID, Sequence[MachineStep]]) -> int:
+    """Сколько операций ЭТК занимают станок без нормы времени (учтены известной частью — «время не задано»)."""
+    return sum(1 for own in steps.values() for step in own if step.unknown)
 
 
 @dataclass(frozen=True)
@@ -140,6 +146,15 @@ def _machine(built: Mapping[str, Any], equipment: EquipmentCatalog = EMPTY) -> M
     return None
 
 
+def code_mismatch_text(task: ProductionTask, operation: Any, part: Any, step: Any, consequence: str) -> str:
+    """Понятное мастеру предупреждение: этап задания не лёг на выданную ЭТК — что в ней на этом месте и что делать."""
+    place = f"ПФ {operation.position}, операция ЭТК {part.position}" if operation.etk_ops else f"этап {operation.position}"
+    where = f"{task.number} · {place}: «{stage_name(part.stage) or part.stage or part.code}» (код {part.code or '—'})"
+    found = (f"в ЭТК на этом месте «{step.stage}» (код {step.code or '—'})" if step is not None else "в ЭТК такой операции нет")
+    return (f"{where} — {found}: ТК изменилась после запуска задания. Перезапустите этап из актуальной ЭТК; "
+            f"{consequence}")
+
+
 def task_steps(
     task: ProductionTask, document: Mapping[str, Any] | None, equipment: EquipmentCatalog = EMPTY,
 ) -> tuple[dict[UUID, tuple[MachineStep, ...]], tuple[str, ...]]:
@@ -159,10 +174,7 @@ def task_steps(
             index = part.position - 1
             step = route[index] if 0 <= index < len(route) else None
             if step is None or step.code != part.code:
-                warnings.append(
-                    f"{task.number} · этап {operation.position}: код {part.code or '—'} не совпадает с техкартой — "
-                    "станки этапа не учтены"
-                )
+                warnings.append(code_mismatch_text(task, operation, part, step, "станки этапа в загрузке не учтены."))
                 steps = []
                 break
             etk = built[index] if index < len(built) else {}
@@ -176,6 +188,7 @@ def task_steps(
                 part.position, stage_name(part.stage) or step.stage, machine.key, machine.label, step.setup_seconds,
                 machine_seconds if machine_seconds > 0 else step.seconds_per_unit,
                 machine.code if machine.code != machine.key else "",
+                unknown=machine_seconds <= 0 and step.unknown_operations > 0,
             ))
         if steps:
             result[operation.id] = tuple(steps)

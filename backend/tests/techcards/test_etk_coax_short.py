@@ -114,8 +114,10 @@ def test_labels_and_protective_tube_are_resolved_once():
     config = deepcopy(FRESH["КБ1"])
     ops = {op["code"]: op for op in _build(config)["operations"]}
     printed = ops["PRINT_MARK_LABEL"]["card"]["steps"]
-    for mark in config["coax"]["marks"]:
-        assert mark["text"] in printed[0]["text"]
+    # The texts live once, in the result table (fields.marks); the step refers to it (ETK audit 23.11, B3).
+    assert [row["text"] for row in ops["PRINT_MARK_LABEL"]["fields"]["marks"]] == [mark["text"] for mark in config["coax"]["marks"]]
+    assert "по таблице «Результат»" in printed[0]["text"]
+    assert not any(mark["text"] in printed[0]["text"] for mark in config["coax"]["marks"])
     assert "Номер программы и параметры печати — не задано" in printed[0]["text"]
     assert printed[-1]["tolerance"] == "СТО ФРАК-001-2026, раздел 4.6"
     label = ops["INS_MARK_LABEL"]["card"]["steps"]

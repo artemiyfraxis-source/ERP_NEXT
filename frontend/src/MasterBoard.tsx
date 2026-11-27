@@ -24,7 +24,7 @@ import { LoadCell, LoadLegend, shiftCapacity } from "./PeopleLoad";
 import { periodWords } from "./PlanLoadSheet";
 import { ProjectPlanBlock } from "./ProjectPlanBlock";
 import { urlParam } from "./navigation";
-import { boardCard, BoardProjectCard, type BoardCardModel } from "./MasterBoardCard";
+import { boardCard, BoardProjectCard, projectClosed, type BoardCardModel } from "./MasterBoardCard";
 import { deadlineChips, feedsText, operationPlanText, taskItemLabel, upstreamIds, windowText } from "./productionGraph";
 import { StatusChip } from "./StatusChip";
 import { PageWindow } from "./PageWindow";
@@ -601,8 +601,24 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   });
   // Проект без незавершённых заданий и без КБ к запуску (всё выполнено или отгружено) карточки не получает (владелец 26.10);
   // с незавершёнными заданиями показывается при любом статусе проекта — расхождение данных мастер должен видеть.
+  // Отгруженный проект (владелец 26.11) — только если по нему ещё есть живая работа: операция с исполнителем или с
+  // отметкой («план истёк», «ждёт ОТК»); иначе его задания — хвост данных, и в списке, и в полосе «Сегодня» их нет.
+  const nowMs = Date.now();
+  const progressOf = (item: ProductionTask, op: ProductionOperation) => opProgress(item, op, nowMs);
+  const openOps = (item: ProductionTask) => item.handed_to || item.status === "Выполнено" ? 0
+    : item.operations.filter((op) => !done(op) && (op.operator_ids.length > 0 || progressOf(item, op).flags.length > 0)).length;
+  const closedOpenOf = new Map<string, number>();
+  const hidden = new Set<string>();
+  for (const project of new Set(live.map((task) => task.project))) {
+    const tile = tiles.items.find((item) => item.project.toLowerCase() === project.toLowerCase());
+    if (!projectClosed(tile, tiles.statuses)) continue;
+    const open = live.filter((task) => task.project === project).reduce((sum, task) => sum + openOps(task), 0);
+    if (open > 0) closedOpenOf.set(project, open); else hidden.add(project);
+  }
+  const active = live.filter((task) => !hidden.has(task.project));
   const projects = Array.from(new Set([
-    ...live.filter((task) => task.status !== "Выполнено").map((task) => task.project), ...waiting.map((item) => item.project),
+    ...active.filter((task) => task.status !== "Выполнено").map((task) => task.project),
+    ...waiting.filter((item) => !hidden.has(item.project)).map((item) => item.project),
   ]));
   // Два срока (РП-1): дедлайн проекта — из плана; срок задания — самый ранний у незавершённых заданий проекта.
   const planOf = (project: string) => projectDeadlines[project.toLowerCase()];
@@ -616,10 +632,8 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   const shown = projects.find((project) => project.toLowerCase() === openProject.toLowerCase())
     ?? (openProject && openProject === urlProject ? openProject : "");
   // Полоса «Сегодня»: операции живых заданий (не отданных на площадку) с каждым флагом; клик фильтрует список.
-  const nowMs = Date.now();
-  const progressOf = (item: ProductionTask, op: ProductionOperation) => opProgress(item, op, nowMs);
   const flagCounts: Record<OpFlag, number> = { late: 0, wait: 0, over: 0 };
-  for (const item of live) {
+  for (const item of active) {
     if (item.handed_to) continue;
     for (const op of item.operations) for (const flag of progressOf(item, op).flags) flagCounts[flag] += 1;
   }
@@ -642,7 +656,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
       project, tile: tiles.items.find((item) => item.project.toLowerCase() === project.toLowerCase()), statuses: tiles.statuses,
       customer: toLaunch.find((item) => item.customer)?.customer, plan: planOf(project), taskDeadline: taskDeadlineOf(project),
       free: freeOf(project), total: own.filter((item) => !item.handed_to).reduce((sum, item) => sum + item.operations.length, 0),
-      toLaunch: toLaunch.length, handed: own.filter((item) => item.handed_to).length, handedSite: HANDOVER_SITE, flags, now: new Date(nowMs),
+      toLaunch: toLaunch.length, closedOpen: closedOpenOf.get(project), handed: own.filter((item) => item.handed_to).length, handedSite: HANDOVER_SITE, flags, now: new Date(nowMs),
     })];
   }));
   // Порядок: сначала горящие (блокер, срок, просроченные операции), потом с замечаниями; внутри — ближайший срок.
@@ -652,7 +666,7 @@ export function MasterBoard({ tasks, operators, site = "", skills, absences, shi
   // Мастер площадки (Степан в Жуковском) видит и ставит только своих монтажников; без площадки — всех.
   const people = installers(operators).filter((person) => !site || person.site === site);
   const today = isoDay(new Date());
-  const unassigned = live.filter((item) => !item.handed_to).reduce((sum, item) => sum + item.operations.filter((op) => !done(op) && !op.operator_ids.length).length, 0);
+  const unassigned = active.filter((item) => !item.handed_to).reduce((sum, item) => sum + item.operations.filter((op) => !done(op) && !op.operator_ids.length).length, 0);
 
   const workShift = shift ?? DEFAULT_SHIFT;
   // На 27" доска во всю ширину — две недели, на 16" и планшете — одна (РП-3, РП-6); листают по неделе.
