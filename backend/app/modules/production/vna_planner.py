@@ -8,6 +8,11 @@ from itertools import product
 from uuid import UUID
 
 from .rf_interfaces import RfDetails, RfInterface, mates
+from .rf_kit_characterization import CHARACTERIZED_DEFINITION, LOADS_DEFINITION
+
+# SMA-MF06 keeps its 50-ohm loads in both states: loads only (СИ.004 as delivered) and, after activation of the measured
+# standards, the characterized SOL kit. Activation only adds Arinst SOL use; it never takes the DUT loads away.
+SMA_MF06_LOAD_KITS = (("load_kit", LOADS_DEFINITION), ("solt_kit", CHARACTERIZED_DEFINITION))
 
 
 @dataclass(frozen=True)
@@ -247,7 +252,7 @@ def plan_connections(instrument: RfAsset, dut: tuple[RfInterface, RfInterface], 
     kits = [a for a in eligible if a.rf.role in ("auto_calibration", "solt_kit")]
     # Reference SOLT standards are never DUT terminations. SMA-MF06 contributes only its explicitly described loads.
     loads = [a for a in eligible if a.rf.role == "load" or
-             (a.rf.role == "load_kit" and a.rf.kit_definition == "SMA-MF06-loads" and all(p.series == "SMA" for p in a.rf.interfaces))]
+             ((a.rf.role, a.rf.kit_definition) in SMA_MF06_LOAD_KITS and all(p.series == "SMA" for p in a.rf.interfaces))]
     if not loads:
         return {**two_port, "problems": [*two_port["problems"], "Для однопортового измерения нужна нагрузка SMA 50 Ом либо согласованная нагрузка серии изделия; стандарты 6650F27 использовать нельзя"]}
     orientations = []

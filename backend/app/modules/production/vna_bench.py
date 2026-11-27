@@ -55,9 +55,10 @@ def arinst_step(op, args=None, *, human=False, label="", item=None):
 
 
 def arinst_invalidated(snapshot, reason):
-    """Keep immutable artifacts/history, remove every reusable calibration reference."""
-    return {**snapshot, "calibration": dict(valid=False, status="required", reason=reason,
-                                            coefficient_artifact_id=None)}
+    """Keep immutable artifacts/history, remove every reusable calibration reference — including the server-built
+    characterized standards and their context, which belong to one calibration run only."""
+    kept = {k: v for k, v in snapshot.items() if k not in ("calibration_context", "characterized_standards")}
+    return {**kept, "calibration": dict(valid=False, status="required", reason=reason, coefficient_artifact_id=None)}
 
 
 def arinst_license(state):
@@ -67,11 +68,13 @@ def arinst_license(state):
     return dict(state="UNKNOWN", message="Связь с Arinst не подтверждена агентом ERP")
 
 
-def arinst_calibration_steps(snapshot, *, orientation, transmission, run_id):
+def arinst_calibration_steps(snapshot, *, orientation, transmission, run_id, labels=None):
+    """`labels`: the identified physical piece of each kind (a characterized kit), shown in the prompt."""
     profile = ArinstProfile.model_validate(snapshot["profile"]).model_dump(mode="json")
     standards = ("OPEN", "SHORT", "LOAD", "THRU") if transmission else ("OPEN", "SHORT", "LOAD")
     return [arinst_step("measure_standard", dict(profile=profile, orientation=orientation, standard=standard),
-                       human=True, label=f"Подключите {standard} в плоскости измерения и подтвердите",
+                       human=True, label=f"Подключите {(labels or {}).get(standard) or standard} в плоскости измерения "
+                                         "и подтвердите",
                        item=dict(kind="arinst_calibration", run_id=run_id)) for standard in standards]
 
 
