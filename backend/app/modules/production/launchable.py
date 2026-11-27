@@ -538,13 +538,34 @@ def preview_operations(route: Sequence[RouteStep], quantity: int) -> tuple[Produ
     return link_inputs(operations, route_inputs(route))
 
 
+TIME_NOT_SET = "время не задано"
+
+
+def unknown_time_operations(task: Any, document: Mapping[str, Any] | None) -> frozenset[UUID]:
+    """Операции задания, у которых в ЭТК хоть одна операция без нормы времени (аудит ЭТК 23.11, D1). Не хранится в
+    задании (миграции нет): читается из той же выданной ЭТК, по которой план берёт станки и наладки. Их секунды — нижняя
+    граница (известная часть), план ставит их как есть, а показывает «время не задано» отдельным счётчиком."""
+    if not isinstance(document, Mapping):
+        return frozenset()
+    steps = route_from_document(document)  # the same reading as the launch: time rows, else the card's seconds
+    return frozenset(
+        operation.id for operation in task.operations
+        if any(0 < position <= len(steps) and steps[position - 1].unknown_operations
+               for position in [item.position for item in operation.etk_ops] or [operation.position]))
+
+
+def unknown_time_warning(count: int, where: str) -> str:
+    return f"{TIME_NOT_SET[:1].upper()}{TIME_NOT_SET[1:]}: {count} оп. — {where} с известной частью нормы (без пустых), уточните нормы в техкарте"
+
+
 def norms_outdated(task: Any, document: Mapping[str, Any] | None) -> bool:
     """«Нормы устарели»: нормы, которые дала бы выданная сейчас ЭТК тому же запуску, отличаются от норм задания.
     Сравниваются действующие нормы операций (секунды на штуку и подготовка), а не номера ревизий: новая ревизия с
     теми же нормами (правка текста, ЭТК до версии 4, у которой подготовку производство и так вычитает) флаг не ставит.
-    Допуск — округление ЭТК до 0,01 мин на партию. Другой состав этапов (число, коды) — устарели: нормы не те."""
+    Допуск — округление ЭТК до 0,01 мин на партию. Другой состав этапов (число, коды) — устарели: нормы не те.
+    Операция без нормы сама по себе не «устарела»: сравнивается её известная часть, как её и запустили (D1)."""
     steps = launch_route(document).steps
-    if not steps or any(step.unknown_operations for step in steps):
+    if not steps:
         return True
     if any(operation.etk_ops for operation in task.operations):
         try:

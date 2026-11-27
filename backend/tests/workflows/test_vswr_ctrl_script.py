@@ -63,7 +63,16 @@ def _vswr_steps(document):
 
 def test_payload_is_the_bundled_template():
     [bundled] = [item for item in LIBRARY if item["id"] == PAYLOAD["id"]]
-    assert bundled["rows"] == PAYLOAD["rows"] and PAYLOAD["before"] != PAYLOAD["after"]
+    # 23.11.2026 (docs/data/operation-templates-etk-readability): only the step rows of the bundled sheet moved on —
+    # the connect step and the one-port fallback are two steps now; every other row is still this delivery.
+    readable = next(item for item in _json(DATA.parent.parent / "docs/data/operation-templates-etk-readability/payload.json")
+                    if item["code"] == "CTRL_VSWR_coax")
+    steps = {"Операция", "Контроль"}
+    assert [row for row in bundled["rows"] if not row or row[0] not in steps] ==            [row for row in PAYLOAD["rows"] if not row or row[0] not in steps]
+    card = parse_operation_template(source_id=bundled["id"], title=bundled["title"], category=bundled["category"],
+                                    rows=bundled["rows"], images=None)
+    assert [[step.kind, step.text, step.tolerance] for step in card.steps] ==            [[step["kind"], step["text"], step["tolerance"]] for step in readable["record"]["steps"]]
+    assert PAYLOAD["before"] != PAYLOAD["after"]
     text = json.dumps(PAYLOAD["before_rows"], ensure_ascii=False)
     assert "30 мин" in text and "(S11)" in text
 

@@ -262,6 +262,17 @@ Describe 'ArinstVL host profiles and measurements' {
         $failure.sha256 | Should Match '^[a-f0-9]{64}$'
         $script:port.Disposed | Should Be $true
     }
+    It 'blocks measurements after an unknown outcome until a fresh connect from ERP' {
+        Mock Test-Path { [IO.File]::Exists($LiteralPath) }
+        $command = New-ArinstTestCommand
+        Write-VnaJson (Get-VnaQuarantinePath $command) @{ session_id = $command.session_id; serial = $command.instrument_serial
+            command_id = $command.command_id; created_at = [DateTime]::UtcNow.ToString('o') }
+        { Invoke-ArinstCommand $command @{} } | Should Throw 'откройте новый'
+        $script:port.Sent.Count | Should Be 0
+        $connect = New-ArinstTestCommand; $connect.op = 'connect'; $connect.args = @{}
+        (Invoke-ArinstCommand $connect @{}).license.ContainsKey('trial_remaining_seconds') | Should Be $false
+        [IO.File]::Exists((Get-VnaQuarantinePath $command)) | Should Be $false
+    }
     It 'releases host profile without claiming RF stopped' {
         $command = New-ArinstTestCommand; $command.op = 'close'; $command.args = @{}
         $result = Invoke-ArinstCommand $command @{}

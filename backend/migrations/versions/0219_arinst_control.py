@@ -72,15 +72,14 @@ def upgrade():
         sa.Column("hardware_uid", sa.String(100), nullable=False, server_default=""),
         sa.Column("identity_verified", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column("license_state", sa.String(12), nullable=False, server_default="unknown"),
-        sa.Column("trial_remaining_seconds", sa.Integer(), nullable=True),
         sa.Column("control_ready", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column("reason", sa.String(500), nullable=False, server_default=""),
         sa.CheckConstraint("version >= 1", name="ck_vna_control_version"),
         sa.CheckConstraint("source IN ('s2vna','arinst')", name="ck_vna_control_source"),
         sa.CheckConstraint("trim(serial) <> '' AND ((source = 'arinst' AND serial = 'arinst:' || hardware_uid AND hardware_uid <> '') OR (source = 's2vna' AND lower(serial) NOT LIKE 'arinst:%'))", name="ck_vna_control_serial"),
-        sa.CheckConstraint("license_state IN ('unknown','not_required','TRIAL','LOCKED','ACTIVATED')", name="ck_vna_control_license"),
-        sa.CheckConstraint("(license_state = 'TRIAL' AND trial_remaining_seconds IS NOT NULL AND trial_remaining_seconds BETWEEN 0 AND 600) OR (license_state <> 'TRIAL' AND trial_remaining_seconds IS NULL)", name="ck_vna_control_trial"),
-        sa.CheckConstraint("source <> 'arinst' OR NOT control_ready OR (identity_verified AND version = 3 AND (license_state IN ('not_required','ACTIVATED') OR (license_state = 'TRIAL' AND trial_remaining_seconds > 0)))", name="ck_vna_control_ready"))
+        # The native ArinstVL protocol needs no licence: there is no trial state to store or to wait out.
+        sa.CheckConstraint("license_state IN ('unknown','not_required')", name="ck_vna_control_license"),
+        sa.CheckConstraint("source <> 'arinst' OR NOT control_ready OR (identity_verified AND version = 3 AND license_state = 'not_required')", name="ck_vna_control_ready"))
     if cached:
         bind.execute(table.insert(), cached)
     op.create_table(IDENTITIES,

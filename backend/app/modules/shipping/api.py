@@ -28,10 +28,10 @@ from .application import (
     AttachCardUpdCommand, AttachUpdCommand, attach_upd_file, store_card_upd_file, UPD_FILE_URL_PREFIX, upd_file_url,
     ConcurrentShippingUpdate, CreateShipmentCommand, DropProjectCommand, EditHeadCommand, HistoryCorrectionCommand,
     IssueDocumentCommand, LayOutCommand, PickCommand, PackPermissionChange, SetPackPermissionsCommand, set_pack_permissions, PackProjectCommand, ProjectShipCommand, ProjectShipLine, QueueProjectCommand, RegisterGoodCommand,
-    RequestedGood, RollbackAcceptanceCommand, RollbackShippedCommand, SetProjectAddresseeCommand, SetRequestedCommand, ShipmentCommand,
+    RequestedGood, RollbackAcceptanceCommand, RollbackShippedCommand, SetProjectAddresseeCommand, SetRequestedCommand, SetTkNoteCommand, ShipmentCommand,
     ShipCommand, ShippingConflict, ShippingPermissionError, UnitOfWork, UnpickCommand, UpdUpload, UpdateDocumentsCommand, cancel_shipment,
     close_shipment, correct_shipment_history, create_shipment, drop_project, edit_shipment_head, issue_document, lay_out_shipment, mark_shipped, pack_project,
-    pack_shipment, pick_shipment, queue_project, register_good, rollback_acceptance, rollback_shipped, set_project_addressee, set_requested,
+    pack_shipment, pick_shipment, queue_project, register_good, rollback_acceptance, rollback_shipped, set_project_addressee, set_requested, set_tk_note,
     ship_project, unpick_line, update_documents,
 )
 from .documents import build_box_labels, build_delivery_note, build_packing_lists, storekeeper_signature
@@ -226,6 +226,10 @@ class HeadPayload(VersionPayload):
     deadline: date | None = None
     note: str | None = Field(default=None, max_length=5000)
     refresh_delivery: bool = False
+
+
+class TkNotePayload(VersionPayload):
+    tk_note: str = Field(default="", max_length=5000)
 
 
 class RequestedPayload(VersionPayload):
@@ -798,6 +802,15 @@ def head(shipment_id: UUID, payload: HeadPayload, principal: Annotated[Principal
     shipment = _run(lambda: edit_shipment_head(EditHeadCommand(
         shipment_id=shipment_id, expected_version=payload.version, actor=principal.actor, now=now, fields=fields,
         refresh_delivery=payload.refresh_delivery,
+    ), uow_factory()))
+    return {"shipment": _shipment_result(shipment)}
+
+
+@router.put("/shipments/{shipment_id}/tk-note")
+def tk_note(shipment_id: UUID, payload: TkNotePayload, principal: Annotated[Principal, Depends(shipping_editor_principal)], now: Annotated[datetime, Depends(moscow_now)], uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)]) -> dict:
+    """«Для перевозчика» без раскладки по коробам: права и проверка версии — как у шапки отправки."""
+    shipment = _run(lambda: set_tk_note(SetTkNoteCommand(
+        shipment_id=shipment_id, expected_version=payload.version, actor=principal.actor, now=now, tk_note=payload.tk_note,
     ), uow_factory()))
     return {"shipment": _shipment_result(shipment)}
 

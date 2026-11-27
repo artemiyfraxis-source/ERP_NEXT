@@ -15,7 +15,7 @@ export function ShipWindow({ project, shipments, rights, reload, close }: {
   const [dataFor, setDataFor] = useState<string | null>(null);
   const dataShipment = shipments.find((shipment) => shipment.id === dataFor) ?? null;
   const sorted = shipments.slice().sort(compareShipments);
-  return <PageWindow label={`Отгрузка ${project}`} close={close} width={1280}>
+  return <PageWindow label={`Отгрузка ${project}`} close={close} width={1440}>
     <section className="panel intake-window intake-ship">
       <header className="page-head"><h2>Отгрузка · {project}</h2><button type="button" className="secondary small" onClick={close}>Закрыть</button></header>
       <Banners error={error} notice={notice} />

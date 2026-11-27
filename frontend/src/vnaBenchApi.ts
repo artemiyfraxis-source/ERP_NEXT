@@ -365,7 +365,7 @@ export interface ArinstBenchState {
     instrument_id: string; inventory_number: string; serial: string; printed_serial: string | null;
     hardware_uid: string | null; firmware: string | null; machine_id: string | null;
     connection_ready: boolean; control_ready: boolean; reason: string | null; supported_ops: string[];
-    license: { state: "not_required" | "TRIAL" | "LOCKED" | "ACTIVATED" | "UNKNOWN"; trial_remaining_seconds: number | null; message: string };
+    license: { state: "not_required" | "UNKNOWN"; message: string };
     options?: ArinstOptions | null;
   };
   profile: ArinstProfile | null;

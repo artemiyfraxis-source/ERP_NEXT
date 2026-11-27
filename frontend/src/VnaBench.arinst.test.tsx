@@ -11,7 +11,7 @@ function state(): ArinstBenchState {
     source: "arinst", device: { instrument_id: "si1", inventory_number: "СИ.001", serial: "arinst:1-2-3", printed_serial: "001",
       hardware_uid: "1-2-3", firmware: "1", machine_id: "pc1", connection_ready: true, control_ready: true, reason: null,
       supported_ops: ["connect", "close", "apply_profile", "measure_standard", "capture"],
-      license: { state: "not_required", trial_remaining_seconds: null, message: "Связь: протокол ArinstVL" },
+      license: { state: "not_required", message: "Связь: протокол ArinstVL" },
       options: { scan_range_hz: [1e6, 9e9], bandwidths_hz: [20, 50, 100, 250, 500, 1000], max_slice_points: 255, raw: "" } },
     profile, calibration: { valid: false, status: "required" }, acceptance: { eligible: false, code: "commissioning_required", message: "Ожидается стендовое сравнение" },
     session: { id: "s1", version: 7, step: 0, state: "ready", status: "open", owned: true, operator: "Контролёр", error: null, steps: [], command: null, artifacts: [] },

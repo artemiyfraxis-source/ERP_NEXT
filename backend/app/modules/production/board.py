@@ -29,7 +29,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Mapping, Sequence
@@ -84,6 +85,16 @@ class CardSnapshot:
     id: UUID
     version: int
     document: Mapping[str, Any] | None
+    revision: int = 0
+    # Документ закреплённой ревизии (читается лениво: нужен только заданиям старее текущей выдачи); нет — None.
+    older: Callable[[int], Mapping[str, Any] | None] | None = field(default=None, compare=False, repr=False)
+
+    def document_for(self, task: Any) -> Mapping[str, Any] | None:
+        """ЭТК, по которой запущено задание: закреплённая ревизия, а если её нет — текущая выданная."""
+        pinned = getattr(task, "techcard_revision", None)
+        if pinned is None or pinned == self.revision or self.older is None:
+            return self.document
+        return self.older(pinned) or self.document
 
 
 def card_key(project: str, index: str) -> tuple[str, str]:

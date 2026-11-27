@@ -419,3 +419,15 @@ def test_shipping_refuses_with_the_whole_list_in_the_gates_words():
 def test_a_shipment_may_be_created_without_an_address_for_the_storekeeper_to_pack_first():
     item = good()
     assert shipment(item, shipping_point="").shipping_point == ""
+
+def test_tk_note_saves_without_boxes_and_never_after_shipping():
+    """«Для перевозчика» без коробов (владелец 26.11): версия +1, короба, документы и статус не меняются."""
+    item = good().accept(Decimal("10"), date(2026, 9, 22), "ГП.26.0000001")
+    picked, _ = shipment(item).pick({item.id: item.remaining}, {item.id: item.grn or ""})
+    noted = picked.set_tk_note("  Хрупкое, не кантовать ")
+    assert (noted.tk_note, noted.version, noted.status, noted.boxes, noted.pl_number) == (
+        "Хрупкое, не кантовать", picked.version + 1, picked.status, picked.boxes, picked.pl_number)
+    assert noted.set_tk_note("Хрупкое, не кантовать") is noted
+    for status in (ShipmentStatus.SHIPPED, ShipmentStatus.CLOSED, ShipmentStatus.CANCELLED):
+        with pytest.raises(ShippingValidationError, match="перевозчика"):
+            replace(noted, status=status).set_tk_note("другое")

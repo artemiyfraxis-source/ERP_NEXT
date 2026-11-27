@@ -27,6 +27,8 @@ export type BoardCardInput = {
   toLaunch: number;
   handed: number;
   handedSite: string;
+  /** Проект отгружен (все КБ отгружены или отменены), но по нему остались незакрытые операции: сколько. */
+  closedOpen?: number;
   /** Операции проекта с каждой отметкой — подписи для подсказки. */
   flags: Record<FlagKey, string[]>;
   now?: Date;
@@ -75,6 +77,14 @@ function statusTitle(tile: KitsetTile) {
   return lines.join("\n");
 }
 
+/** Проект закрыт: этап проекта или все его КБ — «Отгружено» и дальше («Отменён» стоит после «Отгружено»). */
+export function projectClosed(tile: KitsetTile | undefined, statuses: string[]): boolean {
+  const shipped = statuses.indexOf("Отгружено");
+  if (!tile || shipped < 0) return false;
+  const closed = (status: string) => statuses.indexOf(status) >= shipped;
+  return closed(tile.status) || (tile.kb_stages.length > 0 && tile.kb_stages.every((kb) => closed(kb.status)));
+}
+
 export function boardCard(input: BoardCardInput): BoardCardModel {
   const { tile, project } = input;
   const customer = tile?.customer || input.customer || "";
@@ -104,13 +114,18 @@ export function boardCard(input: BoardCardInput): BoardCardModel {
   if (input.handed > 0) actions.push({ text: `в ${input.handedSite}: ${input.handed}`, tone: "warning", title: `Заданий отдано на площадку ${input.handedSite}` });
 
   const problems: BoardCardLine[] = [];
+  const closedOpen = input.closedOpen ?? 0;
+  if (closedOpen > 0) problems.push({
+    text: `отгружен, осталось ${closedOpen} незакрытых операций — закройте или снимите`, tone: "danger",
+    title: "Проект отгружен, но у его заданий есть операции с исполнителем или с просроченным планом. Закройте задания или снимите операции с монтажников.",
+  });
   const push = (text: string, count: number, tone: Tone, title: string) => { if (count > 0) problems.push({ text, count, tone, title }); };
   push("план истёк", input.flags.late.length, "danger", opsTitle("Не начато, план истёк:", input.flags.late));
   push("позже срока", input.flags.over.length, "danger", opsTitle("План позже срока задания:", input.flags.over));
   const index = tile ? input.statuses.indexOf(tile.status) : -1;
   const shipped = input.statuses.indexOf("Отгружено");
-  // «Отменён» стоит после «Отгружено»: у закрытого проекта факты про ТК и набор не нужны.
-  if (tile && !(shipped >= 0 && index > shipped)) {
+  // «Отгружено» и «Отменён» (стоит после него): у закрытого проекта факты про ТК и набор не нужны.
+  if (tile && !(shipped >= 0 && index >= shipped)) {
     const kbs = tile.kb_stages;
     const withTc = kbs.filter((kb) => kb.tc);
     const defects = withTc.filter((kb) => kb.review?.value === "с погрешностями").map((kb) => kb.index);
@@ -151,7 +166,7 @@ export function BoardProjectCard({ model, open }: { model: BoardCardModel; open:
     </div>
     <div className="mb-card-problems">
       {model.problems.map((line) => <span key={line.text} data-tone={line.tone} title={line.title}>
-        {line.text}: <b>{problemText(line)}</b>
+        {line.count === undefined ? line.text : <>{line.text}: <b>{problemText(line)}</b></>}
       </span>)}
     </div>
   </div>;

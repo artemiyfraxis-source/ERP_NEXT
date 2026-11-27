@@ -89,10 +89,11 @@ def test_backfill_constraints_identity_and_safe_downgrade(migrated):
         ("stale", revision.UNRESOLVED, "s2vna", False, False)]
     item = dict(machine_id="exact", serial="arinst:1-2-3", source="arinst", version=3, methods=[], ops=["connect"],
                 reported_at=now, hardware_uid="1-2-3", firmware="2.0.0", model="VNA-DL", identity_verified=True,
-                license_state="not_required", trial_remaining_seconds=None, control_ready=True)
-    for patch in ({"serial": "101"}, {"source": "s2vna"}, {"license_state": "LOCKED", "trial_remaining_seconds": None},
-                  {"trial_remaining_seconds": -1}, {"trial_remaining_seconds": 600},
-                  {"license_state": "TRIAL"}, {"license_state": "unknown"}, {"machine_id": "absent"}):
+                license_state="not_required", control_ready=True)
+    assert "trial_remaining_seconds" not in control.c
+    # No licence/trial states exist: only 'unknown' and the native 'not_required'.
+    for patch in ({"serial": "101"}, {"source": "s2vna"}, {"license_state": "LOCKED"}, {"license_state": "TRIAL"},
+                  {"license_state": "ACTIVATED"}, {"license_state": "unknown"}, {"machine_id": "absent"}):
         with pytest.raises(sa.exc.IntegrityError), connection.begin_nested():
             connection.execute(control.insert(), {**item, **patch})
     connection.execute(control.insert(), item)

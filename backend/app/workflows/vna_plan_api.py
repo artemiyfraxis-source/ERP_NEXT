@@ -72,6 +72,13 @@ def _available(item, registry, now):
     return False
 
 
+def _calibration_kit_ids(chains) -> list[UUID]:
+    """Kits the chosen chain calibrates with; an unused registry kit never qualifies the plan."""
+    connections = chains.get("calibration_connections") or []
+    entries = [connections] if isinstance(connections, dict) else connections
+    return list(dict.fromkeys(UUID(entry["kit_id"]) for entry in entries if entry.get("kit_id")))
+
+
 @router.get("/vna-plan")
 def vna_plan(task_id: UUID, operation_id: UUID, instrument_id: UUID,
              _principal: Annotated[Principal, Depends(production_overview_principal)],
@@ -137,8 +144,7 @@ def vna_plan(task_id: UUID, operation_id: UUID, instrument_id: UUID,
                   f"{selected.inventory_number} не подтверждён в реестре как ВАЦ (средство измерений с разъёмами портов)"]}
         status = "blocked"
     else:
-        calibration = [item for key, item in registry.items()
-                       if details.get(key, RfDetails()).role in ("auto_calibration", "solt_kit") and _available(item, registry, now)]
+        calibration = [registry[key] for key in _calibration_kit_ids(chains) if key in registry]
         notes = [f"{item.inventory_number} без действующей поверки: {reason}"
                  for item in (selected, *calibration) if (reason := _unverified(item, now))]
         if notes:

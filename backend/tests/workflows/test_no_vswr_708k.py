@@ -30,6 +30,10 @@ def _with_form(config):
     config = deepcopy(config)
     config["coax"]["vswrControl"] = {"mode": "all", "every": None}
     config["gen_state"] = {"S": {"coax": {"vswrMode": "all", "vswrEvery": "50"}}, "v": 1}
+    # Production cards carry their БД.ОП norms. The first operation keeps none: its «не задана норма времени» stays the
+    # same before and after the check leaves (an operation before it), so it is not a change besides «Контроль КСВН».
+    for index, op in enumerate(config["ops"]):
+        op["tOp"] = "" if index == 0 else op.get("tOp") or "6"
     return config
 
 
@@ -63,6 +67,7 @@ def test_inputs_are_what_the_generator_saves_for_no_check():
 
 def test_dry_run_writes_nothing_and_prints_every_change(prod, capsys):
     cards = _production(prod)
+    assert _row(prod, cards["КБ1"]).document["warnings"][0].endswith("): не задана норма времени")
     before = _snapshot(prod)
     report, plan, _rollback = _run(prod, commit=False)
     printed = capsys.readouterr().out
