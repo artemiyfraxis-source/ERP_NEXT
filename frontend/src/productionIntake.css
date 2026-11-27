@@ -202,7 +202,7 @@
 .board-card-title strong { font-variant-numeric: tabular-nums; }
 .board-card-customer { font-weight: 400; color: var(--muted-foreground); }
 .board-card-kb { overflow-wrap: anywhere; }
-.board-card-delivery, .board-card-note { font-size: 12px; font-variant-numeric: tabular-nums; }
+.board-card-delivery, .board-card-note, .board-card-forecast { font-size: 12px; font-variant-numeric: tabular-nums; }
 .board-card-code { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted-foreground); }
 .board-card-pl { margin-left: auto; font-variant-numeric: tabular-nums slashed-zero; }
 .board-card-blocker { font-size: 13px; }

@@ -34,7 +34,7 @@ it("requires an explicit quantity, caps it by permission, and refreshes addresse
   expect(qty).toHaveValue("5");
   await waitFor(() => expect(screen.getByRole("button", { name: "Упаковать · 5 шт" })).toBeEnabled());
   fireEvent.click(screen.getByRole("button", { name: "Упаковать · 5 шт" }));
-  await screen.findByText("Упаковано: ОТГ-ДЕМО");
+  await screen.findByText("Упаковано: П");
   const bodies = fetcher.mock.calls.filter(([url]) => String(url).includes("project-ship")).map(([, init]) => JSON.parse(String(init.body)));
   expect(bodies.map((body) => body.addressee_version)).toEqual([2, 3]);
   expect(bodies[1].lines).toEqual([{ good_id: "g1", version: 2, quantity: "5" }]);
@@ -68,7 +68,7 @@ it("refreshes a cached destination conflict and packs with the same quantities a
   expect(screen.getByLabelText("Упаковать КБ1")).toBeChecked();
   expect(screen.getByLabelText("Упаковать КБ2")).toBeChecked();
   fireEvent.click(screen.getByRole("button", { name: "Упаковать · 5 шт" }));
-  await screen.findByText("Упаковано: ОТГ-ДЕМО");
+  await screen.findByText("Упаковано: П");
   const [, init] = fetcher.mock.calls.find(([url]) => String(url).includes("project-ship"))!;
   expect(JSON.parse(String(init.body))).toMatchObject({ addressee_version: 3, lines: [
     { good_id: "g1", version: 2, quantity: "3" }, { good_id: "g2", version: 2, quantity: "2" },
@@ -115,4 +115,19 @@ it("validates the packed quantity inline and recomputes the shortage automatical
   expect(screen.getByText("Введите число больше нуля")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Упаковать · 0 шт" }));
   expect(fetcher.mock.calls.some(([url]) => String(url).includes("project-ship"))).toBe(false);
+});
+
+it("the storekeeper packs with a deadline and a № УПД: both fields are there and travel in the request", async () => {
+  const fetcher = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify(String(input).includes("project-ship") ? { shipment: { pl_number: "PLП-1" } }
+    : String(input).includes("item-addressees") ? { items: [] } : { addressee: { version: 1 } })));
+  vi.stubGlobal("fetch", fetcher);
+  render(<PackWindow project="П" rows={[row]} shipments={[]} rights={rights} reload={vi.fn()} close={vi.fn()} />);
+  fireEvent.change(screen.getByLabelText("Сколько упаковать КБ1"), { target: { value: "2" } });
+  fireEvent.change(screen.getByLabelText("Отгрузить до: проект П"), { target: { value: "2099-01-15" } });
+  fireEvent.change(screen.getByLabelText("№ УПД: проект П"), { target: { value: " РЭ-77 " } });
+  await waitFor(() => expect(screen.getByRole("button", { name: "Упаковать · 2 шт" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Упаковать · 2 шт" }));
+  await screen.findByText("Упаковано: П · PLП-1");
+  const [, init] = fetcher.mock.calls.find(([url]) => String(url).includes("project-ship"))!;
+  expect(JSON.parse(String(init!.body)).documents).toEqual({ upd_number: "РЭ-77", upd_date: null, deadline: "2099-01-15" });
 });

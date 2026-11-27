@@ -654,7 +654,7 @@ def get_pack_permissions(
 @router.post("/project-pack-permissions")
 def change_pack_permissions(
     payload: PackPermissionsPayload,
-    principal: Annotated[Principal, Depends(shipping_manager_principal)],
+    principal: Annotated[Principal, Depends(shipping_editor_principal)],
     now: Annotated[datetime, Depends(moscow_now)],
     uow_factory: Annotated[Callable[[], UnitOfWork], Depends(shipping_uow_factory)],
 ) -> dict:

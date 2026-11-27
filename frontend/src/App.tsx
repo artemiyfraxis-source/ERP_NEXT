@@ -27,6 +27,7 @@ import {
   runsTheSystem,
   sectionOfTab,
   ALIAS_VIEW,
+  ALIAS_PARAMS,
   visibleBlocks,
   visibleNav as visibleNavFor,
   type BlockId,
@@ -50,7 +51,6 @@ import { QualityPage } from "./QualityPage";
 import { RequestsPage } from "./RequestsPage";
 import { ReceivingPage } from "./ReceivingPage";
 import { WarehousePage } from "./WarehousePage";
-import { ShipmentDataPage } from "./ShipmentDataPage";
 import { ProductionIntakePage } from "./ProductionIntakePage";
 import { ReferencesPage } from "./ReferencesPage";
 import { NotificationsPage } from "./NotificationsPage";
@@ -88,6 +88,7 @@ function placeFromUrl(): Place {
     if (value === "labeldesigner") url.searchParams.set("printer", "labels");
     const view = value ? ALIAS_VIEW[value] : undefined;
     if (view) url.searchParams.set("view", view);
+    for (const [name, text] of Object.entries(value ? ALIAS_PARAMS[value] ?? {} : {})) url.searchParams.set(name, text);
     window.history.replaceState(window.history.state, "", url);
     value = moved;
   }
@@ -439,7 +440,6 @@ export function App() {
           canEditReferences={hasAccess(principal.permissions, "erpref", "edit")} finishedGoods={canSee(principal, "shipping") || canSee(principal, "shipping_goods")}
           equipment={canSee(principal, "warehouse")} />}
         {activeSection === "intake" && <ProductionIntakePage key={visit} principal={principal} />}
-        {activeSection === "shipdata" && <ShipmentDataPage principal={principal} />}
         {activeSection === "issues" && <FulfillmentPage principal={principal} mode="pick" />}
         {activeSection === "handout" && <FulfillmentPage principal={principal} mode="give" />}
         {activeSection === "prodplan" && <ProductionPlanPage principal={principal} openProjectCard={visibleNav.some(({ id }) => id === "projects") ? openProjectCard : undefined} />}

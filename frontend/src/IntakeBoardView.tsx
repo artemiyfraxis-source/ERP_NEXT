@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { COLUMNS, GROUPS, matchesFilter, NO_FILTER, PAGE_SIZE, type BoardCard, type BoardFilter, type CardAction, type ColumnId, type ProductionGroup } from "./intakeBoard";
-import { plural } from "./format";
+import { formatDayMonth, plural } from "./format";
 
 /* Доска «Приёмка с производства»: пять колонок по стадиям, поиск и чипы над ними. Карточка — проект или отправка;
    клик открывает окно, главная кнопка двигает дальше, «⋯» — остальное. Первые 20 карточек колонки, дальше «ещё N». */
@@ -57,6 +57,8 @@ function Card({ card, busy, onOpen, onAction, menu }: {
     <div className="board-card-delivery muted">{card.deliveryLine}</div>
     {(card.code || card.sequence) && <div className="board-card-code">{card.sequence && <span>{card.sequence}</span>}{card.code && <span className="board-card-pl">{card.code}</span>}</div>}
     {card.note && <div className="board-card-note muted">{card.note}</div>}
+    {card.forecast && <div className={`board-card-forecast${card.forecast.late ? " tone-danger" : " muted"}`}
+      title={card.forecast.late ? "По плану цеха проект будет готов позже срока" : "Прогноз цеха по «Загрузке»"}>прогноз готовности {formatDayMonth(card.forecast.ready)}{card.forecast.late ? " — позже срока" : ""}</div>}
     {card.blocker
       ? <div className="board-card-blocker" role="note"><span className="tone-warn">⚠ {card.blocker.text}</span><small className="muted"> — {card.blocker.who}</small></div>
       : card.okText ? <div className="board-card-ok tone-ok">✓ {card.okText}</div> : null}

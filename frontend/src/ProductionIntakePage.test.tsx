@@ -33,6 +33,7 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 let calls: Array<{ url: string; method: string; body: unknown }> = [];
 let intakeRows: unknown[] = ROWS;
 let shipments: unknown[] = [];
+let forecast: Record<string, unknown> = {};
 
 function stub() {
   calls = [];
@@ -44,13 +45,15 @@ function stub() {
     if (url.startsWith("/api/shipping/shipments?shipment=")) return json({ shipments: [] });
     if (url.startsWith("/api/shipping/item-addressees?")) return json({ items: [] });
     if (url === "/api/shipping/project-addressees") return json({ addressees: [] });
+    if (url === "/api/shipping/forecast") return json({ projects: forecast });
+    if (url.startsWith("/api/shipping/project-pack-permissions?")) return json({ project: "710К.2", permissions: [{ item_index: "КБ2", name: "Кабель", quantity: "0", consumed: "0", remaining: "0", physical_remaining: "10", version: 0 }] });
     if (url.endsWith("/head")) return json({ shipment: shipment({ version: 4, contact: "Петров" }) });
     if (url.endsWith("/issue-document")) return json({ shipment: shipment() });
     if (/\/shipments\/[^/]+\/ship$/.test(url)) return json({ shipment: shipment(), closed: false, why: "" });
     return json({});
   }));
 }
-beforeEach(() => { vi.useFakeTimers({ now: new Date(2026, 10, 9, 12), toFake: ["Date"] }); window.localStorage.clear(); forgetPersonalViews(); intakeRows = ROWS; shipments = []; setRightsPrincipal(null); stub(); });
+beforeEach(() => { vi.useFakeTimers({ now: new Date(2026, 10, 9, 12), toFake: ["Date"] }); window.localStorage.clear(); forgetPersonalViews(); intakeRows = ROWS; shipments = []; forecast = {}; setRightsPrincipal(null); stub(); });
 afterEach(() => { cleanup(); setRightsPrincipal(null); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); window.history.replaceState({}, "", "/"); });
 
 const column = (name: string) => screen.getByRole("region", { name });
@@ -116,8 +119,9 @@ describe("доска по стадиям", () => {
     expect(within(packed).getByRole("button", { name: "Внести УПД…" })).toBeInTheDocument();
     // Принято: нет разрешения упаковки — склад может упаковать лишь разрешённое, а разрешает менеджер.
     const noPermit = cardsIn("Принято").find((card) => card.textContent!.includes("710К.2"))!;
-    expect(noPermit.querySelector(".board-card-blocker")!.textContent).toBe("⚠ КБ2: нет разрешения упаковки — даёт менеджер (раздел «Отгрузка»)");
-    expect(within(noPermit).queryByRole("button", { name: /Разрешить упаковку/ })).toBeNull();
+    expect(noPermit.querySelector(".board-card-blocker")!.textContent).toBe("⚠ КБ2: нет разрешения упаковки — даёт менеджер или склад");
+    // Разрешение упаковки даёт и склад (владелец 27.11).
+    expect(within(noPermit).getByRole("button", { name: "Разрешить упаковку…" })).toBeInTheDocument();
     const assembled = cardsIn("Принято").find((card) => card.textContent!.includes("690К.1"))!;
     expect(assembled.querySelector(".board-card-blocker")!.textContent).toContain("нет: PL — не сформирован");
   });
@@ -347,5 +351,66 @@ describe("доска по стадиям", () => {
     fireEvent.keyDown(document.activeElement!, { key: "Escape" });
     expect(within(card).queryByRole("menu")).toBeNull();
     expect(button).toHaveFocus();
+  });
+
+  it("«Производство»: строка прогноза готовности по плану цеха, красная, если позже срока", async () => {
+    forecast = { "591К.3": { ready: "2026-11-10", status: "успевает", slack_days: 2 }, "600К.1": { ready: "2026-12-30", status: "не успевает", slack_days: -5 } };
+    await load();
+    const production = cardsIn("Производство");
+    const early = production.find((card) => card.textContent!.includes("591К.3"))!;
+    expect(early.querySelector(".board-card-forecast")!.textContent).toBe("прогноз готовности 10.11");
+    expect(early.querySelector(".board-card-forecast")).not.toHaveClass("tone-danger");
+    expect(cardsIn("Принято").some((card) => card.querySelector(".board-card-forecast"))).toBe(false);
+    // Позже срока проекта (12.11) — красным и словами.
+    cleanup();
+    forecast = { "591К.3": { ready: "2026-11-20", status: "не успевает", slack_days: -8 } };
+    await load();
+    const late = cardsIn("Производство").find((card) => card.textContent!.includes("591К.3"))!.querySelector(".board-card-forecast")!;
+    expect(late.textContent).toBe("прогноз готовности 20.11 — позже срока");
+    expect(late).toHaveClass("tone-danger");
+  });
+
+  it("кладовщик разрешает упаковку: «Разрешить упаковку…» в «Принято» открывает окно с правкой", async () => {
+    await load(warehouse);
+    const noPermit = cardsIn("Принято").find((card) => card.textContent!.includes("710К.2"))!;
+    fireEvent.click(within(noPermit).getByRole("button", { name: "Разрешить упаковку…" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "Разрешения упаковки 710К.2" }));
+    expect(await dialog.findByLabelText("Разрешить ещё КБ2")).toBeEnabled();
+  });
+
+  it("«⋯ Данные доставки проекта…» есть на карточках «Производства» и «Принято» и открывает карточку проекта", async () => {
+    await load(warehouse);
+    for (const name of ["Производство", "Принято"]) {
+      const card = cardsIn(name)[0];
+      fireEvent.click(within(card).getByRole("button", { name: /^Ещё действия/ }));
+      expect(within(card).getByRole("menuitem", { name: "Данные доставки проекта…" })).toBeInTheDocument();
+      fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    }
+  });
+
+  it("«Все позиции (Excel)»: одна таблица КБ и отправок без «ОТГ», фильтр «Только с пробелами»", async () => {
+    shipments = SHIPMENTS();
+    await load(manager);
+    expect(screen.queryByRole("link", { name: /Данные отправок/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Все позиции (Excel)" }));
+    const dialog = within(await screen.findByRole("dialog", { name: "Все позиции" }));
+    expect(await dialog.findByRole("button", { name: "Открыть 828К. КБ3" })).toBeInTheDocument();
+    expect(dialog.getAllByRole("button", { name: "Открыть 591К.3 КБ1" }).length).toBeGreaterThan(0);
+    expect(dialog.getAllByRole("table")).toHaveLength(1);
+    expect(dialog.getByText("PL711К.3-1")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/ОТГ-\d/);
+    expect(dialog.getByRole("button", { name: /Excel/ })).toBeInTheDocument();
+    fireEvent.click(dialog.getByRole("checkbox", { name: "Только с пробелами" }));
+    expect(dialog.queryByRole("button", { name: "Открыть 711К.3 КБ1" })).toBeNull();
+    expect(dialog.getByRole("button", { name: "Открыть 828К. КБ3" })).toBeInTheDocument();
+  });
+
+  it("?filter=gaps (старая ссылка «Данные отправок») включает чип «Только с пробелами»", async () => {
+    window.history.replaceState({}, "", "/?section=intake&filter=gaps");
+    shipments = SHIPMENTS();
+    await load(manager);
+    expect(screen.getByRole("button", { name: "Только с пробелами" })).toHaveAttribute("aria-pressed", "true");
+    expect(cardsIn("Упаковано")).toHaveLength(1);
+    expect(cardsIn("На отгрузку")).toHaveLength(0);
   });
 });

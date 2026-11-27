@@ -2,12 +2,14 @@
 
 from datetime import datetime
 from decimal import Decimal
+from uuid import UUID
 
 import pytest
 
 from app.modules.shipping.domain import MoveContext, PackPermission, ShippingValidationError
 from app.main import app
-from app.shared.http_auth import authenticated_principal
+from app.shared.http_auth import Principal, authenticated_principal
+from tests.factories import Actor
 from tests.shipping.test_api import shipping_api  # noqa: F401
 from tests.shipping.test_pack_decision_no_upd import _good, STOREKEEPER, PROJECT
 from tests.identity.test_view_as import view_api, _login, _view, _csrf, ADMIN2_ID  # noqa: F401
@@ -35,6 +37,11 @@ def test_reduction_cannot_erase_consumed_quantity():
     with pytest.raises(ShippingValidationError, match="ниже уже упакованного"):
         PackPermission("100К.1", "КБ1", Decimal("12"), 1).change(Decimal("6"), Decimal("7"), "Менеджер", NOW)
 
+
+NO_SHIPPING = Principal(
+    actor=Actor(id=UUID("10000000-0000-0000-0000-000000000007"), name="Сборщик", department="Цех"),
+    email="fitter@example.test", roles=frozenset({"fitter"}), permissions={"warehouse": "edit"},
+)
 
 def grant(client, quantity="4", version=0, item_index="КБ1"):
     return client.post("/api/shipping/project-pack-permissions", json={
@@ -237,7 +244,7 @@ def test_manager_project_ship_grants_and_storekeeper_project_ship_does_not(shipp
     assert (view["quantity"], view["remaining"], view["version"]) == ("3", "0", 1)
 
 
-def test_only_manager_can_grant_and_batch_is_all_or_nothing(shipping_api):
+def test_manager_and_storekeeper_can_grant_others_cannot_and_batch_is_all_or_nothing(shipping_api):
     client = shipping_api
     _good(client)
     response = client.post("/api/shipping/project-pack-permissions", json={
@@ -248,8 +255,12 @@ def test_only_manager_can_grant_and_batch_is_all_or_nothing(shipping_api):
     })
     assert response.status_code == 422
     assert client.get("/api/shipping/project-pack-permissions", params={"project": PROJECT}).json()["permissions"][0]["version"] == 0
-    app.dependency_overrides[authenticated_principal] = lambda: STOREKEEPER
+    app.dependency_overrides[authenticated_principal] = lambda: NO_SHIPPING
     assert grant(client).status_code == 403
+    app.dependency_overrides[authenticated_principal] = lambda: STOREKEEPER
+    allowed = grant(client)
+    assert allowed.status_code == 200, allowed.text
+    assert allowed.json()["permissions"][0]["quantity"] == "4"
 
 
 def test_cancel_releases_capacity_but_does_not_change_ceiling(shipping_api):

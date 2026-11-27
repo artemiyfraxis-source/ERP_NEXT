@@ -46,6 +46,7 @@ function PackForm({ project, candidates, rights, busy, mutate, reload }: { proje
   const [qty, setQty] = useState<Record<string, string>>({});
   const [marked, setMarked] = useState<Record<string, boolean>>({});
   const [deadline, setDeadline] = useState("");
+  const [updNumber, setUpdNumber] = useState("");
   const [problem, setProblem] = useState("");
   const [addresseeVersion, setAddresseeVersion] = useState<number | null>(null);
   const [destinations, setDestinations] = useState<ItemAddressee[]>([]);
@@ -81,7 +82,8 @@ function PackForm({ project, candidates, rights, busy, mutate, reload }: { proje
       let result;
       try { result = await shippingApi.projectShip({
         project, addressee_version: addresseeVersion ?? 0, lines, ship: false,
-        ...(rights.canManage ? { documents: { upd_number: "", upd_date: null, deadline: deadline || null } } : {}),
+        // Срок и № УПД вносит и менеджер, и склад (владелец 27.11): PL выдаётся сразу обоим.
+        ...(rights.canEdit ? { documents: { upd_number: updNumber.trim(), upd_date: null, deadline: deadline || null } } : {}),
       }, packKey.current); } catch (reason) {
         if (reason instanceof ApiError && [409, 422].includes(reason.status)) {
           setProblem("Проверьте обновлённые остатки, разрешения и доставку; ваш ввод сохранён.");
@@ -93,11 +95,11 @@ function PackForm({ project, candidates, rights, busy, mutate, reload }: { proje
         throw reason;
       }
       packKey.current = crypto.randomUUID();
-      setMarked({}); setQty({});
+      setMarked({}); setQty({}); setUpdNumber("");
       return result;
     }, (outcome) => {
       const { shipment } = outcome as { shipment: Shipment };
-      return `Упаковано: ${shipment.number}${shipment.pl_number ? ` · ${shipment.pl_number}` : ""}`;
+      return `Упаковано: ${[project, shipment.pl_number].filter(Boolean).join(" · ")}`;
     });
   };
 
@@ -141,7 +143,8 @@ function PackForm({ project, candidates, rights, busy, mutate, reload }: { proje
           })}</tbody>
         </table></div>
         {rights.canEdit && <div className="intake-window-actions">
-          {rights.canManage && <label className="ship-inline">Отгрузить до<input aria-label={`Отгрузить до: проект ${project}`} type="date" min={isoDay(new Date())} value={deadline} onChange={(event) => setDeadline(event.target.value)} /></label>}
+          <label className="ship-inline">Отгрузить до<input aria-label={`Отгрузить до: проект ${project}`} type="date" min={isoDay(new Date())} value={deadline} onChange={(event) => setDeadline(event.target.value)} /></label>
+          <label className="ship-inline">№ УПД<input aria-label={`№ УПД: проект ${project}`} type="text" maxLength={255} value={updNumber} onChange={(event) => setUpdNumber(event.target.value)} /></label>
           {problem && <span className="tone-danger" role="alert">{problem}</span>}
           <button type="button" className="secondary" disabled={Boolean(busy) || refreshingDelivery} onClick={() => setDeliveryReload((value) => value + 1)}>
             {refreshingDelivery ? "Обновляем доставку…" : "Обновить доставку КБ"}</button>

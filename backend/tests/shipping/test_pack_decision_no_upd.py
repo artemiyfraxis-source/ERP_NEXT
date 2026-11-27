@@ -215,16 +215,15 @@ def _permission_notifications():
                 if row.idempotency_key.startswith("notify:shipping:pack-permissions:")]
 
 
-def test_storekeeper_packs_only_after_the_managers_decision(shipping_api):
+def test_storekeeper_packs_only_after_a_decision_and_can_give_it_himself(shipping_api):
     client = shipping_api
     stocked = _good(client)
     lines = [{"good_id": stocked["id"], "quantity": "2"}]
     _as(STOREKEEPER)
     refused = client.post("/api/shipping/project-pack", json={"project": PROJECT, "lines": lines})
-    not_his = _decision(client, True, 0)
-    intake_before = client.get("/api/shipping/project-addressee", params={"project": PROJECT}).json()["addressee"]
-    _as(ADMIN)
+    # Разрешение упаковки даёт и склад («Отгрузка — склад» на правку, владелец 27.11).
     decided = _decision(client, True, 0)
+    _as(ADMIN)
     repeated = _decision(client, True, 1)
     stale = _decision(client, False, 0)
     _as(STOREKEEPER)
@@ -233,11 +232,9 @@ def test_storekeeper_packs_only_after_the_managers_decision(shipping_api):
     locked = _decision(client, False, decided.json()["permissions"][0]["version"])
 
     assert refused.status_code == 422 and "разреш" in refused.json()["detail"]
-    assert not_his.status_code == 403
-    assert (intake_before["pack_decided"], intake_before["pack_decided_by"], intake_before["pack_decided_at"]) == (False, "", None)
     assert decided.status_code == 200
     permission = decided.json()["permissions"][0]
-    assert (permission["quantity"], permission["updated_by"], permission["version"]) == ("6", "Администратор", 1)
+    assert (permission["quantity"], permission["updated_by"], permission["version"]) == ("6", "Алексей", 1)
     assert permission["updated_at"].startswith("2026-09-22")
     assert repeated.status_code == 200 and repeated.json()["permissions"][0]["version"] == 1
     notices = _permission_notifications()
