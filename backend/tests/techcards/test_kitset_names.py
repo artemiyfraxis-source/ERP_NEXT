@@ -306,7 +306,7 @@ def test_load_from_calculation_enqueues_the_project(sessions):
     from uuid import UUID
 
     queue = KitsetNameQueue(sessions)
-    data = CalcKitset(project="708К.4", customer="ООО", calc_source="calc", assemblies=_kitset().assemblies)
+    data = CalcKitset(project="708К.4", customer="ООО Вионет", calc_source="calc", assemblies=_kitset().assemblies)
     actor = Actor(id=UUID("40000000-0000-0000-0000-000000000001"), name="Технолог", department="Производство")
     result = flow.load_kitset(
         flow.LoadKitsetCommand(data=data, number="", deadline=None, ship={}, actor=actor, now=NOW),

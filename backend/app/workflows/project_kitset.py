@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
@@ -150,6 +151,7 @@ from app.modules.techcards.kitsets import (
     is_printer_label_tape,
     item_id,
     project_key,
+    customer_is_placeholder,
     project_number_valid,
     supply_lines,
     write_from_calc,
@@ -373,8 +375,19 @@ def load_kitset(
                 f"Неверный № проекта «{number}» — нужны цифры и кириллическая «К», например 720К.1.2"
             )
         data = replace(data, project=number)
+    if not project_number_valid(data.project):
+        shown = str(data.project or "").strip()
+        if not re.search(r"\d", shown):
+            raise KitsetValidationError("В расчёте не заполнен № проекта (ЗКЗ!B2) — впишите № в поле „№ проекта“")
+        raise KitsetValidationError(
+            f"№ проекта в расчёте (ЗКЗ!B2) «{shown}» не подходит — впишите правильный № в поле „№ проекта“"
+        )
     with techcards_uow() as uow:
         current = uow.kitsets.get(data.project)
+        if customer_is_placeholder(data.customer):
+            if current is None or customer_is_placeholder(current.customer):
+                raise KitsetValidationError("Не заполнен заказчик (ЗКЗ!B3) — заполните его в расчёте")
+            data = replace(data, customer=current.customer)
         if current is not None:
             if not number and current.calc_source.strip():
                 current_id = drive_file_id(current.calc_source)

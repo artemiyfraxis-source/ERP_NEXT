@@ -20,5 +20,13 @@ metadata:
   each `SOURCE.json` keeps its frozen `sourceCommit` (nothing reads `../SUPPLYMAP`); the drift hook is not wired.
   History of the old drift checks: `docs/audit/codex-port.md`.
 
+- Known local-only red (20.11.2026): `tests/test_safe_logging.py::test_uvicorn_requests_do_not_persist_public_signature`
+  fails with `UnicodeDecodeError ... byte 0xc0` when pytest runs from Git Bash (as `npm run check` does): the uvicorn
+  traceback in the log holds the Cyrillic path in cp1251. Proven pre-existing on a pre-slice checkout; passes from
+  PowerShell and on Linux CI. Not a slice failure — cite this note plus green CI `check`, don't debug it again.
+
 **Why:** exit 1 with green tests wastes a debugging round. **How to apply:** check conftest first, then run the
 stages one by one. Hub: [[erp-next-hub]].
+
+- 26.11: `npx tsc --noEmit -p .` in `frontend/` checks NOTHING (tsconfig.json only has project references) and prints
+  nothing — a false «clean». Type-check with `npx tsc --noEmit -p tsconfig.app.json` (the CI `check` runs the build).

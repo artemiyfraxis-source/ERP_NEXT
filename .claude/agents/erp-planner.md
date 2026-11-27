@@ -2,7 +2,7 @@
 name: erp-planner
 description: Read-only planner for ERP_NEXT. Turns one owner request into a short plan of independent tasks (zone, model, migration flag, acceptance check) that the orchestrating main session hands to erp-worker agents. Use at the start of any request that touches 3+ files, several modules, or a migration. Never edits.
 tools: Read, Grep, Glob, Bash
-model: opus
+model: sonnet
 effort: high
 color: purple
 ---

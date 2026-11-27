@@ -59,10 +59,31 @@
 - [Owner docs](owner-cant-open-artifacts.md) — Repo Markdown and GitHub links
 - [Peer requests](vitya-requests-verify.md) — Verify code and usage before implementing
 - [ГОСТ 72182](gost-72182-series.md) — Series map, local files, pending prod checks
-- [FAKRA 708К.](fakra-708k.md) — Parts and specs; tooling and calc questions
+- [FAKRA 708К.](fakra-708k.md) — 6 drawing groups; 16.11 generator flow; open items
+- [708К. no VSWR](708k-no-vswr.md) — No VNA adapters; ETK «не проверять»
 - [Receiving](receiving-now-vs-later.md) — Warehouse intake now; «Приёмка» later
 - [DB storage](db-tab-is-own-table.md) — Each tab owns its table and columns
 - [Scan on any PC](scanner-any-pc.md) — Route through browser PC's agent
 - [Stage warnings](flexible-stages-while-testing.md) — Stage/КБ quantities warn while testing
 - [Warehouse shipping](shipping-warehouse-sees-all.md) — Inline edits; group shipments; auto-close
 - [Copied calc №](calc-copy-wrong-number.md) — Explicit number; rename; NOT VALID checks
+- [VNA kit](vna-measurement-setup.md) — S50180, АКМ, cables, СИ numbers, S2VNA COM
+- [Serial & grouped tasks](factory-serial-and-grouped-tasks.md) — FRX serial label; one task per similar КБ
+- [BZW control](bzw-machine-control.md) — Own control of BZW PLC machines; read-only probe first
+- [ОБ.019 ERP HMI](ob019-erp-hmi-idea.md) — Idea only; Modbus D32 write proven 18.11
+- [СИ applicability](si-applicability-limit.md) — 1.30 was never the owner's; only item norms
+- [СИ concessions](si-owner-concessions.md) — Owner: СИ.034 fit to 12 GHz; record per item
+- [Shrink default КВТ](shrink-default-kvt.md) — ETK tube without maker → КВТ same type/size
+- [Owner time](owner-time-berlin.md) — Berlin time only, never MSK
+- [Equipment names](equipment-naming.md) — Research article; no seller ranges, no shop slang
+- [ERP devbox](erp-devbox.md) — SSH alias, ~/erp clone, own stand, dev-help
+- [One value per column](one-value-per-column.md) — Row per position with action; no stacked cells, no expanders
+- [Queue every request](owner-tasks-into-queue.md) — Plan-file asks and leftovers go to TASKS at once
+- [Print progress](check-print-progress-myself.md) — SSH to the PC queue; don't ask
+- [Unique scratch files](agent-unique-scratch-files.md) — Per-PR body files; shared pr-body.md cross-posts
+- [PR body edits](pr-body-edit-bash.md) — Bash/Python only; PowerShell flattens to one line
+- [Night coordinator](night-coordinator.md) — Keep sessions loaded; audit all items
+- [Marking cover](marking-cover-rule.md) — Clear cover = label + 10 мм; tubes cut on machine
+- [Session board](multi-session-board.md) — Brain board; one coordinator releases
+- [SSH, not owner](use-ssh-dont-ask-owner.md) — Shop PC software steps myself; ask only physical/product
+- [Stock first](stock-first-then-issue.md) — Tools enter stock, then issued; OLD GRN kept
