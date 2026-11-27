@@ -51,6 +51,8 @@ def calc_project_number(cell: object, title: object) -> str:
     value = re.sub(r"\s+", "", str(cell or "").strip())
     head = (str(title or "").strip().split() or [""])[0]
     base = value.rstrip(".") if value.endswith(".") else value
+    if not re.search(r"\d", value) and project_number_valid(head):
+        return head  # шаблон не заполнен («К.»): номер берём из имени файла
     if base and project_number_valid(head) and head.startswith(base) and len(head.rstrip(".")) > len(base):
         return head
     return value

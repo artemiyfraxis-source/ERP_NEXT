@@ -80,6 +80,14 @@ def project_number_valid(value: object) -> bool:
     return bool(_PROJECT_RE.match(re.sub(r"\s+", "", str(value or "").strip().upper())))
 
 
+_LEGAL_FORM_ONLY = re.compile(r"^(?:ООО|ОАО|ЗАО|ПАО|АО|ИП|НПО|НПП|НПК|ТОО|ФГУП|МУП|ГУП)?[\s\"'«»“”„.,-]*$", re.IGNORECASE)
+
+
+def customer_is_placeholder(value: object) -> bool:
+    """Пустой заказчик или одна форма собственности с пробелами/кавычками («ООО "», «АО «»», «ИП»)."""
+    return bool(_LEGAL_FORM_ONLY.match(str(value or "").strip()))
+
+
 def project_key(value: object) -> str:
     """`projNoNorm_`: spaces out, upper case, Latin homoglyphs → Cyrillic, «2000К» ≡ «2000К.1»."""
     normalized = re.sub(r"\s+", "", str(value or "").strip().upper()).translate(_HOMOGLYPHS)
