@@ -151,6 +151,24 @@ Describe 'Управление ВАЦ: типовые команды и COM' {
         $command = New-ControlEnvelope; $status = New-ControlStatus $command; $status.commands[0].status = 'cancelled'
         { Assert-VnaLease $command $status } | Should Throw 'не владеет'
     }
+    It 'линия КСВН — только на графиках отражения, массивом double; на S21/S12 линия скрыта и не переписана (27.11)' {
+        $operatorTable = @(12, 2, 5e8, 1.95e9, -0.02, -0.04)
+        foreach ($trace in 1..4) { $script:ioValues["CALCulate(1).trace$trace.LIMit.DATA"] = $operatorTable }
+        [void](Invoke-ControlTest prepare)
+        { Invoke-ControlTest apply_profile @{ profile = $script:profile } } | Should Not Throw
+        $byParameter = @{}
+        foreach ($trace in 1..4) { $byParameter[[string]$script:ioValues["CALCulate(1).PARameter($trace).DEFine"]] = $trace }
+        foreach ($parameter in 'S11','S22') {
+            $data = $script:ioValues["CALCulate(1).trace$($byParameter[$parameter]).LIMit.DATA"]
+            ($data -is [double[]]) | Should Be $true
+            $data[4] | Should Be $script:profile.vswr_limit
+            $script:ioValues["CALCulate(1).trace$($byParameter[$parameter]).LIMit.DISPlay.STATe"] | Should Be $true
+        }
+        foreach ($parameter in 'S21','S12') {
+            $script:ioValues["CALCulate(1).trace$($byParameter[$parameter]).LIMit.DATA"][0] | Should Be 12
+            $script:ioValues["CALCulate(1).trace$($byParameter[$parameter]).LIMit.DISPlay.STATe"] | Should Be $false
+        }
+    }
     It 'профиль применяется на S2VNA без наклона мощности по портам (СИ.002, 26.11)' {
         # PORT(n).LEVel has only IMMediate there: the slope parent reads as null; writing STATe threw before 2.12.2.
         $script:ioValues['SOURce(1).POWer.PORT(1).LEVel.SLOPe'] = $null; $script:ioValues['SOURce(1).POWer.PORT(2).LEVel.SLOPe'] = $null
