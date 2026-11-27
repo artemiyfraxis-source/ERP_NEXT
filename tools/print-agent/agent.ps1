@@ -3029,6 +3029,7 @@ function Assert-S2BenchReady {
     $writes = Get-S2ProfileWrites $Owner.profile
     $writes.Remove('CALCulate(1).PARameter(1).COUNt')
     foreach ($path in @($writes.Keys)) {
+        if ($path -like '*.LEVel.SLOPe.STATe' -and -not (Test-S2Slope $Scpi $path)) { continue }   # 2.12.2: no per-port slope
         $actual = Invoke-S2Io $Scpi $path
         $same = $true
         try { Assert-VnaEqual $actual $writes[$path] $path } catch { $same = $false }
