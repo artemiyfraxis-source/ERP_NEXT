@@ -235,6 +235,8 @@ export type CoaxMark = { text: string; place: "A" | "B" | "middle"; minMm: numbe
 /** Protective clear tubing over tape labels, mm (owner 17.11.2026). Not printed marking tubes. Used when the label length
  *  is unknown (cards built before the label profile); a known label gets label + COAX_COVER_EXTRA_MM. */
 export const COAX_PROTECTIVE_TUT_LENGTHS = { A: 35, B: 35, middle: 55 } as const;
+/** Clear (protective) heat-shrink tube in a kit line: «прозрачная», «бесцветная», «clear», «transparent». */
+export const CLEAR_TUBE_RE = /прозр|бесцветн|clear|transparent/i;
 /** Clear cover over a printed label or tube = printed length + 10 мм (owner 20.11, marking-cover-rule). */
 export const COAX_COVER_EXTRA_MM = 10;
 /** Printed marking tube piece of the factory number when the technologist did not set one, мм. */
@@ -323,7 +325,7 @@ export function coaxMarksFromName(name: string, project = ""): CoaxMark[] {
 export function coaxMarkDefaults<T extends { type?: string; art?: string; name?: string; unit?: string; qty?: number | string }>(components: T[]) {
   const text = (c: typeof components[number]) => `${c.type || ""} ${c.name || ""} ${c.art || ""}`;
   const tape = components.find((c) => /лент/i.test(text(c)) && /vell|vl-s641|этикет|маркиров/i.test(text(c)));
-  const protect = sumCoaxMaterial(components, components.find((c) => /тут|термоусад/i.test(text(c)) && /прозр|clear/i.test(text(c))));
+  const protect = sumCoaxMaterial(components, components.find((c) => /тут|термоусад/i.test(text(c)) && CLEAR_TUBE_RE.test(text(c))));
   const candidates = components.filter((c) => /маркер/i.test(text(c)) || /\b151437\b|\b151986\b/.test(c.art || "")).flatMap((c) => {
     const known = /\b151437\b/.test(c.art || "") ? "OG" : /\b151986\b/.test(c.art || "") ? "PK" : "";
     const found = COAX_COLORS.filter(({ match, code }) => code === known || match.test(text(c)));

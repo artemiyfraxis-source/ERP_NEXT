@@ -81,6 +81,8 @@ it("binds finished/cut length, strip, marking and colour controls to the generat
   expect(screen.getByLabelText("L по КД, мм")).toHaveValue("4800");
   expect(screen.getByLabelText("Запас А, мм")).toHaveValue("30");
   expect(screen.getByLabelText("Запас В, мм")).toHaveValue("25");
+  // Заводской номер (владелец 27.11) — только у обычного коакса: у FAKRA/HFM свои метки, переключателя нет.
+  expect(screen.queryByRole("switch", { name: /Заводской номер на изделии/ })).toBeNull();
   expect(screen.getByRole("status")).toHaveTextContent(/Длина резки = L \+ А \+ В = 4\s?855 мм/);
   change("Запас А, мм", "31,5");
   expect(latest().coax.cableLength).toBe(4856.5);

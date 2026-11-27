@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { coaxSerialPatch, initState, makeGen, withCoaxVswrFromConfig, type GenData, type GenState } from "./tcGenLogic";
-import { coaxCoverLengths, coaxSerialKb, coaxSerialProductFromName, coaxSerialText } from "./tcGenMarks";
+import { coaxCoverLengths, coaxMarkDefaults, coaxSerialKb, coaxSerialProductFromName, coaxSerialText } from "./tcGenMarks";
+import fixture from "./__fixtures__/coaxSerialConfigs.json";
 
 // 831К. КБ1 (27.11): SMA/RG58 without FAKRA parts, black end TUT in the kit; the clear cover TUT is added for the labels.
 const components = [
@@ -121,11 +122,24 @@ describe("операции ЭТК обычного коакса с заводс�
     const order = ops.map((op) => op.opKey);
     expect(ops.find((op) => op.opKey === "coaxPrintLabel")).toMatchObject({ tmplHint: "PRINT_MARK_TUBE", markMaterial: "tube", printedTube: true,
       label: "Печать маркировочной трубки заводского номера" });
-    expect(order.indexOf("coaxInsMarkTube")).toBeLessThan(order.indexOf("coaxHousingA"));
+    // Трубку с номером надеть и усадить, затем надвинуть на неё прозрачную ТУТ — всё до корпусов; прозрачная усаживается
+    // своей операцией в конце.
+    expect(order).toEqual(["coaxCutStrip", "coaxPrintLabel", "coaxProtectCut", "coaxCutTut", "coaxPinA", "coaxPinB", "coaxInsMarkTube",
+      "coaxHeatMarkTube", "coaxProtectIns", "coaxInsTut", "coaxInsSleeve", "coaxHousingA", "coaxHousingB", "coaxShield", "coaxHeatTut",
+      "coaxHeat", "coaxVswr"]);
+    expect(coaxCoverLengths(25)).toEqual({ A: 35, B: 35, middle: 35 });
+    const at = (key: string) => order.indexOf(key);
+    expect(at("coaxInsMarkTube")).toBeGreaterThan(-1);
+    expect(at("coaxInsMarkTube")).toBeLessThan(at("coaxHeatMarkTube"));
+    expect(at("coaxHeatMarkTube")).toBeLessThan(at("coaxProtectIns"));
+    expect(at("coaxProtectIns")).toBeLessThan(at("coaxHousingA"));
+    expect(at("coaxHeat")).toBeGreaterThan(at("coaxShield"));
     expect(order).not.toContain("coaxInsLabel");
-    expect(ops.find((op) => op.opKey === "coaxHeat")).toMatchObject({ protective: true, label: "Усадка маркировочной и прозрачной ТУТ" });
+    expect(ops.find((op) => op.opKey === "coaxProtectIns")).toMatchObject({ protective: true, label: "Надвинуть прозрачную ТУТ на маркировочную трубку" });
+    expect(ops.find((op) => op.opKey === "coaxHeatMarkTube")).toMatchObject({ printedTube: true, label: "Усадка маркировочной трубки" });
+    expect(ops.find((op) => op.opKey === "coaxHeat")).toMatchObject({ protective: true, label: "Усадка прозрачной ТУТ на маркировочной трубке" });
     const config = cfg(S);
-    expect(config.coax).toMatchObject({ tutLengths: { middle: 35 }, coverPrintedMm: 25,
+    expect(config.coax).toMatchObject({ tutLengths: { A: 35, B: 35, middle: 35 }, coverPrintedMm: 25,
       serial: { carrier: "tube", tubeLengthMm: 25 } });
     expect(config.coax).not.toHaveProperty("labelProfile");
     // Без прозрачной ТУТ трубка усаживается своей операцией.
@@ -139,6 +153,46 @@ describe("операции ЭТК обычного коакса с заводс�
     const S0 = initState(bare);
     const S = withCoax(S0, coaxSerialPatch(bare, S0.coax, true));
     expect(makeGen(bare, S).validate().error).toMatch(/нет прозрачной ТУТ для защиты этикеток/);
+    const tube = withCoax(S, { markMaterial: "tube" });
+    expect(makeGen(bare, tube).validate().error).toBe(
+      "В составе нет прозрачной ТУТ для защиты маркировочной трубки — добавьте её в состав или выключите «Прозрачная ТУТ поверх».");
+  });
+
+  it("шаблон строится по текущему обозначению: КБ1 → КБ2 после перенумерации, своё обозначение — как набрано", () => {
+    const S = serialOn();
+    const renumbered: GenData = { ...D, itemIndex: "КБ2", assemblyInfo: { ...D.assemblyInfo, "Индекс": "КБ2" } };
+    const config = makeGen(renumbered, S).buildConfig() as Record<string, any>;
+    expect(config.coax.serial).toMatchObject({ template: "FRX.831К.КБ2.{№}", designation: "КБ2", productKind: "kb" });
+    expect(config.ops.find((op: any) => op.opKey === "coaxPrintLabel").marks[0].text).toBe("FRX.831К.КБ2.{№}");
+    for (const own of ["34.226", "120907/AA"]) {
+      const custom = withCoax(S, { serialProduct: own });
+      const cfgOwn = makeGen(renumbered, custom).buildConfig() as Record<string, any>;
+      expect(cfgOwn.coax.serial).toMatchObject({ template: `FRX.831К.${own}.{№}`, designation: own, productKind: "custom" });
+      expect(cfgOwn.ops.find((op: any) => op.opKey === "coaxPrintLabel").marks[0].text).toBe(`FRX.831К.${own}.{№}`);
+    }
+  });
+
+  it("с номером прежние операции карты сохраняют имя карты, своё название — только у добавленных", () => {
+    const labelled = Object.fromEntries((cfg(serialOn({ labelProfile: profile })).ops as any[]).map((op) => [op.opKey, op.label]));
+    for (const key of ["coaxCutStrip", "coaxCutTut", "coaxPinA", "coaxInsTut", "coaxInsSleeve", "coaxHousingA", "coaxShield", "coaxHeatTut", "coaxVswr"])
+      expect(labelled[key], key).toBeUndefined();
+    expect(labelled).toMatchObject({ coaxPrintLabel: "Печать этикетки заводского номера", coaxProtectCut: "Резка прозрачной ТУТ",
+      coaxInsLabel: "Наклейка этикеток маркировки", coaxHeat: "Усадка прозрачной ТУТ на этикетках" });
+  });
+
+  it("конфиг генератора совпадает с фикстурой, по которой собирает ЭТК тест бэкенда", () => {
+    expect(cfg(serialOn({ labelProfile: profile, vswrPassport: true }))).toEqual(fixture.tape);
+    expect(cfg(serialOn({ markMaterial: "tube", markTubeLen: "25" }))).toEqual(fixture.tube);
+  });
+
+  it("прозрачная ТУТ в составе: «прозрачная», «бесцветная», «clear», «transparent» в любом регистре", () => {
+    for (const name of ["ТУТ 6/3 ПРОЗРАЧНАЯ", "ТУТ 6/3мм, бесцветная", "Heat shrink 6/3 Clear", "Heat shrink 6/3 TRANSPARENT"])
+      expect(coaxMarkDefaults([{ type: "ТУТ", name, art: name }]).protect?.name, name).toBe(name);
+    expect(coaxMarkDefaults([{ type: "ТУТ", name: "ТУТ 6/3 чёрная", art: "x" }]).protect).toBeUndefined();
+    const colourless: GenData = { ...D, components: components.map((item) => item.id === "c" ? { ...item, name: "ТУТ 6/3 бесцветная", art: "ТУТ 6/3 бесцветная" } : item) };
+    const S0 = initState(colourless);
+    const ops = makeGen(colourless, withCoax(S0, coaxSerialPatch(colourless, S0.coax, true))).getActiveOps();
+    expect(ops.find((op) => op.opKey === "coaxCutTut")?.shrinkMaterials).toEqual([{ art: "ТУТ 6/3 чёрная", name: "ТУТ 6/3 чёрная" }]);
   });
 
   it("без номера обычный коакс собирается как раньше", () => {

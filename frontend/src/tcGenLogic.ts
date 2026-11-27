@@ -8,7 +8,7 @@
  * `POST /api/techcards/projects/{id}/build` (etk_builder.py читает ровно эти ключи).
  */
 import { matchCableRec } from "./cableMatch";
-import { COAX_PROTECTIVE_TUT_LENGTHS, COAX_SERIAL_TUBE_MM, coaxCoverLengths, coaxSerialProduct, coaxSerialProductFromName, coaxSerialText, type CoaxLabelProfile, coaxMarkDefaults, coaxMarksFromName, sumCoaxMaterial, type CoaxMark, type ConnColor, markIsTube, markLabel, markSpecs, markTubeShrinks, markTubeSplit, type MarkMat, type MarkRow, type MarkSpec, type MarkTube } from "./tcGenMarks";
+import { COAX_PROTECTIVE_TUT_LENGTHS, COAX_SERIAL_TUBE_MM, CLEAR_TUBE_RE, coaxCoverLengths, coaxSerialProduct, coaxSerialProductFromName, coaxSerialText, type CoaxLabelProfile, coaxMarkDefaults, coaxMarksFromName, sumCoaxMaterial, type CoaxMark, type ConnColor, markIsTube, markLabel, markSpecs, markTubeShrinks, markTubeSplit, type MarkMat, type MarkRow, type MarkSpec, type MarkTube } from "./tcGenMarks";
 import { laserMarkOf, laserPrintedKey, markMediaOf, pickCoverTube, pickWireMarkTube, savedWireMarks, tubeBeforeShrink, WIRE_MARK_DIST_MM, WIRE_MARK_LEN_MM, wireMarkCoverLen, wireMarkCoverOn, wireMarkKey, wireMarkKindOf, wireMarkRow, wireMarkTexts, wireMarkTubeBySize, type LaserMark, type MarkMedia, type WireMarkCfg, type WireMarkRow, type WireMarkSkip } from "./tcGenWireMarks";
 import { twistGroupProblems, twistGroupsOf, type TwistRow } from "./twistGroups";
 import { pickTerminals, type TerminalPairs } from "./terminalPick";
@@ -454,11 +454,24 @@ export function coaxSerialPatch(D: GenData, coax: GenState["coax"], on: boolean)
   if (!on) return { serialMark: false, marks: rest };
   const name = String(Object.entries(D.assemblyInfo || {}).find(([key]) => /наименование/i.test(key))?.[1] || "");
   const serialProduct = coax.serialProduct ?? coaxSerialProductFromName(name);
-  const item = D.itemIndex || String(Object.entries(D.assemblyInfo || {}).find(([key]) => /индекс/i.test(key))?.[1] || "");
-  const mark: CoaxMark = { text: coaxSerialText(D.projectNo || "", item, serialProduct), place: "middle", minMm: own?.minMm || 100,
+  const mark: CoaxMark = { text: coaxSerialText(D.projectNo || "", serialItem_(D), serialProduct), place: "middle", minMm: own?.minMm || 100,
     scope: "assembly", serial: true, qr: own ? !!own.qr : true };
   return { serialMark: true, serialProduct, marks: [mark, ...rest], markMaterial: coax.markMaterial ?? "tape",
     markProtect: coax.markProtect ?? true };
+}
+
+/** Item index of the card for the factory number: the card's own, else «Индекс» of the sheet. */
+function serialItem_(D: GenData): string {
+  return D.itemIndex || String(Object.entries(D.assemblyInfo || {}).find(([key]) => /индекс/i.test(key))?.[1] || "");
+}
+
+/** The factory-number mark always reads the current designation: «КБ1» renumbered to «КБ2» gives FRX.<проект>.КБ2.{№};
+ *  a custom designation (34.226, 120907/AA) stays as typed. FAKRA/HFM has no factory-number switch — its marks as they are. */
+function withSerialTemplate_(D: GenData, S: GenState): GenState {
+  if (!S.coax.serialMark || !S.coax.marks?.some((mark) => mark.serial)) return S;
+  const text = coaxSerialText(D.projectNo || "", serialItem_(D), S.coax.serialProduct);
+  if (S.coax.marks.every((mark) => !mark.serial || mark.text === text)) return S;
+  return { ...S, coax: { ...S.coax, marks: S.coax.marks.map((mark) => (mark.serial ? { ...mark, text } : mark)) } };
 }
 
 /** Cut length is always derived from the finished length, never from the previous cut. */
@@ -479,6 +492,11 @@ export function coaxLengthConfirmation(coax: GenState["coax"]): string {
   if (coax.lengthBasis !== "finished" || !["calc", "bom"].includes(coax.finishedLengthFrom || "")) return "";
   return `L взята из ${coax.finishedLengthFrom === "calc" ? "расчёта" : "состава"} — подтвердите длину готового изделия по КД (без запаса на разъёмы)`;
 }
+
+/** Printed marking tube of the factory number (the printer's cassette); the same wording as etk_builder.PRINTED_MARK_MATERIAL. */
+const MARK_TUBE_PRINTED_ = "Маркировочная трубка, принтер Supvan TP80E (ОБ.057)";
+/** Operations the factory number adds to an ordinary coax card (print, clear cover, label or marking tube). */
+const SERIAL_OP_KEYS_ = new Set(["coaxPrintLabel", "coaxProtectCut", "coaxProtectIns", "coaxInsLabel", "coaxHeat", "coaxInsMarkTube", "coaxHeatMarkTube"]);
 
 export type CoaxVswrMode = "all" | "sample" | "none";
 export type CoaxVswrControl = { mode: CoaxVswrMode; every: number | null; passport?: true };
@@ -1026,6 +1044,7 @@ export function emptyState(): GenState {
 
 /** Генератор над данными D и состоянием S. Методы — функции TcGenInline с теми же правилами. */
 export function makeGen(D: GenData, S: GenState) {
+  S = withSerialTemplate_(D, S);
   const comps = () => typedComps_(D.components || []);
   const getCompById = (id: string | null | undefined) => (id ? comps().find((c) => c.id === id) || null : null);
   const getByTypes = (types: string[]) => comps().filter((c) => {
@@ -2275,7 +2294,7 @@ export function makeGen(D: GenData, S: GenState) {
   const coaxBomCable_ = () => { const c = coaxBomCableComp_(); return c ? (c.art || c.name || "") : ""; };
   const coaxBomTut_ = () => comps().find((x) => /тут/i.test(x.type || "")) || null;
   /** ТУТ на концах — трубка состава, кроме прозрачной (она защищает метки). */
-  const coaxEndTutComp_ = () => comps().find((x) => /тут/i.test(x.type || "") && !/прозр|clear/i.test(`${x.name || ""} ${x.art || ""}`)) || null;
+  const coaxEndTutComp_ = () => comps().find((x) => /тут/i.test(x.type || "") && !CLEAR_TUBE_RE.test(`${x.name || ""} ${x.art || ""}`)) || null;
   const coaxBomSleeve_ = () => comps().find((x) => /втулк/i.test(`${x.type || ""} ${x.name || ""}`)) || null;
   // ── FAKRA / HFM (708К, владелец 25.10): конец — набор деталей (контакт с вставкой и гильзой, корпус, уплотнитель, крышка) ──
   /** Концы FAKRA/HFM из состава (см. fakraEndsFromBom_); null — обычный коакс. */
@@ -2554,7 +2573,9 @@ export function makeGen(D: GenData, S: GenState) {
       else if (pin !== COAX_PIN_COLLET) ops.push(pinOp(sd, pin));
     };
     const housingLabel = (sd: Side, pin: string) => `Монтаж корпуса (${sd === "B" ? "B" : "А"})${pin === COAX_PIN_COLLET ? " — цанговый контакт, без пайки" : ""}`;
-    const insTutOp = (): OpSpec | null => (tutOn ? { type: "coaxInsTut", opKey: printed ? "coaxProtectIns" : "coaxInsTut", label: `Монтаж ${printed && S.coax.serialMark ? "прозрачной " : ""}ТУТ${x(marks)}`, units: marks, tmplHint: "INS_TUT", ...(printed ? { protective: true } : {}) } : null);
+    const insTutOp = (): OpSpec | null => (tutOn ? { type: "coaxInsTut", opKey: printed ? "coaxProtectIns" : "coaxInsTut",
+      label: tube ? `Надвинуть прозрачную ТУТ на маркировочную трубку${x(marks)}` : `Монтаж ${printed && S.coax.serialMark ? "прозрачной " : ""}ТУТ${x(marks)}`,
+      units: marks, tmplHint: "INS_TUT", ...(printed ? { protective: true } : {}) } : null);
     const shieldA = coaxShieldOf_("A"), shieldB = sideB ? coaxShieldOf_("B") : "";
     const sidesOf = (kind: string) => (["A", "B"] as Side[]).filter((sd) => (sd === "A" ? shieldA : shieldB) === kind);
     const clampSides = sidesOf(COAX_SHIELD_CLAMP), solderSides = sidesOf("пайка");
@@ -2572,11 +2593,18 @@ export function makeGen(D: GenData, S: GenState) {
     const hasSleeve = nCrimp + nClamp > 0;
     const angledB = sideB && pinB === "внутри корпуса";
     const pushTut = () => {
+      // Трубка с номером — до корпусов (после монтажа разъёмов её не надеть): надеть, усадить, затем надвинуть на неё
+      // прозрачную ТУТ; прозрачная усаживается своей операцией в конце.
+      if (tube) {
+        ops.push({ type: "coaxInsTut", opKey: "coaxInsMarkTube", label: `Надеть маркировочную трубку в середину${x(marks)}`, units: marks,
+          tmplHint: "INS_TUT", markMaterial: "tube", markPhase: "install", printedTube: true, coaxMarks: S.coax.marks });
+        ops.push({ type: "coaxHeat", opKey: "coaxHeatMarkTube", label: `Усадка маркировочной трубки${x(marks)}`, units: marks,
+          tmplHint: "HEAT_TYT_short", markMaterial: "tube", printedTube: true,
+          // Усаживается напечатанная трубка (кассета принтера), не ТУТ состава — температура по ней, пока не задана.
+          shrinkMaterials: [{ art: "", name: MARK_TUBE_PRINTED_ }] });
+      }
       const o = insTutOp(); if (o) ops.push(o);
       if (endTut) ops.push({ type: "coaxInsTut", opKey: "coaxInsTut", label: `Монтаж ТУТ${x(ends)}`, units: ends, tmplHint: "INS_TUT", endTut: true });
-      // Трубка с номером надевается до корпусов: после монтажа разъёмов её не надеть.
-      if (tube) ops.push({ type: "coaxInsTut", opKey: "coaxInsMarkTube", label: `Надеть маркировочную трубку в середину${x(marks)}`, units: marks,
-        tmplHint: "INS_TUT", markMaterial: "tube", markPhase: "install", printedTube: true, coaxMarks: S.coax.marks });
     };
     if (angledB) {
       pushPin("A", pinA); pushTut(); if (hasSleeve) ops.push(sleeveOp()); ops.push(pinOp("B", pinB));
@@ -2594,8 +2622,7 @@ export function makeGen(D: GenData, S: GenState) {
     solderSides.forEach((sd) => ops.push({ type: "coaxSolderShield", side: sd, opKey: "coaxSolderShield" + sd, label: `Пайка экрана (${sdName(sd)})`, tmplHint: "SDR_COAX_housing" }));
     if (nCrimp > 0) ops.push({ type: "coaxShield", opKey: "coaxShield", label: `Опрессовка втулки экрана${x(nCrimp)}`, units: nCrimp, tmplHint: "PRS_SLEEVE_coax" });
     if (endTut) ops.push({ type: "coaxHeat", opKey: "coaxHeatTut", label: `Усадка ТУТ${x(ends)}`, units: ends, tmplHint: "HEAT_TYT_short", endTut: true });
-    if (tutOn) ops.push({ type: "coaxHeat", opKey: "coaxHeat", label: `${tube ? "Усадка маркировочной и прозрачной ТУТ" : tape ? "Усадка прозрачной ТУТ на этикетках" : "Усадка ТУТ"}${x(marks)}`, units: marks, tmplHint: "HEAT_TYT_short", ...(printed ? { protective: true } : {}) });
-    else if (tube) ops.push({ type: "coaxHeat", opKey: "coaxHeatMarkTube", label: `Усадка маркировочной трубки${x(marks)}`, units: marks, tmplHint: "HEAT_TYT_short", markMaterial: "tube", printedTube: true });
+    if (tutOn) ops.push({ type: "coaxHeat", opKey: "coaxHeat", label: `${tube ? "Усадка прозрачной ТУТ на маркировочной трубке" : tape ? "Усадка прозрачной ТУТ на этикетках" : "Усадка ТУТ"}${x(marks)}`, units: marks, tmplHint: "HEAT_TYT_short", ...(printed ? { protective: true } : {}) });
     const caps: Record<string, number> = {};
     ([["A", pinA, S.coax.coverA], ["B", sideB ? pinB : "", S.coax.coverB]] as const).forEach(([, pin, cover]) => {
       if (pin !== "внутри корпуса") return;
@@ -4348,7 +4375,8 @@ export function makeGen(D: GenData, S: GenState) {
         ...(spec.parts?.length ? { parts: spec.parts } : {}),
         ...(spec.noTooling ? { noTooling: true } : {}),
         // FAKRA/HFM: у каждой операции своё русское название в ЭТК (сервер ставит его вместо общего имени карты).
-        ...((isFakra_() || S.coax.serialMark) && spec.label ? { label: spec.label } : {}),
+        // С заводским номером своё название — только у добавленных им операций; прежние сохраняют имя карты.
+        ...((isFakra_() || (S.coax.serialMark && SERIAL_OP_KEYS_.has(spec.opKey))) && spec.label ? { label: spec.label } : {}),
         ...(spec.vswrControl ? { vswrControl: spec.vswrControl } : {}) };
     });
     const serialTube = !isFakra_() && !!S.coax.serialMark && S.coax.markMaterial !== "tape";
@@ -4357,7 +4385,7 @@ export function makeGen(D: GenData, S: GenState) {
     // Длина напечатанного: этикетка — по профилю ОБ.102, трубка — заданная; от неё прозрачная ТУТ (+10 мм).
     const printedMm = serialTube ? parseDecimal_(S.coax.markTubeLen) || COAX_SERIAL_TUBE_MM : S.coax.labelProfile?.lengthMm || 0;
     const endTut = getActiveOps().some((op) => op.endTut);
-    const serial = S.coax.serialMark ? S.coax.marks?.find((mark) => mark.serial) : undefined;
+    const serial = S.coax.serialMark && !isFakra_() ? S.coax.marks?.find((mark) => mark.serial) : undefined;
     const cable = coaxBomCableComp_(), sleeve = coaxBomSleeve_();
     const vswrControl = coaxVswrControl_(S.coax);
     // Норма заказчика — только у сборки с разъёмом на стороне В и проверкой КСВН.
@@ -4383,7 +4411,8 @@ export function makeGen(D: GenData, S: GenState) {
               ...(endTut ? { tutLength: parseDecimal_(S.coax.tutLen) || 20 } : {}) }
           : { tutLength: parseDecimal_(S.coax.tutLen) || 20 }),
         ...(S.coax.labelProfile && S.coax.markMaterial === "tape" ? { labelProfile: { ...S.coax.labelProfile } } : {}),
-        ...(serial ? { serial: { template: serial.text, designation: coaxSerialProduct(D.projectNo || "", D.itemIndex || findKey(/индекс/i), S.coax.serialProduct),
+        ...(serial ? { serial: { template: coaxSerialText(D.projectNo || "", serialItem_(D), S.coax.serialProduct),
+          designation: coaxSerialProduct(D.projectNo || "", serialItem_(D), S.coax.serialProduct),
           productKind: S.coax.serialProduct?.trim() ? "custom" : "kb", carrier: serialTube ? "tube" : "tape", qr: !!serial.qr,
           ...(serialTube ? { tubeLengthMm: printedMm } : S.coax.labelProfile ? { profile: { ...S.coax.labelProfile } } : {}) } } : {}),
         tutArt: tut?.art || "", tutName: tut?.name || "",

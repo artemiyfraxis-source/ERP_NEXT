@@ -141,7 +141,7 @@ import { coaxReseedPatch, coaxSerialPatch } from "./tcGenLogic";
 import { markingApi } from "./markingApi";
 import { applyEnd, firstFreePin, pinConns, pinRows, pinSummary, spliceLines } from "./tcGenPinTable";
 import { useTerminalPairs } from "./useTerminalPairs";
-import { coaxCoverLengths, coaxSerialKb, type CoaxLabelProfile, MARK_KIND_DEFAULT, markIsTube, markSpecs, markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
+import { coaxCoverLengths, coaxSerialKb, coaxSerialText, type CoaxLabelProfile, MARK_KIND_DEFAULT, markIsTube, markSpecs, markMatsFromRecords, markRowsByConnectors, markRowsFromConfig, markRowsFromHarness, markTargets, mergeMarkRows } from "./tcGenMarks";
 
 /** library — карточки библиотеки операций целиком (код, сторона, нормы) для «Ручной сборки». */
 type Refs = Pick<GenData, "templates" | "ops" | "terRecords" | "coaxRecords" | "wireDia" | "coaxCableDia" | "markMats" | "cableRecords" | "lugRecords"> & { library: LibraryCard[] };
@@ -290,7 +290,8 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
         .map((profile) => ({ id: profile.id, name: profile.name, lengthMm: profile.geometry.width_mm }));
       setLabelProfiles({ list, error: list.length ? "" : "Нет профилей этикеток ОБ.102 — заведите их в «Маркировка»." });
     }).catch((reason) => {
-      if (!controller.signal.aborted) setLabelProfiles({ list: [], error: `Профили этикеток не загрузились: ${reason instanceof Error ? reason.message : String(reason)}` });
+      if (!controller.signal.aborted) setLabelProfiles({ list: [], error: reason instanceof TypeError ? "Нет связи с ERP — профили этикеток не загрузились."
+        : "Профили этикеток не загрузились — откройте вкладку ещё раз или выберите профиль позже." });
     });
     return () => controller.abort();
   }, [coaxTab]);
@@ -1847,7 +1848,7 @@ export function TcGenerator({ card, kit, kitError, busy, onBuild, onDiscard, onC
     </div>
     <CoaxMarking coax={S.coax} onChange={setCoax} components={components}
       labels={!!gen.coaxFakra_() || !!S.coax.serialMark || S.coax.markMaterial === "tape"}
-      serial={{ kb: coaxSerialKb(card.project, card.item_index), fakra: !!gen.coaxFakra_(), profiles: labelProfiles.list, profilesError: labelProfiles.error,
+      serial={{ kb: coaxSerialKb(card.project, card.item_index), fakra: !!gen.coaxFakra_(), template: coaxSerialText(card.project, card.item_index, S.coax.serialProduct), profiles: labelProfiles.list, profilesError: labelProfiles.error,
         onSerial: (on, serialProduct) => setCoax(coaxSerialPatch(D, serialProduct === undefined ? S.coax : { ...S.coax, serialProduct }, on)) }} />
     {S.coax.sideB && <section className="gsec full" aria-label="Контроль КСВН"><div className="gsec-head"><h3>Контроль КСВН</h3></div>
       <div className="opt-grid">

@@ -38,6 +38,8 @@ export function CoaxLength({ coax, onChange }: Props) {
  *  (coaxSerialPatch), `profiles` — профили этикеток ОБ.102 (null — загружаются), `fakra` — FAKRA/HFM со своими метками. */
 export type CoaxSerialProps = {
   kb: string; fakra: boolean; profiles: CoaxLabelProfile[] | null; profilesError?: string;
+  /** Текущий шаблон номера по обозначению изделия (метка в форме может хранить прежний текст). */
+  template: string;
   onSerial: (on: boolean, serialProduct?: string) => void;
 };
 
@@ -63,9 +65,9 @@ export function CoaxMarking({ coax, onChange, components, labels, serial }: Prop
     .find((item) => item.method === "paint" && item.code === code)?.art ?? "";
   return <section className="gsec coax-marking full" aria-label="Маркировка коакс-кабеля">
     <div className="gsec-head"><h3>Маркировка</h3></div>
-    <Toggle checked={serialOn} title="Заводской номер на изделии" hint="FRX.<проект>.<изделие>.<№> в середине, номер — при печати"
-      onChange={(on) => serial.onSerial(on)} />
-    {serialOn && <div className="opt-grid coax-serial">
+    {!serial.fakra && <Toggle checked={serialOn} title="Заводской номер на изделии" hint="FRX.<проект>.<изделие>.<№> в середине, номер — при печати"
+      onChange={(on) => serial.onSerial(on)} />}
+    {serialOn && !serial.fakra && <div className="opt-grid coax-serial">
       <Field label="Изделие в номере" className="span2"><select name="coax-serial-product-kind" autoComplete="off" value={ownProduct ? "custom" : "kb"}
         onChange={(event) => {
           const own = event.target.value === "custom";
@@ -115,7 +117,7 @@ export function CoaxMarking({ coax, onChange, components, labels, serial }: Prop
       <caption>Метки коакс-кабеля</caption>
       <thead><tr><th scope="col">Надпись</th><th scope="col">Место</th><th scope="col" className="num">Не ближе, мм</th><th scope="col" aria-label="Удалить" /></tr></thead>
       <tbody>{marks.map((mark, index) => mark.serial ? <tr key={index} className="coax-mark-serial">
-        <td><b>{mark.text}</b><small>номер — при печати{mark.qr ? ", QR-код" : ""}</small></td>
+        <td><b>{serial.template}</b><small>номер — при печати{mark.qr ? ", QR-код" : ""}</small></td>
         <td>Середина</td>
         <td><input className="num" type="number" min={100} aria-label={`Не ближе, мм, метка ${index + 1}`} name={`coax-mark-distance-${index}`} autoComplete="off" inputMode="numeric"
           value={mark.minMm || ""} onChange={(event) => setMark(index, { minMm: Number(event.target.value) })} /></td>

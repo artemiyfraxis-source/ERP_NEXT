@@ -71,3 +71,29 @@ def test_custom_designation_and_tube_carrier_reach_the_print_op_together_with_th
     printed = next(op for op in doc["operations"] if op["code"] == "PRINT_MARK_TUBE")
     assert printed["fields"]["serial"] == {"template": "FRX.831К.34.226.{№}", "designation": "34.226", "productKind": "custom",
                                            "carrier": "tube", "qr": True, "tubeLengthMm": 25}
+
+
+def _steps(operation):
+    return " ".join(step["text"] for step in operation["card"]["steps"])
+
+
+def test_tube_carrier_shrinks_the_marking_tube_first_then_covers_it_with_its_own_clear_tube_op():
+    for short in (False, True):
+        config = deepcopy(FIXTURE["tube"])
+        if short:
+            config["coax"]["shortCards"] = True
+        doc = build_etk(config, _fresh_cards(config))
+        keys = [op["opKey"] for op in doc["build_config"]["ops"]]
+        ops = dict(zip(keys, doc["operations"]))
+        assert (keys.index("coaxInsMarkTube") < keys.index("coaxHeatMarkTube") < keys.index("coaxProtectIns")
+                < keys.index("coaxHousingA") < keys.index("coaxHeat"))
+        assert ops["coaxHeatMarkTube"]["components"] == [] and ops["coaxInsMarkTube"]["components"] == []
+        # 831К.: трубка 25 мм + 10 = прозрачная ТУТ 35 мм, одна на изделие; партия 1 в фикстуре.
+        assert doc["build_config"]["coax"]["tutLengths"] == {"A": 35, "B": 35, "middle": 35}
+        assert _norms(ops["coaxProtectCut"]["components"]) == {"ТУТ 6/3 прозрачная": Decimal("0.035")}
+        assert [ops[key]["code"] for key in ("coaxPrintLabel", "coaxInsMarkTube", "coaxHeatMarkTube", "coaxProtectIns", "coaxHeat")] == [
+            "PRINT_MARK_TUBE", "INS_TUT", "HEAT_TYT_short", "INS_TUT", "HEAT_TYT_short"]
+        assert "прозрачн" not in _steps(ops["coaxInsMarkTube"]).replace("прозрачная ТУТ — после неё", "")
+        assert "маркировочн" in _steps(ops["coaxProtectIns"])
+        assert "маркировочн" in _steps(ops["coaxHeat"])
+        assert "этикет" not in _steps(ops["coaxHeat"])

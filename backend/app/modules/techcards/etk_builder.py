@@ -1959,7 +1959,8 @@ def coax_sketch_fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict
     operation_type = str(op.get("type") or "")
     coax = _coax(config)
     if operation_type == "coaxHeat" and op.get("protective"):
-        return {"coaxProtectiveHeat": True}
+        # Под прозрачной ТУТ — этикетка или (заводской номер на трубке) усаженная маркировочная трубка.
+        return {"coaxProtectiveHeat": True, **({"coaxCoverOver": "tube"} if _coax_serial_tube(coax) else {})}
     if operation_type in COAX_END_TYPES:
         end = _coax_end(op, config)
         return {"coaxEnd": {**_coax_strip_sizes(config, "B" if op.get("side") == "B" else "A"),
@@ -2626,10 +2627,14 @@ def _resolve_card(
                 elif "Порядок предварительного надевания" in text:
                     text = "Проверить порядок: крышка, уплотнитель, гильза. Детали проходят свободно, оболочка и разделанный конец не повреждены. Окончательная герметизация выполняется отдельной операцией."
         if fields.get("coaxProtectiveHeat"):
+            # Носитель номера — маркировочная трубка: прозрачная ТУТ закрывает уже усаженную трубку, а не этикетку.
+            what = "маркировочную трубку" if fields.get("coaxCoverOver") == "tube" else "этикетку"
             if text.startswith("Надвинуть ТУТ"):
-                text = "Убедиться, что прозрачная ТУТ закрывает этикетку на её месте по КД, не ближе 100 мм от разъёма. Не сдвигать этикетку при усадке."
+                text = (f"Убедиться, что прозрачная ТУТ закрывает {what} на её месте по КД, не ближе 100 мм от разъёма. "
+                        f"Не сдвигать {what} при усадке.")
             elif "ТУТ после усадки" in text:
-                text = "ВИЗУАЛЬНЫЙ КОНТРОЛЬ: прозрачная ТУТ плотно облегает этикетку и кабель, без складок и пузырей; надпись читаема, не повреждена нагревом; места меток соответствуют КД."
+                text = (f"ВИЗУАЛЬНЫЙ КОНТРОЛЬ: прозрачная ТУТ плотно облегает {what} и кабель, без складок и пузырей; "
+                        "надпись читаема, не повреждена нагревом; места меток соответствуют КД.")
         tolerance = substitute(step.tolerance)
         if step.kind == "Контроль" and tolerance in {"", "-", "—"}:
             lowered = text.casefold()
@@ -2781,8 +2786,9 @@ def _coax_recipe_steps(op: Mapping[str, Any], config: Mapping[str, Any]) -> list
     steps: list[str] = []
     if op.get("type") in {"coaxCutTut", "coaxInsTut", "coaxHeat"} and (groups := _coax_protective_tubes(op, config)):
         material = str(coax.get("tutName") or coax.get("tutArt") or "ТУТ")
-        action = {"coaxCutTut": "Нарезать", "coaxInsTut": "Надеть",
-                  "coaxHeat": "Усадить поверх меток" if _coax_serial_tube(coax) else "Усадить поверх этикеток"}[op["type"]]
+        tube = _coax_serial_tube(coax)
+        action = {"coaxCutTut": "Нарезать", "coaxInsTut": "Надвинуть на усаженную маркировочную трубку" if tube else "Надеть",
+                  "coaxHeat": "Усадить поверх маркировочной трубки" if tube else "Усадить поверх этикеток"}[op["type"]]
         steps.extend(f"{action} {material}: {_coax_tube_text(group, _part_quantity(config))}." for group in groups)
     if op.get("type") == "coaxCut" and (cables := _coax_cables(config)) > 1:
         count = int(cables)
@@ -2813,17 +2819,22 @@ def _coax_recipe_steps(op: Mapping[str, Any], config: Mapping[str, Any]) -> list
                 instruction += (" 1,0 мм — участок открытого диэлектрика. Фольгу сохранить внутри корпуса, "
                                 "оплётку — снаружи насечки. ТТК, гильзу и изолирующий диск надеть следующей операцией.")
             steps.append(instruction)
-    if op.get("protective") and op.get("type") == "coaxInsTut":
+    if op.get("protective") and op.get("type") == "coaxInsTut" and not _coax_serial_tube(coax):
         steps.append("Надеть прозрачные отрезки ТУТ на кабель и сдвинуть к середине до монтажа деталей концов.")
     for mark in _list(op.get("marks")):
         if not isinstance(mark, Mapping):
             continue
         place = "середина кабеля" if mark.get("place") == "middle" else "от разъёма " + ("А" if mark.get("place") == "A" else "В")
-        action = "Напечатать" if op.get("type") == "coaxCutTut" else "Наклеить"
         label = ("по листу надписей задания" if _MARK_SERIAL_TOKEN.search(str(mark.get("text") or ""))
                  else f"«{mark.get('text', '')}»")
-        steps.append(f"{action} метку {label}: {place}, не ближе {_format(mark.get('minMm', 100))} мм от разъёма.")
-    if op.get("markPhase") == "install" and coax.get("markProtect"):
+        if op.get("type") == "coaxCutTut":
+            action = "Напечатать трубку с надписью" if op.get("markMaterial") == "tube" and _printer_mark(op) else "Напечатать метку"
+        elif op.get("markMaterial") == "tube" and _printer_mark(op):
+            action = "Надеть маркировочную трубку с надписью"
+        else:
+            action = "Наклеить метку"
+        steps.append(f"{action} {label}: {place}, не ближе {_format(mark.get('minMm', 100))} мм от разъёма.")
+    if op.get("markPhase") == "install" and coax.get("markProtect") and op.get("markMaterial") != "tube":
         steps.append("Сдвинуть прозрачную ТУТ поверх наклеенных этикеток; усадить в заключительной операции.")
     color = op.get("connColor")
     if isinstance(color, Mapping) and color.get("method") != "none":
@@ -3033,9 +3044,8 @@ def _short_label(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[
                        for mark in marks)
     protect = bool(_coax(config).get("markProtect"))
     if op.get("markMaterial") == "tube" and _printer_mark(op):
-        steps = [_step("Операция", f"Надеть маркировочную трубку с номером на кабель до монтажа корпусов разъёмов: {places}.")]
-        if protect:
-            steps.append(_step("Операция", "Надвинуть прозрачную ТУТ поверх маркировочной трубки; усадка — отдельной операцией."))
+        steps = [_step("Операция", f"Надеть маркировочную трубку с номером на кабель до монтажа корпусов разъёмов: {places}; "
+                                   "усадка — следующей операцией" + (", прозрачная ТУТ — после неё." if protect else "."))]
         steps.append(_step("Контроль", "Проверить текст, место и читаемость номера на трубке.",
                            "; ".join(part for part in (_mark_distances(marks), _STO_MARKING) if part)))
         return steps
@@ -3076,6 +3086,13 @@ def _short_tut_cut(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dic
 def _short_tut_on(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[str, str]]:
     groups = _coax_protective_tubes(op, config)
     material = _tube_material(config, bool(groups), op)
+    if groups and _coax_serial_tube(_coax(config)):
+        per_assembly = _tube_per_assembly(groups)
+        return [
+            _step("Операция", f"Надвинуть {material} на усаженную маркировочную трубку по центру: {per_assembly} на сборку."),
+            _step("Контроль", "Трубка с номером закрыта полностью, прозрачная ТУТ без надрывов и проколов; усадка — "
+                              "отдельной операцией.", f"{material}: {per_assembly} на сборку"),
+        ]
     if groups:
         per_assembly = _tube_per_assembly(groups)
         return [
@@ -3092,9 +3109,29 @@ def _short_tut_on(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict
     ]
 
 
+def _short_mark_tube_heat(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[str, str]]:
+    """The printed marking tube with the factory number is shrunk on its own, before the clear cover goes over it."""
+    return [
+        _step("Операция", SHRINK_PLACEHOLDER),
+        _step("Операция", "Расположить маркировочную трубку с номером по центру кабеля и усадить равномерно горячим "
+                          "воздухом через рефлектор без местного перегрева."),
+        _step("Контроль", "После охлаждения: трубка плотно облегает кабель, номер читается, смещения и прожогов нет.",
+              _mark_distances(_short_marks(op, config))),
+    ]
+
+
 def _short_heat(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[str, str]]:
     # The first step is the material requirement (etk_heat_shrink replaces the placeholder); never a heat-gun setting.
     groups = _coax_protective_tubes(op, config)
+    if groups and _coax_serial_tube(_coax(config)):
+        return [
+            _step("Операция", SHRINK_PLACEHOLDER),
+            _step("Операция", f"Расположить прозрачную ТУТ по центру усаженной маркировочной трубки ({_tube_per_assembly(groups)} "
+                              "на сборку) и усадить равномерно горячим воздухом через рефлектор без местного перегрева."),
+            _step("Контроль", "После охлаждения проверить: номер закрыт полностью и читается, ТУТ плотно облегает "
+                              "трубку и кабель; смещения, складок, пузырей и прожогов нет.",
+                  _mark_distances(_short_marks(op, config))),
+        ]
     if groups:
         return [
             _step("Операция", SHRINK_PLACEHOLDER),
@@ -3172,6 +3209,8 @@ def coax_short_steps(op: Mapping[str, Any], config: Mapping[str, Any], fields: M
         steps = _short_label(op, config)
     elif operation_type == "coaxInsTut" and plain:
         steps = _short_tut_on(op, config)
+    elif operation_type == "coaxHeat" and tape:
+        steps = _short_mark_tube_heat(op, config)
     elif operation_type == "coaxHeat" and plain:
         steps = _short_heat(op, config)
     elif operation_type == "coaxVswr":
