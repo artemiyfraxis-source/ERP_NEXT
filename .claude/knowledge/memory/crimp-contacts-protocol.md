@@ -18,6 +18,10 @@ On 12.10.2026 the owner pasted an old agent protocol, «СИСТЕМНЫЙ ПР�
 - Pull force is stored in N: kgf × 9.8, lbf × 4.448. Crimp heights and insulation OD are min–max ranges per AWG of that article. AWG values carry no «#».
 - Material is written «Металл / Покрытие» (e.g. Brass / Gold 0,76µm).
 - Applicator, pneumatics, ОТР, «с зачисткой» and mm² are filled by the technologist. An importer must not fill them; mm² is not converted from AWG.
+- Exception — lugs («Наконечники», owner 16.11.2026: «сечения все есть в артикулах»): agents fill mm² from the article and
+  the maker catalogue through the card-edit path (`edit_record`, old-value guard; the importer still refuses mm²). НШВ,
+  НШВИ, ПМ, ТМЛ — one section, from = to; insulated ring/fork/РПИ/НКИ/НВИ — the catalogue range. Applicators stay off-limits.
+  КВТ НВИ/НКИ exist in two lines (ПРОФИ, EasyFix) with different articles and specs — separate rows, never merged.
 - Wire-to-wire: a female housing needs its male mate added too.
 
 **Where ERP deliberately differs:**

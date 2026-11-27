@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 19b4b321-0510-4f61-9970-d9722981d5ea
-  modified: 2026-10-19T21:06:47.233Z
+  modified: 2026-11-19T20:59:43.901Z
 ---
 
 - Host: the owner's own PC in the shop (not VPS/Timeweb — never raise it again). Ubuntu Server 24.04, user `erp`, hostname `erp-server`, `/opt/erp`. Fallback: WSL2.
@@ -34,5 +34,7 @@ Related: [[google-wiring]], [[erp-local-demo]], [[staff-and-sites]]. Hub: [[erp-
   `warehouse_upd_llm_settings.api_key`. A new table with secrets → REVOKE it from `erp_ro`. Даша reaches the server
   only after the owner shares the `erp-server` node to her Tailscale account. Her key + guide went to the owner in
   `Downloads/erp-dasha-access/` (not in git). Not in RULES.md: she is not a developer, guard-danger doesn't apply.
+- Vasily has the same read-only setup since 05.11: user `vasily`, `61-vasily-readonly.conf`. Extra devices only
+  need their `.pub` appended to `/home/vasily/.ssh/authorized_keys`, keeping the existing key.
 - OpenSSH 10 on the server penalises a source address after failed auths (PerSourcePenalties): a burst of bad-key
   attempts locked my own `erp@` ssh out for ~1 min (28.10). Test new accounts one connection at a time.

@@ -27,3 +27,8 @@ Built in #564 (migration 0127: `techcard_projects.inputs/overrides/review_note/d
 **Why:** manual rebuilds don't scale and silently stale cards misled fitters.
 **How to apply:** don't tell the owner to «Пересобрать» after reference/builder fixes — check the journal instead; a
 builder change must keep `etk_derive` deterministic (golden tests). Related: [[module-techcards]], [[live-data-protocol]].
+
+**Release = revisions (17.11.2026, #869):** `deploy/update.sh` runs `etk_refresh --all` right after the update, so a PR that
+changes ETK derivation re-issues cards the moment `update-server` runs (74 cards on 17.11, before the owner saw the count). For
+such a PR: before merge, run the new code's `etk_refresh --all --dry-run` against a prod copy (rehearsal image or the branch
+built on the server) and show the counts and a sample card to the owner; a post-release dry-run always shows 0.

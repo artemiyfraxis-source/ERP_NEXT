@@ -89,8 +89,12 @@ verifier → one PR — only the hands do. Main never collapses into «I'll just
   | Mechanical renames/copy without string literals in code | `erp-worker` | haiku — main re-checks every literal |
   | UI copy, wiring, tests mirroring existing ones, one-module feature, screen change | `erp-worker` card (see below) | sonnet |
   | Migration, stock/money quantities, generators, importers, hard bug | `erp-worker` | opus |
-  | Pre-ship review (fresh, read-only, the `cross-review` brief or `/code-review`) | `general-purpose` | sonnet; opus for migration/stock/money/auth |
+  | First pre-ship review of a slice (fresh, read-only, `cross-review` brief or `/code-review`) | `general-purpose` | sonnet; opus only if the diff has a migration, stock/money quantities, auth or machine register writes |
+  | Re-review of a fix diff, review of a merge resolution | `general-purpose` | sonnet |
+  | Merge-conflict resolution / rebase on main | `general-purpose` | sonnet; opus only when migrations conflict |
   | Verifier (`npm run check` on the integrated worktree) | `erp-verifier` | sonnet |
+- **Sonnet is the default.** Choose opus only from a row that names it. Screens (`*.tsx`, CSS), wiring, re-reviews
+  and merges stay sonnet even inside an opus feature: split the worker instead of upgrading it.
 - **Launching a worker.** `subagent_type: erp-worker` fails here: its `isolation: worktree` is refused («core.worktree
   redirect», verified 17.11.2026). Launch `general-purpose` with the chosen `model` and a prompt that says «read
   `.claude/agents/erp-worker.md` and follow it, then read the brief; work only in <absolute worktree>».
