@@ -2196,8 +2196,8 @@ class SqlAlchemySerialRepository:
         """Заводские номера изделиям задания: позиция → (k, номер) при изделии ``designation``; возвращает изделия,
         получившие номер сейчас.
         Выданный номер не меняется (перепечатка — тот же, ничего не возвращается).
-        Вызывающий держит замок проекта (печать); строки изделий — под замок, UNIQUE (factory_number) — последняя
-        защита: проигравшая параллельная печать того же задания берёт номера победителя, чужой номер — отказ."""
+        Вызывающий держит замок проекта (печать); строки изделий — под замок (параллельная печать того же задания
+        ждёт и берёт номера победителя), UNIQUE (factory_number) — последняя защита; чужой номер — отказ."""
         def locked():
             return list(self.session.scalars(
                 select(ProductionSerialRow).where(ProductionSerialRow.task_id == task_id)
@@ -2208,23 +2208,20 @@ class SqlAlchemySerialRepository:
             return []
         wanted = [number for _row, _k, number in fresh]
         taken = self.session.execute(
-            select(ProductionSerialRow.factory_number, ProductionSerialRow.serial_number)
+            select(ProductionSerialRow.factory_number, ProductionSerialRow.serial_number, ProductionTaskRow.number)
+            .join(ProductionTaskRow, ProductionTaskRow.id == ProductionSerialRow.task_id)
             .where(ProductionSerialRow.factory_number.in_(wanted), ProductionSerialRow.task_id != task_id)
         ).first()
         if taken is not None:
             raise ProductionValidationError(
-                f"Заводской номер {taken[0]} уже выдан изделию {taken[1]} — номер не переиспользуется")
-        try:
-            with self.session.begin_nested():
-                for row, item_serial, number in fresh:
-                    row.item_serial, row.product_designation, row.factory_number = item_serial, designation, number
-                self.session.flush()
-        except IntegrityError:
-            # Между проверкой и записью номер занят параллельной печатью (замок проекта обычно не допускает).
-            rows = locked()
-            if all(row.factory_number == numbers[row.position][1] for row in rows if row.position in numbers):
-                return []
-            raise ProductionValidationError("Заводской номер изделия занят параллельной печатью — повторите печать")
+                f"Заводской номер {taken[0]} уже выдан изделию {taken[1]} задания {taken[2]} — печать остановлена: "
+                "номер не переиспользуется, два изделия с одним номером недопустимы")
+        # No savepoint: pysqlite releases a savepoint opened before any write as a commit, and a refused print must
+        # leave nothing. A number taken between the check and this write (the print's project lock prevents it) fails
+        # the whole transaction on UNIQUE — the print is refused with «повторите», never stored twice.
+        for row, item_serial, number in fresh:
+            row.item_serial, row.product_designation, row.factory_number = item_serial, designation, number
+        self.session.flush()
         return [self._domain(row) for row, _item_serial, _number in fresh]
 
     def ensure_task(self, task_id: UUID, task_number: str, quantity: int) -> bool:

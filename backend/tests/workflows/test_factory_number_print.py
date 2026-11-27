@@ -191,9 +191,9 @@ def test_two_kb_of_one_designation_in_one_print_count_on(marking):
     assert printed == sorted(f"FRX.591К.3.34.226.{k}" for k in range(1, 11))
 
 
-def test_labels_printed_before_0222_keep_their_numbers(marking, monkeypatch):
-    """Этикетки, напечатанные до 0222 (номера по позиции: у обоих КБ 1–5), при допечатке не сдвигаются; номер,
-    уже занятый другим КБ того же изделия, не выдаётся второй раз — у такого задания заводских номеров нет."""
+def test_labels_printed_before_0222_never_share_a_number(marking, monkeypatch):
+    """Этикетки, напечатанные до 0222 (номера по позиции: у обоих КБ одного изделия 1–5), не сдвигаются; номер, уже
+    принадлежащий другому заданию, печать не повторяет — отказ с номером того задания, ничего не выдано."""
     import app.workflows.marking_labels as workflow
 
     _client, factory, *_ = marking
@@ -203,11 +203,16 @@ def test_labels_printed_before_0222_keep_their_numbers(marking, monkeypatch):
         old.setattr(workflow, "factory_scope", lambda task, document, uow: (None, None, False))
         old.setattr(workflow, "allocate_factory_numbers_in", lambda *args, **kwargs: [])
         enqueue(marking, key="before", payload=_group_payload(marking, group_id))
-    _batch, _request, shown = enqueue(marking, key="after", payload=_group_payload(marking, group_id))
+    body = _group_payload(marking, group_id)
+    shown = preview(marking, body)
     serials = {(row["task_id"], row["serial"]) for row in shown["labels"] if row["serial"] is not None}
-    assert serials == {(str(task.id), k) for task in (first, second) for k in range(1, 6)}
-    assert [n for *_r, n in _numbers(factory, first.id)] == [f"FRX.591К.3.34.226.{k}" for k in range(1, 6)]
-    assert all(n is None for *_r, n in _numbers(factory, second.id))
+    assert serials == {(str(task.id), k) for task in (first, second) for k in range(1, 6)}   # не сдвинулись
+    refused = _client.post(BASE + "/batches", json={**body, "idempotency_key": "after",
+                                                    "manifest_hash": shown["manifest_hash"]})
+    assert refused.status_code == 422, refused.text
+    assert "уже выдан" in refused.json()["detail"] and first.number in refused.json()["detail"]
+    for task in (first, second):
+        assert all(n is None for *_r, n in _numbers(factory, task.id))
 
 
 def _set_serial_field(marking, serial):
@@ -301,3 +306,32 @@ def test_printed_numbers_are_never_reused_after_cancel(marking):
     enqueue(marking, key="after-cancel", payload={**payload, "source": source})
     assert [number for *_rest, number in _numbers(factory, again.id)] == [f"FRX.591К.3.КБ1.{k}" for k in range(6, 11)]
     assert [number for *_rest, number in _numbers(factory, task.id)] == KB
+
+
+def test_a_quantity_raised_after_the_print_refuses_instead_of_numbering_a_part(marking):
+    """Тираж после запуска не меняется (правки нет); правка в БД — печать отказывает, номера 1–5 не трогаются."""
+    from sqlalchemy import update
+
+    from app.modules.production.infrastructure import ProductionTaskRow
+
+    client, factory, payload, task, *_ = marking
+    enqueue(marking)
+    with factory() as uow:
+        uow.session.execute(update(ProductionTaskRow).where(ProductionTaskRow.id == task.id).values(quantity=7))
+        uow.commit()
+    shown = preview(marking)
+    refused = client.post(BASE + "/batches", json={**payload, "idempotency_key": "bigger",
+                                                   "manifest_hash": shown["manifest_hash"]})
+    assert refused.status_code == 422 and "тираж" in refused.json()["detail"], refused.text
+    assert [number for *_rest, number in _numbers(factory, task.id)] == KB
+
+
+def test_a_template_with_a_prefix_is_still_the_factory_number(marking):
+    """«№ FRX.591К.3.34.226.{№}»: шаблон — часть от «FRX.», номер не падает на «КБ1», этикетка читается как номер."""
+    client, factory, _payload, task, *_ = marking
+    _mark_text(marking, "№ FRX.591К.3.34.226.{№}")
+    _batch, _request, shown = enqueue(marking)
+    expected = [f"FRX.591К.3.34.226.{k}" for k in range(1, 6)]
+    assert [number for *_rest, number in _numbers(factory, task.id)] == expected
+    printed = [row["text"] for row in shown["labels"] if row["serial"] is not None]
+    assert printed[0].startswith("№") and [factory_number_key(t) for t in printed] == [factory_number_key(n) for n in expected]

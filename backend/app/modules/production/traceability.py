@@ -125,17 +125,18 @@ def factory_number(project: str, designation: str, item_serial: int) -> str | No
     return number if len(number) <= FACTORY_NUMBER_LIMIT else None
 
 
-_SCANNED_NUMBER = re.compile(r"FRX\..+\.0*([1-9]\d*)", re.IGNORECASE)
+_SCANNED_NUMBER = re.compile(r"FRX\..+\.0*([1-9]\d*)$", re.IGNORECASE)
 
 
 def factory_number_key(text: str) -> tuple[str, int] | None:
-    """Ключ сравнения скана с хранимым номером и k: регистр, пробелы, латинские двойники («K/К», «KB/КБ») и нули в k
-    не важны; точки и «/» в проекте и обозначении сохраняются. Не заводской номер — None."""
+    """Ключ сравнения скана с хранимым номером и k: регистр, пробелы, латинские двойники по одной букве («K/К», «A/А»)
+    и нули в k не важны; точки и «/» в проекте и обозначении сохраняются; текст до «FRX.» («№ FRX.…») — не номер.
+    «КВ1» и «КБ1» — разные ключи. Не заводской номер — None."""
     clean = re.sub(r"\s+", "", str(text or ""))
-    match = _SCANNED_NUMBER.fullmatch(clean)
+    match = _SCANNED_NUMBER.search(clean)
     if match is None:
         return None
-    body = clean[:match.start(1)].rstrip("0").upper().translate(_LOOKALIKE).replace("КВ", "КБ")
+    body = clean[match.start():match.start(1)].rstrip("0").upper().translate(_LOOKALIKE)
     return f"{body}{int(match.group(1))}", int(match.group(1))
 
 

@@ -280,7 +280,7 @@ def factory_scope(task, document, uow, strict=True):
     """(изделие, шаблон, legacy) of the task's factory numbers (0222): изделие and the numbered FRX template from the ETK
     (`serial_source`; a self-contradicting ETK raises ValueError when `strict`, a read-only view gets no изделие);
     legacy — numbered labels of the task were printed before it got stored numbers: its count stays per item (the
-    numbers on those labels must not move), and its numbers are stored only where no other item holds them."""
+    numbers on those labels must not move); a number another task already holds refuses the print."""
     try:
         designation, template = serial_source(document, task) if document else (None, None)
     except ValueError:

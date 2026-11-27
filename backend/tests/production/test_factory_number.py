@@ -48,7 +48,8 @@ def test_designation_cleaning_and_default_kb():
 
 @pytest.mark.parametrize(("scan", "stored"), [
     ("FRX.831К.КБ1.3", "FRX.831К.КБ1.3"),
-    ("frx.831k.kb1.03", "FRX.831К.КБ1.3"),
+    ("frx.831k.кб1.03", "FRX.831К.КБ1.3"),
+    ("№ FRX.831К.КБ1.3", "FRX.831К.КБ1.3"),           # текст этикетки до «FRX.» — не номер
     (" FRX.831K.КБ1.3 ", "FRX.831К.КБ1.3"),
     ("FRX.831К.34.226.7", "FRX.831К.34.226.7"),
     ("frx.708k.4.120907/aa.012", "FRX.708К.4.120907/АА.12"),
@@ -64,6 +65,9 @@ def test_scan_key_keeps_dots_slashes_and_k_apart():
     assert factory_number_key("FRX.831К.34.22.67") != key
     assert factory_number_key("FRX.708К.4.120907/AA.12") != factory_number_key("FRX.708К.4.120907.AA.12")
     assert factory_number_key("ПЗ-0001-0003") is None and factory_number_key("FRX.831К.КБ1.0") is None
+    # Двойники — по одной букве: «КВ1» и «КБ1» — разные изделия (латинская B — это В, не Б).
+    assert factory_number_key("FRX.831К.КВ1.3") != factory_number_key("FRX.831К.КБ1.3")
+    assert factory_number_key("FRX.831K.KB1.3") == factory_number_key("FRX.831К.КВ1.3")
 
 
 def _doc(*fields):
@@ -80,6 +84,8 @@ TASK = SimpleNamespace(project="708К.4", item="КБ5")
     ({"serial": {"template": "FRX.708К.4.КБ5.{№}", "designation": "КБ5"}}, ("КБ5", "FRX.708К.4.КБ5.{№}")),
     ({"marks": [{"text": "FRX.708К.4.34.226.{№}"}]}, ("34.226", "FRX.708К.4.34.226.{№}")),   # надпись — тоже шаблон
     ({"marks": [{"text": "FRX.708К.4.34.226.{№:6}"}]}, ("34.226", "FRX.708К.4.34.226.{№:6}")),
+    ({"marks": [{"text": "№ FRX.708К.4.КБ5.{№}"}]}, ("КБ5", "FRX.708К.4.КБ5.{№}")),        # с приставкой
+    ({"marks": [{"text": "№ FRX.708К.4.34.226.{№}"}]}, ("34.226", "FRX.708К.4.34.226.{№}")),
     ({"serial": {"designation": "34.226"}}, ("34.226", None)),         # без шаблона — обозначение технолога
     ({"marks": [{"text": "КБ-{№:3}"}]}, ("КБ5", None)),                # этикетка без заводского номера — «КБ<n>»
 ])

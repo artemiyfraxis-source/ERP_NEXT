@@ -1,7 +1,7 @@
 """Opt-in real PostgreSQL race of factory-number allocation (0222); isolated schema in loopback erp_stock_test only.
 
-Two transactions number the same task at once — the loser takes the winner's numbers; two tasks reaching for the same
-number — exactly one wins, the other is refused. The repository is driven without the project lock the print holds, so
+Two transactions number the same task at once — the loser waits on the row lock and takes the winner's numbers; two
+tasks reaching for the same number — exactly one wins, the other is refused (pre-check or UNIQUE). The repository is driven without the project lock the print holds, so
 the row lock and UNIQUE (factory_number) alone are proven."""
 
 from concurrent.futures import ThreadPoolExecutor
@@ -13,6 +13,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 from sqlalchemy.schema import CreateSchema, DropSchema
@@ -91,7 +92,7 @@ def _race(engine, *jobs):
                 issued = SqlAlchemySerialRepository(session).assign_factory_numbers(task_id, "КБ1", numbers)
                 session.commit()
                 return len(issued)
-            except ProductionValidationError as error:
+            except (ProductionValidationError, IntegrityError) as error:   # both refuse the print
                 session.rollback()
                 return error
     with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
@@ -115,7 +116,7 @@ def test_two_tasks_reaching_for_one_number_never_share_it(engine):
     first, second = _task(engine, "ПЗ-0001"), _task(engine, "ПЗ-0002")
     outcomes = _race(engine, (first, _numbers(1)), (second, _numbers(1)))
     assert sum(item == 3 for item in outcomes) == 1
-    assert sum(isinstance(item, ProductionValidationError) for item in outcomes) == 1
+    assert sum(isinstance(item, (ProductionValidationError, IntegrityError)) for item in outcomes) == 1
     stored = _stored(engine)
     assert len(stored) == 3 and len({number for *_rest, number in stored}) == 3
     assert len({task_id for task_id, *_rest in stored}) == 1

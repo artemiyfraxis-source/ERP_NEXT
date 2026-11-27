@@ -30,8 +30,9 @@ def serial_source(document, task):
         texts = [serial.get("template"), *(mark.get("text") for mark in fields.get("marks") or () if isinstance(mark, dict))]
         for text in texts:
             clean = re.sub(r"\s+", "", str(text or ""))
-            if clean[:4].upper() == "FRX." and TOKEN.search(clean):
-                templates.append(clean)
+            start = clean.upper().find("FRX.")   # «№ FRX.831К.КБ1.{№}»: the number is the part from «FRX.»
+            if start >= 0 and TOKEN.search(clean[start:]):
+                templates.append(clean[start:])
     if templates:
         parsed = {}
         for text in templates:

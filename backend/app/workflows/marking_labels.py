@@ -543,8 +543,7 @@ def source_rows(source, selected, principal, uow, now, interleave=False, remaini
             serial = issue_mark_serials_in(tasks[task_id], True, principal.actor, now, uow, None if legacy else designation,
                                            pending)
             # 0222 (владелец 27.11, решение 4): печать выдаёт и хранит заводские номера изделий задания.
-            allocate_factory_numbers_in(tasks[task_id], serial, designation, principal.actor, now, uow, legacy=legacy,
-                                        template=template)
+            allocate_factory_numbers_in(tasks[task_id], serial, designation, principal.actor, now, uow, template=template)
     return rows, {"group": group_snapshot, "tasks": snapshots}
 
 

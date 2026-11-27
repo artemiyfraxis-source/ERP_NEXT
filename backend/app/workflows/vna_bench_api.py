@@ -1296,9 +1296,13 @@ def resolve(payload: ResolveInput, principal: Person, factory: Factory):
         serials = list(uow.session.scalars(select(ProductionSerialRow).where(ProductionSerialRow.serial_number == query)))
         if not serials and (key := factory_number_key(query)) is not None:
             # Factory numbers ending in this k, compared by the scan key: dots and «/» of the designation are kept.
+            # A Latin keyboard has no «Б»: typed «KB1» also tries «КБ1» — only for Latin input, so a stored «КВ1»
+            # still differs from «КБ1».
+            keys = {key} | ({factory_number_key(re.sub(r"KB(?=\d)", "КБ", query, flags=re.IGNORECASE))}
+                            if re.search(r"KB(?=\d)", query, re.IGNORECASE) else set())
             serials = [row for row in uow.session.scalars(select(ProductionSerialRow).where(
                 ProductionSerialRow.item_serial == key[1], ProductionSerialRow.factory_number.is_not(None)))
-                if factory_number_key(row.factory_number) == key]
+                if factory_number_key(row.factory_number) in keys]
         if serials:
             task_number = None
             found = {row.task_id: row.position for row in serials}

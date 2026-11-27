@@ -1142,13 +1142,13 @@ def issue_mark_serials_in(task, numbered, actor, now, uow, designation=None, pen
 
 
 def allocate_factory_numbers_in(task: ProductionTask, serial_range: tuple[int, int] | None, designation: str | None,
-                                actor: Actor, now: datetime, uow, *, legacy: bool = False,
-                                template: str | None = None) -> list:
+                                actor: Actor, now: datetime, uow, *, template: str | None = None) -> list:
     """Заводские номера изделий задания при печати этикетки с «№ изделия» (владелец 27.11, решение 4): изделию
     позиции p — k = first + p − 1 и FRX.<проект>.<изделие>.<k>, тот же k, что напечатан вместо {№}; изделие —
     ``designation`` из ЭТК («КБ<n>» или своё обозначение). Хранятся и не переиспользуются; перепечатка берёт выданные.
-    Нет изделия — номеров нет. ``legacy`` — этикетки задания напечатаны до 0222 (номера считались по позиции): если
-    другая позиция того же изделия уже держит эти номера, задание остаётся без заводских номеров, печать не меняется.
+    Нет изделия — номеров нет. Номер, уже выданный другому заданию (так бывает у этикеток, напечатанных до 0222 по
+    счёту позиции), печать не повторяет: отказ с номером того задания — два изделия с одним номером не появятся.
+    Тираж задания больше выданных номеров (тираж после запуска не меняется; на случай правки в БД) — отказ.
     ``template`` — номерной шаблон этикетки FRX…{№}: каждая этикетка с ним должна читаться как хранимый номер своего
     изделия (тот же ключ скана), иначе печать отказывает (например, ЭТК сменила изделие после первой печати).
     Caller holds the project/task locks (as for `issue_mark_serials_in`) and commits with the print."""
@@ -1162,14 +1162,15 @@ def allocate_factory_numbers_in(task: ProductionTask, serial_range: tuple[int, i
             return []
         numbers[position] = (first + position - 1, number)
     uow.serials.ensure_task(task.id, task.number, task.quantity)
-    try:
-        issued = uow.serials.assign_factory_numbers(task.id, clean_designation(designation), numbers)
-    except ProductionValidationError:
-        if not legacy:
-            raise
-        return []
+    issued = uow.serials.assign_factory_numbers(task.id, clean_designation(designation), numbers)
+    units = uow.serials.list_for_task(task.id)
+    if any(unit.factory_number for unit in units) and not all(unit.factory_number for unit in units):
+        given = sum(1 for unit in units if unit.factory_number)
+        raise ProductionValidationError(
+            f"Заводские номера выданы {given} изделиям из {len(units)}: тираж задания {task.number} изменился после "
+            "печати — добавку запустите отдельным заданием")
     if template:
-        for unit in uow.serials.list_for_task(task.id):
+        for unit in units:
             label = expand_serial(template, unit.item_serial) if unit.item_serial else None
             if unit.factory_number and factory_number_key(label) != factory_number_key(unit.factory_number):
                 raise ProductionValidationError(

@@ -112,7 +112,7 @@ def mark(payload: OutsideInput, principal: PrintUser, factory: Factory, now: Now
                 if fresh and not payload.dry_run:
                     issue_mark_serials_in(task, True, principal.actor, now, uow, count_by, pending)  # spent outside
                     allocate_factory_numbers_in(task, serial_range, designation, principal.actor, now, uow,
-                                                legacy=legacy, template=template)  # 0222: printed outside — stored
+                                                template=template)  # 0222: printed outside — stored too
             if not rows:
                 raise ValueError("В ЭТК выбранных КБ нет номерных этикеток — отмечать нечего")
             if not payload.dry_run and new:
