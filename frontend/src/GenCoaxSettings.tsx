@@ -2,7 +2,8 @@ import { useState } from "react";
 import { Field, Toggle, UnitInput } from "./GenControls";
 import { AutoTextarea } from "./AutoTextarea";
 import { coaxCutLength, coaxLengthProblem, coaxLengthConfirmation, type GenState } from "./tcGenLogic";
-import { COAX_COLORS, coaxMarkDefaults, type CoaxMark, type ConnColor } from "./tcGenMarks";
+import { COAX_COLORS, COAX_COVER_EXTRA_MM, COAX_SERIAL_TUBE_MM, coaxCoverLengths, coaxMarkDefaults, type CoaxLabelProfile, type CoaxMark, type ConnColor } from "./tcGenMarks";
+import { parseDecimal_ } from "./tcGenLogic";
 import { DataTable, type DataColumn } from "./DataTable";
 import { formatNumber } from "./format";
 
@@ -33,8 +34,26 @@ export function CoaxLength({ coax, onChange }: Props) {
   </>;
 }
 
-export function CoaxMarking({ coax, onChange, components, labels }: Props & { components: Array<{ type?: string; art?: string; name?: string }>; labels: boolean }) {
+/** «Заводской номер на изделии»: `kb` — «КБ<n>» карты, `onSerial` — включить/выключить или сменить обозначение изделия
+ *  (coaxSerialPatch), `profiles` — профили этикеток ОБ.102 (null — загружаются), `fakra` — FAKRA/HFM со своими метками. */
+export type CoaxSerialProps = {
+  kb: string; fakra: boolean; profiles: CoaxLabelProfile[] | null; profilesError?: string;
+  onSerial: (on: boolean, serialProduct?: string) => void;
+};
+
+export function CoaxMarking({ coax, onChange, components, labels, serial }: Props & { components: Array<{ type?: string; art?: string; name?: string }>; labels: boolean; serial: CoaxSerialProps }) {
   const marks = coax.marks ?? [];
+  const serialOn = !!coax.serialMark;
+  const tape = coax.markMaterial === "tape";
+  // Обычный коакс печатает метки только на ленте или — с номером — на маркировочной трубке.
+  const printed = tape || (serialOn && !serial.fakra);
+  const custom = coax.serialProduct !== undefined && coax.serialProduct.trim() !== "";
+  const [ownChoice, setOwnProduct] = useState<boolean | null>(null);
+  const ownProduct = ownChoice ?? custom;
+  const printedMm = tape ? coax.labelProfile?.lengthMm ?? 0 : parseDecimal_(coax.markTubeLen) || COAX_SERIAL_TUBE_MM;
+  const cover = coaxCoverLengths(printedMm > 0 ? printedMm : null);
+  const profiles = serial.profiles ?? [];
+  const known = !coax.labelProfile || profiles.some((item) => item.id === coax.labelProfile!.id);
   const color = coax.connColor ?? { method: "none", color: "", code: "", art: "" };
   const setColor = (patch: Partial<ConnColor>) => onChange({ connColor: { ...color, ...patch } });
   const setMark = (index: number, patch: Partial<CoaxMark>) => onChange({ marks: marks.map((mark, i) => i === index ? { ...mark, ...patch } : mark) });
@@ -44,19 +63,64 @@ export function CoaxMarking({ coax, onChange, components, labels }: Props & { co
     .find((item) => item.method === "paint" && item.code === code)?.art ?? "";
   return <section className="gsec coax-marking full" aria-label="Маркировка коакс-кабеля">
     <div className="gsec-head"><h3>Маркировка</h3></div>
+    <Toggle checked={serialOn} title="Заводской номер на изделии" hint="FRX.<проект>.<изделие>.<№> в середине, номер — при печати"
+      onChange={(on) => serial.onSerial(on)} />
+    {serialOn && <div className="opt-grid coax-serial">
+      <Field label="Изделие в номере" className="span2"><select name="coax-serial-product-kind" autoComplete="off" value={ownProduct ? "custom" : "kb"}
+        onChange={(event) => {
+          const own = event.target.value === "custom";
+          setOwnProduct(own);
+          if (!own) serial.onSerial(true, "");
+        }}>
+        <option value="kb">{serial.kb}</option><option value="custom">Своё обозначение</option>
+      </select></Field>
+      {ownProduct && <Field label="Обозначение" className="span2"><input name="coax-serial-product" autoComplete="off" placeholder="34.226 или 120907/AA"
+        value={coax.serialProduct ?? ""} onChange={(event) => serial.onSerial(true, event.target.value)} /></Field>}
+      <Field label="Носитель" className="span2"><select name="coax-mark-material" autoComplete="off" value={coax.markMaterial ?? "tube"}
+        onChange={(event) => onChange({ markMaterial: event.target.value as Coax["markMaterial"] })}>
+        <option value="tape">Этикетка на ленте</option><option value="tube">Термоусадочная трубка</option>
+      </select></Field>
+      <div className="span-all"><Toggle checked={!!marks.find((mark) => mark.serial)?.qr} title="QR-код с номером"
+        onChange={(qr) => onChange({ marks: marks.map((mark) => mark.serial ? { ...mark, qr } : mark) })} /></div>
+    </div>}
     {labels && <>
-    <div className="opt-grid">
+    {!serialOn && <div className="opt-grid">
       <Field label="Материал меток" className="span2"><select name="coax-mark-material" autoComplete="off" value={coax.markMaterial ?? "tube"}
         onChange={(event) => onChange({ markMaterial: event.target.value as Coax["markMaterial"] })}>
         <option value="tape">Этикетка на ленте</option><option value="tube">Термоусадочная трубка</option>
       </select></Field>
-    </div>
-    {coax.markMaterial === "tape" && <small className="gsec-meta">Лента Vell VL-S641, 18 мм · расходник маркиратора ZCUT-RT660 (ОБ.102)</small>}
-    {coax.markMaterial === "tape" && <Toggle checked={!!coax.markProtect} title="Прозрачная ТУТ поверх этикеток" onChange={(markProtect) => onChange({ markProtect })} />}
+    </div>}
+    {tape && <div className="opt-grid">
+      <Field label="Профиль этикетки" className="span2"><select name="coax-label-profile" autoComplete="off" value={coax.labelProfile?.id ?? ""}
+        disabled={serial.profiles === null}
+        onChange={(event) => onChange({ labelProfile: profiles.find((item) => item.id === event.target.value) })}>
+        <option value="">{serial.profiles === null ? "Загрузка…" : "Не выбран"}</option>
+        {!known && coax.labelProfile && <option value={coax.labelProfile.id}>{coax.labelProfile.name}</option>}
+        {profiles.map((item) => <option key={item.id} value={item.id}>{item.name}, длина {item.lengthMm} мм</option>)}
+      </select></Field>
+      <small className="gsec-meta span2">Лента Vell VL-S641, 18 мм · ZCUT-RT660 (ОБ.102)</small>
+      {serial.profilesError && <div className="warning-inline span-all" role="alert">{serial.profilesError}</div>}
+    </div>}
+    {!tape && serialOn && !serial.fakra && <div className="opt-grid">
+      <Field label="Длина трубки, мм"><UnitInput unit="мм" name="coax-mark-tube-length" autoComplete="off" inputMode="decimal" placeholder={String(COAX_SERIAL_TUBE_MM)}
+        value={coax.markTubeLen ?? ""} onChange={(event) => onChange({ markTubeLen: event.target.value })} /></Field>
+      <small className="gsec-meta span2">Печать трубки — Supvan TP80E (ОБ.057)</small>
+    </div>}
+    {printed && <Toggle checked={!!coax.markProtect} title={tape ? "Прозрачная ТУТ поверх этикеток" : "Прозрачная ТУТ поверх трубки"} onChange={(markProtect) => onChange({ markProtect })}>
+      <small className="gsec-meta coax-cover-length">{printedMm > 0
+        ? `Длина прозрачной ТУТ ${cover.middle} мм = ${tape ? "этикетка" : "трубка"} ${printedMm} + ${COAX_COVER_EXTRA_MM}`
+        : `Профиль не выбран: концевые ${cover.A} мм, центральная ${cover.middle} мм`}</small>
+    </Toggle>}
     <div className="gtable-wrap is-full"><table className="gtable coax-marks">
       <caption>Метки коакс-кабеля</caption>
       <thead><tr><th scope="col">Надпись</th><th scope="col">Место</th><th scope="col" className="num">Не ближе, мм</th><th scope="col" aria-label="Удалить" /></tr></thead>
-      <tbody>{marks.map((mark, index) => <tr key={index}>
+      <tbody>{marks.map((mark, index) => mark.serial ? <tr key={index} className="coax-mark-serial">
+        <td><b>{mark.text}</b><small>номер — при печати{mark.qr ? ", QR-код" : ""}</small></td>
+        <td>Середина</td>
+        <td><input className="num" type="number" min={100} aria-label={`Не ближе, мм, метка ${index + 1}`} name={`coax-mark-distance-${index}`} autoComplete="off" inputMode="numeric"
+          value={mark.minMm || ""} onChange={(event) => setMark(index, { minMm: Number(event.target.value) })} /></td>
+        <td />
+      </tr> : <tr key={index}>
         <td><AutoTextarea aria-label={`Надпись метки ${index + 1}`} name={`coax-mark-text-${index}`} autoComplete="off" value={mark.text} onChange={(text) => setMark(index, { text })} /></td>
         <td><select aria-label={`Место метки ${index + 1}`} name={`coax-mark-place-${index}`} autoComplete="off" value={mark.place} onChange={(event) => setMark(index, { place: event.target.value as CoaxMark["place"] })}>
           <option value="A">Сторона А</option><option value="middle">Середина</option><option value="B">Сторона В</option>

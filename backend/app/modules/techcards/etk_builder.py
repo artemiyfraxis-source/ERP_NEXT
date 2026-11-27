@@ -629,6 +629,35 @@ def _coax_cables(config: Mapping[str, Any]) -> Decimal:
 
 
 COAX_PROTECTIVE_TUT_LENGTHS = {"A": 35, "B": 35, "middle": 55}
+# Clear cover over a printed label or tube = printed length + 10 мм (owner 20.11); the constants above stay for cards
+# built before the label profile (no `coverPrintedMm`).
+COAX_COVER_EXTRA_MM = 10
+PRINTED_MARK_MATERIAL = {"tape": "Лента Vell VL-S641, 18 мм",
+                         "tube": "Маркировочная трубка, принтер Supvan TP80E (ОБ.057)"}
+
+
+def _printer_mark(op: Mapping[str, Any]) -> bool:
+    """A printed coax mark (label tape or, with the factory number, a marking tube printed on the Supvan — `printedTube`):
+    the stock is the printer's consumable — no BOM consumption, no tube cut length, its own result and steps. FAKRA
+    marking tubes (`markMaterial` «tube» without the flag) are cut from the BOM TUT, as before."""
+    return op.get("markMaterial") == "tape" or (op.get("markMaterial") == "tube" and op.get("printedTube") is True)
+
+
+def _coax_cover_lengths(coax: Mapping[str, Any]) -> dict[str, Any]:
+    printed = _decimal(coax.get("coverPrintedMm"))
+    if printed.is_finite() and printed > 0:
+        return {place: printed + COAX_COVER_EXTRA_MM for place in COAX_PROTECTIVE_TUT_LENGTHS}
+    return dict(COAX_PROTECTIVE_TUT_LENGTHS)
+
+
+def _coax_serial_tube(coax: Mapping[str, Any]) -> bool:
+    serial = coax.get("serial")
+    return isinstance(serial, Mapping) and serial.get("carrier") == "tube"
+
+
+def _coax_tut(op: Mapping[str, Any], coax: Mapping[str, Any]) -> str:
+    """The TUT of a coax op: end TUT beside printed marks carries its own article (`endTut`), else the config's."""
+    return str(op.get("tutArt") or op.get("tutName") or coax.get("tutArt") or coax.get("tutName") or "").strip()
 
 
 def _coax_protective_tubes(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -666,11 +695,14 @@ def _coax_quantity_config(config: Mapping[str, Any]) -> Mapping[str, Any]:
     if config.get("mode") != "coax" or not isinstance(config.get("ops"), list):
         return config
     coax = _coax(config)
-    protection = coax.get("markMaterial") == "tape" and coax.get("markProtect")
+    protection = (coax.get("markMaterial") == "tape" or _coax_serial_tube(coax)) and coax.get("markProtect")
+    end_tut = any(isinstance(raw, Mapping) and raw.get("endTut") for raw in _list(config.get("ops")))
     if protection:
-        # Replay old saved 30/60 mm values with the owner's per-place rule. Manual assemblies keep their settings.
-        coax = {**coax, "tutLengths": dict(COAX_PROTECTIVE_TUT_LENGTHS)}
-        coax.pop("tutLength", None)
+        # Replay old saved 30/60 mm values with the owner's per-place rule (label + 10 мм once the label length is
+        # known). Manual assemblies keep their settings. End TUT beside the labels keeps its own length.
+        coax = {**coax, "tutLengths": _coax_cover_lengths(coax)}
+        if not end_tut:
+            coax.pop("tutLength", None)
         config = {**config, "coax": coax}
     if cables <= 1 and not protection:
         return config
@@ -697,10 +729,13 @@ def _coax_quantity_config(config: Mapping[str, Any]) -> Mapping[str, Any]:
                 count += len(_list(op.get("clampSides")))
             op["units"] = int(cables) * count
         marks = _list(op.get("marks")) or _list(coax.get("marks"))
-        if kind in {"coaxCutTut", "coaxInsTut", "coaxHeat"} and not op.get("side"):
-            if protection and op.get("markMaterial") != "tape":
+        if kind in {"coaxCutTut", "coaxInsTut", "coaxHeat"} and not op.get("side") and op.get("endTut"):
+            op["units"] = len(sides) * int(cables)  # end TUT beside printed marks: one piece per connected end
+        elif kind in {"coaxCutTut", "coaxInsTut", "coaxHeat"} and not op.get("side"):
+            if protection and not op.get("markMaterial"):
                 op["protective"] = True
-            if not any(side.get("kind") for side in sides) and coax.get("markMaterial") != "tape":
+            if (not any(side.get("kind") for side in sides) and coax.get("markMaterial") != "tape"
+                    and not _coax_serial_tube(coax)):
                 # Ordinary tubes go on connected ends, even if old label settings remain in the form.
                 op["units"] = len(sides) * int(cables)
             elif marks:
@@ -728,6 +763,9 @@ def vswr_control(raw: object) -> dict[str, Any] | None:
     or not readable — None: the assembly was built before the setting, its ETK reads as it did."""
     if not isinstance(raw, Mapping) or raw.get("mode") not in {"all", "sample", "none"}:
         return None
+    if raw.get("passport") is True and raw["mode"] == "all":
+        # «Паспорт по ВАЦ на каждое изделие» (владелец 27.11): сплошной контроль, паспорт по замеру каждого номера.
+        return {"mode": "all", "every": None, "passport": True}
     if raw["mode"] != "sample":
         return {"mode": raw["mode"], "every": None}
     try:
@@ -834,7 +872,7 @@ def _coax_state(config: Mapping[str, Any], done: Sequence[Mapping[str, Any]]) ->
             sides["cap_screw"].add(end)
         elif kind in {"coaxVswr", "coaxConnColor"}:
             flags.add(kind)
-        elif kind == "coaxInsTut" and step.get("markMaterial") == "tape":
+        elif kind == "coaxInsTut" and _printer_mark(step):
             flags.add("coaxLabel")
         elif kind in {"coaxInsTut", "coaxInsSleeve", "coaxShield", "coaxHeat"}:
             clamp = len(_list(step.get("clampSides"))) if kind == "coaxInsSleeve" else 0
@@ -858,9 +896,10 @@ def _coax_result_name(op: Mapping[str, Any], config: Mapping[str, Any], done: Se
     operation_type = str(op.get("type") or "")
     coax = _coax(config)
     cable = str(coax.get("cableArt") or coax.get("cableName") or "").strip()
-    tut = str(coax.get("tutArt") or coax.get("tutName") or "").strip()
-    if operation_type == "coaxCutTut" and op.get("markMaterial") == "tape":
-        return f"Напечатанные этикетки: {int(_coax_units(op))} шт."
+    tut = _coax_tut(op, coax)
+    if operation_type == "coaxCutTut" and _printer_mark(op):
+        what = "трубки" if op.get("markMaterial") == "tube" else "этикетки"
+        return f"Напечатанные {what}: {int(_coax_units(op))} шт."
     if operation_type == "coaxCutTut":
         if groups := _coax_protective_tubes(op, config):
             return f"Трубка {tut or 'ТУТ'} нарезана: " + " + ".join(_coax_tube_text(group) for group in groups)
@@ -976,10 +1015,12 @@ def _coax_output(op: Mapping[str, Any], config: Mapping[str, Any], done: Sequenc
     operation_type = str(op.get("type") or "")
     coax = _coax(config)
     cable = str(coax.get("cableArt") or coax.get("cableName") or "").strip()
-    tut = str(coax.get("tutArt") or coax.get("tutName") or "").strip()
-    if operation_type == "coaxCutTut" and op.get("markMaterial") == "tape":
-        return _output("Напечатанные этикетки", [_attr("Материал", "Лента Vell VL-S641, 18 мм"),
-                                                 _attr("Этикеток на изделие, шт.", _format(_coax_units(op)))])
+    tut = _coax_tut(op, coax)
+    if operation_type == "coaxCutTut" and _printer_mark(op):
+        tube = op.get("markMaterial") == "tube"
+        return _output("Напечатанные трубки" if tube else "Напечатанные этикетки", [
+            _attr("Материал", PRINTED_MARK_MATERIAL[op["markMaterial"]]),
+            _attr("Трубок на изделие, шт." if tube else "Этикеток на изделие, шт.", _format(_coax_units(op)))])
     if operation_type == "coaxCutTut":
         groups = _coax_protective_tubes(op, config)
         length = _format(coax.get("tutLength"))
@@ -1199,7 +1240,7 @@ _MARK_SERIAL_TOKEN = re.compile(r"\{№(?::[1-6])?\}")
 
 def _coax_mark_rows(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[str, str]]:
     """Expose the complete label output once, at printing; installation reuses the same physical labels."""
-    material = "Лента Vell VL-S641, 18 мм" if op.get("markMaterial") == "tape" else "Термотрубка"
+    material = PRINTED_MARK_MATERIAL[op["markMaterial"]] if _printer_mark(op) else "Термотрубка"
     return [{
         "target": "Кабель", "text": str(mark.get("text") or ""), "material": material,
         "place": "середина кабеля" if mark.get("place") == "middle" else "у разъёма " + (
@@ -1328,8 +1369,13 @@ def _coax_components(op: Mapping[str, Any], config: Mapping[str, Any], *, manual
             return []
         return [{"art": art, "name": str(coax.get(name_key) or ""), "norm": _format(norm), "unit": unit}]
 
-    if operation_type == "coaxCutTut" and op.get("markMaterial") == "tape":
+    if operation_type in {"coaxCutTut", "coaxInsTut", "coaxHeat"} and _printer_mark(op):
         return []  # Label stock belongs to the printer, including old configs with explicit BOM parts.
+    if operation_type == "coaxCutTut" and op.get("endTut") and (op.get("tutArt") or op.get("tutName")):
+        art, name = str(op.get("tutArt") or op.get("tutName")), str(op.get("tutName") or "")
+        length = _decimal(coax.get("tutLength"))
+        return ([{"art": art, "name": name, "norm": _format(units * length / 1000 * quantity), "unit": "М."}] if length > 0
+                else [{"art": art, "name": name, "norm": _format(units * quantity), "unit": "Шт."}])
     if operation_type == "coaxCutTut" and (groups := _coax_protective_tubes(op, config)):
         length = sum(group["units"] * group["length"] for group in groups)
         return row("tutArt", "tutName", length / 1000 * quantity, "М.")
@@ -1344,7 +1390,7 @@ def _coax_components(op: Mapping[str, Any], config: Mapping[str, Any], *, manual
         cables = _coax_cables(config)
         return row("cableArt", "cableName", _decimal(coax.get("cableLength")) * quantity * cables / 1000, "М.")
     if operation_type == "coaxCutTut":
-        if op.get("markMaterial") == "tape":
+        if _printer_mark(op):
             return []  # Missing label stock must never consume protective tubing.
         if (manual or op.get("protective")) and _decimal(coax.get("tutLength")) > 0:
             return row("tutArt", "tutName", units * _decimal(coax.get("tutLength")) / 1000 * quantity, "М.")
@@ -1601,7 +1647,7 @@ def _time(op: Mapping[str, Any], config: Mapping[str, Any], result_name: str) ->
                 minutes = None if piece is None or minutes is None else minutes + piece * group["units"]
             return [{"name": result_name, "norm": _norm(None if minutes is None else minutes * quantity)}]
         length = {"coaxCut": coax.get("cableLength"), "coaxCutTut": coax.get("tutLength")}.get(operation_type)
-        if op.get("markMaterial") == "tape":
+        if _printer_mark(op):
             length = None
         linear = linear_seconds(op.get("linearTiming"), _decimal(length) / 1000) if length is not None else None
         piece = linear / 60 if linear is not None else operation_minutes
@@ -1920,7 +1966,7 @@ def coax_sketch_fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict
                             "side": _side_label(op), "pinType": str(end.get("pinType") or ""),
                             "shield": coax_end_shield(end)}}
     if operation_type == "coaxCutTut":
-        if op.get("markMaterial") == "tape":
+        if _printer_mark(op):
             return {}
         if groups := _coax_protective_tubes(op, config):
             return {"coaxProtectiveTubes": [{key: _format(value) if key != "place" else value
@@ -1931,12 +1977,12 @@ def coax_sketch_fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict
         length = _format(coax.get("tutLength"))
         return {"lengthKd": f"{length}мм"} if length != "0" else {}
     parts = {
-        "coaxInsTut": ("tube", coax.get("tutArt") or coax.get("tutName"), coax.get("tutLength")),
-        "coaxHeat": ("tube", coax.get("tutArt") or coax.get("tutName"), coax.get("tutLength")),
+        "coaxInsTut": ("tube", _coax_tut(op, coax), coax.get("tutLength")),
+        "coaxHeat": ("tube", _coax_tut(op, coax), coax.get("tutLength")),
         "coaxInsSleeve": ("sleeve", coax.get("sleeveArt") or coax.get("sleeveName"), ""),
         "coaxShield": ("sleeve", coax.get("sleeveArt") or coax.get("sleeveName"), ""),
     }.get(operation_type)
-    if not parts or op.get("markMaterial") == "tape":
+    if not parts or _printer_mark(op):
         return {}
     kind, name, length = parts
     length_text = _format(length) if length else "0"
@@ -2043,7 +2089,8 @@ def _vswr_scope(control: Mapping[str, Any] | None) -> str:
     """How many units of the batch the check measures, as the step says it; no setting — nothing (text as before)."""
     mode = control.get("mode") if isinstance(control, Mapping) else None
     if mode == "all":
-        return "контроль сплошной — каждое изделие партии"
+        return ("контроль сплошной — каждое изделие партии"
+                + ("; паспорт по ВАЦ на каждое изделие по заводскому номеру" if control.get("passport") else ""))
     if mode == "sample":
         every = control.get("every")
         return f"контроль выборочный: первое изделие партии и далее каждое {every}-е (1 из {every})"
@@ -2231,10 +2278,18 @@ def _fields(op: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
                        "lPlusB": _coax(config).get("lPlusB"), "cutTolerance": "0…+5 мм", "drawingTolerance": "0…+10 мм"})
     if op.get("marks") and operation_type.startswith("coax"):
         fields["coaxMarks"] = deepcopy(op["marks"])
-        if operation_type == "coaxCutTut" and (op.get("markMaterial") == "tape" or any(
+        if operation_type == "coaxCutTut" and (_printer_mark(op) or any(
             _MARK_SERIAL_TOKEN.search(str(mark.get("text") or "")) for mark in _mark_items(op)
         )):
             fields["marks"] = _coax_mark_rows(op, config)
+    if operation_type == "coaxCutTut" and _printer_mark(op) and isinstance(serial := _coax(config).get("serial"), Mapping):
+        # «Заводской номер на изделии» (владелец 27.11): шаблон FRX.<проект>.<изделие>.{№} и изделие в номере
+        # (designation; счётчик — на проект и изделие) — согласованно, их читает печать и выдача номера (production);
+        # носитель, профиль этикетки и QR-код.
+        template = str(serial.get("template") or "")
+        designation = str(serial.get("designation") or serial.get("product") or "")
+        fields["serial"] = {"template": template, "designation": designation, **{
+            key: deepcopy(serial[key]) for key in ("productKind", "carrier", "qr", "profile", "tubeLengthMm") if key in serial}}
     if operation_type == "coaxInsSleeve" and _coax(config).get("fakraCutStrip"):
         end = _coax_end(op, config)
         if end.get("kind") in {"straight", "angled"}:
@@ -2726,7 +2781,8 @@ def _coax_recipe_steps(op: Mapping[str, Any], config: Mapping[str, Any]) -> list
     steps: list[str] = []
     if op.get("type") in {"coaxCutTut", "coaxInsTut", "coaxHeat"} and (groups := _coax_protective_tubes(op, config)):
         material = str(coax.get("tutName") or coax.get("tutArt") or "ТУТ")
-        action = {"coaxCutTut": "Нарезать", "coaxInsTut": "Надеть", "coaxHeat": "Усадить поверх этикеток"}[op["type"]]
+        action = {"coaxCutTut": "Нарезать", "coaxInsTut": "Надеть",
+                  "coaxHeat": "Усадить поверх меток" if _coax_serial_tube(coax) else "Усадить поверх этикеток"}[op["type"]]
         steps.extend(f"{action} {material}: {_coax_tube_text(group, _part_quantity(config))}." for group in groups)
     if op.get("type") == "coaxCut" and (cables := _coax_cables(config)) > 1:
         count = int(cables)
@@ -2837,9 +2893,10 @@ def clean_material_name(name: object) -> str:
     return re.sub(r"[\s\-–—]+$", "", _SHOP_TAIL.split(text, maxsplit=1)[0]).strip()
 
 
-def _tube_material(config: Mapping[str, Any], protective: bool) -> str:
-    """The article first: a BOM name may be a whole shop listing (then only its clean head)."""
-    coax = _coax(config)
+def _tube_material(config: Mapping[str, Any], protective: bool, op: Mapping[str, Any] | None = None) -> str:
+    """The article first: a BOM name may be a whole shop listing (then only its clean head). End TUT beside printed
+    marks (`endTut`) names its own tube."""
+    coax = op if op is not None and op.get("endTut") and (op.get("tutArt") or op.get("tutName")) else _coax(config)
     return (str(coax.get("tutArt") or "").strip() or clean_material_name(coax.get("tutName"))
             or ("прозрачная ТУТ" if protective else "ТУТ"))
 
@@ -2872,7 +2929,7 @@ def _plain_tube(op: Mapping[str, Any], config: Mapping[str, Any]) -> tuple[str, 
     """(«2 отрезка по 20 мм», «ТУТ 6/3: 20 мм ×2») of a plain coax TUT; no length — said so."""
     length = _format(_coax(config).get("tutLength"))
     units = _coax_units(op)
-    material = _tube_material(config, False)
+    material = _tube_material(config, False, op)
     if length == "0":
         return f"{_pieces(units)}, длина не задана", f"{material}: длина не задана"
     return f"{_pieces(units)} по {length} мм", f"{material}: {length} мм ×{_format(units)}"
@@ -2949,6 +3006,14 @@ def _short_print(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[
     if not marks:
         return None
     # Тексты и места — одной таблицей «Результат» (fields.marks), не второй раз в шаге (аудит 23.11, B3).
+    if op.get("markMaterial") == "tube" and _printer_mark(op):
+        return [
+            _step("Операция", "Заправить кассету маркировочной трубки в принтер Supvan TP80E (ОБ.057), задать тексты, "
+                              "длину отрезка и количество по таблице «Результат». Номер заводской — по листу задания."),
+            _step("Операция", "Выполнить тестовую печать, затем напечатать и отрезать партию трубок."),
+            _step("Контроль", "Проверить на тестовой печати и в партии тексты и количество: надпись читается, без "
+                              "смазывания, пропусков и обрезанных знаков.", _STO_MARKING),
+        ]
     return [
         _step("Операция", "Заправить этикеточную ленту в маркиратор, задать тексты и количество этикеток по таблице "
                           "«Результат». Номер программы и параметры печати — не задано."),
@@ -2967,6 +3032,13 @@ def _short_label(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[
                        + (f", не ближе {_format(mark.get('minMm', 100))} мм от разъёма" if mark.get("place") in _SIDE_RU else "")
                        for mark in marks)
     protect = bool(_coax(config).get("markProtect"))
+    if op.get("markMaterial") == "tube" and _printer_mark(op):
+        steps = [_step("Операция", f"Надеть маркировочную трубку с номером на кабель до монтажа корпусов разъёмов: {places}.")]
+        if protect:
+            steps.append(_step("Операция", "Надвинуть прозрачную ТУТ поверх маркировочной трубки; усадка — отдельной операцией."))
+        steps.append(_step("Контроль", "Проверить текст, место и читаемость номера на трубке.",
+                           "; ".join(part for part in (_mark_distances(marks), _STO_MARKING) if part)))
+        return steps
     steps = [_step("Операция", "Наклеить этикетки на чистую сухую оболочку ровной обёрткой, без складок и отслоения "
                                f"краёв: {places}.")]
     if protect:
@@ -2981,7 +3053,7 @@ def _short_label(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[
 
 def _short_tut_cut(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[str, str]]:
     groups = _coax_protective_tubes(op, config)
-    material = _tube_material(config, bool(groups))
+    material = _tube_material(config, bool(groups), op)
     steps = [_step("Операция", f"Заправить {material} в автомат мерной резки; зазор подающих роликов — без сплющивания "
                                "трубки. Выполнить 2–3 пробных реза.")]
     if groups:
@@ -3003,7 +3075,7 @@ def _short_tut_cut(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dic
 
 def _short_tut_on(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[str, str]]:
     groups = _coax_protective_tubes(op, config)
-    material = _tube_material(config, bool(groups))
+    material = _tube_material(config, bool(groups), op)
     if groups:
         per_assembly = _tube_per_assembly(groups)
         return [
@@ -3033,7 +3105,7 @@ def _short_heat(op: Mapping[str, Any], config: Mapping[str, Any]) -> list[dict[s
                               "кабель; смещения, складок, пузырей и прожогов нет.",
                   _mark_distances(_short_marks(op, config))),
         ]
-    material = _tube_material(config, False)
+    material = _tube_material(config, False, op)
     return [
         _step("Операция", SHRINK_PLACEHOLDER),
         _step("Операция", f"Надвинуть {material} на соединение с нахлёстом на корпус разъёма и оболочку кабеля и "
@@ -3086,7 +3158,7 @@ def coax_short_steps(op: Mapping[str, Any], config: Mapping[str, Any], fields: M
     if not coax.get(SHORT_CARDS) or op.get("side"):
         return None
     operation_type = str(op.get("type") or "")
-    tape = op.get("markMaterial") == "tape"
+    tape = _printer_mark(op)
     # Printed marking tubes (markMaterial «tube») keep their own print/put-on/shrink cards.
     plain = bool(op.get("protective")) or coax.get("markMaterial") != "tube"
     steps: list[dict[str, str]] | None = None

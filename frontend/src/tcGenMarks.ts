@@ -229,9 +229,56 @@ export function mergeMarkRows(current: MarkRow[], extra: MarkRow[]): MarkRow[] {
   return [...kept, ...extra.filter((row) => !seen.has(key(row)))];
 }
 
-export type CoaxMark = { text: string; place: "A" | "B" | "middle"; minMm: number; scope?: "cable" | "assembly" };
-/** Protective clear tubing over tape labels, mm (owner 17.11.2026). Not printed marking tubes. */
+/** `serial` — the factory-number label (owner 27.11): the text is the template `FRX.<project>.КБ<n>.{№}`, the number is
+ *  allocated at print; `qr` — the label also carries a QR code with that number. */
+export type CoaxMark = { text: string; place: "A" | "B" | "middle"; minMm: number; scope?: "cable" | "assembly"; serial?: boolean; qr?: boolean };
+/** Protective clear tubing over tape labels, mm (owner 17.11.2026). Not printed marking tubes. Used when the label length
+ *  is unknown (cards built before the label profile); a known label gets label + COAX_COVER_EXTRA_MM. */
 export const COAX_PROTECTIVE_TUT_LENGTHS = { A: 35, B: 35, middle: 55 } as const;
+/** Clear cover over a printed label or tube = printed length + 10 мм (owner 20.11, marking-cover-rule). */
+export const COAX_COVER_EXTRA_MM = 10;
+/** Printed marking tube piece of the factory number when the technologist did not set one, мм. */
+export const COAX_SERIAL_TUBE_MM = 30;
+/** Label profile of the ZCUT-RT660 marker (ОБ.102): the label lies along the cable, its length is the profile width. */
+export type CoaxLabelProfile = { id: string; name: string; lengthMm: number };
+
+/** «КБ1» from «КБ1», «КБ-1», «KB 1», «591K.3.КБ1»; any other item index as it is, without spaces — the same rule as
+ *  backend production/traceability.box_code_kb, so the label and the stored factory number agree. */
+export function coaxSerialKb(project: string, item: string): string {
+  const clean = String(item || "").replace(/\s+/g, "");
+  const match = /(?:КБ|KB)[.\-]*(\d+)/i.exec(clean);
+  if (match) return `КБ${Number(match[1])}`;
+  const prefix = String(project || "").replace(/\s+/g, "");
+  const rest = prefix && clean.toLowerCase().startsWith(`${prefix}.`.toLowerCase()) ? clean.slice(prefix.length + 1) : clean;
+  return rest || "КБ";
+}
+
+/** Middle part of the factory number: the technologist's product designation (owner 27.11: «либо КБ, либо по
+ *  кастомному, как в РТС 34.226»; customer PN «120907/AA» on 708К.) without spaces and edge dots; empty — «КБ<n>». */
+export function coaxSerialProduct(project: string, item: string, custom?: string): string {
+  const own = String(custom || "").replace(/\s+/g, "").replace(/^\.+|\.+$/g, "");
+  return own || coaxSerialKb(project, item);
+}
+
+/** Customer PN from the assembly name («… 120907/AA …»), the default custom designation; none — "". */
+export function coaxSerialProductFromName(name: string): string {
+  return [...String(name || "").matchAll(/\b\d+(?:[/_])?AA\b/gi)].at(-1)?.[0] ?? "";
+}
+
+/** Factory-number template on the item (owner 27.11): `FRX.<project without trailing dots>.<изделие>.{№}`, where
+ *  <изделие> is «КБ<n>» or the custom designation, e.g. `FRX.831К.КБ1.{№}` → `FRX.831К.КБ1.3`; the serial is unpadded,
+ *  counted per (project, изделие) and filled at print. */
+export function coaxSerialText(project: string, item: string, custom?: string): string {
+  const code = String(project || "").replace(/\s+/g, "").replace(/\.+$/, "");
+  return `FRX.${code}.${coaxSerialProduct(project, item, custom)}.{№}`;
+}
+
+/** Clear-cover length per mark place: printed length + 10 мм everywhere when known, else the 17.11 constants. */
+export function coaxCoverLengths(printedMm: number | null | undefined): Record<"A" | "B" | "middle", number> {
+  if (!(printedMm && printedMm > 0)) return { ...COAX_PROTECTIVE_TUT_LENGTHS };
+  const cover = Math.round((printedMm + COAX_COVER_EXTRA_MM) * 1000) / 1000;
+  return { A: cover, B: cover, middle: cover };
+}
 export type ConnColor = { method: "none" | "paint" | "laser" | "tape"; color: string; code: string; art: string };
 
 export const COAX_COLORS = [

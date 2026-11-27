@@ -1,0 +1,741 @@
+{
+ "tape": {
+  "mode": "coax",
+  "tab": "coax",
+  "assemblyIndex": "КБ1",
+  "assemblyName": "Кабельная сборка SMA-Male to SMA-Male RG58C/U 500mm",
+  "partQty": 1,
+  "coax": {
+   "cableLength": 510,
+   "markMaterial": "tape",
+   "markProtect": true,
+   "marks": [
+    {
+     "text": "FRX.831К.КБ1.{№}",
+     "place": "middle",
+     "minMm": 100,
+     "scope": "assembly",
+     "serial": true,
+     "qr": true
+    }
+   ],
+   "tutLengths": {
+    "A": 50,
+    "B": 50,
+    "middle": 50
+   },
+   "coverPrintedMm": 40,
+   "tutLength": 20,
+   "labelProfile": {
+    "id": "p40",
+    "name": "40×60",
+    "lengthMm": 40
+   },
+   "serial": {
+    "template": "FRX.831К.КБ1.{№}",
+    "designation": "КБ1",
+    "productKind": "kb",
+    "carrier": "tape",
+    "qr": true,
+    "profile": {
+     "id": "p40",
+     "name": "40×60",
+     "lengthMm": 40
+    }
+   },
+   "tutArt": "ТУТ 6/3 прозрачная",
+   "tutName": "ТУТ 6/3 прозрачная",
+   "cableArt": "RG58C/U",
+   "cableName": "RG58C/U",
+   "sleeveArt": "",
+   "sleeveName": "",
+   "shieldType": "обжим",
+   "sideA": {
+    "article": "SMA-C58P",
+    "connName": "SMA-C58P",
+    "type": "",
+    "wire": "",
+    "mfr": "",
+    "program": "",
+    "d1": "",
+    "d2": "",
+    "d3": "",
+    "l1": "",
+    "l2": "",
+    "l3": "",
+    "lPlus": "",
+    "lMinus": "",
+    "pinType": "пайка",
+    "shield": "обжим"
+   },
+   "sideB": {
+    "article": "SMA-C58P-B",
+    "connName": "SMA-C58P",
+    "type": "",
+    "wire": "",
+    "mfr": "",
+    "program": "",
+    "d1": "",
+    "d2": "",
+    "d3": "",
+    "l1": "",
+    "l2": "",
+    "l3": "",
+    "lPlus": "",
+    "lMinus": "",
+    "pinType": "пайка",
+    "shield": "обжим"
+   },
+   "vswrControl": {
+    "mode": "all",
+    "every": null,
+    "passport": true
+   }
+  },
+  "ops": [
+   {
+    "type": "coaxCut",
+    "opKey": "coaxCutStrip",
+    "side": "",
+    "units": 1,
+    "templateId": "CUT_COAX+2strip",
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "machine": {
+     "model": "BZW-50X",
+     "inventory": "ОБ.095",
+     "name": "Станок резки провода с роторной зачисткой больш."
+    },
+    "stripSides": [
+     "A",
+     "B"
+    ],
+    "label": "Резка с разделкой (А и В)"
+   },
+   {
+    "type": "coaxCutTut",
+    "opKey": "coaxPrintLabel",
+    "side": "",
+    "units": 1,
+    "templateId": "PRINT_MARK_LABEL",
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "marks": [
+     {
+      "text": "FRX.831К.КБ1.{№}",
+      "place": "middle",
+      "minMm": 100,
+      "scope": "assembly",
+      "serial": true,
+      "qr": true
+     }
+    ],
+    "markMaterial": "tape",
+    "markPhase": "print",
+    "label": "Печать этикетки заводского номера"
+   },
+   {
+    "type": "coaxCutTut",
+    "opKey": "coaxProtectCut",
+    "side": "",
+    "units": 1,
+    "templateId": "CUT_TUT_short",
+    "shrinkMaterials": [
+     {
+      "art": "ТУТ 6/3 прозрачная",
+      "name": "ТУТ 6/3 прозрачная"
+     }
+    ],
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "protective": true,
+    "label": "Резка прозрачной ТУТ"
+   },
+   {
+    "type": "coaxCutTut",
+    "opKey": "coaxCutTut",
+    "side": "",
+    "units": 2,
+    "templateId": "CUT_TUT_short",
+    "shrinkMaterials": [
+     {
+      "art": "ТУТ 6/3 чёрная",
+      "name": "ТУТ 6/3 чёрная"
+     }
+    ],
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "endTut": true,
+    "tutArt": "ТУТ 6/3 чёрная",
+    "tutName": "ТУТ 6/3 чёрная",
+    "label": "Резка ТУТ ×2"
+   },
+   {
+    "type": "coaxPin",
+    "opKey": "coaxPinA",
+    "side": "A",
+    "units": 1,
+    "templateId": "SDR_COAX_pin",
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "label": "Пайка центрального контакта (А)"
+   },
+   {
+    "type": "coaxPin",
+    "opKey": "coaxPinB",
+    "side": "B",
+    "units": 1,
+    "templateId": "SDR_COAX_pin",
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "label": "Пайка центрального контакта (B)"
+   },
+   {
+    "type": "coaxInsTut",
+    "opKey": "coaxProtectIns",
+    "side": "",
+    "units": 1,
+    "templateId": "INS_TUT",
+    "shrinkMaterials": [
+     {
+      "art": "ТУТ 6/3 прозрачная",
+      "name": "ТУТ 6/3 прозрачная"
+     }
+    ],
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "protective": true,
+    "label": "Монтаж прозрачной ТУТ"
+   },
+   {
+    "type": "coaxInsTut",
+    "opKey": "coaxInsTut",
+    "side": "",
+    "units": 2,
+    "templateId": "INS_TUT",
+    "shrinkMaterials": [
+     {
+      "art": "ТУТ 6/3 чёрная",
+      "name": "ТУТ 6/3 чёрная"
+     }
+    ],
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "endTut": true,
+    "tutArt": "ТУТ 6/3 чёрная",
+    "tutName": "ТУТ 6/3 чёрная",
+    "label": "Монтаж ТУТ ×2"
+   },
+   {
+    "type": "coaxInsSleeve",
+    "opKey": "coaxInsSleeve",
+    "side": "",
+    "units": 2,
+    "templateId": "INS_SLEEVE_coax",
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "label": "Монтаж втулки экрана ×2"
+   },
+   {
+    "type": "coaxHousing",
+    "opKey": "coaxHousingA",
+    "side": "A",
+    "units": 1,
+    "templateId": "INS_housing_COAX",
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "label": "Монтаж корпуса (А)"
+   },
+   {
+    "type": "coaxHousing",
+    "opKey": "coaxHousingB",
+    "side": "B",
+    "units": 1,
+    "templateId": "INS_housing_COAX",
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "label": "Монтаж корпуса (B)"
+   },
+   {
+    "type": "coaxShield",
+    "opKey": "coaxShield",
+    "side": "",
+    "units": 2,
+    "templateId": "PRS_SLEEVE_coax",
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "label": "Опрессовка втулки экрана ×2"
+   },
+   {
+    "type": "coaxHeat",
+    "opKey": "coaxHeatTut",
+    "side": "",
+    "units": 2,
+    "templateId": "HEAT_TYT_short",
+    "shrinkMaterials": [
+     {
+      "art": "ТУТ 6/3 чёрная",
+      "name": "ТУТ 6/3 чёрная"
+     }
+    ],
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "endTut": true,
+    "tutArt": "ТУТ 6/3 чёрная",
+    "tutName": "ТУТ 6/3 чёрная",
+    "label": "Усадка ТУТ ×2"
+   },
+   {
+    "type": "coaxInsTut",
+    "opKey": "coaxInsLabel",
+    "side": "",
+    "units": 1,
+    "templateId": "INS_MARK_LABEL",
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "marks": [
+     {
+      "text": "FRX.831К.КБ1.{№}",
+      "place": "middle",
+      "minMm": 100,
+      "scope": "assembly",
+      "serial": true,
+      "qr": true
+     }
+    ],
+    "markMaterial": "tape",
+    "markPhase": "install",
+    "label": "Наклейка этикеток маркировки"
+   },
+   {
+    "type": "coaxHeat",
+    "opKey": "coaxHeat",
+    "side": "",
+    "units": 1,
+    "templateId": "HEAT_TYT_short",
+    "shrinkMaterials": [
+     {
+      "art": "ТУТ 6/3 прозрачная",
+      "name": "ТУТ 6/3 прозрачная"
+     }
+    ],
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "protective": true,
+    "label": "Усадка прозрачной ТУТ на этикетках"
+   },
+   {
+    "type": "coaxVswr",
+    "opKey": "coaxVswr",
+    "side": "",
+    "units": 1,
+    "templateId": "CTRL_VSWR_coax",
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "label": "Контроль КСВН",
+    "vswrControl": {
+     "mode": "all",
+     "every": null,
+     "passport": true
+    }
+   }
+  ]
+ },
+ "tube": {
+  "mode": "coax",
+  "tab": "coax",
+  "assemblyIndex": "КБ1",
+  "assemblyName": "Кабельная сборка SMA-Male to SMA-Male RG58C/U 500mm",
+  "partQty": 1,
+  "coax": {
+   "cableLength": 510,
+   "markMaterial": "tube",
+   "markProtect": true,
+   "marks": [
+    {
+     "text": "FRX.831К.КБ1.{№}",
+     "place": "middle",
+     "minMm": 100,
+     "scope": "assembly",
+     "serial": true,
+     "qr": true
+    }
+   ],
+   "tutLengths": {
+    "A": 35,
+    "B": 35,
+    "middle": 35
+   },
+   "coverPrintedMm": 25,
+   "tutLength": 20,
+   "serial": {
+    "template": "FRX.831К.КБ1.{№}",
+    "designation": "КБ1",
+    "productKind": "kb",
+    "carrier": "tube",
+    "qr": true,
+    "tubeLengthMm": 25
+   },
+   "tutArt": "ТУТ 6/3 прозрачная",
+   "tutName": "ТУТ 6/3 прозрачная",
+   "cableArt": "RG58C/U",
+   "cableName": "RG58C/U",
+   "sleeveArt": "",
+   "sleeveName": "",
+   "shieldType": "обжим",
+   "sideA": {
+    "article": "SMA-C58P",
+    "connName": "SMA-C58P",
+    "type": "",
+    "wire": "",
+    "mfr": "",
+    "program": "",
+    "d1": "",
+    "d2": "",
+    "d3": "",
+    "l1": "",
+    "l2": "",
+    "l3": "",
+    "lPlus": "",
+    "lMinus": "",
+    "pinType": "пайка",
+    "shield": "обжим"
+   },
+   "sideB": {
+    "article": "SMA-C58P-B",
+    "connName": "SMA-C58P",
+    "type": "",
+    "wire": "",
+    "mfr": "",
+    "program": "",
+    "d1": "",
+    "d2": "",
+    "d3": "",
+    "l1": "",
+    "l2": "",
+    "l3": "",
+    "lPlus": "",
+    "lMinus": "",
+    "pinType": "пайка",
+    "shield": "обжим"
+   },
+   "vswrControl": {
+    "mode": "all",
+    "every": null
+   }
+  },
+  "ops": [
+   {
+    "type": "coaxCut",
+    "opKey": "coaxCutStrip",
+    "side": "",
+    "units": 1,
+    "templateId": "CUT_COAX+2strip",
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "machine": {
+     "model": "BZW-50X",
+     "inventory": "ОБ.095",
+     "name": "Станок резки провода с роторной зачисткой больш."
+    },
+    "stripSides": [
+     "A",
+     "B"
+    ],
+    "label": "Резка с разделкой (А и В)"
+   },
+   {
+    "type": "coaxCutTut",
+    "opKey": "coaxPrintLabel",
+    "side": "",
+    "units": 1,
+    "templateId": "PRINT_MARK_TUBE",
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "marks": [
+     {
+      "text": "FRX.831К.КБ1.{№}",
+      "place": "middle",
+      "minMm": 100,
+      "scope": "assembly",
+      "serial": true,
+      "qr": true
+     }
+    ],
+    "markMaterial": "tube",
+    "markPhase": "print",
+    "printedTube": true,
+    "label": "Печать маркировочной трубки заводского номера"
+   },
+   {
+    "type": "coaxCutTut",
+    "opKey": "coaxProtectCut",
+    "side": "",
+    "units": 1,
+    "templateId": "CUT_TUT_short",
+    "shrinkMaterials": [
+     {
+      "art": "ТУТ 6/3 прозрачная",
+      "name": "ТУТ 6/3 прозрачная"
+     }
+    ],
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "protective": true,
+    "label": "Резка прозрачной ТУТ"
+   },
+   {
+    "type": "coaxCutTut",
+    "opKey": "coaxCutTut",
+    "side": "",
+    "units": 2,
+    "templateId": "CUT_TUT_short",
+    "shrinkMaterials": [
+     {
+      "art": "ТУТ 6/3 чёрная",
+      "name": "ТУТ 6/3 чёрная"
+     }
+    ],
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "endTut": true,
+    "tutArt": "ТУТ 6/3 чёрная",
+    "tutName": "ТУТ 6/3 чёрная",
+    "label": "Резка ТУТ ×2"
+   },
+   {
+    "type": "coaxPin",
+    "opKey": "coaxPinA",
+    "side": "A",
+    "units": 1,
+    "templateId": "SDR_COAX_pin",
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "label": "Пайка центрального контакта (А)"
+   },
+   {
+    "type": "coaxPin",
+    "opKey": "coaxPinB",
+    "side": "B",
+    "units": 1,
+    "templateId": "SDR_COAX_pin",
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "label": "Пайка центрального контакта (B)"
+   },
+   {
+    "type": "coaxInsTut",
+    "opKey": "coaxProtectIns",
+    "side": "",
+    "units": 1,
+    "templateId": "INS_TUT",
+    "shrinkMaterials": [
+     {
+      "art": "ТУТ 6/3 прозрачная",
+      "name": "ТУТ 6/3 прозрачная"
+     }
+    ],
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "protective": true,
+    "label": "Монтаж прозрачной ТУТ"
+   },
+   {
+    "type": "coaxInsTut",
+    "opKey": "coaxInsTut",
+    "side": "",
+    "units": 2,
+    "templateId": "INS_TUT",
+    "shrinkMaterials": [
+     {
+      "art": "ТУТ 6/3 чёрная",
+      "name": "ТУТ 6/3 чёрная"
+     }
+    ],
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "endTut": true,
+    "tutArt": "ТУТ 6/3 чёрная",
+    "tutName": "ТУТ 6/3 чёрная",
+    "label": "Монтаж ТУТ ×2"
+   },
+   {
+    "type": "coaxInsTut",
+    "opKey": "coaxInsMarkTube",
+    "side": "",
+    "units": 1,
+    "templateId": "INS_TUT",
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "marks": [
+     {
+      "text": "FRX.831К.КБ1.{№}",
+      "place": "middle",
+      "minMm": 100,
+      "scope": "assembly",
+      "serial": true,
+      "qr": true
+     }
+    ],
+    "markMaterial": "tube",
+    "markPhase": "install",
+    "printedTube": true,
+    "label": "Надеть маркировочную трубку в середину"
+   },
+   {
+    "type": "coaxInsSleeve",
+    "opKey": "coaxInsSleeve",
+    "side": "",
+    "units": 2,
+    "templateId": "INS_SLEEVE_coax",
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "label": "Монтаж втулки экрана ×2"
+   },
+   {
+    "type": "coaxHousing",
+    "opKey": "coaxHousingA",
+    "side": "A",
+    "units": 1,
+    "templateId": "INS_housing_COAX",
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "label": "Монтаж корпуса (А)"
+   },
+   {
+    "type": "coaxHousing",
+    "opKey": "coaxHousingB",
+    "side": "B",
+    "units": 1,
+    "templateId": "INS_housing_COAX",
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "label": "Монтаж корпуса (B)"
+   },
+   {
+    "type": "coaxShield",
+    "opKey": "coaxShield",
+    "side": "",
+    "units": 2,
+    "templateId": "PRS_SLEEVE_coax",
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "label": "Опрессовка втулки экрана ×2"
+   },
+   {
+    "type": "coaxHeat",
+    "opKey": "coaxHeatTut",
+    "side": "",
+    "units": 2,
+    "templateId": "HEAT_TYT_short",
+    "shrinkMaterials": [
+     {
+      "art": "ТУТ 6/3 чёрная",
+      "name": "ТУТ 6/3 чёрная"
+     }
+    ],
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "endTut": true,
+    "tutArt": "ТУТ 6/3 чёрная",
+    "tutName": "ТУТ 6/3 чёрная",
+    "label": "Усадка ТУТ ×2"
+   },
+   {
+    "type": "coaxHeat",
+    "opKey": "coaxHeat",
+    "side": "",
+    "units": 1,
+    "templateId": "HEAT_TYT_short",
+    "shrinkMaterials": [
+     {
+      "art": "ТУТ 6/3 прозрачная",
+      "name": "ТУТ 6/3 прозрачная"
+     }
+    ],
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "protective": true,
+    "label": "Усадка маркировочной и прозрачной ТУТ"
+   },
+   {
+    "type": "coaxVswr",
+    "opKey": "coaxVswr",
+    "side": "",
+    "units": 1,
+    "templateId": "CTRL_VSWR_coax",
+    "opNum": "",
+    "tPrep": "",
+    "tOp": "",
+    "tMachine": "",
+    "label": "Контроль КСВН",
+    "vswrControl": {
+     "mode": "all",
+     "every": null
+    }
+   }
+  ]
+ }
+}
