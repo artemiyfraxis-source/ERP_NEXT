@@ -22,7 +22,6 @@ from app.modules.production.rf_kit_characterization import KitStandard
 from app.modules.production.rf_kit_characterization_infrastructure import (RfKitRepository, RfKitStandardRow,
                                                                            RfStandardCharacterizationRow)
 from app.modules.production.vna_dsp import from_t, multiply, to_t
-from app.modules.production.vna_check_infrastructure import VnaCheckRow
 from app.modules.production.vna_session_infrastructure import VnaSessionRow
 from app.shared.persistence import AuditEventRow
 from tests.identity.test_api_tokens import _csrf, tokens_api  # noqa: F401
@@ -94,8 +93,6 @@ class KitAgent(Agent):
 
 @pytest.fixture()
 def env(bench_env, monkeypatch):
-    # the early session refusal is off here: these tests exercise the characterization logic itself
-    monkeypatch.setattr("app.workflows.vna_bench_api.KIT_EARLY_REFUSAL", False)
     ids = bench_env["ids"]
     ids.update(mf06=uuid4(), fa=uuid4(), fb=uuid4())
     with bench_env["sessions"]() as session:
@@ -129,9 +126,9 @@ def act(env, view, path, body=None, expect=200):
     return post(env, session_path(view, path), {"version": view["session"]["version"], **(body or {})}, expect)
 
 
-def calibrate(env, view, *, full=True):
-    """The bench calibration is calibration-only since 26.11.2026. The SMA-MF06 pass still needs confidence + LOAD
-    (owner 27.11: decided separately), so by default the test records them on the session's check row."""
+def calibrate(env, view):
+    """The ACM calibration of the bench (calibration-only since 26.11.2026). Owner 27.11: the SMA-MF06 standards are
+    characterized on this same ACM calibration."""
     env["stub"].network = None
     env["stub"].drive()
     view = state(env)
@@ -139,13 +136,6 @@ def calibrate(env, view, *, full=True):
     env["stub"].drive()
     view = state(env)
     assert view["calibration"]["valid"], view["session"]["steps"]
-    if full:
-        with env["sessions"]() as db:
-            row = db.get(VnaSessionRow, UUID(view["session"]["id"]))
-            check = db.get(VnaCheckRow, row.calibration_check_id)
-            check.confidence_passed, check.confidence_tx_dev_db, check.confidence_rx_dev_db = True, 0.01, 0.01
-            check.load_p1_vswr, check.load_p2_vswr, check.passed = 1.02, 1.02, True
-            db.commit()
     return view
 
 
@@ -300,25 +290,15 @@ def test_activation_needs_all_eight_validated_and_a_failed_check_blocks_it(env):
     assert pieces(view)[("OPEN", "female")]["state"] == "validated"
 
 
-def test_the_sma_mf06_pass_waits_for_the_owners_decision_on_a_shortened_calibration(env):
-    """Owner 27.11: dropping the confidence test and LOAD covers measurements; for the SMA-MF06 pass it is decided
-    separately — a calibration-only session takes no characterization sweep."""
-    view = post(env, "/sessions", {"characterization": {"kit_id": str(env["ids"]["mf06"])}})
-    view = calibrate(env, view, full=False)
-    refused = sweep(env, view, None, {"fixture_id": str(env["ids"]["fa"])}, 409)
-    assert refused["detail"]["code"] == "kit_calibration_pending" and "отдельно" in refused["detail"]["message"]
-
-
-def test_a_characterization_session_is_refused_early_by_default(env, monkeypatch):
-    """No ERP calibration is full now: the operator must not waste a calibration before the capture refusal."""
-    monkeypatch.setattr("app.workflows.vna_bench_api.KIT_EARLY_REFUSAL", True)
-    refused = post(env, "/sessions", {"characterization": {"kit_id": str(env["ids"]["mf06"])}}, 409)
-    assert refused["detail"]["code"] == "kit_calibration_pending" and "отдельно" in refused["detail"]["message"]
-    monkeypatch.setattr("app.workflows.vna_bench_api.KIT_EARLY_REFUSAL", False)
-    view = post(env, "/sessions", {"characterization": {"kit_id": str(env["ids"]["mf06"])}})
-    monkeypatch.setattr("app.workflows.vna_bench_api.KIT_EARLY_REFUSAL", True)
-    refused = act(env, view, "/characterization/band", {"band": "high"}, 409)
-    assert refused["detail"]["code"] == "kit_calibration_pending"
+def test_the_sma_mf06_pass_runs_on_the_acm_calibration_only(env):
+    """Owner 27.11: «мы калибруемся по АКМ» — the standards are characterized on the bench's ACM calibration, with no
+    confidence test and no LOAD; the session's check row is the calibration-only one."""
+    view = open_kit_session(env)
+    with env["sessions"]() as db:
+        row = db.get(VnaSessionRow, UUID(view["session"]["id"]))
+        assert row.calibration_check_id is not None
+    # The capture is accepted on this calibration: the sweep is queued to the agent.
+    act(env, view, "/characterization/captures", {"fixture_id": str(env["ids"]["fa"])})
 
 
 def test_refusals_fixture_first_band_and_ill_conditioned_removal(env):
